@@ -8,7 +8,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 960px; background: radial-gradient(circle at 10% 0%, #1e293b 0, #0f172a 42rem); }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { border: 1px solid #475569; border-radius: 8px; color: #e2e8f0; background: #1e293b; padding: 0.62rem 0.9rem; cursor: pointer; }
 button:hover { border-color: #38bdf8; }
 button:disabled { cursor: wait; opacity: .55; }
@@ -29,8 +29,8 @@ h2 { font-size: 1.2rem; }
 .muted, .note { color: #94a3b8; font-size: .82rem; }
 .settings-form { display: grid; grid-template-columns: minmax(20rem, 1.7fr) minmax(15rem, 1.3fr) 8rem auto; align-items: end; gap: .85rem; }
 label { display: grid; gap: .4rem; color: #cbd5e1; font-size: .78rem; }
-input { width: 100%; border: 1px solid #475569; border-radius: 8px; outline: none; color: #f8fafc; background: #0b1220; padding: .62rem .7rem; }
-input:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, .16); }
+input, select { width: 100%; border: 1px solid #475569; border-radius: 8px; outline: none; color: #f8fafc; background: #0b1220; padding: .62rem .7rem; }
+input:focus, select:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, .16); }
 .form-actions { display: flex; gap: .45rem; }
 .message { min-height: 1.3rem; margin: .85rem 0 0; color: #86efac; }
 .message.error { color: #fca5a5; }
@@ -52,4 +52,29 @@ td small { display: block; max-width: 16rem; margin-top: .2rem; overflow: hidden
 .quality.ok { color: #bbf7d0; background: #14532d; }
 .quality.partial_period { color: #fde68a; background: #713f12; }
 .quality.missing_period, .quality.invalid_utilization { color: #fecaca; background: #7f1d1d; }
-@media (max-width: 1100px) { .settings-form { grid-template-columns: 1fr 1fr; } .form-actions { grid-column: 1 / -1; } }
+.quality.warning, .quality.partial { color: #fde68a; background: #713f12; }
+.subscription-form { display: grid; grid-template-columns: minmax(20rem, 2fr) minmax(12rem, 1fr) 10rem auto; align-items: end; gap: .85rem; margin: 0 1.35rem 1.1rem; }
+.comparison-table { min-width: 1120px; }
+.danger-button { color: #fecaca; border-color: #7f1d1d; background: transparent; padding: .35rem .55rem; }
+.compact-select { width: min(28rem, 48vw); }
+.chart-wrap { position: relative; margin: 0 1.35rem 1.2rem; border: 1px solid #1e293b; border-radius: 10px; background: #0b1220; padding: .8rem; }
+#trend-chart { display: block; width: 100%; min-height: 260px; overflow: visible; }
+#trend-chart .grid { stroke: #1e293b; stroke-width: 1; }
+#trend-chart .axis-label { fill: #64748b; font-size: 11px; }
+#trend-chart .usage-line { fill: none; stroke: #38bdf8; stroke-width: 3; }
+#trend-chart .estimate-line { fill: none; stroke: #a78bfa; stroke-width: 3; }
+#trend-chart .utilization-line { fill: none; stroke: #fbbf24; stroke-width: 2; stroke-dasharray: 6 4; }
+#trend-chart .point { stroke: #0b1220; stroke-width: 2; }
+.chart-legend { display: flex; justify-content: center; gap: 1.4rem; color: #94a3b8; font-size: .75rem; }
+.chart-legend span::before { content: ""; display: inline-block; width: .7rem; height: .18rem; margin: 0 .35rem .18rem 0; background: currentColor; }
+.chart-legend .usage { color: #38bdf8; }
+.chart-legend .estimate { color: #a78bfa; }
+.chart-legend .utilization { color: #fbbf24; }
+.analysis-summary { display: grid; grid-template-columns: repeat(2, minmax(12rem, 18rem)); gap: .8rem; margin: 0 1.35rem 1rem; }
+.breakdown-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .85rem; margin: 0 1.35rem 1.35rem; }
+.breakdown-grid article { min-width: 0; border: 1px solid #1e293b; border-radius: 10px; background: #0b1220; }
+.breakdown-grid h3 { margin: 0; padding: .85rem 1rem .45rem; color: #cbd5e1; font-size: .9rem; }
+.mini-table-wrap { max-height: 23rem; overflow: auto; padding: 0 .5rem .6rem; }
+.mini-table { min-width: 0; font-size: .76rem; }
+.mini-table th:nth-child(n+2), .mini-table td:nth-child(n+2) { text-align: right; }
+@media (max-width: 1100px) { .settings-form, .subscription-form { grid-template-columns: 1fr 1fr; } .form-actions { grid-column: 1 / -1; } .breakdown-grid { grid-template-columns: 1fr; } }

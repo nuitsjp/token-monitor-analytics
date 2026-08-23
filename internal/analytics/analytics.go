@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -19,12 +20,22 @@ type Stats struct {
 	UpdatedAt string                   `json:"updatedAt"`
 	Periods   map[string]PeriodSummary `json:"periods"`
 	Limits    Limits                   `json:"limits"`
+	Devices   []Device                 `json:"devices"`
 }
 
 type PeriodSummary struct {
 	TotalTokens float64            `json:"totalTokens"`
 	CostUSD     float64            `json:"costUsd"`
+	Clients     map[string]float64 `json:"clients"`
 	ClientCosts map[string]float64 `json:"clientCosts"`
+	Models      map[string]float64 `json:"models"`
+	ModelCosts  map[string]float64 `json:"modelCosts"`
+}
+
+type Device struct {
+	DeviceID string                   `json:"deviceId"`
+	Hostname string                   `json:"hostname"`
+	Periods  map[string]PeriodSummary `json:"periods"`
 }
 
 type Limits struct {
@@ -76,6 +87,23 @@ type Observation struct {
 type ParseResult struct {
 	Stats        Stats
 	Observations []Observation
+}
+
+type UsageBreakdown struct {
+	Dimension string  `json:"dimension"`
+	Key       string  `json:"key"`
+	Label     string  `json:"label"`
+	Tokens    float64 `json:"tokens"`
+	CostUSD   float64 `json:"costUsd"`
+}
+
+type StatsAnalysis struct {
+	PeriodKey             string             `json:"periodKey"`
+	TotalTokens           float64            `json:"totalTokens"`
+	TotalCostUSD          float64            `json:"totalCostUsd"`
+	ProviderCosts         map[string]float64 `json:"providerCosts"`
+	ProviderAccountCounts map[string]int     `json:"providerAccountCounts"`
+	Breakdowns            []UsageBreakdown   `json:"breakdowns"`
 }
 
 func ParseAndCalculate(raw []byte, observedAt time.Time) (ParseResult, error) {
@@ -154,6 +182,94 @@ func ParseAndCalculate(raw []byte, observedAt time.Time) (ParseResult, error) {
 		}
 	}
 	return result, nil
+}
+
+func AnalyzeStats(raw []byte, periodKey string) (StatsAnalysis, error) {
+	var stats Stats
+	if err := json.Unmarshal(raw, &stats); err != nil {
+		return StatsAnalysis{}, fmt.Errorf("decode stats for analysis: %w", err)
+	}
+	period, ok := stats.Periods[periodKey]
+	if !ok {
+		return StatsAnalysis{}, fmt.Errorf("stats period %q is missing", periodKey)
+	}
+	analysis := StatsAnalysis{
+		PeriodKey:             periodKey,
+		TotalTokens:           period.TotalTokens,
+		TotalCostUSD:          period.CostUSD,
+		ProviderCosts:         make(map[string]float64),
+		ProviderAccountCounts: make(map[string]int),
+	}
+	for provider, cost := range period.ClientCosts {
+		analysis.ProviderCosts[strings.ToLower(strings.TrimSpace(provider))] = cost
+	}
+	accountKeys := make(map[string]map[string]struct{})
+	for index, provider := range stats.Limits.Providers {
+		providerName := strings.ToLower(strings.TrimSpace(provider.Provider))
+		if providerName == "" {
+			continue
+		}
+		if accountKeys[providerName] == nil {
+			accountKeys[providerName] = make(map[string]struct{})
+		}
+		accountKey := strings.TrimSpace(provider.AccountKey)
+		if accountKey == "" {
+			accountKey = fmt.Sprintf("row:%d", index)
+		}
+		accountKeys[providerName][accountKey] = struct{}{}
+	}
+	for provider, keys := range accountKeys {
+		analysis.ProviderAccountCounts[provider] = len(keys)
+	}
+	analysis.Breakdowns = append(analysis.Breakdowns, breakdownRows("tool", period.Clients, period.ClientCosts)...)
+	analysis.Breakdowns = append(analysis.Breakdowns, breakdownRows("model", period.Models, period.ModelCosts)...)
+	for _, device := range stats.Devices {
+		devicePeriod, ok := device.Periods[periodKey]
+		if !ok {
+			continue
+		}
+		label := firstNonEmpty(device.Hostname, device.DeviceID)
+		analysis.Breakdowns = append(analysis.Breakdowns, UsageBreakdown{
+			Dimension: "device",
+			Key:       firstNonEmpty(device.DeviceID, device.Hostname),
+			Label:     label,
+			Tokens:    devicePeriod.TotalTokens,
+			CostUSD:   devicePeriod.CostUSD,
+		})
+	}
+	return analysis, nil
+}
+
+func breakdownRows(dimension string, tokens, costs map[string]float64) []UsageBreakdown {
+	keys := make(map[string]struct{}, len(tokens)+len(costs))
+	for key := range tokens {
+		keys[key] = struct{}{}
+	}
+	for key := range costs {
+		keys[key] = struct{}{}
+	}
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	sort.Slice(ordered, func(left, right int) bool {
+		leftCost, rightCost := costs[ordered[left]], costs[ordered[right]]
+		if leftCost == rightCost {
+			return ordered[left] < ordered[right]
+		}
+		return leftCost > rightCost
+	})
+	rows := make([]UsageBreakdown, 0, len(ordered))
+	for _, key := range ordered {
+		rows = append(rows, UsageBreakdown{
+			Dimension: dimension,
+			Key:       key,
+			Label:     key,
+			Tokens:    tokens[key],
+			CostUSD:   costs[key],
+		})
+	}
+	return rows
 }
 
 func FetchStats(ctx context.Context, client *http.Client, hubURL, secret string) ([]byte, time.Time, error) {

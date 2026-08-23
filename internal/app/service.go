@@ -1,9 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +52,37 @@ type Status struct {
 	LastFetchedAt   string `json:"lastFetchedAt"`
 	SnapshotCount   int    `json:"snapshotCount"`
 	IntervalSeconds int    `json:"intervalSeconds"`
+}
+
+type SubscriptionInput struct {
+	Provider        string  `json:"provider"`
+	AccountKey      string  `json:"accountKey"`
+	AccountLabel    string  `json:"accountLabel"`
+	PlanName        string  `json:"planName"`
+	MonthlyPriceUSD float64 `json:"monthlyPriceUsd"`
+}
+
+type SubscriptionMetric struct {
+	ID                          int64    `json:"id"`
+	Provider                    string   `json:"provider"`
+	AccountKey                  string   `json:"accountKey"`
+	AccountLabel                string   `json:"accountLabel"`
+	PlanName                    string   `json:"planName"`
+	MonthlyPriceUSD             float64  `json:"monthlyPriceUsd"`
+	ActualUsageUSD              *float64 `json:"actualUsageUsd"`
+	EstimatedLimitUSD           *float64 `json:"estimatedLimitUsd"`
+	ActualValueMultiplier       *float64 `json:"actualValueMultiplier"`
+	EstimatedMaxValueMultiplier *float64 `json:"estimatedMaxValueMultiplier"`
+	DataQuality                 string   `json:"dataQuality"`
+}
+
+type Dashboard struct {
+	PeriodKey     string                     `json:"periodKey"`
+	TotalTokens   float64                    `json:"totalTokens"`
+	TotalCostUSD  float64                    `json:"totalCostUsd"`
+	Subscriptions []SubscriptionMetric       `json:"subscriptions"`
+	Trend         []analytics.Observation    `json:"trend"`
+	Breakdowns    []analytics.UsageBreakdown `json:"breakdowns"`
 }
 
 func NewService(store *storage.Store, credentials credential.Store) (*Service, error) {
@@ -175,6 +211,159 @@ func (s *Service) GetHistory(limit int) ([]analytics.Observation, error) {
 	return s.store.History(limit)
 }
 
+func (s *Service) GetAccounts() ([]storage.AccountOption, error) {
+	return s.store.Accounts()
+}
+
+func (s *Service) SaveSubscription(input SubscriptionInput) (storage.Subscription, error) {
+	subscription := storage.Subscription{
+		Provider:        strings.TrimSpace(input.Provider),
+		AccountKey:      strings.TrimSpace(input.AccountKey),
+		AccountLabel:    strings.TrimSpace(input.AccountLabel),
+		PlanName:        strings.TrimSpace(input.PlanName),
+		MonthlyPriceUSD: input.MonthlyPriceUSD,
+	}
+	if subscription.Provider == "" || subscription.AccountKey == "" {
+		return storage.Subscription{}, fmt.Errorf("provider and account are required")
+	}
+	if subscription.AccountLabel == "" {
+		subscription.AccountLabel = subscription.AccountKey
+	}
+	if subscription.PlanName == "" {
+		return storage.Subscription{}, fmt.Errorf("plan name is required")
+	}
+	if subscription.MonthlyPriceUSD <= 0 || math.IsNaN(subscription.MonthlyPriceUSD) || math.IsInf(subscription.MonthlyPriceUSD, 0) {
+		return storage.Subscription{}, fmt.Errorf("monthly price must be a positive USD amount")
+	}
+	return s.store.SaveSubscription(subscription)
+}
+
+func (s *Service) DeleteSubscription(id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("subscription id is required")
+	}
+	return s.store.DeleteSubscription(id)
+}
+
+func (s *Service) GetDashboard() (Dashboard, error) {
+	subscriptions, err := s.store.Subscriptions()
+	if err != nil {
+		return Dashboard{}, err
+	}
+	history, err := s.store.History(1000)
+	if err != nil {
+		return Dashboard{}, err
+	}
+	dashboard := Dashboard{PeriodKey: "month", Trend: history}
+	raw, err := s.store.LatestSnapshotRaw()
+	if err != nil {
+		return Dashboard{}, err
+	}
+	analysis := analytics.StatsAnalysis{ProviderCosts: map[string]float64{}, ProviderAccountCounts: map[string]int{}}
+	if len(raw) > 0 {
+		analysis, err = analytics.AnalyzeStats(raw, "month")
+		if err != nil {
+			return Dashboard{}, err
+		}
+		dashboard.TotalTokens = analysis.TotalTokens
+		dashboard.TotalCostUSD = analysis.TotalCostUSD
+		dashboard.Breakdowns = analysis.Breakdowns
+	}
+	latestEstimate := make(map[string]float64)
+	for _, observation := range history {
+		key := subscriptionKey(observation.Provider, observation.AccountKey)
+		if _, exists := latestEstimate[key]; !exists && observation.CalculationStatus == "ok" && observation.EstimatedLimitUSD > 0 {
+			latestEstimate[key] = observation.EstimatedLimitUSD
+		}
+	}
+	for _, subscription := range subscriptions {
+		metric := SubscriptionMetric{
+			ID: subscription.ID, Provider: subscription.Provider, AccountKey: subscription.AccountKey,
+			AccountLabel: subscription.AccountLabel, PlanName: subscription.PlanName,
+			MonthlyPriceUSD: subscription.MonthlyPriceUSD,
+		}
+		providerKey := strings.ToLower(subscription.Provider)
+		var quality []string
+		accountCount := analysis.ProviderAccountCounts[providerKey]
+		if accountCount > 1 {
+			quality = append(quality, "ambiguous_account_cost")
+		} else if accountCount == 0 {
+			quality = append(quality, "missing_provider_account")
+		} else if usage, ok := analysis.ProviderCosts[providerKey]; ok {
+			metric.ActualUsageUSD = floatPointer(usage)
+			metric.ActualValueMultiplier = floatPointer(usage / subscription.MonthlyPriceUSD)
+		} else {
+			quality = append(quality, "missing_monthly_provider_cost")
+		}
+		if estimate, ok := latestEstimate[subscriptionKey(subscription.Provider, subscription.AccountKey)]; ok {
+			metric.EstimatedLimitUSD = floatPointer(estimate)
+			metric.EstimatedMaxValueMultiplier = floatPointer(estimate / subscription.MonthlyPriceUSD)
+		} else {
+			quality = append(quality, "missing_exact_estimate")
+		}
+		if len(quality) == 0 {
+			metric.DataQuality = "ok"
+		} else {
+			metric.DataQuality = strings.Join(quality, ",")
+		}
+		dashboard.Subscriptions = append(dashboard.Subscriptions, metric)
+	}
+	return dashboard, nil
+}
+
+func (s *Service) ExportJSON() (string, error) {
+	subscriptions, err := s.store.Subscriptions()
+	if err != nil {
+		return "", err
+	}
+	history, err := s.store.AllHistory()
+	if err != nil {
+		return "", err
+	}
+	payload := struct {
+		GeneratedAt   string                  `json:"generatedAt"`
+		Subscriptions []storage.Subscription  `json:"subscriptions"`
+		Observations  []analytics.Observation `json:"observations"`
+	}{time.Now().UTC().Format(time.RFC3339Nano), subscriptions, history}
+	encoded, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func (s *Service) ExportCSV() (string, error) {
+	subscriptions, err := s.store.Subscriptions()
+	if err != nil {
+		return "", err
+	}
+	history, err := s.store.AllHistory()
+	if err != nil {
+		return "", err
+	}
+	prices := make(map[string]float64)
+	for _, subscription := range subscriptions {
+		prices[subscriptionKey(subscription.Provider, subscription.AccountKey)] = subscription.MonthlyPriceUSD
+	}
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	_ = writer.Write([]string{"observed_at", "provider", "account_key", "account_label", "window_kind", "period_key", "usage_usd", "utilization_percent", "estimated_limit_usd", "monthly_price_usd", "calculation_status", "calculation_note"})
+	for _, observation := range history {
+		price := prices[subscriptionKey(observation.Provider, observation.AccountKey)]
+		_ = writer.Write([]string{
+			observation.ObservedAt, observation.Provider, observation.AccountKey, observation.AccountLabel,
+			observation.WindowKind, observation.PeriodKey, formatFloat(observation.UsageUSD),
+			formatFloat(observation.UtilizationPercent), formatFloat(observation.EstimatedLimitUSD),
+			formatFloat(price), observation.CalculationStatus, observation.CalculationNote,
+		})
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return "", err
+	}
+	return "\uFEFF" + buffer.String(), nil
+}
+
 func (s *Service) GetStatus() Status {
 	hubURL, interval, err := s.store.GetSettings()
 	if interval < 10 {
@@ -247,4 +436,16 @@ func (s *Service) setError(err error) {
 	s.mu.Lock()
 	s.lastError = err.Error()
 	s.mu.Unlock()
+}
+
+func subscriptionKey(provider, accountKey string) string {
+	return strings.ToLower(strings.TrimSpace(provider)) + "\x00" + strings.TrimSpace(accountKey)
+}
+
+func floatPointer(value float64) *float64 {
+	return &value
+}
+
+func formatFloat(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
 }

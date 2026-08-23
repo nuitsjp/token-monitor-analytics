@@ -142,3 +142,25 @@ func TestFetchStatsUsesBearerAuth(t *testing.T) {
 		t.Fatalf("unexpected body %s", body)
 	}
 }
+
+func TestAnalyzeStatsBuildsMonthlyBreakdowns(t *testing.T) {
+	raw := []byte(`{
+"periods":{"month":{"totalTokens":300,"costUsd":6,"clients":{"codex":200,"claude":100},"clientCosts":{"codex":4,"claude":2},"models":{"gpt-5":200},"modelCosts":{"gpt-5":4}}},
+"limits":{"providers":[{"provider":"codex","accountKey":"a"},{"provider":"claude","accountKey":"b"}]},
+"devices":[{"deviceId":"device-1","hostname":"desktop","periods":{"month":{"totalTokens":300,"costUsd":6}}}]
+}`)
+	analysis, err := AnalyzeStats(raw, "month")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.TotalCostUSD != 6 || analysis.ProviderCosts["codex"] != 4 || analysis.ProviderAccountCounts["codex"] != 1 {
+		t.Fatalf("unexpected analysis: %+v", analysis)
+	}
+	counts := map[string]int{}
+	for _, row := range analysis.Breakdowns {
+		counts[row.Dimension]++
+	}
+	if counts["tool"] != 2 || counts["model"] != 1 || counts["device"] != 1 {
+		t.Fatalf("unexpected breakdown counts: %+v", counts)
+	}
+}

@@ -19,3 +19,11 @@ export interface Observation {
     "observedAt": string;
     "calculatedAt": string;
 }
+
+export interface UsageBreakdown {
+    "dimension": string;
+    "key": string;
+    "label": string;
+    "tokens": number;
+    "costUsd": number;
+}

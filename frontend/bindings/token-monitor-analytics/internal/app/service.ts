@@ -8,13 +8,36 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as analytics$0 from "../analytics/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as storage$0 from "../storage/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function DeleteSubscription(id: number): $CancellablePromise<void> {
+    return $Call.ByID(4280780847, id);
+}
+
+export function ExportCSV(): $CancellablePromise<string> {
+    return $Call.ByID(2716925709);
+}
+
+export function ExportJSON(): $CancellablePromise<string> {
+    return $Call.ByID(3132627473);
+}
+
 export function FetchNow(): $CancellablePromise<$models.FetchResult> {
     return $Call.ByID(788538493);
+}
+
+export function GetAccounts(): $CancellablePromise<storage$0.AccountOption[] | null> {
+    return $Call.ByID(1778294467);
+}
+
+export function GetDashboard(): $CancellablePromise<$models.Dashboard> {
+    return $Call.ByID(1987820481);
 }
 
 export function GetHistory(limit: number): $CancellablePromise<analytics$0.Observation[] | null> {
@@ -31,6 +54,10 @@ export function GetStatus(): $CancellablePromise<$models.Status> {
 
 export function SaveSettings(settings: $models.Settings): $CancellablePromise<void> {
     return $Call.ByID(73086565, settings);
+}
+
+export function SaveSubscription(input: $models.SubscriptionInput): $CancellablePromise<storage$0.Subscription> {
+    return $Call.ByID(4133557825, input);
 }
 
 export function Start(): $CancellablePromise<void> {

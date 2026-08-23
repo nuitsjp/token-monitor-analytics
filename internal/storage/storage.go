@@ -16,6 +16,22 @@ type Store struct {
 	db *sql.DB
 }
 
+type Subscription struct {
+	ID              int64   `json:"id"`
+	Provider        string  `json:"provider"`
+	AccountKey      string  `json:"accountKey"`
+	AccountLabel    string  `json:"accountLabel"`
+	PlanName        string  `json:"planName"`
+	MonthlyPriceUSD float64 `json:"monthlyPriceUsd"`
+	UpdatedAt       string  `json:"updatedAt"`
+}
+
+type AccountOption struct {
+	Provider     string `json:"provider"`
+	AccountKey   string `json:"accountKey"`
+	AccountLabel string `json:"accountLabel"`
+}
+
 func Open(path string) (*Store, error) {
 	if path == "" {
 		return nil, fmt.Errorf("database path is empty")
@@ -75,6 +91,16 @@ CREATE TABLE IF NOT EXISTS observations (
 );
 CREATE INDEX IF NOT EXISTS idx_observations_scope ON observations(provider, account_key, window_kind, observed_at);
 CREATE INDEX IF NOT EXISTS idx_snapshots_fetched_at ON snapshots(fetched_at DESC);
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  account_key TEXT NOT NULL,
+  account_label TEXT NOT NULL,
+  plan_name TEXT NOT NULL,
+  monthly_price_usd REAL NOT NULL CHECK(monthly_price_usd > 0),
+  updated_at TEXT NOT NULL,
+  UNIQUE(provider, account_key)
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("initialize database: %w", err)
@@ -208,4 +234,109 @@ func (s *Store) SnapshotCount() (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM snapshots").Scan(&count)
 	return count, err
+}
+
+func (s *Store) SaveSubscription(subscription Subscription) (Subscription, error) {
+	subscription.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	err := s.db.QueryRow(`INSERT INTO subscriptions(
+provider, account_key, account_label, plan_name, monthly_price_usd, updated_at
+) VALUES(?, ?, ?, ?, ?, ?)
+ON CONFLICT(provider, account_key) DO UPDATE SET
+  account_label = excluded.account_label,
+  plan_name = excluded.plan_name,
+  monthly_price_usd = excluded.monthly_price_usd,
+  updated_at = excluded.updated_at
+RETURNING id`, subscription.Provider, subscription.AccountKey, subscription.AccountLabel,
+		subscription.PlanName, subscription.MonthlyPriceUSD, subscription.UpdatedAt).Scan(&subscription.ID)
+	if err != nil {
+		return Subscription{}, fmt.Errorf("save subscription: %w", err)
+	}
+	return subscription, nil
+}
+
+func (s *Store) DeleteSubscription(id int64) error {
+	result, err := s.db.Exec("DELETE FROM subscriptions WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete subscription: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted == 0 {
+		return fmt.Errorf("subscription %d not found", id)
+	}
+	return nil
+}
+
+func (s *Store) Subscriptions() ([]Subscription, error) {
+	rows, err := s.db.Query(`SELECT id, provider, account_key, account_label, plan_name,
+monthly_price_usd, updated_at FROM subscriptions ORDER BY provider, account_label`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var subscriptions []Subscription
+	for rows.Next() {
+		var subscription Subscription
+		if err := rows.Scan(&subscription.ID, &subscription.Provider, &subscription.AccountKey,
+			&subscription.AccountLabel, &subscription.PlanName, &subscription.MonthlyPriceUSD,
+			&subscription.UpdatedAt); err != nil {
+			return nil, err
+		}
+		subscriptions = append(subscriptions, subscription)
+	}
+	return subscriptions, rows.Err()
+}
+
+func (s *Store) Accounts() ([]AccountOption, error) {
+	rows, err := s.db.Query(`SELECT provider, account_key, MAX(account_label)
+FROM observations WHERE account_key <> '' GROUP BY provider, account_key ORDER BY provider, account_key`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var accounts []AccountOption
+	for rows.Next() {
+		var account AccountOption
+		if err := rows.Scan(&account.Provider, &account.AccountKey, &account.AccountLabel); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, rows.Err()
+}
+
+func (s *Store) LatestSnapshotRaw() ([]byte, error) {
+	var raw []byte
+	err := s.db.QueryRow("SELECT raw_json FROM snapshots ORDER BY fetched_at DESC, id DESC LIMIT 1").Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return raw, err
+}
+
+func (s *Store) AllHistory() ([]analytics.Observation, error) {
+	rows, err := s.db.Query(`SELECT provider, account_key, account_label, window_kind, window_label,
+period_key, period_start, period_end, reset_at, usage_usd, utilization_percent,
+estimated_limit_usd, calculation_status, calculation_note, observed_at, calculated_at
+FROM observations ORDER BY observed_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []analytics.Observation
+	for rows.Next() {
+		var observation analytics.Observation
+		if err := rows.Scan(&observation.Provider, &observation.AccountKey, &observation.AccountLabel,
+			&observation.WindowKind, &observation.WindowLabel, &observation.PeriodKey,
+			&observation.PeriodStart, &observation.PeriodEnd, &observation.ResetAt,
+			&observation.UsageUSD, &observation.UtilizationPercent, &observation.EstimatedLimitUSD,
+			&observation.CalculationStatus, &observation.CalculationNote, &observation.ObservedAt,
+			&observation.CalculatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, observation)
+	}
+	return result, rows.Err()
 }

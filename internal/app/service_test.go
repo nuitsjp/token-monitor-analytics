@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
+	"token-monitor-analytics/internal/analytics"
 	"token-monitor-analytics/internal/storage"
 )
 
@@ -128,6 +131,49 @@ func TestNewServiceKeepsLegacySecretWhenCredentialWriteFails(t *testing.T) {
 	legacySecret, err := store.LegacySecret()
 	if err != nil || legacySecret != "legacy-secret" {
 		t.Fatalf("legacy secret was removed after failed migration: %q, err=%v", legacySecret, err)
+	}
+}
+
+func TestDashboardCalculatesSubscriptionValueAndExports(t *testing.T) {
+	store := openTestStore(t)
+	raw := []byte(`{
+"periods":{"month":{"totalTokens":1000,"costUsd":80,"clients":{"codex":1000},"clientCosts":{"codex":80}}},
+"limits":{"providers":[{"provider":"codex","accountKey":"sha256:x"}]},"devices":[]}`)
+	_, err := store.SaveSnapshot(time.Now(), "http://hub.test/api/stats", raw, []analytics.Observation{{
+		Provider: "codex", AccountKey: "sha256:x", AccountLabel: "Personal", WindowKind: "billing",
+		PeriodKey: "month", UsageUSD: 80, UtilizationPercent: 40, EstimatedLimitUSD: 200,
+		CalculationStatus: "ok", ObservedAt: "2026-08-23T00:00:00Z", CalculatedAt: "2026-08-23T00:00:00Z",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(store, &fakeCredentialStore{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SaveSubscription(SubscriptionInput{
+		Provider: "codex", AccountKey: "sha256:x", AccountLabel: "Personal", PlanName: "Plus", MonthlyPriceUSD: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dashboard, err := service.GetDashboard()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dashboard.Subscriptions) != 1 {
+		t.Fatalf("dashboard = %+v", dashboard)
+	}
+	metric := dashboard.Subscriptions[0]
+	if metric.ActualValueMultiplier == nil || *metric.ActualValueMultiplier != 4 || metric.EstimatedMaxValueMultiplier == nil || *metric.EstimatedMaxValueMultiplier != 10 {
+		t.Fatalf("metric = %+v", metric)
+	}
+	jsonExport, err := service.ExportJSON()
+	if err != nil || !strings.Contains(jsonExport, `"planName": "Plus"`) {
+		t.Fatalf("JSON export error=%v", err)
+	}
+	csvExport, err := service.ExportCSV()
+	if err != nil || !strings.HasPrefix(csvExport, "\uFEFF") || !strings.Contains(csvExport, "monthly_price_usd") || !strings.Contains(csvExport, "codex") {
+		t.Fatalf("CSV export error=%v", err)
 	}
 }
 

@@ -275,4 +275,12 @@ wails3 build
 
 Token Monitor Hub の現行 `GET /api/stats` は `periods.today`、`periods.month`、`periods.allTime` と、`limits.providers[].windows[]` を返します。provider 別の費用は `clientCosts` の同名キーを使います。利用枠に対応する期間別費用が応答に存在する場合だけ、その期間を使います。現行 Hub に週次・セッション専用の費用期間がない場合は、月次や allTime を混ぜず、`today` の参考費用と利用率を `partial_period` として保存しますが、期間が一致しないため推定値は算出しません。`clientCosts` が無い場合や、同じ provider に複数アカウントがある場合も、費用を推測・重複帰属せず、推定値を作りません。対応期間が無い billing 枠などは `missing_period` となります。
 
+## Phase 2 の実装
+
+観測済みの provider / account に対して、プラン名と月額料金をUSDで登録できます。月額をUSDに限定するのは、Token MonitorのAPI換算額と為替換算なしで比較するためです。
+
+ダッシュボードでは、最新の月次provider別API換算利用額から実利用価値倍率を、期間が一致している最新の推定上限額から推定最大価値倍率を計算します。同じproviderに複数アカウントがあり費用を個別帰属できない場合や、期間一致した推定値がない場合は倍率を空欄にし、データ品質を表示します。
+
+保存済み観測の利用額・利用率・推定上限額をSVGグラフで表示し、最新スナップショットの月次Tool・Model・Device内訳を確認できます。エクスポートは全観測と契約料金を含むJSON、およびExcelで直接開けるUTF-8 BOM付きCSVに対応します。
+
 API 形式の根拠は Token Monitor 本体の [Hub API ドキュメント](https://github.com/Javis603/token-monitor/blob/main/docs/API.md)です。

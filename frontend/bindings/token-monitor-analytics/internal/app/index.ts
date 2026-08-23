@@ -7,7 +7,10 @@ export {
 };
 
 export type {
+    Dashboard,
     FetchResult,
     Settings,
-    Status
+    Status,
+    SubscriptionInput,
+    SubscriptionMetric
 } from "./models.js";
