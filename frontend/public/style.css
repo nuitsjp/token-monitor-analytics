@@ -54,6 +54,9 @@ td small { display: block; max-width: 16rem; margin-top: .2rem; overflow: hidden
 .quality.missing_period, .quality.invalid_utilization { color: #fecaca; background: #7f1d1d; }
 .quality.warning, .quality.partial { color: #fde68a; background: #713f12; }
 .subscription-form { display: grid; grid-template-columns: minmax(20rem, 2fr) minmax(12rem, 1fr) 10rem auto; align-items: end; gap: .85rem; margin: 0 1.35rem 1.1rem; }
+.cloud-form { display: grid; grid-template-columns: minmax(20rem, 1.5fr) minmax(16rem, 1fr) auto auto; align-items: end; gap: .85rem; }
+.checkbox-label { display: flex; align-items: center; gap: .5rem; min-height: 2.6rem; white-space: nowrap; }
+.checkbox-label input { width: auto; }
 .comparison-table { min-width: 1120px; }
 .danger-button { color: #fecaca; border-color: #7f1d1d; background: transparent; padding: .35rem .55rem; }
 .compact-select { width: min(28rem, 48vw); }
@@ -77,4 +80,4 @@ td small { display: block; max-width: 16rem; margin-top: .2rem; overflow: hidden
 .mini-table-wrap { max-height: 23rem; overflow: auto; padding: 0 .5rem .6rem; }
 .mini-table { min-width: 0; font-size: .76rem; }
 .mini-table th:nth-child(n+2), .mini-table td:nth-child(n+2) { text-align: right; }
-@media (max-width: 1100px) { .settings-form, .subscription-form { grid-template-columns: 1fr 1fr; } .form-actions { grid-column: 1 / -1; } .breakdown-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .settings-form, .subscription-form, .cloud-form { grid-template-columns: 1fr 1fr; } .form-actions { grid-column: 1 / -1; } .breakdown-grid { grid-template-columns: 1fr; } }

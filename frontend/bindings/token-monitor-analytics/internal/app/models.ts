@@ -5,6 +5,20 @@
 // @ts-ignore: Unused imports
 import * as analytics$0 from "../analytics/models.js";
 
+export interface CloudSettings {
+    "url": string;
+    "secret"?: string;
+    "secretConfigured": boolean;
+    "enabled": boolean;
+    "deviceId": string;
+}
+
+export interface CloudSyncResult {
+    "uploadedSnapshots": number;
+    "acceptedThrough": number;
+    "syncedAt": string;
+}
+
 export interface Dashboard {
     "periodKey": string;
     "totalTokens": number;

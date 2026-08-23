@@ -3,11 +3,15 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,14 +25,15 @@ import (
 const defaultIntervalSeconds = 300
 
 type Service struct {
-	store       *storage.Store
-	credentials credential.Store
-	httpClient  *http.Client
-	mu          sync.RWMutex
-	cancel      context.CancelFunc
-	running     bool
-	lastError   string
-	lastFetch   string
+	store            *storage.Store
+	credentials      credential.Store
+	cloudCredentials credential.Store
+	httpClient       *http.Client
+	mu               sync.RWMutex
+	cancel           context.CancelFunc
+	running          bool
+	lastError        string
+	lastFetch        string
 }
 
 type Settings struct {
@@ -85,19 +90,47 @@ type Dashboard struct {
 	Breakdowns    []analytics.UsageBreakdown `json:"breakdowns"`
 }
 
-func NewService(store *storage.Store, credentials credential.Store) (*Service, error) {
+type CloudSettings struct {
+	URL              string `json:"url"`
+	Secret           string `json:"secret,omitempty"`
+	SecretConfigured bool   `json:"secretConfigured"`
+	Enabled          bool   `json:"enabled"`
+	DeviceID         string `json:"deviceId"`
+}
+
+type CloudSyncResult struct {
+	UploadedSnapshots int    `json:"uploadedSnapshots"`
+	AcceptedThrough   int64  `json:"acceptedThrough"`
+	SyncedAt          string `json:"syncedAt"`
+}
+
+type BackupEnvelope struct {
+	Version     int                `json:"version"`
+	GeneratedAt string             `json:"generatedAt"`
+	Checksum    string             `json:"checksum"`
+	Data        storage.BackupData `json:"data"`
+}
+
+func NewService(store *storage.Store, credentials, cloudCredentials credential.Store) (*Service, error) {
 	if store == nil {
 		return nil, fmt.Errorf("storage is required")
 	}
 	if credentials == nil {
 		return nil, fmt.Errorf("credential store is required")
 	}
+	if cloudCredentials == nil {
+		return nil, fmt.Errorf("cloud credential store is required")
+	}
 	service := &Service{
-		store:       store,
-		credentials: credentials,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		store:            store,
+		credentials:      credentials,
+		cloudCredentials: cloudCredentials,
+		httpClient:       &http.Client{Timeout: 30 * time.Second},
 	}
 	if err := service.migrateLegacySecret(); err != nil {
+		return nil, err
+	}
+	if err := service.ensureDeviceID(); err != nil {
 		return nil, err
 	}
 	return service, nil
@@ -188,6 +221,15 @@ func (s *Service) Start() error {
 			case <-ticker.C:
 				if _, err := s.fetchAndStore(hubURL, secret); err != nil {
 					s.setError(err)
+					continue
+				}
+				cloudConfig, err := s.store.GetCloudConfig()
+				if err != nil {
+					s.setError(err)
+				} else if cloudConfig.Enabled {
+					if _, err := s.SyncCloudNow(); err != nil {
+						s.setError(err)
+					}
 				}
 			case <-ctx.Done():
 				return
@@ -364,6 +406,97 @@ func (s *Service) ExportCSV() (string, error) {
 	return "\uFEFF" + buffer.String(), nil
 }
 
+func (s *Service) GetCloudSettings() CloudSettings {
+	config, err := s.store.GetCloudConfig()
+	if err != nil {
+		s.setError(err)
+	}
+	storedSecret, found, credentialErr := s.cloudCredentials.Read()
+	if credentialErr != nil {
+		s.setError(credentialErr)
+	}
+	return CloudSettings{
+		URL: config.URL, Enabled: config.Enabled, DeviceID: config.DeviceID,
+		SecretConfigured: found && storedSecret != "",
+	}
+}
+
+func (s *Service) SaveCloudSettings(settings CloudSettings) error {
+	cloudURL := strings.TrimRight(strings.TrimSpace(settings.URL), "/")
+	if settings.Enabled {
+		parsed, err := url.Parse(cloudURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return fmt.Errorf("cloud URL must be an http or https URL")
+		}
+	}
+	if settings.Secret != "" {
+		if err := s.cloudCredentials.Write(settings.Secret); err != nil {
+			return err
+		}
+	}
+	if settings.Enabled {
+		secret, found, err := s.cloudCredentials.Read()
+		if err != nil {
+			return err
+		}
+		if !found || secret == "" {
+			return fmt.Errorf("cloud shared secret is required")
+		}
+	}
+	config, err := s.store.GetCloudConfig()
+	if err != nil {
+		return err
+	}
+	config.URL = cloudURL
+	config.Enabled = settings.Enabled
+	return s.store.SaveCloudConfig(config)
+}
+
+func (s *Service) CreateBackup() (string, error) {
+	data, err := s.store.ExportBackupData()
+	if err != nil {
+		return "", err
+	}
+	encodedData, err := json.Marshal(data)
+	if err != nil {
+		return "", err
+	}
+	checksum := sha256.Sum256(encodedData)
+	envelope := BackupEnvelope{
+		Version: 1, GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Checksum: hex.EncodeToString(checksum[:]), Data: data,
+	}
+	encoded, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func (s *Service) RestoreBackup(content string) error {
+	var envelope BackupEnvelope
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
+		return fmt.Errorf("decode backup: %w", err)
+	}
+	if envelope.Version != 1 {
+		return fmt.Errorf("unsupported backup version %d", envelope.Version)
+	}
+	encodedData, err := json.Marshal(envelope.Data)
+	if err != nil {
+		return err
+	}
+	checksum := sha256.Sum256(encodedData)
+	if !strings.EqualFold(envelope.Checksum, hex.EncodeToString(checksum[:])) {
+		return fmt.Errorf("backup checksum does not match")
+	}
+	if err := s.store.RestoreBackupData(envelope.Data); err != nil {
+		return fmt.Errorf("restore backup: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) GetStatus() Status {
 	hubURL, interval, err := s.store.GetSettings()
 	if interval < 10 {
@@ -403,6 +536,22 @@ func (s *Service) migrateLegacySecret() error {
 		return fmt.Errorf("remove legacy secret from SQLite: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) ensureDeviceID() error {
+	config, err := s.store.GetCloudConfig()
+	if err != nil {
+		return err
+	}
+	if config.DeviceID != "" {
+		return nil
+	}
+	identifier := make([]byte, 16)
+	if _, err := rand.Read(identifier); err != nil {
+		return fmt.Errorf("generate installation id: %w", err)
+	}
+	config.DeviceID = hex.EncodeToString(identifier)
+	return s.store.SaveCloudConfig(config)
 }
 
 func (s *Service) fetchAndStore(hubURL, secret string) (FetchResult, error) {

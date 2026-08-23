@@ -283,4 +283,27 @@ Token Monitor Hub の現行 `GET /api/stats` は `periods.today`、`periods.mont
 
 保存済み観測の利用額・利用率・推定上限額をSVGグラフで表示し、最新スナップショットの月次Tool・Model・Device内訳を確認できます。エクスポートは全観測と契約料金を含むJSON、およびExcelで直接開けるUTF-8 BOM付きCSVに対応します。
 
+## Phase 3 の実装
+
+クラウド連携は任意です。未設定または無効の場合、Phase 1・2の全機能はローカルだけで動作します。特定クラウドへ固定せず、SQLiteを使う自己ホスト型同期サーバーを提供します。
+
+### クラウド同期サーバー
+
+同期サーバーは、デバイスIDとローカルスナップショットIDの組で増分データを重複排除します。Bearer認証された`POST /api/v1/sync`で受信し、`GET /api/v1/dashboard`とブラウザー画面で複数端末のデータを確認できます。ブラウザーに入力したシークレットは`sessionStorage`にだけ保持します。
+
+```powershell
+$env:TOKEN_MONITOR_ANALYTICS_CLOUD_SECRET_FILE = 'D:\secure\token-monitor-analytics-cloud-secret.txt'
+$env:TOKEN_MONITOR_ANALYTICS_CLOUD_DB = 'D:\data\token-monitor-analytics-cloud.db'
+$env:TOKEN_MONITOR_ANALYTICS_CLOUD_ADDR = ':8080'
+go run ./cmd/cloudserver
+```
+
+コンテナでは`deploy/cloudserver/Dockerfile`を使用できます。公開環境ではリバースプロキシでHTTPSを終端し、`/data`を永続ボリュームへ割り当ててください。デスクトップアプリではCloud URLと共有シークレットを設定し、手動同期または定期収集後の自動同期を使用します。クラウド用シークレットはGeneric Credential `TokenMonitorAnalytics/Cloud/default`に保存します。
+
+### バックアップと復元
+
+「バックアップ作成」は、原JSONスナップショット、算出結果、契約料金、非秘密設定を1つのJSONへ出力します。Windows Credential Managerのシークレットは含みません。バックアップにはSHA-256チェックサムが付き、復元では全体を検証してから単一SQLiteトランザクションで置換します。検証失敗時は既存データを維持します。復元後のクラウド同期カーソルは0へ戻り、全スナップショットを重複排除付きで再送します。
+
+手動バックアップのRPOは最後に作成した時点、通常の復元RTOは数分です。自動世代管理は実装していないため、運用ではバックアップJSONとクラウドサーバーの`cloud.db`を、バージョニングまたはオブジェクトロックのある外部保管先へ日次保存してください。Credential Manager喪失時は、機外で管理するHub／Cloudシークレットを同じWindowsユーザーで再登録する必要があります。四半期ごとに別のテスト環境へ復元し、スナップショット件数、契約料金、ダッシュボード表示を確認してください。
+
 API 形式の根拠は Token Monitor 本体の [Hub API ドキュメント](https://github.com/Javis603/token-monitor/blob/main/docs/API.md)です。

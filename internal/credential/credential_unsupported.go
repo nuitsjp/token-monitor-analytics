@@ -4,10 +4,16 @@ package credential
 
 import "errors"
 
-type Manager struct{}
+type Manager struct {
+	target string
+}
 
 func New() *Manager {
-	return &Manager{}
+	return &Manager{target: DefaultTarget}
+}
+
+func NewForTarget(target string) *Manager {
+	return &Manager{target: target}
 }
 
 func (m *Manager) Read() (string, bool, error) {

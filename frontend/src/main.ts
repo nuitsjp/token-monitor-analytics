@@ -15,11 +15,13 @@ type SubscriptionMetric = {
 };
 type UsageBreakdown = {dimension: "tool" | "model" | "device"; key: string; label: string; tokens: number; costUsd: number};
 type Dashboard = {periodKey: string; totalTokens: number; totalCostUsd: number; subscriptions: SubscriptionMetric[]; trend: Observation[]; breakdowns: UsageBreakdown[]};
+type CloudSettings = {url: string; secret?: string; secretConfigured: boolean; enabled: boolean; deviceId: string};
 
 const svgNamespace = "http://www.w3.org/2000/svg";
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const settingsForm = $("settings-form") as HTMLFormElement;
 const subscriptionForm = $("subscription-form") as HTMLFormElement;
+const cloudForm = $("cloud-form") as HTMLFormElement;
 const hubUrl = $("hub-url") as HTMLInputElement;
 const secret = $("secret") as HTMLInputElement;
 const interval = $("interval") as HTMLInputElement;
@@ -271,6 +273,16 @@ async function loadSettings() {
     secret.placeholder = settings.secretConfigured ? "保存済み（変更する場合のみ入力）" : "Hub の共有シークレット";
 }
 
+async function loadCloudSettings() {
+    const settings = await Service.GetCloudSettings() as CloudSettings;
+    ($("cloud-url") as HTMLInputElement).value = settings.url || "";
+    ($("cloud-enabled") as HTMLInputElement).checked = settings.enabled;
+    const cloudSecret = $("cloud-secret") as HTMLInputElement;
+    cloudSecret.value = "";
+    cloudSecret.placeholder = settings.secretConfigured ? "保存済み（変更する場合のみ入力）" : "Cloudの共有シークレット";
+    $("cloud-device").textContent = `Device: ${settings.deviceId || "—"}`;
+}
+
 async function deleteSubscription(item: SubscriptionMetric) {
     if (!window.confirm(`${item.provider} / ${item.planName} の契約料金を削除しますか？`)) return;
     try {
@@ -328,6 +340,25 @@ subscriptionForm.addEventListener("submit", async (event) => {
     }
 });
 
+cloudForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const cloudSecret = $("cloud-secret") as HTMLInputElement;
+    try {
+        await Service.SaveCloudSettings({
+            url: ($("cloud-url") as HTMLInputElement).value.trim(),
+            secret: cloudSecret.value,
+            enabled: ($("cloud-enabled") as HTMLInputElement).checked,
+            deviceId: "",
+            secretConfigured: false,
+        });
+        cloudSecret.value = "";
+        setMessage("クラウド設定を保存しました。");
+        await loadCloudSettings();
+    } catch (error) {
+        setMessage(String(error), true);
+    }
+});
+
 $("start-button").addEventListener("click", async () => {
     try { await Service.Start(); setMessage("定期取得を開始しました。"); await refresh(); }
     catch (error) { setMessage(String(error), true); }
@@ -351,6 +382,44 @@ $("fetch-button").addEventListener("click", async () => {
     finally { button.disabled = false; }
 });
 
+$("cloud-sync").addEventListener("click", async () => {
+    const button = $("cloud-sync") as HTMLButtonElement;
+    button.disabled = true;
+    try {
+        const result = await Service.SyncCloudNow() as {uploadedSnapshots: number; syncedAt: string};
+        setMessage(`クラウド同期完了: ${result.uploadedSnapshots}スナップショット`);
+    } catch (error) {
+        setMessage(String(error), true);
+    } finally {
+        button.disabled = false;
+    }
+});
+
+$("create-backup").addEventListener("click", async () => {
+    try { download(await Service.CreateBackup(), "application/json", "backup.json"); }
+    catch (error) { setMessage(String(error), true); }
+});
+
+$("select-restore").addEventListener("click", () => ($("restore-file") as HTMLInputElement).click());
+$("restore-file").addEventListener("change", async () => {
+    const input = $("restore-file") as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!window.confirm("現在のローカルデータをバックアップ内容で置き換えます。続行しますか？")) {
+        input.value = "";
+        return;
+    }
+    try {
+        await Service.RestoreBackup(await file.text());
+        setMessage("バックアップを復元しました。シークレットはCredential Managerの現在値を維持しています。");
+        await Promise.all([loadSettings(), loadCloudSettings(), refresh()]);
+    } catch (error) {
+        setMessage(String(error), true);
+    } finally {
+        input.value = "";
+    }
+});
+
 trendFilter.addEventListener("change", () => renderTrend(currentDashboard.trend || []));
 $("export-csv").addEventListener("click", async () => {
     try { download(await Service.ExportCSV(), "text/csv", "csv"); }
@@ -362,7 +431,7 @@ $("export-json").addEventListener("click", async () => {
 });
 
 void (async () => {
-    try { await loadSettings(); await refresh(); }
+    try { await Promise.all([loadSettings(), loadCloudSettings(), refresh()]); }
     catch (error) { setMessage(String(error), true); }
     window.setInterval(() => { void refresh().catch((error) => setMessage(String(error), true)); }, 10000);
 })();

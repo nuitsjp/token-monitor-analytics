@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,10 @@ import (
 
 type Store struct {
 	db *sql.DB
+}
+
+type queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
 }
 
 type Subscription struct {
@@ -30,6 +35,26 @@ type AccountOption struct {
 	Provider     string `json:"provider"`
 	AccountKey   string `json:"accountKey"`
 	AccountLabel string `json:"accountLabel"`
+}
+
+type CloudConfig struct {
+	URL        string `json:"url"`
+	Enabled    bool   `json:"enabled"`
+	DeviceID   string `json:"deviceId"`
+	SyncCursor int64  `json:"syncCursor"`
+}
+
+type SyncSnapshot struct {
+	LocalID      int64                   `json:"localId"`
+	FetchedAt    string                  `json:"fetchedAt"`
+	RawJSON      json.RawMessage         `json:"rawJson"`
+	Observations []analytics.Observation `json:"observations"`
+}
+
+type BackupData struct {
+	Settings      map[string]string `json:"settings"`
+	Snapshots     []SyncSnapshot    `json:"snapshots"`
+	Subscriptions []Subscription    `json:"subscriptions"`
 }
 
 func Open(path string) (*Store, error) {
@@ -270,7 +295,11 @@ func (s *Store) DeleteSubscription(id int64) error {
 }
 
 func (s *Store) Subscriptions() ([]Subscription, error) {
-	rows, err := s.db.Query(`SELECT id, provider, account_key, account_label, plan_name,
+	return subscriptionsFrom(s.db)
+}
+
+func subscriptionsFrom(source queryer) ([]Subscription, error) {
+	rows, err := source.Query(`SELECT id, provider, account_key, account_label, plan_name,
 monthly_price_usd, updated_at FROM subscriptions ORDER BY provider, account_label`)
 	if err != nil {
 		return nil, err
@@ -339,4 +368,221 @@ FROM observations ORDER BY observed_at, id`)
 		result = append(result, observation)
 	}
 	return result, rows.Err()
+}
+
+func (s *Store) GetCloudConfig() (CloudConfig, error) {
+	config := CloudConfig{}
+	rows, err := s.db.Query("SELECT key, value FROM settings WHERE key IN ('cloud_url', 'cloud_enabled', 'installation_id', 'cloud_sync_cursor')")
+	if err != nil {
+		return config, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return config, err
+		}
+		switch key {
+		case "cloud_url":
+			config.URL = value
+		case "cloud_enabled":
+			config.Enabled = value == "true"
+		case "installation_id":
+			config.DeviceID = value
+		case "cloud_sync_cursor":
+			config.SyncCursor, _ = strconv.ParseInt(value, 10, 64)
+		}
+	}
+	return config, rows.Err()
+}
+
+func (s *Store) SaveCloudConfig(config CloudConfig) error {
+	values := map[string]string{
+		"cloud_url":         config.URL,
+		"cloud_enabled":     strconv.FormatBool(config.Enabled),
+		"installation_id":   config.DeviceID,
+		"cloud_sync_cursor": strconv.FormatInt(config.SyncCursor, 10),
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for key, value := range values {
+		if _, err := tx.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SetCloudSyncCursor(cursor int64) error {
+	_, err := s.db.Exec(`INSERT INTO settings(key, value) VALUES('cloud_sync_cursor', ?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`, strconv.FormatInt(cursor, 10))
+	return err
+}
+
+func (s *Store) SnapshotsAfter(cursor int64, limit int) ([]SyncSnapshot, error) {
+	return snapshotsAfter(s.db, cursor, limit)
+}
+
+func snapshotsAfter(source queryer, cursor int64, limit int) ([]SyncSnapshot, error) {
+	query := "SELECT id, fetched_at, raw_json FROM snapshots WHERE id > ? ORDER BY id"
+	args := []any{cursor}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := source.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var snapshots []SyncSnapshot
+	for rows.Next() {
+		var snapshot SyncSnapshot
+		if err := rows.Scan(&snapshot.LocalID, &snapshot.FetchedAt, &snapshot.RawJSON); err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for index := range snapshots {
+		observations, err := observationsForSnapshot(source, snapshots[index].LocalID)
+		if err != nil {
+			return nil, err
+		}
+		snapshots[index].Observations = observations
+	}
+	return snapshots, nil
+}
+
+func (s *Store) ExportBackupData() (BackupData, error) {
+	backup := BackupData{Settings: make(map[string]string)}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return backup, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query("SELECT key, value FROM settings WHERE key <> 'secret'")
+	if err != nil {
+		return backup, err
+	}
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			rows.Close()
+			return backup, err
+		}
+		backup.Settings[key] = value
+	}
+	if err := rows.Close(); err != nil {
+		return backup, err
+	}
+	backup.Snapshots, err = snapshotsAfter(tx, 0, 0)
+	if err != nil {
+		return backup, err
+	}
+	backup.Subscriptions, err = subscriptionsFrom(tx)
+	if err != nil {
+		return backup, err
+	}
+	return backup, tx.Commit()
+}
+
+func (s *Store) RestoreBackupData(backup BackupData) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	rollback := func(cause error) error {
+		_ = tx.Rollback()
+		return cause
+	}
+	if _, err := tx.Exec("DELETE FROM observations; DELETE FROM snapshots; DELETE FROM subscriptions; DELETE FROM settings"); err != nil {
+		return rollback(err)
+	}
+	for key, value := range backup.Settings {
+		if key == "secret" {
+			continue
+		}
+		if key == "cloud_sync_cursor" {
+			value = "0"
+		}
+		if _, err := tx.Exec("INSERT INTO settings(key, value) VALUES(?, ?)", key, value); err != nil {
+			return rollback(err)
+		}
+	}
+	if _, exists := backup.Settings["cloud_sync_cursor"]; !exists {
+		if _, err := tx.Exec("INSERT INTO settings(key, value) VALUES('cloud_sync_cursor', '0')"); err != nil {
+			return rollback(err)
+		}
+	}
+	for _, snapshot := range backup.Snapshots {
+		if !json.Valid(snapshot.RawJSON) {
+			return rollback(fmt.Errorf("snapshot %d contains invalid JSON", snapshot.LocalID))
+		}
+		if _, err := tx.Exec(`INSERT INTO snapshots(id, fetched_at, observed_at, endpoint, raw_json)
+VALUES(?, ?, ?, 'restored-backup', ?)`, snapshot.LocalID, snapshot.FetchedAt, snapshot.FetchedAt, snapshot.RawJSON); err != nil {
+			return rollback(err)
+		}
+		for _, observation := range snapshot.Observations {
+			if err := insertObservation(tx, snapshot.LocalID, observation); err != nil {
+				return rollback(err)
+			}
+		}
+	}
+	for _, subscription := range backup.Subscriptions {
+		if subscription.MonthlyPriceUSD <= 0 {
+			return rollback(fmt.Errorf("subscription %d has an invalid monthly price", subscription.ID))
+		}
+		if _, err := tx.Exec(`INSERT INTO subscriptions(id, provider, account_key, account_label, plan_name, monthly_price_usd, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, ?)`, subscription.ID, subscription.Provider, subscription.AccountKey,
+			subscription.AccountLabel, subscription.PlanName, subscription.MonthlyPriceUSD, subscription.UpdatedAt); err != nil {
+			return rollback(err)
+		}
+	}
+	return tx.Commit()
+}
+
+func observationsForSnapshot(source queryer, snapshotID int64) ([]analytics.Observation, error) {
+	rows, err := source.Query(`SELECT provider, account_key, account_label, window_kind, window_label,
+period_key, period_start, period_end, reset_at, usage_usd, utilization_percent,
+estimated_limit_usd, calculation_status, calculation_note, observed_at, calculated_at
+FROM observations WHERE snapshot_id = ? ORDER BY id`, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var observations []analytics.Observation
+	for rows.Next() {
+		var observation analytics.Observation
+		if err := rows.Scan(&observation.Provider, &observation.AccountKey, &observation.AccountLabel,
+			&observation.WindowKind, &observation.WindowLabel, &observation.PeriodKey,
+			&observation.PeriodStart, &observation.PeriodEnd, &observation.ResetAt,
+			&observation.UsageUSD, &observation.UtilizationPercent, &observation.EstimatedLimitUSD,
+			&observation.CalculationStatus, &observation.CalculationNote, &observation.ObservedAt,
+			&observation.CalculatedAt); err != nil {
+			return nil, err
+		}
+		observations = append(observations, observation)
+	}
+	return observations, rows.Err()
+}
+
+func insertObservation(tx *sql.Tx, snapshotID int64, observation analytics.Observation) error {
+	_, err := tx.Exec(`INSERT INTO observations(
+snapshot_id, provider, account_key, account_label, window_kind, window_label,
+period_key, period_start, period_end, reset_at, usage_usd, utilization_percent,
+estimated_limit_usd, calculation_status, calculation_note, observed_at, calculated_at
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, snapshotID,
+		observation.Provider, observation.AccountKey, observation.AccountLabel, observation.WindowKind,
+		observation.WindowLabel, observation.PeriodKey, observation.PeriodStart, observation.PeriodEnd,
+		observation.ResetAt, observation.UsageUSD, observation.UtilizationPercent,
+		observation.EstimatedLimitUSD, observation.CalculationStatus, observation.CalculationNote,
+		observation.ObservedAt, observation.CalculatedAt)
+	return err
 }

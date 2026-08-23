@@ -81,3 +81,53 @@ func TestStoreSavesSubscriptionAndAccountOptions(t *testing.T) {
 		t.Fatalf("subscriptions after delete = %+v, err=%v", subscriptions, err)
 	}
 }
+
+func TestCloudConfigAndBackupRestore(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "source.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	config := CloudConfig{URL: "https://sync.example.test", Enabled: true, DeviceID: "device-a", SyncCursor: 12}
+	if err := store.SaveCloudConfig(config); err != nil {
+		t.Fatal(err)
+	}
+	gotConfig, err := store.GetCloudConfig()
+	if err != nil || gotConfig != config {
+		t.Fatalf("cloud config = %+v, err=%v", gotConfig, err)
+	}
+	_, err = store.SaveSnapshot(time.Unix(10, 0), "http://hub.test/api/stats", []byte(`{"periods":{"month":{}}}`), []analytics.Observation{{
+		Provider: "codex", AccountKey: "account", AccountLabel: "Account", WindowKind: "weekly",
+		CalculationStatus: "partial_period", ObservedAt: "1970-01-01T00:00:10Z", CalculatedAt: "1970-01-01T00:00:10Z",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveSubscription(Subscription{Provider: "codex", AccountKey: "account", AccountLabel: "Account", PlanName: "Plus", MonthlyPriceUSD: 20}); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := store.ExportBackupData()
+	if err != nil || len(backup.Snapshots) != 1 || len(backup.Subscriptions) != 1 {
+		t.Fatalf("backup snapshots=%d subscriptions=%d err=%v", len(backup.Snapshots), len(backup.Subscriptions), err)
+	}
+	if _, exists := backup.Settings["secret"]; exists {
+		t.Fatal("backup contains a secret")
+	}
+	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	if err := restored.RestoreBackupData(backup); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := restored.SnapshotCount(); err != nil || count != 1 {
+		t.Fatalf("restored snapshots=%d err=%v", count, err)
+	}
+	if restoredConfig, err := restored.GetCloudConfig(); err != nil || restoredConfig.SyncCursor != 0 {
+		t.Fatalf("restored cloud config=%+v err=%v", restoredConfig, err)
+	}
+	if subscriptions, err := restored.Subscriptions(); err != nil || len(subscriptions) != 1 {
+		t.Fatalf("restored subscriptions=%d err=%v", len(subscriptions), err)
+	}
+}

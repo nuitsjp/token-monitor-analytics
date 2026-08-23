@@ -16,6 +16,10 @@ import * as storage$0 from "../storage/models.js";
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+export function CreateBackup(): $CancellablePromise<string> {
+    return $Call.ByID(2863217751);
+}
+
 export function DeleteSubscription(id: number): $CancellablePromise<void> {
     return $Call.ByID(4280780847, id);
 }
@@ -36,6 +40,10 @@ export function GetAccounts(): $CancellablePromise<storage$0.AccountOption[] | n
     return $Call.ByID(1778294467);
 }
 
+export function GetCloudSettings(): $CancellablePromise<$models.CloudSettings> {
+    return $Call.ByID(418755065);
+}
+
 export function GetDashboard(): $CancellablePromise<$models.Dashboard> {
     return $Call.ByID(1987820481);
 }
@@ -52,6 +60,14 @@ export function GetStatus(): $CancellablePromise<$models.Status> {
     return $Call.ByID(476699857);
 }
 
+export function RestoreBackup(content: string): $CancellablePromise<void> {
+    return $Call.ByID(2874649411, content);
+}
+
+export function SaveCloudSettings(settings: $models.CloudSettings): $CancellablePromise<void> {
+    return $Call.ByID(165065668, settings);
+}
+
 export function SaveSettings(settings: $models.Settings): $CancellablePromise<void> {
     return $Call.ByID(73086565, settings);
 }
@@ -66,4 +82,8 @@ export function Start(): $CancellablePromise<void> {
 
 export function Stop(): $CancellablePromise<void> {
     return $Call.ByID(2217185525);
+}
+
+export function SyncCloudNow(): $CancellablePromise<$models.CloudSyncResult> {
+    return $Call.ByID(2755460665);
 }

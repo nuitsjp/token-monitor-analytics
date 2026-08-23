@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 
 	_ "modernc.org/sqlite"
 	"token-monitor-analytics/internal/analytics"
+	"token-monitor-analytics/internal/cloudserver"
 	"token-monitor-analytics/internal/storage"
 )
 
@@ -44,7 +46,7 @@ func (f *fakeCredentialStore) Delete() error {
 func TestSaveSettingsWritesSecretToCredentialStoreOnly(t *testing.T) {
 	store := openTestStore(t)
 	credentials := &fakeCredentialStore{}
-	service, err := NewService(store, credentials)
+	service, err := NewService(store, credentials, &fakeCredentialStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestFetchNowUsesCredentialStoreSecret(t *testing.T) {
 
 	store := openTestStore(t)
 	credentials := &fakeCredentialStore{secret: secret, found: true}
-	service, err := NewService(store, credentials)
+	service, err := NewService(store, credentials, &fakeCredentialStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,7 @@ func TestNewServiceMigratesLegacySecretAfterCredentialWrite(t *testing.T) {
 	insertLegacySecret(t, path, "legacy-secret")
 
 	credentials := &fakeCredentialStore{found: true}
-	if _, err := NewService(store, credentials); err != nil {
+	if _, err := NewService(store, credentials, &fakeCredentialStore{}); err != nil {
 		t.Fatal(err)
 	}
 	if credentials.secret != "legacy-secret" {
@@ -125,7 +127,7 @@ func TestNewServiceKeepsLegacySecretWhenCredentialWriteFails(t *testing.T) {
 	insertLegacySecret(t, path, "legacy-secret")
 
 	credentials := &fakeCredentialStore{writeErr: errors.New("write failed")}
-	if _, err := NewService(store, credentials); err == nil {
+	if _, err := NewService(store, credentials, &fakeCredentialStore{}); err == nil {
 		t.Fatal("expected migration failure")
 	}
 	legacySecret, err := store.LegacySecret()
@@ -147,7 +149,7 @@ func TestDashboardCalculatesSubscriptionValueAndExports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := NewService(store, &fakeCredentialStore{})
+	service, err := NewService(store, &fakeCredentialStore{}, &fakeCredentialStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +176,119 @@ func TestDashboardCalculatesSubscriptionValueAndExports(t *testing.T) {
 	csvExport, err := service.ExportCSV()
 	if err != nil || !strings.HasPrefix(csvExport, "\uFEFF") || !strings.Contains(csvExport, "monthly_price_usd") || !strings.Contains(csvExport, "codex") {
 		t.Fatalf("CSV export error=%v", err)
+	}
+}
+
+func TestCloudSyncUploadsSnapshotsAndAdvancesCursor(t *testing.T) {
+	const cloudSecret = "cloud-secret"
+	var received cloudSyncRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+cloudSecret {
+			t.Error("cloud Authorization header is missing")
+		}
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Error(err)
+		}
+		accepted := int64(0)
+		if len(received.Snapshots) > 0 {
+			accepted = received.Snapshots[len(received.Snapshots)-1].LocalID
+		}
+		_ = json.NewEncoder(writer).Encode(cloudSyncResponse{AcceptedThrough: accepted})
+	}))
+	defer server.Close()
+
+	store := openTestStore(t)
+	_, err := store.SaveSnapshot(time.Now(), "http://hub.test/api/stats", []byte(`{"periods":{"month":{}}}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloudCredentials := &fakeCredentialStore{secret: cloudSecret, found: true}
+	service, err := NewService(store, &fakeCredentialStore{}, cloudCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SaveCloudSettings(CloudSettings{URL: server.URL, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.SyncCloudNow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.UploadedSnapshots != 1 || result.AcceptedThrough == 0 || received.DeviceID == "" {
+		t.Fatalf("sync result=%+v payload=%+v", result, received)
+	}
+	config, err := store.GetCloudConfig()
+	if err != nil || config.SyncCursor != result.AcceptedThrough {
+		t.Fatalf("cloud config=%+v err=%v", config, err)
+	}
+}
+
+func TestBackupEnvelopeRejectsTamperingAndRestores(t *testing.T) {
+	store := openTestStore(t)
+	_, err := store.SaveSnapshot(time.Now(), "http://hub.test/api/stats", []byte(`{"periods":{"month":{}}}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(store, &fakeCredentialStore{}, &fakeCredentialStore{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := service.CreateBackup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RestoreBackup(strings.Replace(backup, `"version": 1`, `"version": 2`, 1)); err == nil {
+		t.Fatal("unsupported backup version was accepted")
+	}
+	if err := service.RestoreBackup(strings.Replace(backup, `"fetchedAt"`, `"tamperedFetchedAt"`, 1)); err == nil {
+		t.Fatal("tampered backup was accepted")
+	}
+	if err := service.RestoreBackup(backup); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDesktopToCloudServerIntegration(t *testing.T) {
+	cloud, err := cloudserver.New(filepath.Join(t.TempDir(), "cloud.db"), "cloud-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cloud.Close()
+	server := httptest.NewServer(cloud.Handler())
+	defer server.Close()
+
+	store := openTestStore(t)
+	_, err = store.SaveSnapshot(time.Now(), "http://hub.test/api/stats", []byte(`{
+"periods":{"month":{"totalTokens":100,"costUsd":2,"clients":{"codex":100},"clientCosts":{"codex":2}}},
+"limits":{"providers":[{"provider":"codex","accountKey":"account"}]}}`), []analytics.Observation{{
+		Provider: "codex", AccountKey: "account", WindowKind: "weekly", ObservedAt: "2026-08-23T00:00:00Z",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(store, &fakeCredentialStore{}, &fakeCredentialStore{secret: "cloud-secret", found: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SaveCloudSettings(CloudSettings{URL: server.URL, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SyncCloudNow(); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/dashboard", nil)
+	request.Header.Set("Authorization", "Bearer cloud-secret")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var dashboard cloudserver.Dashboard
+	if err := json.NewDecoder(response.Body).Decode(&dashboard); err != nil {
+		t.Fatal(err)
+	}
+	if dashboard.DeviceCount != 1 || dashboard.Analysis.TotalCostUSD != 2 || len(dashboard.Observations) != 1 {
+		t.Fatalf("cloud dashboard=%+v", dashboard)
 	}
 }
 

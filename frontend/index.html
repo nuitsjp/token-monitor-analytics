@@ -51,6 +51,35 @@
       <article class="metric-card"><span>エラー</span><strong id="last-error">なし</strong></article>
     </section>
 
+    <section class="panel settings-panel" aria-labelledby="cloud-title">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">OPTIONAL CLOUD / PHASE 3</p>
+          <h2 id="cloud-title">クラウド同期</h2>
+        </div>
+        <span class="muted" id="cloud-device">Device: —</span>
+      </div>
+      <form id="cloud-form" class="cloud-form">
+        <label>Cloud URL
+          <input id="cloud-url" type="url" placeholder="https://analytics.example.com" />
+        </label>
+        <label>共有シークレット
+          <input id="cloud-secret" type="password" placeholder="保存済みの場合は空欄で維持" autocomplete="new-password" />
+        </label>
+        <label class="checkbox-label"><input id="cloud-enabled" type="checkbox" /> クラウド同期を有効化</label>
+        <div class="form-actions"><button type="submit" class="primary">クラウド設定を保存</button><button type="button" id="cloud-sync">今すぐ同期</button></div>
+      </form>
+      <p class="note">未設定時はローカルだけで動作します。クラウドシークレットはWindows Credential Managerに保存されます。</p>
+    </section>
+
+    <section class="panel" aria-labelledby="backup-title">
+      <div class="panel-heading">
+        <div><p class="eyebrow">復旧</p><h2 id="backup-title">バックアップと復元</h2></div>
+        <div class="form-actions"><button type="button" id="create-backup">バックアップ作成</button><button type="button" id="select-restore" class="danger-button">バックアップから復元</button><input id="restore-file" type="file" accept="application/json,.json" hidden /></div>
+      </div>
+      <p class="note">バックアップには原スナップショット、算出結果、契約料金、非秘密設定を含みます。Windows Credential Managerのシークレットは含みません。</p>
+    </section>
+
     <section class="panel" aria-labelledby="subscriptions-title">
       <div class="panel-heading">
         <div>

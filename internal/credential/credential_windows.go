@@ -51,6 +51,10 @@ func New() *Manager {
 	return &Manager{target: DefaultTarget}
 }
 
+func NewForTarget(target string) *Manager {
+	return &Manager{target: target}
+}
+
 func (m *Manager) Read() (string, bool, error) {
 	target, err := windows.UTF16PtrFromString(m.target)
 	if err != nil {

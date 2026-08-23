@@ -1,5 +1,8 @@
 .task
 bin
+*.db
+*.db-wal
+*.db-shm
 frontend/dist
 frontend/node_modules
 build/linux/appimage/build

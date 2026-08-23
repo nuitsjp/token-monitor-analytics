@@ -26,7 +26,7 @@ func main() {
 	}
 	defer store.Close()
 
-	service, err := app.NewService(store, credential.New())
+	service, err := app.NewService(store, credential.New(), credential.NewForTarget(credential.CloudDefaultTarget))
 	if err != nil {
 		log.Fatal(err)
 	}
