@@ -1,0 +1,55 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #e2e8f0;
+  background: #0f172a;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 960px; background: radial-gradient(circle at 10% 0%, #1e293b 0, #0f172a 42rem); }
+button, input { font: inherit; }
+button { border: 1px solid #475569; border-radius: 8px; color: #e2e8f0; background: #1e293b; padding: 0.62rem 0.9rem; cursor: pointer; }
+button:hover { border-color: #38bdf8; }
+button:disabled { cursor: wait; opacity: .55; }
+button.primary { color: #082f49; border-color: #38bdf8; background: #38bdf8; font-weight: 700; }
+button.quiet { color: #94a3b8; background: transparent; }
+.shell { max-width: 1440px; margin: 0 auto; padding: 2.25rem 3.25rem 4rem; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 2rem; margin-bottom: 1.75rem; }
+.eyebrow { margin: 0 0 .45rem; color: #38bdf8; font-size: .72rem; font-weight: 800; letter-spacing: .14em; }
+h1, h2 { margin: 0; letter-spacing: -.02em; }
+h1 { font-size: 2.05rem; }
+h2 { font-size: 1.2rem; }
+.lede { max-width: 52rem; margin: .6rem 0 0; color: #94a3b8; line-height: 1.6; }
+.status-pill { border: 1px solid #475569; border-radius: 999px; padding: .45rem .8rem; color: #fbbf24; white-space: nowrap; }
+.status-pill.connected { color: #86efac; border-color: #166534; }
+.panel { margin-top: 1rem; border: 1px solid #334155; border-radius: 14px; background: rgba(15, 23, 42, .78); box-shadow: 0 12px 30px rgba(2, 6, 23, .18); }
+.settings-panel { padding: 1.25rem 1.35rem 1rem; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.muted, .note { color: #94a3b8; font-size: .82rem; }
+.settings-form { display: grid; grid-template-columns: minmax(20rem, 1.7fr) minmax(15rem, 1.3fr) 8rem auto; align-items: end; gap: .85rem; }
+label { display: grid; gap: .4rem; color: #cbd5e1; font-size: .78rem; }
+input { width: 100%; border: 1px solid #475569; border-radius: 8px; outline: none; color: #f8fafc; background: #0b1220; padding: .62rem .7rem; }
+input:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, .16); }
+.form-actions { display: flex; gap: .45rem; }
+.message { min-height: 1.3rem; margin: .85rem 0 0; color: #86efac; }
+.message.error { color: #fca5a5; }
+.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .8rem; margin-top: 1rem; }
+.metric-card { min-height: 5.3rem; display: grid; align-content: center; gap: .5rem; padding: 1rem 1.1rem; border: 1px solid #334155; border-radius: 12px; background: #111c31; }
+.metric-card span { color: #94a3b8; font-size: .78rem; }
+.metric-card strong { overflow: hidden; color: #f8fafc; font-size: 1rem; text-overflow: ellipsis; white-space: nowrap; }
+.panel > .panel-heading, .panel > .note, .table-wrap { margin-left: 1.35rem; margin-right: 1.35rem; }
+.panel > .panel-heading { padding-top: 1.25rem; }
+.note { line-height: 1.55; }
+.table-wrap { overflow: auto; padding-bottom: 1.1rem; }
+table { width: 100%; border-collapse: collapse; min-width: 920px; font-size: .82rem; }
+th { padding: .75rem .65rem; color: #94a3b8; text-align: left; font-size: .72rem; font-weight: 700; }
+td { padding: .8rem .65rem; border-top: 1px solid #1e293b; vertical-align: top; }
+td strong { display: block; color: #f8fafc; }
+td small { display: block; max-width: 16rem; margin-top: .2rem; overflow: hidden; color: #94a3b8; text-overflow: ellipsis; white-space: nowrap; }
+.empty { padding: 2rem .65rem; color: #64748b; text-align: center; }
+.quality { display: inline-flex; border-radius: 999px; padding: .22rem .5rem; font-size: .7rem; font-weight: 700; }
+.quality.ok { color: #bbf7d0; background: #14532d; }
+.quality.partial_period { color: #fde68a; background: #713f12; }
+.quality.missing_period, .quality.invalid_utilization { color: #fecaca; background: #7f1d1d; }
+@media (max-width: 1100px) { .settings-form { grid-template-columns: 1fr 1fr; } .form-actions { grid-column: 1 / -1; } }

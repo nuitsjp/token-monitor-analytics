@@ -241,3 +241,38 @@ Token Monitor Analytics
 ```
 
 本プロジェクトはToken Monitorの非公式な関連プロジェクトであり、Token Monitor本体およびその開発者による公式製品ではありません。
+
+## Phase 1 の実装
+
+Phase 1 は Windows ネイティブの Wails v3 アプリとして実装しています。Go バックエンドが Hub API の取得、SQLite 保存、推定計算、定期取得を担当し、Web フロントエンドは接続設定と履歴表示を担当します。
+
+保存するデータは、Token Monitor が返した原 JSON スナップショットと、そこから計算した観測結果を別テーブルに分けています。計算方法を変更しても原データを失わない構造です。既定のデータベースは `%APPDATA%\Token Monitor Analytics\data.db` です。テストや開発では `TOKEN_MONITOR_ANALYTICS_DB` で保存先を上書きできます。
+
+Hub の共有シークレットは SQLite へ保存せず、Windows Credential Manager の Generic Credential `TokenMonitorAnalytics/Hub/default` に保存します。資格情報を登録した Windows ユーザーと、アプリを実行するユーザーは同じである必要があります。旧バージョンの SQLite に平文シークレットが残っている場合は、Credential Manager への保存に成功した後で SQLite から削除します。
+
+### 起動手順（Windows）
+
+必要なものは Go 1.25 以降、Node.js/npm、WebView2、Wails v3 CLI です。Wails v3 CLI は公式手順に従ってインストールしてください。
+
+```powershell
+go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+wails3 doctor
+git clone <repository>
+cd token-monitor-analytics
+npm --prefix frontend install
+wails3 dev
+```
+
+配布用の Windows バイナリは次で作成します。
+
+```powershell
+wails3 build
+```
+
+アプリ画面で Token Monitor Hub の URL と共有シークレットを入力して「設定を保存」し、「今すぐ取得」または「定期取得を開始」を押します。共有シークレットは Windows Credential Manager から読み出し、Hub API の `Authorization: Bearer <secret>` にだけ使用します。取得間隔の既定値は 300 秒です。
+
+### 計算上の制約
+
+Token Monitor Hub の現行 `GET /api/stats` は `periods.today`、`periods.month`、`periods.allTime` と、`limits.providers[].windows[]` を返します。provider 別の費用は `clientCosts` の同名キーを使います。利用枠に対応する期間別費用が応答に存在する場合だけ、その期間を使います。現行 Hub に週次・セッション専用の費用期間がない場合は、月次や allTime を混ぜず、`today` の参考費用と利用率を `partial_period` として保存しますが、期間が一致しないため推定値は算出しません。`clientCosts` が無い場合や、同じ provider に複数アカウントがある場合も、費用を推測・重複帰属せず、推定値を作りません。対応期間が無い billing 枠などは `missing_period` となります。
+
+API 形式の根拠は Token Monitor 本体の [Hub API ドキュメント](https://github.com/Javis603/token-monitor/blob/main/docs/API.md)です。
