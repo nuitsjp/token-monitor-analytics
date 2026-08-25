@@ -613,6 +613,12 @@ function ReviewDetail({
         <ReviewField styles={styles} label="推定除外理由">
           {item.estimationExclusionReason || "なし"}
         </ReviewField>
+        <ReviewField styles={styles} label="現在の関連付け">
+          <CurrentAssociationDetails
+            association={item.currentAssociation}
+            displayTimeZone={displayTimeZone}
+          />
+        </ReviewField>
       </dl>
       <div className={styles.actions}>
         <Button appearance="primary" onClick={onNavigate}>
@@ -640,6 +646,44 @@ function ReviewField({
       <dt className={styles.fieldLabel}>{label}</dt>
       <dd className={styles.fieldValue}>{children}</dd>
     </div>
+  );
+}
+
+function CurrentAssociationDetails({
+  association,
+  displayTimeZone,
+}: {
+  association: ReviewItemSnapshot["currentAssociation"];
+  displayTimeZone: string;
+}) {
+  if (!association) return <>なし</>;
+  const values = [
+    association.logicalAccountDisplayName
+      ? `論理アカウント: ${association.logicalAccountDisplayName}`
+      : "",
+    association.limitMeaning ? `利用枠定義: ${association.limitMeaning}` : "",
+    association.planVersionName
+      ? `プラン版: ${association.planVersionName}`
+      : "",
+  ].filter(Boolean);
+  if (association.associationValidFrom || association.associationValidTo) {
+    values.push(
+      `関連付け有効期間: ${formatPeriod(association.associationValidFrom, association.associationValidTo, displayTimeZone)}`,
+    );
+  }
+  if (association.planValidFrom || association.planValidTo) {
+    values.push(
+      `プラン履歴有効期間: ${formatPeriod(association.planValidFrom, association.planValidTo, displayTimeZone)}`,
+    );
+  }
+  return values.length > 0 ? (
+    <>
+      {values.map((value) => (
+        <div key={value}>{value}</div>
+      ))}
+    </>
+  ) : (
+    "なし"
   );
 }
 

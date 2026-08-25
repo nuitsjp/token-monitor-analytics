@@ -61,6 +61,7 @@ export type {
     PlanVersionSnapshot,
     RawSnapshotDetail,
     RawSnapshotSnapshot,
+    ReviewCurrentAssociationSnapshot,
     ReviewFilterInput,
     ReviewItemSnapshot,
     ReviewPage,

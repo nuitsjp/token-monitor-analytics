@@ -421,6 +421,16 @@ export interface RawSnapshotSnapshot {
     "apiContract": string;
 }
 
+export interface ReviewCurrentAssociationSnapshot {
+    "logicalAccountDisplayName": string;
+    "limitMeaning": string;
+    "planVersionName": string;
+    "associationValidFrom": string;
+    "associationValidTo": string;
+    "planValidFrom": string;
+    "planValidTo": string;
+}
+
 export interface ReviewFilterInput {
     "cursor": string;
     "limit": number;
@@ -454,6 +464,7 @@ export interface ReviewItemSnapshot {
     "count": number;
     "evidenceIds": string[] | null;
     "estimationExclusionReason": string;
+    "currentAssociation": ReviewCurrentAssociationSnapshot | null;
 }
 
 export interface ReviewPage {

@@ -211,6 +211,30 @@ func (l *Lifecycle) deriveReviewItems(ctx context.Context) ([]domain.ReviewItem,
 	}
 	costPeriods := reviewObservationPeriods(costObservations)
 	limitPeriods := reviewObservationPeriods(limitObservations)
+	costLinks, err := readReviewCostLinks(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	limitLinks, err := readReviewLimitLinks(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	logicalAccountNames, err := readReviewLogicalAccountNames(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	limitMeanings, err := readReviewLimitMeanings(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	histories, err := readReviewPlanHistories(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	versions, err := readReviewPlanVersions(ctx, database)
+	if err != nil {
+		return nil, err
+	}
 
 	associatedCost, err := readAssociatedReviewSources(ctx, database, true)
 	if err != nil {
@@ -280,19 +304,26 @@ func (l *Lifecycle) deriveReviewItems(ctx context.Context) ([]domain.ReviewItem,
 	if err := appendItems(completeness...); err != nil {
 		return nil, err
 	}
-	warnings, err := readReviewWarnings(ctx, database, costObservations, limitObservations)
+	warnings, err := readReviewWarnings(ctx, database, costObservations, limitObservations, costSources, limitSources)
 	if err != nil {
 		return nil, err
 	}
 	if err := appendItems(warnings...); err != nil {
 		return nil, err
 	}
-	planIssues, err := readReviewPlanIssues(ctx, database, limitSources, limitObservations, limitPeriods)
+	planIssues, err := readReviewPlanIssues(ctx, database, limitSources, limitObservations, limitPeriods, limitLinks, histories, versions)
 	if err != nil {
 		return nil, err
 	}
 	if err := appendItems(planIssues...); err != nil {
 		return nil, err
+	}
+	for index := range items {
+		if items[index].CurrentAssociation == nil {
+			items[index].CurrentAssociation = reviewCurrentAssociation(
+				items[index], costLinks, limitLinks, logicalAccountNames, limitMeanings, histories, versions,
+			)
+		}
 	}
 	return items, nil
 }
@@ -442,16 +473,16 @@ func readReviewIdentificationCandidates(ctx context.Context, database *sql.DB) (
 }
 
 func readReviewHubAccounts(ctx context.Context, database *sql.DB) ([]domain.ReviewItem, error) {
-	rows, err := database.QueryContext(ctx, `SELECT hub_account_candidate_id, hub_id, account_key, display_name, workspace_name, device_name, state, first_observed_at, last_observed_at, created_at FROM hub_account_candidates WHERE state IN ('unconfirmed', 'archived_reconfirmation') ORDER BY hub_id, hub_account_candidate_id`)
+	rows, err := database.QueryContext(ctx, `SELECT hac.hub_account_candidate_id, hac.hub_id, hac.account_key, hac.display_name, hac.workspace_name, hac.device_name, hac.state, hac.first_observed_at, hac.last_observed_at, hac.created_at, COALESCE(la.display_name, '') FROM hub_account_candidates hac LEFT JOIN logical_accounts la ON la.logical_account_id = hac.logical_account_id WHERE hac.state IN ('unconfirmed', 'archived_reconfirmation') ORDER BY hac.hub_id, hac.hub_account_candidate_id`)
 	if err != nil {
 		return nil, fmt.Errorf("read review Hub accounts: %w", err)
 	}
 	defer rows.Close()
 	result := make([]domain.ReviewItem, 0)
 	for rows.Next() {
-		var id, hubID, accountKey, displayName, workspace, device, state string
+		var id, hubID, accountKey, displayName, workspace, device, state, logicalAccountName string
 		var first, last, created sql.NullString
-		if err := rows.Scan(&id, &hubID, &accountKey, &displayName, &workspace, &device, &state, &first, &last, &created); err != nil {
+		if err := rows.Scan(&id, &hubID, &accountKey, &displayName, &workspace, &device, &state, &first, &last, &created, &logicalAccountName); err != nil {
 			return nil, fmt.Errorf("scan review Hub account: %w", err)
 		}
 		createdAt, err := parseUTC(created.String)
@@ -464,6 +495,9 @@ func readReviewHubAccounts(ctx context.Context, database *sql.DB) ([]domain.Revi
 		}
 		item := newReviewItem("hub-account:"+id, domain.ReviewKindHubAccountCandidate, domain.ReviewState(state), domain.ReviewImpactCalculationIntervalImpossible, hubID, id, id, accountKey, period, "Hub account candidate is not confirmed for a logical account", nil, accountKey)
 		item.AccountDisplayName, item.WorkspaceName, item.DeviceName = displayName, workspace, device
+		if logicalAccountName != "" {
+			item.CurrentAssociation = &domain.ReviewCurrentAssociation{LogicalAccountDisplayName: logicalAccountName}
+		}
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -624,17 +658,19 @@ func reviewCompletenessCovers(segments []reviewCompletenessSegment, period revie
 	return false
 }
 
-func readReviewWarnings(ctx context.Context, database *sql.DB, cost, limit []reviewObservation) ([]domain.ReviewItem, error) {
+func readReviewWarnings(ctx context.Context, database *sql.DB, cost, limit []reviewObservation, costSources, limitSources []reviewSource) ([]domain.ReviewItem, error) {
 	type warningKey struct{ HubID, DeviceID, RawServiceIdentifier, Kind string }
 	type warningAggregate struct {
 		item domain.ReviewItem
 	}
 	aggregates := make(map[warningKey]*warningAggregate)
-	add := func(observation reviewObservation, kind domain.ReviewKind, reason string, impact domain.ReviewImpact) {
+	costSourceIDs := reviewSourceIDs(costSources)
+	limitSourceIDs := reviewSourceIDs(limitSources)
+	add := func(observation reviewObservation, sourceID string, kind domain.ReviewKind, reason string, impact domain.ReviewImpact) {
 		key := warningKey{observation.HubID, observation.DeviceID, observation.RawServiceIdentifier, string(kind)}
 		aggregate, ok := aggregates[key]
 		if !ok {
-			aggregate = &warningAggregate{item: newReviewItem("warning:"+observation.HubID+":"+observation.DeviceID+":"+observation.RawServiceIdentifier+":"+string(kind), kind, domain.ReviewStateActive, impact, observation.HubID, "", "", observation.RawServiceIdentifier, reviewPeriod{First: observation.ObservedAt, Last: observation.ObservedAt}, reason, []string{observation.ID})}
+			aggregate = &warningAggregate{item: newReviewItem("warning:"+observation.HubID+":"+observation.DeviceID+":"+observation.RawServiceIdentifier+":"+string(kind), kind, domain.ReviewStateActive, impact, observation.HubID, sourceID, sourceID, observation.RawServiceIdentifier, reviewPeriod{First: observation.ObservedAt, Last: observation.ObservedAt}, reason, []string{observation.ID})}
 			aggregates[key] = aggregate
 			return
 		}
@@ -650,15 +686,15 @@ func readReviewWarnings(ctx context.Context, database *sql.DB, cost, limit []rev
 	}
 	for _, observation := range cost {
 		if observation.DedupeState == "conflict" {
-			add(observation, domain.ReviewKindCostDedupeConflict, "cost observations have conflicting dedupe fingerprints", domain.ReviewImpactCurrentCalculation)
+			add(observation, costSourceIDs[reviewSourceKey{HubID: observation.HubID, DeviceID: observation.DeviceID, RawServiceIdentifier: observation.RawServiceIdentifier}], domain.ReviewKindCostDedupeConflict, "cost observations have conflicting dedupe fingerprints", domain.ReviewImpactCurrentCalculation)
 		}
 	}
 	for _, observation := range limit {
 		if strings.TrimSpace(observation.AccountKey) == "" {
-			add(observation, domain.ReviewKindMissingAccountKey, "empty accountKey prevents account association", domain.ReviewImpactCalculationIntervalImpossible)
+			add(observation, limitSourceIDs[reviewSourceKey{HubID: observation.HubID, DeviceID: observation.DeviceID, RawServiceIdentifier: observation.RawServiceIdentifier, AccountKey: observation.AccountKey, WindowKey: observation.WindowKey}], domain.ReviewKindMissingAccountKey, "empty accountKey prevents account association", domain.ReviewImpactCalculationIntervalImpossible)
 		}
 		if observation.DedupeState == "conflict" {
-			add(observation, domain.ReviewKindLimitDedupeConflict, "limit observations have conflicting dedupe fingerprints", domain.ReviewImpactCurrentCalculation)
+			add(observation, limitSourceIDs[reviewSourceKey{HubID: observation.HubID, DeviceID: observation.DeviceID, RawServiceIdentifier: observation.RawServiceIdentifier, AccountKey: observation.AccountKey, WindowKey: observation.WindowKey}], domain.ReviewKindLimitDedupeConflict, "limit observations have conflicting dedupe fingerprints", domain.ReviewImpactCurrentCalculation)
 		}
 	}
 	result := make([]domain.ReviewItem, 0, len(aggregates))
@@ -668,19 +704,7 @@ func readReviewWarnings(ctx context.Context, database *sql.DB, cost, limit []rev
 	return result, nil
 }
 
-func readReviewPlanIssues(ctx context.Context, database *sql.DB, sources []reviewSource, observations []reviewObservation, periods map[reviewSourceKey]reviewPeriod) ([]domain.ReviewItem, error) {
-	links, err := readReviewLimitLinks(ctx, database)
-	if err != nil {
-		return nil, err
-	}
-	histories, err := readReviewPlanHistories(ctx, database)
-	if err != nil {
-		return nil, err
-	}
-	versions, err := readReviewPlanVersions(ctx, database)
-	if err != nil {
-		return nil, err
-	}
+func readReviewPlanIssues(ctx context.Context, database *sql.DB, sources []reviewSource, observations []reviewObservation, periods map[reviewSourceKey]reviewPeriod, links map[string][]reviewLink, histories map[string][]reviewHistory, versions map[string]string) ([]domain.ReviewItem, error) {
 	sourceIDs := make(map[reviewSourceKey]string, len(sources))
 	for _, source := range sources {
 		sourceIDs[reviewSourceKey{HubID: source.HubID, DeviceID: source.DeviceID, RawServiceIdentifier: source.RawServiceIdentifier, AccountKey: source.AccountKey, WindowKey: source.WindowKey}] = source.ID
@@ -733,9 +757,10 @@ func readReviewPlanIssues(ctx context.Context, database *sql.DB, sources []revie
 }
 
 type reviewLink struct {
-	LogicalAccountID string
-	ValidFrom        time.Time
-	ValidTo          *time.Time
+	LogicalAccountID  string
+	LimitDefinitionID string
+	ValidFrom         time.Time
+	ValidTo           *time.Time
 }
 
 type reviewHistory struct {
@@ -744,37 +769,131 @@ type reviewHistory struct {
 	ValidTo       *time.Time
 }
 
+func readReviewCostLinks(ctx context.Context, database *sql.DB) (map[string][]reviewLink, error) {
+	return readReviewLinks(ctx, database, `SELECT usage_cost_source_id, logical_account_id, '', valid_from, valid_to FROM usage_cost_source_account_links ORDER BY usage_cost_source_id, valid_from`, "cost")
+}
+
 func readReviewLimitLinks(ctx context.Context, database *sql.DB) (map[string][]reviewLink, error) {
-	rows, err := database.QueryContext(ctx, `SELECT usage_limit_source_id, logical_account_id, valid_from, valid_to FROM usage_limit_source_links ORDER BY usage_limit_source_id, valid_from`)
+	return readReviewLinks(ctx, database, `SELECT usage_limit_source_id, logical_account_id, limit_definition_id, valid_from, valid_to FROM usage_limit_source_links ORDER BY usage_limit_source_id, valid_from`, "limit")
+}
+
+func readReviewLinks(ctx context.Context, database *sql.DB, query, kind string) (map[string][]reviewLink, error) {
+	rows, err := database.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("read review limit links: %w", err)
+		return nil, fmt.Errorf("read review %s links: %w", kind, err)
 	}
 	defer rows.Close()
 	result := make(map[string][]reviewLink)
 	for rows.Next() {
-		var sourceID, accountID, from string
+		var sourceID, accountID, limitDefinitionID, from string
 		var to sql.NullString
-		if err := rows.Scan(&sourceID, &accountID, &from, &to); err != nil {
-			return nil, fmt.Errorf("scan review limit link: %w", err)
+		if err := rows.Scan(&sourceID, &accountID, &limitDefinitionID, &from, &to); err != nil {
+			return nil, fmt.Errorf("scan review %s link: %w", kind, err)
 		}
 		start, err := parseUTC(from)
 		if err != nil {
-			return nil, fmt.Errorf("parse review limit link start: %w", err)
+			return nil, fmt.Errorf("parse review %s link start: %w", kind, err)
 		}
 		var end *time.Time
 		if to.Valid {
 			value, parseErr := parseUTC(to.String)
 			if parseErr != nil {
-				return nil, fmt.Errorf("parse review limit link end: %w", parseErr)
+				return nil, fmt.Errorf("parse review %s link end: %w", kind, parseErr)
 			}
 			end = &value
 		}
-		result[sourceID] = append(result[sourceID], reviewLink{LogicalAccountID: accountID, ValidFrom: start, ValidTo: end})
+		result[sourceID] = append(result[sourceID], reviewLink{LogicalAccountID: accountID, LimitDefinitionID: limitDefinitionID, ValidFrom: start, ValidTo: end})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read review limit links: %w", err)
+		return nil, fmt.Errorf("read review %s links: %w", kind, err)
 	}
 	return result, nil
+}
+
+func readReviewLogicalAccountNames(ctx context.Context, database *sql.DB) (map[string]string, error) {
+	rows, err := database.QueryContext(ctx, `SELECT logical_account_id, display_name FROM logical_accounts`)
+	if err != nil {
+		return nil, fmt.Errorf("read review logical account names: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]string)
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("scan review logical account name: %w", err)
+		}
+		result[id] = name
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read review logical account names: %w", err)
+	}
+	return result, nil
+}
+
+func readReviewLimitMeanings(ctx context.Context, database *sql.DB) (map[string]string, error) {
+	rows, err := database.QueryContext(ctx, `SELECT limit_definition_id, meaning FROM limit_definitions`)
+	if err != nil {
+		return nil, fmt.Errorf("read review limit meanings: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string]string)
+	for rows.Next() {
+		var id, meaning string
+		if err := rows.Scan(&id, &meaning); err != nil {
+			return nil, fmt.Errorf("scan review limit meaning: %w", err)
+		}
+		result[id] = meaning
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read review limit meanings: %w", err)
+	}
+	return result, nil
+}
+
+func reviewSourceIDs(sources []reviewSource) map[reviewSourceKey]string {
+	result := make(map[reviewSourceKey]string, len(sources))
+	for _, source := range sources {
+		result[reviewSourceKey{
+			HubID: source.HubID, DeviceID: source.DeviceID,
+			RawServiceIdentifier: source.RawServiceIdentifier,
+			AccountKey:           source.AccountKey, WindowKey: source.WindowKey,
+		}] = source.ID
+	}
+	return result
+}
+
+func reviewCurrentAssociation(item domain.ReviewItem, costLinks, limitLinks map[string][]reviewLink, accountNames, limitMeanings map[string]string, histories map[string][]reviewHistory, versions map[string]string) *domain.ReviewCurrentAssociation {
+	if item.SourceID == "" {
+		return nil
+	}
+	var values []reviewLink
+	switch item.Kind {
+	case domain.ReviewKindUsageCostUnassociated, domain.ReviewKindCostDedupeConflict, domain.ReviewKindCompleteness:
+		values = costLinks[item.SourceID]
+	case domain.ReviewKindUsageLimitUnassociated, domain.ReviewKindPlanHistoryInconsistency, domain.ReviewKindMissingAccountKey, domain.ReviewKindLimitDedupeConflict:
+		values = limitLinks[item.SourceID]
+	}
+	link, ok := activeReviewLink(values, item.LastObservedAt)
+	if !ok {
+		return nil
+	}
+	association := &domain.ReviewCurrentAssociation{
+		LogicalAccountDisplayName: accountNames[link.LogicalAccountID],
+		AssociationValidFrom:      &link.ValidFrom,
+		AssociationValidTo:        link.ValidTo,
+	}
+	if link.LimitDefinitionID != "" {
+		association.LimitMeaning = limitMeanings[link.LimitDefinitionID]
+		if history, exists := activeReviewHistory(histories[link.LogicalAccountID], item.LastObservedAt); exists {
+			association.PlanVersionName = versions[history.PlanVersionID]
+			association.PlanValidFrom = &history.ValidFrom
+			association.PlanValidTo = history.ValidTo
+		}
+	}
+	if association.LogicalAccountDisplayName == "" && association.LimitMeaning == "" && association.PlanVersionName == "" {
+		return nil
+	}
+	return association
 }
 
 func readReviewPlanHistories(ctx context.Context, database *sql.DB) (map[string][]reviewHistory, error) {

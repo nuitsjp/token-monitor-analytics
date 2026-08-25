@@ -44,6 +44,19 @@ const (
 	ReviewImpactCurrentNoImpact               ReviewImpact = "current_no_impact"
 )
 
+// ReviewCurrentAssociation is the non-secret, human-readable association
+// active at the review item's last observed time. It intentionally contains
+// no internal identifiers.
+type ReviewCurrentAssociation struct {
+	LogicalAccountDisplayName string
+	LimitMeaning              string
+	PlanVersionName           string
+	AssociationValidFrom      *time.Time
+	AssociationValidTo        *time.Time
+	PlanValidFrom             *time.Time
+	PlanValidTo               *time.Time
+}
+
 // ReviewItem contains evidence and navigation identifiers only. It has no raw
 // response body, credentials, or other secret-bearing fields.
 type ReviewItem struct {
@@ -68,6 +81,7 @@ type ReviewItem struct {
 	Count                     int
 	EvidenceIDs               []string
 	EstimationExclusionReason string
+	CurrentAssociation        *ReviewCurrentAssociation
 }
 
 type ReviewFilter struct {

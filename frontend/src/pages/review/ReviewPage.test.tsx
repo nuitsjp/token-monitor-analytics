@@ -31,6 +31,15 @@ const review = (
   count: 2,
   evidenceIds: ["evidence-1", "evidence-2"],
   estimationExclusionReason: "未確認のため推定から除外",
+  currentAssociation: {
+    logicalAccountDisplayName: "論理アカウント A",
+    limitMeaning: "入力上限",
+    planVersionName: "Plan A v1",
+    associationValidFrom: "2026-07-01T00:00:00Z",
+    associationValidTo: "2026-12-01T00:00:00Z",
+    planValidFrom: "2026-08-01T00:00:00Z",
+    planValidTo: "2026-09-01T00:00:00Z",
+  },
   ...overrides,
 });
 
@@ -55,6 +64,7 @@ describe("ReviewPage", () => {
           state: "missing",
           target: "警告対象",
           estimationExclusionReason: "accountKey が空のため除外",
+          currentAssociation: null,
         }),
       ],
     });
@@ -66,6 +76,9 @@ describe("ReviewPage", () => {
       await screen.findByRole("button", { name: "サービス候補 A" }),
     ).toBeVisible();
     expect(screen.getByText("未確認のため推定から除外")).toBeVisible();
+    expect(screen.getByText(/現在の関連付け/)).toBeVisible();
+    expect(screen.getByText(/論理アカウント: 論理アカウント A/)).toBeVisible();
+    expect(screen.getByText(/プラン履歴有効期間/)).toBeVisible();
     expect(screen.queryByText("review-1")).not.toBeInTheDocument();
     expect(screen.queryByText("evidence-1")).not.toBeInTheDocument();
 
@@ -75,6 +88,7 @@ describe("ReviewPage", () => {
     ).toBeVisible();
     expect(screen.queryByText("サービス候補 A")).not.toBeInTheDocument();
     expect(screen.getByText("accountKey が空のため除外")).toBeVisible();
+    expect(screen.getByText("なし")).toBeVisible();
   });
 
   it("passes half-open date and classification filters to the adapter", async () => {

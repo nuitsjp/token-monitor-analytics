@@ -30,27 +30,38 @@ type ReviewFilterInput struct {
 }
 
 type ReviewItemSnapshot struct {
-	ID                        string   `json:"id"`
-	Kind                      string   `json:"kind"`
-	State                     string   `json:"state"`
-	Impact                    string   `json:"impact"`
-	HubID                     string   `json:"hubId"`
-	SourceID                  string   `json:"sourceId"`
-	TargetID                  string   `json:"targetId"`
-	Target                    string   `json:"target"`
-	RawLimitServiceIdentifier string   `json:"rawLimitServiceIdentifier"`
-	RawReportedPlanName       string   `json:"rawReportedPlanName"`
-	AccountKey                string   `json:"accountKey"`
-	AccountDisplayName        string   `json:"accountDisplayName"`
-	WorkspaceName             string   `json:"workspaceName"`
-	DeviceName                string   `json:"deviceName"`
-	FirstObservedAt           string   `json:"firstObservedAt"`
-	LastObservedAt            string   `json:"lastObservedAt"`
-	TargetPeriodStart         string   `json:"targetPeriodStart"`
-	TargetPeriodEnd           string   `json:"targetPeriodEnd"`
-	Count                     int      `json:"count"`
-	EvidenceIDs               []string `json:"evidenceIds"`
-	EstimationExclusionReason string   `json:"estimationExclusionReason"`
+	ID                        string                            `json:"id"`
+	Kind                      string                            `json:"kind"`
+	State                     string                            `json:"state"`
+	Impact                    string                            `json:"impact"`
+	HubID                     string                            `json:"hubId"`
+	SourceID                  string                            `json:"sourceId"`
+	TargetID                  string                            `json:"targetId"`
+	Target                    string                            `json:"target"`
+	RawLimitServiceIdentifier string                            `json:"rawLimitServiceIdentifier"`
+	RawReportedPlanName       string                            `json:"rawReportedPlanName"`
+	AccountKey                string                            `json:"accountKey"`
+	AccountDisplayName        string                            `json:"accountDisplayName"`
+	WorkspaceName             string                            `json:"workspaceName"`
+	DeviceName                string                            `json:"deviceName"`
+	FirstObservedAt           string                            `json:"firstObservedAt"`
+	LastObservedAt            string                            `json:"lastObservedAt"`
+	TargetPeriodStart         string                            `json:"targetPeriodStart"`
+	TargetPeriodEnd           string                            `json:"targetPeriodEnd"`
+	Count                     int                               `json:"count"`
+	EvidenceIDs               []string                          `json:"evidenceIds"`
+	EstimationExclusionReason string                            `json:"estimationExclusionReason"`
+	CurrentAssociation        *ReviewCurrentAssociationSnapshot `json:"currentAssociation"`
+}
+
+type ReviewCurrentAssociationSnapshot struct {
+	LogicalAccountDisplayName string `json:"logicalAccountDisplayName"`
+	LimitMeaning              string `json:"limitMeaning"`
+	PlanVersionName           string `json:"planVersionName"`
+	AssociationValidFrom      string `json:"associationValidFrom"`
+	AssociationValidTo        string `json:"associationValidTo"`
+	PlanValidFrom             string `json:"planValidFrom"`
+	PlanValidTo               string `json:"planValidTo"`
 }
 
 type ReviewPage struct {
@@ -114,6 +125,22 @@ func reviewItemSnapshot(item domain.ReviewItem) ReviewItemSnapshot {
 		TargetPeriodEnd:   formatOptionalReviewTime(item.TargetPeriodEnd),
 		Count:             item.Count, EvidenceIDs: append([]string(nil), item.EvidenceIDs...),
 		EstimationExclusionReason: item.EstimationExclusionReason,
+		CurrentAssociation:        reviewCurrentAssociationSnapshot(item.CurrentAssociation),
+	}
+}
+
+func reviewCurrentAssociationSnapshot(value *domain.ReviewCurrentAssociation) *ReviewCurrentAssociationSnapshot {
+	if value == nil {
+		return nil
+	}
+	return &ReviewCurrentAssociationSnapshot{
+		LogicalAccountDisplayName: value.LogicalAccountDisplayName,
+		LimitMeaning:              value.LimitMeaning,
+		PlanVersionName:           value.PlanVersionName,
+		AssociationValidFrom:      formatOptionalReviewTime(value.AssociationValidFrom),
+		AssociationValidTo:        formatOptionalReviewTime(value.AssociationValidTo),
+		PlanValidFrom:             formatOptionalReviewTime(value.PlanValidFrom),
+		PlanValidTo:               formatOptionalReviewTime(value.PlanValidTo),
 	}
 }
 
