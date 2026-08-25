@@ -73,6 +73,11 @@ tasks:
     cmds:
       - go test ./tests/acceptance -run Restore
 
+  acceptance:
+    summary: Runs the normative acceptance gate and writes its report
+    cmds:
+      - powershell -NoProfile -File scripts/check-acceptance.ps1
+
   requirements:check:
     summary: Checks that every agreed normative requirement has an owning task
     cmds:
