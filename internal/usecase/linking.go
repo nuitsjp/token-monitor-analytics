@@ -22,6 +22,8 @@ type LinkingStore interface {
 	ConfirmHubSwitch(context.Context, domain.HubSwitch) error
 	PreviewUsageCostAssociation(context.Context, domain.UsageCostAssociation) (domain.ImpactPreview, error)
 	PreviewUsageLimitAssociation(context.Context, domain.UsageLimitAssociation) (domain.ImpactPreview, error)
+	PreviewUsageCostSourceCompleteness(context.Context, domain.UsageCostSourceCompleteness) (domain.ImpactPreview, error)
+	PreviewHubSwitch(context.Context, domain.HubSwitch) (domain.ImpactPreview, error)
 }
 
 type LinkingUsecase struct {
@@ -178,6 +180,39 @@ func (u *LinkingUsecase) PreviewUsageLimitAssociation(ctx context.Context, assoc
 		return domain.ImpactPreview{}, err
 	}
 	return u.store.PreviewUsageLimitAssociation(ctx, association)
+}
+
+func (u *LinkingUsecase) PreviewUsageCostSourceCompleteness(ctx context.Context, completeness domain.UsageCostSourceCompleteness) (domain.ImpactPreview, error) {
+	if completeness.ID == "" {
+		completeness.ID = u.ids.New()
+	}
+	now := u.clock.Now().UTC()
+	if completeness.CreatedAt.IsZero() {
+		completeness.CreatedAt = now
+	}
+	if completeness.UpdatedAt.IsZero() {
+		completeness.UpdatedAt = now
+	}
+	if completeness.State == "" {
+		completeness.State = domain.CompletenessUnconfirmed
+	}
+	if err := completeness.Validate(); err != nil {
+		return domain.ImpactPreview{}, err
+	}
+	return u.store.PreviewUsageCostSourceCompleteness(ctx, completeness)
+}
+
+func (u *LinkingUsecase) PreviewHubSwitch(ctx context.Context, switchRecord domain.HubSwitch) (domain.ImpactPreview, error) {
+	if switchRecord.ID == "" {
+		switchRecord.ID = u.ids.New()
+	}
+	if switchRecord.CreatedAt.IsZero() {
+		switchRecord.CreatedAt = u.clock.Now().UTC()
+	}
+	if err := switchRecord.Validate(); err != nil {
+		return domain.ImpactPreview{}, err
+	}
+	return u.store.PreviewHubSwitch(ctx, switchRecord)
 }
 
 func (u *LinkingUsecase) prepareCostAssociation(association domain.UsageCostAssociation) domain.UsageCostAssociation {

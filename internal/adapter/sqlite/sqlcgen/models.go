@@ -8,6 +8,35 @@ import (
 	"database/sql"
 )
 
+type CalculationBoundary struct {
+	CalculationBoundaryID string `json:"calculation_boundary_id"`
+	ServiceID             string `json:"service_id"`
+	LogicalAccountID      string `json:"logical_account_id"`
+	UsageLimitSourceID    string `json:"usage_limit_source_id"`
+	BoundaryAt            string `json:"boundary_at"`
+	BoundaryKind          string `json:"boundary_kind"`
+	Reason                string `json:"reason"`
+	RelatedID             string `json:"related_id"`
+	CreatedAt             string `json:"created_at"`
+}
+
+type CalculationInterval struct {
+	CalculationIntervalID string         `json:"calculation_interval_id"`
+	ServiceID             string         `json:"service_id"`
+	LogicalAccountID      string         `json:"logical_account_id"`
+	UsageLimitSourceID    string         `json:"usage_limit_source_id"`
+	LimitDefinitionID     string         `json:"limit_definition_id"`
+	PlanVersionID         sql.NullString `json:"plan_version_id"`
+	CycleType             string         `json:"cycle_type"`
+	ValidFrom             string         `json:"valid_from"`
+	ValidTo               string         `json:"valid_to"`
+	State                 string         `json:"state"`
+	ExclusionReason       string         `json:"exclusion_reason"`
+	BoundaryIdsJson       string         `json:"boundary_ids_json"`
+	CreatedAt             string         `json:"created_at"`
+	UpdatedAt             string         `json:"updated_at"`
+}
+
 type CollectionAttempt struct {
 	AttemptID                string         `json:"attempt_id"`
 	HubID                    string         `json:"hub_id"`

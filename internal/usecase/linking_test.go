@@ -67,6 +67,14 @@ func (s *linkingTestStore) PreviewUsageLimitAssociation(context.Context, domain.
 	s.previewCalls++
 	return s.preview, nil
 }
+func (s *linkingTestStore) PreviewUsageCostSourceCompleteness(context.Context, domain.UsageCostSourceCompleteness) (domain.ImpactPreview, error) {
+	s.previewCalls++
+	return s.preview, nil
+}
+func (s *linkingTestStore) PreviewHubSwitch(context.Context, domain.HubSwitch) (domain.ImpactPreview, error) {
+	s.previewCalls++
+	return s.preview, nil
+}
 
 func TestT023LinkingUsecaseInjectsIDsTimesAndValidatesBeforeStore(t *testing.T) {
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
@@ -105,6 +113,15 @@ func TestT023LinkingUsecasePreviewIsReadOnlyAndUpdateInjectsTime(t *testing.T) {
 	}
 	if len(preview.AffectedObservationIDs) != 1 || store.previewCalls != 1 || store.costAssociationCreates != 0 || store.associationUpdates != 0 {
 		t.Fatalf("preview side effects: preview=%#v store=%#v", preview, store)
+	}
+	if _, err := uc.PreviewUsageCostSourceCompleteness(context.Background(), domain.UsageCostSourceCompleteness{UsageCostSourceID: "source", ValidFrom: now, ValidTo: &end, State: domain.CompletenessConfirmed, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.PreviewHubSwitch(context.Background(), domain.HubSwitch{OldHubID: "old", OldDeviceID: "device-old", NewHubID: "new", NewDeviceID: "device-new", CollectionDeviceID: "collector", SwitchedAt: now, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if store.previewCalls != 3 || store.costAssociationCreates != 0 || store.associationUpdates != 0 {
+		t.Fatalf("non-association previews changed writes: %#v", store)
 	}
 	if err := uc.UpdateUsageCostAssociation(context.Background(), domain.UsageCostAssociation{ID: "existing", UsageCostSourceID: "source", LogicalAccountID: "account", ValidFrom: now, ValidTo: &end, CreatedAt: now}); err != nil {
 		t.Fatal(err)

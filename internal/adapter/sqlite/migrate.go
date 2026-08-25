@@ -8,7 +8,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const CurrentSchemaVersion int64 = 10
+const CurrentSchemaVersion int64 = 11
 
 //go:embed migrations/*.sql
 var migrations embed.FS

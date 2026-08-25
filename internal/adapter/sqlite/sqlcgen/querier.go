@@ -10,6 +10,8 @@ import (
 
 type Querier interface {
 	GetDisplaySettings(ctx context.Context) (GetDisplaySettingsRow, error)
+	ListCalculationBoundariesBySource(ctx context.Context, usageLimitSourceID string) ([]CalculationBoundary, error)
+	ListCalculationIntervalsBySource(ctx context.Context, usageLimitSourceID string) ([]CalculationInterval, error)
 	ListUsageCostAssociationsBySource(ctx context.Context, usageCostSourceID string) ([]UsageCostSourceAccountLink, error)
 	ListUsageCostSourceCompletenessBySource(ctx context.Context, usageCostSourceID string) ([]UsageCostSourceCompleteness, error)
 	ListUsageCostSourcesByHub(ctx context.Context, hubID string) ([]UsageCostSource, error)

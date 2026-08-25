@@ -332,3 +332,72 @@ func TestT023CollectionObservationCreatesCandidatesInOneTransaction(t *testing.T
 		t.Fatalf("observed label windows = %#v, want old plus two new observations", windows)
 	}
 }
+
+func TestT023CompletenessAndHubSwitchImpactPreviewsAreReadOnly(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	end := now.Add(time.Hour)
+	hubA := insertAccountTestHub(t, lifecycle, now, "preview-hub-a")
+	hubB := insertAccountTestHub(t, lifecycle, now, "preview-hub-b")
+	for _, item := range []struct {
+		hubID string
+		id    string
+	}{
+		{hubA, "preview-attempt-a"},
+		{hubB, "preview-attempt-b"},
+	} {
+		if err := lifecycle.CreateCollectionAttempt(ctx, CollectionAttempt{AttemptID: item.id, HubID: item.hubID, Trigger: "manual", State: "started", StartedAt: now, AnalyticsIntervalSeconds: 300}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := lifecycle.SaveRawSnapshot(ctx, RawSnapshot{SnapshotID: "preview-snapshot-a", AttemptID: "preview-attempt-a", HubID: hubA, ResponseKind: "stats", ReceivedStartedAt: now, ReceivedCompletedAt: now.Add(time.Second), HTTPStatus: 200, APIContract: "contract", Body: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.SaveRawSnapshot(ctx, RawSnapshot{SnapshotID: "preview-snapshot-b", AttemptID: "preview-attempt-b", HubID: hubB, ResponseKind: "stats", ReceivedStartedAt: now, ReceivedCompletedAt: now.Add(time.Second), HTTPStatus: 200, APIContract: "contract", Body: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	costA := UsageCostSource{ID: "preview-cost-a", HubID: hubA, DeviceID: "device-a", RawServiceIdentifier: "cost.raw", CreatedAt: now}
+	costB := UsageCostSource{ID: "preview-cost-b", HubID: hubB, DeviceID: "device-b", RawServiceIdentifier: "cost.raw", CreatedAt: now}
+	limitA := UsageLimitSource{ID: "preview-limit-a", HubID: hubA, DeviceID: "device-a", AccountKey: "account", RawServiceIdentifier: "limit.raw", WindowKey: "weekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", CreatedAt: now}
+	limitB := UsageLimitSource{ID: "preview-limit-b", HubID: hubB, DeviceID: "device-b", AccountKey: "account", RawServiceIdentifier: "limit.raw", WindowKey: "weekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", CreatedAt: now}
+	for _, source := range []UsageCostSource{costA, costB} {
+		if err := lifecycle.CreateUsageCostSource(ctx, source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, source := range []UsageLimitSource{limitA, limitB} {
+		if err := lifecycle.CreateUsageLimitSource(ctx, source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := lifecycle.InsertObservations(ctx, []CostObservation{{ObservationID: "preview-cost-observation-a", SnapshotID: "preview-snapshot-a", HubID: hubA, DeviceID: "device-a", RawServiceIdentifier: "cost.raw", UsageUpdatedAt: now.Add(10 * time.Minute), CostUSDText: "1", AnalyticsIntervalSeconds: 300, JSONPath: "$.cost", DedupeKey: "preview-cost-a", ValueFingerprint: "preview-cost-a"}, {ObservationID: "preview-cost-observation-b", SnapshotID: "preview-snapshot-b", HubID: hubB, DeviceID: "device-b", RawServiceIdentifier: "cost.raw", UsageUpdatedAt: now.Add(20 * time.Minute), CostUSDText: "2", AnalyticsIntervalSeconds: 300, JSONPath: "$.cost", DedupeKey: "preview-cost-b", ValueFingerprint: "preview-cost-b"}}, []LimitObservation{{ObservationID: "preview-limit-observation-a", SnapshotID: "preview-snapshot-a", HubID: hubA, DeviceID: "device-a", RawServiceIdentifier: "limit.raw", AccountKey: "account", ProviderUpdatedAt: now.Add(10 * time.Minute), WindowKey: "weekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", PlanLabel: "Plan", AnalyticsIntervalSeconds: 300, JSONPath: "$.limit", DedupeKey: "preview-limit-a", ValueFingerprint: "preview-limit-a"}, {ObservationID: "preview-limit-observation-b", SnapshotID: "preview-snapshot-b", HubID: hubB, DeviceID: "device-b", RawServiceIdentifier: "limit.raw", AccountKey: "account", ProviderUpdatedAt: now.Add(20 * time.Minute), WindowKey: "weekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", PlanLabel: "Plan", AnalyticsIntervalSeconds: 300, JSONPath: "$.limit", DedupeKey: "preview-limit-b", ValueFingerprint: "preview-limit-b"}}); err != nil {
+		t.Fatal(err)
+	}
+	completeness := UsageCostSourceCompleteness{ID: "preview-completeness", UsageCostSourceID: costA.ID, ValidFrom: now, ValidTo: &end, State: CompletenessConfirmed, CreatedAt: now, UpdatedAt: now}
+	beforeSources, err := lifecycle.ListUsageCostSources(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	completenessPreview, err := lifecycle.PreviewUsageCostSourceCompleteness(ctx, completeness)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completenessPreview.AffectedSourceIDs) != 1 || len(completenessPreview.AffectedObservationIDs) != 1 || completenessPreview.AffectedObservationIDs[0] != "preview-cost-observation-a" {
+		t.Fatalf("completeness preview = %#v", completenessPreview)
+	}
+	switchPreview, err := lifecycle.PreviewHubSwitch(ctx, HubSwitch{ID: "preview-switch", OldHubID: hubA, OldDeviceID: "device-a", NewHubID: hubB, NewDeviceID: "device-b", CollectionDeviceID: "collector", SwitchedAt: now.Add(30 * time.Minute), CreatedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(switchPreview.AffectedSourceIDs) != 4 || len(switchPreview.AffectedObservationIDs) != 4 {
+		t.Fatalf("Hub switch preview = %#v", switchPreview)
+	}
+	afterSources, err := lifecycle.ListUsageCostSources(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeSources) != len(afterSources) {
+		t.Fatalf("preview changed persisted sources: before=%#v after=%#v", beforeSources, afterSources)
+	}
+}

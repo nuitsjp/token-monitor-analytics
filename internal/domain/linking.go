@@ -104,13 +104,15 @@ type ImpactInterval struct {
 // ImpactPreview is read-only information shown before a relation or
 // completeness change is committed.
 type ImpactPreview struct {
-	SourceID                     string
-	SourceKind                   string
-	IntervalStart                time.Time
-	IntervalEnd                  time.Time
-	AffectedObservationIDs       []string
-	AffectedCalculationIntervals []ImpactInterval
-	AffectedDerivedResultIDs     []string
+	SourceID                       string
+	SourceKind                     string
+	AffectedSourceIDs              []string
+	IntervalStart                  time.Time
+	IntervalEnd                    time.Time
+	AffectedObservationIDs         []string
+	AffectedCalculationIntervalIDs []string
+	AffectedCalculationIntervals   []ImpactInterval
+	AffectedDerivedResultIDs       []string
 }
 
 func (s UsageCostSource) Validate() error {

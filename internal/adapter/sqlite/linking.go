@@ -593,6 +593,120 @@ func (l *Lifecycle) PreviewUsageLimitAssociation(ctx context.Context, associatio
 	return l.previewSource(ctx, association.UsageLimitSourceID, "usage_limit", association.ValidFrom, association.ValidTo, `usage_limit_observations o ON o.hub_id = s.hub_id AND o.device_id = s.device_id AND o.account_key = s.account_key AND o.raw_service_identifier = s.raw_service_identifier AND o.window_key = s.window_key`, `o.provider_updated_at`, `o.observation_id`)
 }
 
+func (l *Lifecycle) PreviewUsageCostSourceCompleteness(ctx context.Context, completeness UsageCostSourceCompleteness) (ImpactPreview, error) {
+	if err := completeness.Validate(); err != nil {
+		return ImpactPreview{}, err
+	}
+	preview, err := l.previewSource(ctx, completeness.UsageCostSourceID, "usage_cost_completeness", completeness.ValidFrom, completeness.ValidTo, `usage_cost_observations o ON o.hub_id = s.hub_id AND o.device_id = s.device_id AND o.raw_service_identifier = s.raw_service_identifier`, `o.usage_updated_at`, `o.observation_id`)
+	if err != nil {
+		return ImpactPreview{}, err
+	}
+	preview.AffectedCalculationIntervalIDs, preview.AffectedCalculationIntervals, err = l.listCostCompletenessCalculationImpact(ctx, completeness.UsageCostSourceID, completeness.ValidFrom, completeness.ValidTo)
+	if err != nil {
+		return ImpactPreview{}, err
+	}
+	return preview, nil
+}
+
+func (l *Lifecycle) PreviewHubSwitch(ctx context.Context, switchRecord HubSwitch) (ImpactPreview, error) {
+	if err := switchRecord.Validate(); err != nil {
+		return ImpactPreview{}, err
+	}
+	database, err := l.DB()
+	if err != nil {
+		return ImpactPreview{}, err
+	}
+	preview := ImpactPreview{SourceKind: "hub_switch", IntervalStart: switchRecord.SwitchedAt.UTC(), IntervalEnd: catalogPeriodEnd(nil)}
+	rows, err := database.QueryContext(ctx, `
+		SELECT usage_cost_source_id FROM usage_cost_sources
+		WHERE (hub_id = ? AND device_id = ?) OR (hub_id = ? AND device_id = ?)
+		UNION
+		SELECT usage_limit_source_id FROM usage_limit_sources
+		WHERE (hub_id = ? AND device_id = ?) OR (hub_id = ? AND device_id = ?)
+		ORDER BY 1`, switchRecord.OldHubID, switchRecord.OldDeviceID, switchRecord.NewHubID, switchRecord.NewDeviceID,
+		switchRecord.OldHubID, switchRecord.OldDeviceID, switchRecord.NewHubID, switchRecord.NewDeviceID)
+	if err != nil {
+		return ImpactPreview{}, fmt.Errorf("list Hub switch sources: %w", err)
+	}
+	for rows.Next() {
+		var sourceID string
+		if err := rows.Scan(&sourceID); err != nil {
+			_ = rows.Close()
+			return ImpactPreview{}, fmt.Errorf("scan Hub switch source: %w", err)
+		}
+		preview.AffectedSourceIDs = append(preview.AffectedSourceIDs, sourceID)
+	}
+	if err := rows.Close(); err != nil {
+		return ImpactPreview{}, fmt.Errorf("close Hub switch sources: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return ImpactPreview{}, fmt.Errorf("read Hub switch sources: %w", err)
+	}
+	if len(preview.AffectedSourceIDs) == 0 {
+		return preview, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(preview.AffectedSourceIDs)), ",")
+	sourceArgs := make([]any, 0, len(preview.AffectedSourceIDs))
+	for _, sourceID := range preview.AffectedSourceIDs {
+		sourceArgs = append(sourceArgs, sourceID)
+	}
+	observationArgs := append(append([]any{}, sourceArgs...), sourceArgs...)
+	rows, err = database.QueryContext(ctx, `SELECT observation_id, observed_at FROM (
+		SELECT o.observation_id, o.usage_updated_at AS observed_at
+		FROM usage_cost_observations o JOIN usage_cost_sources s ON s.hub_id = o.hub_id AND s.device_id = o.device_id AND s.raw_service_identifier = o.raw_service_identifier
+		WHERE s.usage_cost_source_id IN (`+placeholders+`) AND o.dedupe_state = 'canonical'
+		UNION ALL
+		SELECT o.observation_id, o.provider_updated_at AS observed_at
+		FROM usage_limit_observations o JOIN usage_limit_sources s ON s.hub_id = o.hub_id AND s.device_id = o.device_id AND s.account_key = o.account_key AND s.raw_service_identifier = o.raw_service_identifier AND s.window_key = o.window_key
+		WHERE s.usage_limit_source_id IN (`+placeholders+`) AND o.dedupe_state = 'canonical'
+	) ORDER BY observed_at, observation_id`, observationArgs...)
+	if err != nil {
+		return ImpactPreview{}, fmt.Errorf("list Hub switch observations: %w", err)
+	}
+	for rows.Next() {
+		var observationID, observed string
+		if err := rows.Scan(&observationID, &observed); err != nil {
+			_ = rows.Close()
+			return ImpactPreview{}, fmt.Errorf("scan Hub switch observation: %w", err)
+		}
+		preview.AffectedObservationIDs = append(preview.AffectedObservationIDs, observationID)
+	}
+	if err := rows.Close(); err != nil {
+		return ImpactPreview{}, fmt.Errorf("close Hub switch observations: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return ImpactPreview{}, fmt.Errorf("read Hub switch observations: %w", err)
+	}
+	intervalArgs := append(append([]any{}, sourceArgs...), catalogPeriodText(switchRecord.SwitchedAt), catalogPeriodText(switchRecord.SwitchedAt))
+	rows, err = database.QueryContext(ctx, `SELECT calculation_interval_id, valid_from, valid_to FROM calculation_intervals WHERE usage_limit_source_id IN (`+placeholders+`) AND valid_from <= ? AND ? < valid_to ORDER BY valid_from, calculation_interval_id`, intervalArgs...)
+	if err != nil {
+		return ImpactPreview{}, fmt.Errorf("list Hub switch calculation intervals: %w", err)
+	}
+	for rows.Next() {
+		var intervalID, from, to string
+		if err := rows.Scan(&intervalID, &from, &to); err != nil {
+			_ = rows.Close()
+			return ImpactPreview{}, fmt.Errorf("scan Hub switch calculation interval: %w", err)
+		}
+		start, parseErr := parseUTC(from)
+		if parseErr != nil {
+			_ = rows.Close()
+			return ImpactPreview{}, fmt.Errorf("parse Hub switch interval start: %w", parseErr)
+		}
+		end, parseErr := parseUTC(to)
+		if parseErr != nil {
+			_ = rows.Close()
+			return ImpactPreview{}, fmt.Errorf("parse Hub switch interval end: %w", parseErr)
+		}
+		preview.AffectedCalculationIntervalIDs = append(preview.AffectedCalculationIntervalIDs, intervalID)
+		preview.AffectedCalculationIntervals = append(preview.AffectedCalculationIntervals, ImpactInterval{Start: start, End: end})
+	}
+	if err := rows.Close(); err != nil {
+		return ImpactPreview{}, fmt.Errorf("close Hub switch calculation intervals: %w", err)
+	}
+	return preview, rows.Err()
+}
+
 // CanUseUsageCostSourceForEstimation rejects the entire requested interval if
 // any completeness segment is missing, unconfirmed, excluded, or inconsistent
 // with the active cost associations. It never returns a partial interval.
@@ -646,13 +760,17 @@ func (l *Lifecycle) previewSource(ctx context.Context, sourceID, kind string, st
 	if strings.TrimSpace(sourceID) == "" || start.IsZero() {
 		return ImpactPreview{}, errors.New("impact preview source and start are required")
 	}
-	preview := ImpactPreview{SourceID: sourceID, SourceKind: kind, IntervalStart: start.UTC(), IntervalEnd: catalogPeriodEnd(end)}
+	preview := ImpactPreview{SourceID: sourceID, SourceKind: kind, AffectedSourceIDs: []string{sourceID}, IntervalStart: start.UTC(), IntervalEnd: catalogPeriodEnd(end)}
 	database, err := l.DB()
 	if err != nil {
 		return ImpactPreview{}, err
 	}
-	query := `SELECT ` + idColumn + `, ` + observedColumn + ` FROM ` + map[string]string{"usage_cost": "usage_cost_sources s", "usage_limit": "usage_limit_sources s"}[kind] + ` JOIN ` + join + ` WHERE s.` + map[string]string{"usage_cost": "usage_cost_source_id", "usage_limit": "usage_limit_source_id"}[kind] + ` = ? AND ` + observedColumn + ` >= ? AND ` + observedColumn + ` < ? AND o.dedupe_state = 'canonical' ORDER BY ` + observedColumn + `, ` + idColumn
-	rows, err := database.QueryContext(ctx, query, sourceID, catalogPeriodText(preview.IntervalStart), catalogPeriodText(preview.IntervalEnd))
+	queryKind := kind
+	if queryKind == "usage_cost_completeness" {
+		queryKind = "usage_cost"
+	}
+	query := `SELECT ` + idColumn + `, ` + observedColumn + ` FROM ` + map[string]string{"usage_cost": "usage_cost_sources s", "usage_limit": "usage_limit_sources s"}[queryKind] + ` JOIN ` + join + ` WHERE s.` + map[string]string{"usage_cost": "usage_cost_source_id", "usage_limit": "usage_limit_source_id"}[queryKind] + ` = ? AND ` + observedColumn + ` >= ? AND ` + observedColumn + ` < ? AND o.dedupe_state = 'canonical' ORDER BY ` + observedColumn + `, ` + idColumn
+	rows, err := database.QueryContext(ctx, query, sourceID, utcText(preview.IntervalStart), utcText(preview.IntervalEnd))
 	if err != nil {
 		return ImpactPreview{}, fmt.Errorf("preview source observations: %w", err)
 	}
@@ -671,6 +789,49 @@ func (l *Lifecycle) previewSource(ctx context.Context, sourceID, kind string, st
 		preview.AffectedCalculationIntervals = []ImpactInterval{{Start: preview.IntervalStart, End: preview.IntervalEnd}}
 	}
 	return preview, nil
+}
+
+func (l *Lifecycle) listCostCompletenessCalculationImpact(ctx context.Context, sourceID string, start time.Time, end *time.Time) ([]string, []ImpactInterval, error) {
+	database, err := l.DB()
+	if err != nil {
+		return nil, nil, err
+	}
+	intervalEnd := catalogPeriodEnd(end)
+	rows, err := database.QueryContext(ctx, `
+		SELECT DISTINCT ci.calculation_interval_id, ci.valid_from, ci.valid_to
+		FROM calculation_intervals ci
+		JOIN usage_limit_source_links ul ON ul.usage_limit_source_id = ci.usage_limit_source_id
+		JOIN usage_cost_source_account_links ca ON ca.logical_account_id = ul.logical_account_id
+		WHERE ca.usage_cost_source_id = ?
+		  AND ca.valid_from < ? AND (ca.valid_to IS NULL OR ? < ca.valid_to)
+		  AND ci.valid_from < ? AND ? < ci.valid_to
+		ORDER BY ci.valid_from, ci.calculation_interval_id`, sourceID, catalogPeriodText(intervalEnd), catalogPeriodText(start), catalogPeriodText(intervalEnd), catalogPeriodText(start))
+	if err != nil {
+		return nil, nil, fmt.Errorf("list completeness calculation impact: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	var intervals []ImpactInterval
+	for rows.Next() {
+		var id, from, to string
+		if err := rows.Scan(&id, &from, &to); err != nil {
+			return nil, nil, fmt.Errorf("scan completeness calculation impact: %w", err)
+		}
+		intervalStart, parseErr := parseUTC(from)
+		if parseErr != nil {
+			return nil, nil, fmt.Errorf("parse completeness impact start: %w", parseErr)
+		}
+		intervalEndValue, parseErr := parseUTC(to)
+		if parseErr != nil {
+			return nil, nil, fmt.Errorf("parse completeness impact end: %w", parseErr)
+		}
+		ids = append(ids, id)
+		intervals = append(intervals, ImpactInterval{Start: intervalStart, End: intervalEndValue})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("read completeness calculation impact: %w", err)
+	}
+	return ids, intervals, nil
 }
 
 func insertUsageCostSourceTx(ctx context.Context, tx *sql.Tx, source UsageCostSource) error {
