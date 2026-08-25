@@ -20,7 +20,7 @@ func newAccountTestService(t *testing.T) (*AccountService, *sqliteadapter.Lifecy
 	}
 	t.Cleanup(func() { _ = lifecycle.Close() })
 	now := time.Date(2026, 8, 25, 12, 0, 0, 123456789, time.FixedZone("JST", 9*60*60))
-	service, err := NewAccountServiceWithDependencies(lifecycle, fixedClock{value: now}, randomIDs{})
+	service, err := NewAccountServiceWithDependencies(lifecycle, fixedClock{value: now}, randomIDs{}, newDesktopTestMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func newAccountTestService(t *testing.T) (*AccountService, *sqliteadapter.Lifecy
 func createAccountCatalogFixture(t *testing.T, lifecycle *sqliteadapter.Lifecycle, now time.Time) (string, string) {
 	t.Helper()
 	ctx := context.Background()
-	catalog, err := NewCatalogServiceWithDependencies(lifecycle, fixedClock{value: now}, randomIDs{})
+	catalog, err := NewCatalogServiceWithDependencies(lifecycle, fixedClock{value: now}, randomIDs{}, newDesktopTestMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func createAccountCatalogFixture(t *testing.T, lifecycle *sqliteadapter.Lifecycl
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := NewHubServiceWithDependencies(lifecycle, &memoryCredentials{values: make(map[string]string)}, fixedClock{value: now}, randomIDs{})
+	hub := NewHubServiceWithDependencies(lifecycle, &memoryCredentials{values: make(map[string]string)}, fixedClock{value: now}, randomIDs{}, newDesktopTestMaintenanceGate())
 	hubSnapshot, err := hub.CreateHub(ctx, CreateHubInput{DisplayName: "Hub", URL: "https://hub.example", CollectionIntervalSeconds: 300, CollectionEnabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -207,14 +207,14 @@ func TestAccountServiceSplitsAndMergesThroughUsecase(t *testing.T) {
 }
 
 func TestNewAccountServiceRequiresDependencies(t *testing.T) {
-	if _, err := NewAccountService(nil); err == nil {
+	if _, err := NewAccountService(nil, newDesktopTestMaintenanceGate()); err == nil {
 		t.Fatal("nil lifecycle was accepted")
 	}
 	lifecycle := &sqliteadapter.Lifecycle{}
-	if _, err := NewAccountServiceWithDependencies(lifecycle, nil, randomIDs{}); err == nil {
+	if _, err := NewAccountServiceWithDependencies(lifecycle, nil, randomIDs{}, newDesktopTestMaintenanceGate()); err == nil {
 		t.Fatal("nil clock was accepted")
 	}
-	if _, err := NewAccountServiceWithDependencies(lifecycle, fixedClock{}, nil); err == nil {
+	if _, err := NewAccountServiceWithDependencies(lifecycle, fixedClock{}, nil, newDesktopTestMaintenanceGate()); err == nil {
 		t.Fatal("nil ID generator was accepted")
 	}
 }
@@ -242,7 +242,7 @@ func TestAccountServiceExposesT023LinkingWithStrictPeriods(t *testing.T) {
 	if err := lifecycle.CreateUsageLimitSource(ctx, limitSource); err != nil {
 		t.Fatal(err)
 	}
-	catalogService, err := NewCatalogServiceWithDependencies(lifecycle, fixedClock{value: now}, randomIDs{})
+	catalogService, err := NewCatalogServiceWithDependencies(lifecycle, fixedClock{value: now}, randomIDs{}, newDesktopTestMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestAccountServiceExposesT023LinkingWithStrictPeriods(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	hubService := NewHubServiceWithDependencies(lifecycle, &memoryCredentials{values: make(map[string]string)}, fixedClock{value: now}, randomIDs{})
+	hubService := NewHubServiceWithDependencies(lifecycle, &memoryCredentials{values: make(map[string]string)}, fixedClock{value: now}, randomIDs{}, newDesktopTestMaintenanceGate())
 	newHub, err := hubService.CreateHub(ctx, CreateHubInput{DisplayName: "New Hub", URL: "https://new-hub.example", CollectionIntervalSeconds: 300, CollectionEnabled: true})
 	if err != nil {
 		t.Fatal(err)

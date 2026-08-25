@@ -10,6 +10,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	timezoneadapter "token-monitor-analytics/internal/adapter/timezone"
+	"token-monitor-analytics/internal/usecase"
 )
 
 type SettingsSnapshot struct {
@@ -26,10 +27,11 @@ type SaveSettingsInput struct {
 
 type SettingsService struct {
 	lifecycle *sqliteadapter.Lifecycle
+	gate      *usecase.MaintenanceGate
 }
 
-func NewSettingsService(lifecycle *sqliteadapter.Lifecycle) *SettingsService {
-	return &SettingsService{lifecycle: lifecycle}
+func NewSettingsService(lifecycle *sqliteadapter.Lifecycle, gate *usecase.MaintenanceGate) *SettingsService {
+	return &SettingsService{lifecycle: lifecycle, gate: gate}
 }
 
 func RegisterThemeSync(app *application.App, service *SettingsService) {
@@ -72,6 +74,11 @@ func (s *SettingsService) GetSettings(ctx context.Context) (SettingsSnapshot, er
 }
 
 func (s *SettingsService) SaveSettings(ctx context.Context, input SaveSettingsInput) (SettingsSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return SettingsSnapshot{}, err
+	}
+	defer release()
 	if input.Theme != "light" && input.Theme != "dark" && input.Theme != "system" {
 		return SettingsSnapshot{}, errors.New("invalid theme")
 	}

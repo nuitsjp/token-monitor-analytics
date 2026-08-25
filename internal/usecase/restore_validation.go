@@ -42,14 +42,16 @@ type RestoreValidationUsecase struct {
 	recorder   RestoreTrialRecorder
 	clock      Clock
 	ids        IDGenerator
+	gate       *MaintenanceGate
 	current    *validatedRestore
 	state      domain.RestoreTrialState
 	validating bool
 	running    bool
+	applying   bool
 }
 
-func NewRestoreValidationUsecase(database RestoreDatabaseValidator, archive RestoreArchiveValidator, recorder RestoreTrialRecorder, clock Clock, ids IDGenerator) (*RestoreValidationUsecase, error) {
-	if database == nil || archive == nil || clock == nil || ids == nil {
+func NewRestoreValidationUsecase(database RestoreDatabaseValidator, archive RestoreArchiveValidator, recorder RestoreTrialRecorder, clock Clock, ids IDGenerator, gate *MaintenanceGate) (*RestoreValidationUsecase, error) {
+	if database == nil || archive == nil || clock == nil || ids == nil || gate == nil {
 		return nil, errors.New("restore validation usecase dependencies are required")
 	}
 	return &RestoreValidationUsecase{
@@ -58,6 +60,7 @@ func NewRestoreValidationUsecase(database RestoreDatabaseValidator, archive Rest
 		recorder: recorder,
 		clock:    clock,
 		ids:      ids,
+		gate:     gate,
 		state:    domain.RestoreTrialState{Status: domain.RestoreTrialNotRun},
 	}, nil
 }
@@ -66,8 +69,13 @@ func (u *RestoreValidationUsecase) ValidateArchive(ctx context.Context, archiveP
 	if strings.TrimSpace(archivePath) == "" {
 		return domain.RestoreValidationResult{}, errors.New("restore archive path is required")
 	}
+	lease, err := u.gate.Acquire(ctx, MaintenanceRestore)
+	if err != nil {
+		return domain.RestoreValidationResult{}, err
+	}
+	defer lease.Release()
 	u.mu.Lock()
-	if u.validating || u.running {
+	if u.validating || u.running || u.applying {
 		u.mu.Unlock()
 		return domain.RestoreValidationResult{}, errors.New("restore validation or trial is already running")
 	}
@@ -136,8 +144,13 @@ func (u *RestoreValidationUsecase) ValidateArchive(ctx context.Context, archiveP
 }
 
 func (u *RestoreValidationUsecase) RunRestoreTrial(ctx context.Context, operationID string) (domain.RestoreTrialState, error) {
+	lease, err := u.gate.Acquire(ctx, MaintenanceRestore)
+	if err != nil {
+		return domain.RestoreTrialState{}, err
+	}
+	defer lease.Release()
 	u.mu.Lock()
-	if u.validating || u.running {
+	if u.validating || u.running || u.applying {
 		u.mu.Unlock()
 		return domain.RestoreTrialState{}, errors.New("restore validation or trial is already running")
 	}
@@ -194,9 +207,9 @@ func (u *RestoreValidationUsecase) RestoreTrialState() domain.RestoreTrialState 
 
 func (u *RestoreValidationUsecase) Close() error {
 	u.mu.Lock()
-	if u.validating || u.running {
+	if u.validating || u.running || u.applying {
 		u.mu.Unlock()
-		return errors.New("restore validation or trial is running")
+		return errors.New("restore operation is running")
 	}
 	current := u.current
 	u.current = nil
@@ -210,6 +223,34 @@ func (u *RestoreValidationUsecase) Close() error {
 		return fmt.Errorf("resolve restore workspace: %w", err)
 	}
 	return removeManagedRestoreDirectory(workspaceRoot, current.directory, "restore-validated-")
+}
+
+func (u *RestoreValidationUsecase) claimForApply(operationID string) (validatedRestore, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.validating || u.running || u.applying {
+		return validatedRestore{}, errors.New("restore operation is running")
+	}
+	if u.current == nil || strings.TrimSpace(operationID) == "" || operationID != u.current.operationID {
+		return validatedRestore{}, errors.New("restore validation operation is not current")
+	}
+	u.applying = true
+	return *u.current, nil
+}
+
+func (u *RestoreValidationUsecase) finishApply(validated validatedRestore) error {
+	u.mu.Lock()
+	if u.current != nil && u.current.operationID == validated.operationID {
+		u.current = nil
+		u.state = domain.RestoreTrialState{Status: domain.RestoreTrialNotRun}
+	}
+	u.applying = false
+	u.mu.Unlock()
+	workspaceRoot, err := u.database.ApplicationDataDirectory()
+	if err != nil {
+		return fmt.Errorf("resolve restore workspace: %w", err)
+	}
+	return removeManagedRestoreDirectory(workspaceRoot, validated.directory, "restore-validated-")
 }
 
 func (u *RestoreValidationUsecase) finishRestoreTrial(ctx context.Context, artifactSHA string, trialErr error) (domain.RestoreTrialState, error) {

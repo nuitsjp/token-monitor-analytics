@@ -101,6 +101,46 @@ type RestoreTrialState struct {
 	Warning        string
 }
 
+type RestoreApplyResult struct {
+	OperationID       string
+	ArtifactSHA256    string
+	FormatVersion     int
+	SchemaVersion     int64
+	RestoredAt        time.Time
+	AuditID           string
+	RollbackSucceeded bool
+	Warning           string
+}
+
+type RestoreRecoveryStatus string
+
+const (
+	RestoreRecoveryNone             RestoreRecoveryStatus = "none"
+	RestoreRecoveryRolledBack       RestoreRecoveryStatus = "rolled_back"
+	RestoreRecoveryCommittedCleaned RestoreRecoveryStatus = "committed_cleaned"
+)
+
+type RestoreRecoveryResult struct {
+	Status         RestoreRecoveryStatus
+	OperationID    string
+	ArtifactSHA256 string
+}
+
+type RestoreRecoveryError struct {
+	Code             string
+	Stage            string
+	CurrentPresent   bool
+	OriginalPresent  bool
+	CandidatePresent bool
+}
+
+func (e *RestoreRecoveryError) Error() string {
+	if e == nil {
+		return "restore recovery stopped safely"
+	}
+	return fmt.Sprintf("restore recovery stopped safely: code=%s stage=%s current=%t original=%t candidate=%t", e.Code, e.Stage, e.CurrentPresent, e.OriginalPresent, e.CandidatePresent)
+}
+
 func (m BackupManifest) Validate() error {
 	if m.FormatVersion != BackupFormatVersion {
 		return fmt.Errorf("unsupported backup format version %d", m.FormatVersion)

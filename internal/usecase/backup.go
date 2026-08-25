@@ -36,22 +36,28 @@ type BackupUsecase struct {
 	recorder BackupResultRecorder
 	clock    Clock
 	appVer   string
+	gate     *MaintenanceGate
 }
 
-func NewBackupUsecase(source BackupSource, writer BackupArchiveWriter, recorder BackupResultRecorder, clock Clock, appVersion string) (*BackupUsecase, error) {
-	if source == nil || writer == nil || clock == nil {
+func NewBackupUsecase(source BackupSource, writer BackupArchiveWriter, recorder BackupResultRecorder, clock Clock, appVersion string, gate *MaintenanceGate) (*BackupUsecase, error) {
+	if source == nil || writer == nil || clock == nil || gate == nil {
 		return nil, errors.New("backup usecase dependencies are required")
 	}
 	if strings.TrimSpace(appVersion) == "" {
 		return nil, errors.New("backup app version is required")
 	}
-	return &BackupUsecase{source: source, writer: writer, recorder: recorder, clock: clock, appVer: appVersion}, nil
+	return &BackupUsecase{source: source, writer: writer, recorder: recorder, clock: clock, appVer: appVersion, gate: gate}, nil
 }
 
 func (u *BackupUsecase) CreateBackup(ctx context.Context, destinationPath string) (domain.BackupArtifact, error) {
 	if strings.TrimSpace(destinationPath) == "" {
 		return domain.BackupArtifact{}, errors.New("backup destination is required")
 	}
+	lease, err := u.gate.Acquire(ctx, MaintenanceBackup)
+	if err != nil {
+		return domain.BackupArtifact{}, err
+	}
+	defer lease.Release()
 	dataDir, err := u.source.ApplicationDataDirectory()
 	if err != nil {
 		return domain.BackupArtifact{}, fmt.Errorf("resolve application data directory: %w", err)

@@ -17,6 +17,7 @@ type AccountService struct {
 	lifecycle *sqliteadapter.Lifecycle
 	usecase   *usecase.AccountUsecase
 	linking   *usecase.LinkingUsecase
+	gate      *usecase.MaintenanceGate
 }
 
 type AccountSnapshot struct {
@@ -226,13 +227,13 @@ type HubSwitchInput struct {
 	SwitchedAt         string `json:"switchedAt"`
 }
 
-func NewAccountService(lifecycle *sqliteadapter.Lifecycle) (*AccountService, error) {
-	return NewAccountServiceWithDependencies(lifecycle, usecase.SystemClock{}, UUIDGenerator{})
+func NewAccountService(lifecycle *sqliteadapter.Lifecycle, gate *usecase.MaintenanceGate) (*AccountService, error) {
+	return NewAccountServiceWithDependencies(lifecycle, usecase.SystemClock{}, UUIDGenerator{}, gate)
 }
 
-func NewAccountServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, clock usecase.Clock, ids usecase.IDGenerator) (*AccountService, error) {
-	if lifecycle == nil {
-		return nil, errors.New("account lifecycle is required")
+func NewAccountServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) (*AccountService, error) {
+	if lifecycle == nil || gate == nil {
+		return nil, errors.New("account lifecycle and maintenance gate are required")
 	}
 	uc, err := usecase.NewAccountUsecase(lifecycle, clock, ids)
 	if err != nil {
@@ -242,7 +243,7 @@ func NewAccountServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, clock
 	if err != nil {
 		return nil, err
 	}
-	return &AccountService{lifecycle: lifecycle, usecase: uc, linking: linking}, nil
+	return &AccountService{lifecycle: lifecycle, usecase: uc, linking: linking, gate: gate}, nil
 }
 
 func (s *AccountService) GetAccounts(ctx context.Context) (AccountSnapshot, error) {
@@ -333,6 +334,11 @@ func (s *AccountService) GetLinkingSnapshot(ctx context.Context) (LinkingSnapsho
 }
 
 func (s *AccountService) CreateUsageCostAssociation(ctx context.Context, input UsageCostAssociationInput) (UsageCostAssociationSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return UsageCostAssociationSnapshot{}, err
+	}
+	defer release()
 	association, err := usageCostAssociationFromInput(input)
 	if err != nil {
 		return UsageCostAssociationSnapshot{}, err
@@ -345,6 +351,11 @@ func (s *AccountService) CreateUsageCostAssociation(ctx context.Context, input U
 }
 
 func (s *AccountService) UpdateUsageCostAssociation(ctx context.Context, input UsageCostAssociationInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	existing, err := s.usageCostAssociationByID(ctx, input.ID)
 	if err != nil {
 		return err
@@ -370,6 +381,11 @@ func (s *AccountService) PreviewUsageCostAssociation(ctx context.Context, input 
 }
 
 func (s *AccountService) CreateUsageLimitAssociation(ctx context.Context, input UsageLimitAssociationInput) (UsageLimitAssociationSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return UsageLimitAssociationSnapshot{}, err
+	}
+	defer release()
 	association, err := usageLimitAssociationFromInput(input)
 	if err != nil {
 		return UsageLimitAssociationSnapshot{}, err
@@ -382,6 +398,11 @@ func (s *AccountService) CreateUsageLimitAssociation(ctx context.Context, input 
 }
 
 func (s *AccountService) UpdateUsageLimitAssociation(ctx context.Context, input UsageLimitAssociationInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	existing, err := s.usageLimitAssociationByID(ctx, input.ID)
 	if err != nil {
 		return err
@@ -419,6 +440,11 @@ func (s *AccountService) PreviewUsageCostSourceCompleteness(ctx context.Context,
 }
 
 func (s *AccountService) ConfirmUsageCostSourceCompleteness(ctx context.Context, input UsageCostSourceCompletenessInput) (UsageCostSourceCompletenessSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return UsageCostSourceCompletenessSnapshot{}, err
+	}
+	defer release()
 	completeness, err := completenessFromInput(input)
 	if err != nil {
 		return UsageCostSourceCompletenessSnapshot{}, err
@@ -431,6 +457,11 @@ func (s *AccountService) ConfirmUsageCostSourceCompleteness(ctx context.Context,
 }
 
 func (s *AccountService) UpdateUsageCostSourceCompleteness(ctx context.Context, input UsageCostSourceCompletenessInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	existing, err := s.completenessByID(ctx, input.ID)
 	if err != nil {
 		return err
@@ -456,6 +487,11 @@ func (s *AccountService) PreviewHubSwitch(ctx context.Context, input HubSwitchIn
 }
 
 func (s *AccountService) ConfirmHubSwitch(ctx context.Context, input HubSwitchInput) (HubSwitchSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return HubSwitchSnapshot{}, err
+	}
+	defer release()
 	switchRecord, err := hubSwitchFromInput(input)
 	if err != nil {
 		return HubSwitchSnapshot{}, err
@@ -468,6 +504,11 @@ func (s *AccountService) ConfirmHubSwitch(ctx context.Context, input HubSwitchIn
 }
 
 func (s *AccountService) CreateLogicalAccount(ctx context.Context, input CreateLogicalAccountInput) (LogicalAccountSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return LogicalAccountSnapshot{}, err
+	}
+	defer release()
 	account, err := s.usecase.RegisterLogicalAccount(ctx, input.ServiceID, input.DisplayName)
 	if err != nil {
 		return LogicalAccountSnapshot{}, err
@@ -476,6 +517,11 @@ func (s *AccountService) CreateLogicalAccount(ctx context.Context, input CreateL
 }
 
 func (s *AccountService) UpdateLogicalAccount(ctx context.Context, input UpdateLogicalAccountInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	account, err := s.logicalAccountByID(ctx, input.ID)
 	if err != nil {
 		return err
@@ -487,14 +533,29 @@ func (s *AccountService) UpdateLogicalAccount(ctx context.Context, input UpdateL
 }
 
 func (s *AccountService) ArchiveLogicalAccount(ctx context.Context, accountID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.ArchiveLogicalAccount(ctx, accountID)
 }
 
 func (s *AccountService) RestoreLogicalAccount(ctx context.Context, accountID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.RestoreLogicalAccount(ctx, accountID)
 }
 
 func (s *AccountService) CreateLogicalAccountFromCandidate(ctx context.Context, input CreateLogicalAccountFromCandidateInput) (LogicalAccountSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return LogicalAccountSnapshot{}, err
+	}
+	defer release()
 	account, err := s.usecase.CreateLogicalAccountFromCandidate(ctx, input.CandidateID, input.ServiceID, input.DisplayName)
 	if err != nil {
 		return LogicalAccountSnapshot{}, err
@@ -503,18 +564,38 @@ func (s *AccountService) CreateLogicalAccountFromCandidate(ctx context.Context, 
 }
 
 func (s *AccountService) AssociateHubAccountCandidate(ctx context.Context, candidateID, logicalAccountID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.AssociateHubAccountCandidate(ctx, candidateID, logicalAccountID)
 }
 
 func (s *AccountService) RejectHubAccountCandidate(ctx context.Context, candidateID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.RejectHubAccountCandidate(ctx, candidateID)
 }
 
 func (s *AccountService) ReleaseHubAccountCandidate(ctx context.Context, candidateID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.ReleaseHubAccountCandidate(ctx, candidateID)
 }
 
 func (s *AccountService) SplitLogicalAccount(ctx context.Context, input SplitLogicalAccountInput) (LogicalAccountSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return LogicalAccountSnapshot{}, err
+	}
+	defer release()
 	account, err := s.usecase.SplitLogicalAccount(ctx, input.SourceID, input.ServiceID, input.DisplayName, input.CandidateIDs...)
 	if err != nil {
 		return LogicalAccountSnapshot{}, err
@@ -523,10 +604,20 @@ func (s *AccountService) SplitLogicalAccount(ctx context.Context, input SplitLog
 }
 
 func (s *AccountService) MergeLogicalAccounts(ctx context.Context, sourceID, targetID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.MergeLogicalAccounts(ctx, sourceID, targetID)
 }
 
 func (s *AccountService) CreatePlanHistory(ctx context.Context, input CreatePlanHistoryInput) (PlanHistorySnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return PlanHistorySnapshot{}, err
+	}
+	defer release()
 	validFrom, validTo, err := parseAccountPeriod(input.ValidFrom, input.ValidTo)
 	if err != nil {
 		return PlanHistorySnapshot{}, err
@@ -539,6 +630,11 @@ func (s *AccountService) CreatePlanHistory(ctx context.Context, input CreatePlan
 }
 
 func (s *AccountService) UpdatePlanHistory(ctx context.Context, input UpdatePlanHistoryInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	history, err := s.planHistoryByID(ctx, input.ID)
 	if err != nil {
 		return err

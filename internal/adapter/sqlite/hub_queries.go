@@ -101,10 +101,12 @@ func (l *Lifecycle) ListCredentialAuditEvents(ctx context.Context, hubID string)
 	}
 	rows, err := database.QueryContext(ctx, `
 		SELECT sequence, action FROM configuration_audits
-		WHERE entity_id = ? AND action IN (
-			'restore_succeeded', 'credential_saved', 'credential_deleted',
-			'credential_reconfirmed', 'credential_save_started', 'credential_delete_started'
-		)
+		WHERE (
+			entity_type = 'hub_credential' AND entity_id = ? AND action IN (
+				'credential_saved', 'credential_deleted', 'credential_reconfirmed',
+				'credential_save_started', 'credential_delete_started'
+			)
+		) OR (entity_type = 'restore' AND action = 'restore_succeeded')
 		ORDER BY sequence`, hubID)
 	if err != nil {
 		return nil, fmt.Errorf("list credential audit events: %w", err)

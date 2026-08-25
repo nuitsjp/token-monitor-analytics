@@ -109,6 +109,10 @@ var restoreEnumContracts = map[string]map[string][]string{
 }
 
 func (l *Lifecycle) ValidateRestoreDatabase(ctx context.Context, path string, manifest domain.BackupManifest) error {
+	return l.validateRestoreDatabase(ctx, path, manifest, true)
+}
+
+func (l *Lifecycle) validateRestoreDatabase(ctx context.Context, path string, manifest domain.BackupManifest, rejectOperational bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -122,8 +126,10 @@ func (l *Lifecycle) ValidateRestoreDatabase(ctx context.Context, path string, ma
 	if err != nil {
 		return restoreError(domain.RestoreValidationIntegrity, errors.New("resolve restore database path"))
 	}
-	if err := l.rejectOperationalDatabase(absolutePath); err != nil {
-		return restoreError(domain.RestoreValidationIntegrity, err)
+	if rejectOperational {
+		if err := l.rejectOperationalDatabase(absolutePath); err != nil {
+			return restoreError(domain.RestoreValidationIntegrity, err)
+		}
 	}
 	if err := validateRestoreDatabaseFile(ctx, absolutePath, manifest); err != nil {
 		return err
@@ -812,6 +818,10 @@ func logicalSnapshot(ctx context.Context, path string) (map[string]logicalTableS
 	}
 	database.SetMaxOpenConns(1)
 	defer database.Close()
+	return logicalSnapshotDatabase(ctx, database, "")
+}
+
+func logicalSnapshotDatabase(ctx context.Context, database *sql.DB, excludedAuditID string) (map[string]logicalTableSnapshot, error) {
 	tables, err := userTables(ctx, database)
 	if err != nil {
 		return nil, err
@@ -834,8 +844,14 @@ func logicalSnapshot(ctx context.Context, path string) (map[string]logicalTableS
 		for index, column := range order {
 			quotedOrder[index] = quoteIdentifier(column)
 		}
-		query := `SELECT ` + strings.Join(quotedColumns, `, `) + ` FROM ` + quoteIdentifier(table) + ` ORDER BY ` + strings.Join(quotedOrder, `, `)
-		rows, err := database.QueryContext(ctx, query)
+		query := `SELECT ` + strings.Join(quotedColumns, `, `) + ` FROM ` + quoteIdentifier(table)
+		var arguments []any
+		if table == "configuration_audits" && excludedAuditID != "" {
+			query += ` WHERE audit_id <> ?`
+			arguments = append(arguments, excludedAuditID)
+		}
+		query += ` ORDER BY ` + strings.Join(quotedOrder, `, `)
+		rows, err := database.QueryContext(ctx, query, arguments...)
 		if err != nil {
 			return nil, err
 		}

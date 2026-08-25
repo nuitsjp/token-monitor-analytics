@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"token-monitor-analytics/internal/adapter/hubapi"
 	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
+	"token-monitor-analytics/internal/usecase"
 )
 
 type memoryCredentials struct {
@@ -49,6 +50,8 @@ type randomIDs struct{}
 
 func (randomIDs) New() string { return uuid.NewString() }
 
+func newDesktopTestMaintenanceGate() *usecase.MaintenanceGate { return usecase.NewMaintenanceGate() }
+
 func newHubTestService(t *testing.T) (*HubService, *sqliteadapter.Lifecycle, *memoryCredentials) {
 	t.Helper()
 	lifecycle := &sqliteadapter.Lifecycle{}
@@ -62,6 +65,7 @@ func newHubTestService(t *testing.T) (*HubService, *sqliteadapter.Lifecycle, *me
 		credentials,
 		fixedClock{value: time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)},
 		randomIDs{},
+		newDesktopTestMaintenanceGate(),
 	)
 	return service, lifecycle, credentials
 }
@@ -98,6 +102,22 @@ func TestHubIdentityIsIndependentFromURLAndSurvivesEditAndDisable(t *testing.T) 
 	}
 	if hubs, err := service.GetHubs(ctx); err != nil || len(hubs) != 2 {
 		t.Fatalf("Hubs after disable = %d, err = %v", len(hubs), err)
+	}
+}
+
+func TestDesktopMutationUsesSharedMaintenanceGateButReadsRemainAvailable(t *testing.T) {
+	service, _, _ := newHubTestService(t)
+	lease, err := service.gate.Acquire(context.Background(), usecase.MaintenanceRestore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	if _, err := service.GetHubs(context.Background()); err != nil {
+		t.Fatalf("read-only API was blocked: %v", err)
+	}
+	_, err = service.CreateHub(context.Background(), CreateHubInput{DisplayName: "blocked", URL: "http://localhost:17321", CollectionIntervalSeconds: 300})
+	if !errors.Is(err, usecase.ErrMaintenanceBusy) {
+		t.Fatalf("mutation error = %v, want maintenance busy", err)
 	}
 }
 
@@ -188,7 +208,13 @@ func TestRestorePendingNeedsNewCredentialAndSuccessfulConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lifecycle.AppendCredentialAudit(ctx, sqliteadapter.CredentialAudit{AuditID: uuid.NewString(), OccurredAt: time.Now().UTC(), Action: "restore_succeeded", HubID: hub.ID}); err != nil {
+	database, err := lifecycle.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO configuration_audits
+		(audit_id, occurred_at, actor, action, entity_type, entity_id)
+		VALUES (?, ?, 'system', 'restore_succeeded', 'restore', 'operation-test')`, uuid.NewString(), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.CheckHubConnection(ctx, hub.ID); err == nil {

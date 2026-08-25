@@ -60,7 +60,7 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 	allowlist := hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "scheduler-test", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true})
 	collector, err := usecase.NewCollectionUsecase(database, schedulerCredentials{}, func(rawURL string, allow hubapi.Allowlist) (usecase.CollectionClient, error) {
 		return hubapi.NewClient(rawURL, allow)
-	}, schedulerClock{}, schedulerIDs{}, allowlist)
+	}, schedulerClock{}, schedulerIDs{}, allowlist, usecase.NewMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,5 +106,52 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 	}
 	if statsCalls.Load() <= stoppedCalls {
 		t.Fatal("scheduler did not restore after restart")
+	}
+}
+
+func TestSchedulerDoesNotRestoreTimerAcrossGlobalRestoreCredentialBoundary(t *testing.T) {
+	ctx := context.Background()
+	database := &sqliteadapter.Lifecycle{}
+	if err := database.Open(ctx, filepath.Join(t.TempDir(), "analytics.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Now().UTC()
+	hubID := uuid.NewString()
+	if err := database.CreateHub(ctx, sqliteadapter.Hub{ID: hubID, DisplayName: "Hub", URL: "http://localhost:17321", CollectionEnabled: true, CollectionIntervalSeconds: 60, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AppendCredentialAudit(ctx, sqliteadapter.CredentialAudit{AuditID: uuid.NewString(), OccurredAt: now, Action: "credential_saved", HubID: hubID}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, `INSERT INTO configuration_audits
+		(audit_id, occurred_at, actor, action, entity_type, entity_id)
+		VALUES (?, ?, 'system', 'restore_succeeded', 'restore', 'operation-one')`, uuid.NewString(), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	gate := usecase.NewMaintenanceGate()
+	collector, err := usecase.NewCollectionUsecase(database, schedulerCredentials{}, func(rawURL string, allow hubapi.Allowlist) (usecase.CollectionClient, error) {
+		return hubapi.NewClient(rawURL, allow)
+	}, schedulerClock{}, schedulerIDs{}, hubapi.DefaultAllowlist, gate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler, err := New(collector, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer scheduler.Close()
+	scheduler.mu.Lock()
+	jobs := len(scheduler.jobs)
+	scheduler.mu.Unlock()
+	if jobs != 0 {
+		t.Fatalf("post-restore scheduler jobs = %d, want 0", jobs)
 	}
 }

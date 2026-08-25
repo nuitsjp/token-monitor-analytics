@@ -95,7 +95,7 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 	ids := &collectionTestIDs{}
 	uc, err := NewCollectionUsecase(database, collectionTestCredentials{}, func(rawURL string, allow hubapi.Allowlist) (CollectionClient, error) {
 		return hubapi.NewClient(rawURL, allow)
-	}, collectionTestClock{value: now}, ids, allowlist)
+	}, collectionTestClock{value: now}, ids, allowlist, NewMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,8 +264,8 @@ func TestConcurrentCollectionSkipsSecondRequest(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("first collection did not enter client")
 	}
-	if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); err != nil {
-		t.Fatal(err)
+	if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); !errors.Is(err, ErrMaintenanceBusy) {
+		t.Fatalf("second collection error = %v, want maintenance busy", err)
 	}
 	close(client.release)
 	if err := <-firstDone; err != nil {
@@ -278,8 +278,8 @@ func TestConcurrentCollectionSkipsSecondRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(attempts) != 2 {
-		t.Fatalf("attempts = %d, want 2", len(attempts))
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
 	}
 }
 
@@ -351,7 +351,7 @@ func newCollectionFixture(t *testing.T, enabled bool, statsBody string, actions 
 		}
 	}
 	allowlist := hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "test-hub", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true})
-	uc, err := NewCollectionUsecase(database, credentials, factory, collectionTestClock{value: now}, &collectionTestIDs{}, allowlist)
+	uc, err := NewCollectionUsecase(database, credentials, factory, collectionTestClock{value: now}, &collectionTestIDs{}, allowlist, NewMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}

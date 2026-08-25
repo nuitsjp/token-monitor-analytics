@@ -7,12 +7,14 @@ import (
 	"time"
 
 	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
+	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
 
 type HubSource interface {
 	ListHubRows(context.Context) ([]sqliteadapter.HubRow, error)
 	GetHubRow(context.Context, string) (sqliteadapter.HubRow, error)
+	ListCredentialAuditEvents(context.Context, string) ([]sqliteadapter.CredentialAuditEvent, error)
 }
 
 // Scheduler owns only timers and lifecycle. Persistence and HTTP collection
@@ -50,7 +52,16 @@ func (s *Scheduler) Restore(ctx context.Context) error {
 		return err
 	}
 	for _, row := range rows {
-		if row.Hub.Enabled && row.Hub.CollectionEnabled {
+		events, err := s.source.ListCredentialAuditEvents(ctx, row.Hub.ID)
+		if err != nil {
+			_ = s.Close()
+			return err
+		}
+		credentialEvents := make([]domain.CredentialEvent, 0, len(events))
+		for _, event := range events {
+			credentialEvents = append(credentialEvents, domain.CredentialEvent{Sequence: event.Sequence, Action: event.Action})
+		}
+		if row.Hub.Enabled && row.Hub.CollectionEnabled && domain.DeriveCredentialState(credentialEvents) == domain.CredentialRegistered {
 			if err := s.startJob(row.Hub.ID, row.Hub.CollectionIntervalSeconds); err != nil {
 				_ = s.Close()
 				return err
@@ -58,6 +69,20 @@ func (s *Scheduler) Restore(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Scheduler) Suspend(context.Context) (bool, error) {
+	s.mu.Lock()
+	wasRunning := s.cancel != nil
+	s.mu.Unlock()
+	if !wasRunning {
+		return false, nil
+	}
+	return true, s.Close()
+}
+
+func (s *Scheduler) Resume(ctx context.Context) error {
+	return s.Restore(ctx)
 }
 
 func (s *Scheduler) Start(ctx context.Context, hubID string) error {

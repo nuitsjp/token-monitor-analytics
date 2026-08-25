@@ -106,7 +106,7 @@ func TestRestoreValidationUsecaseBindsOperationAndRecordsTrial(t *testing.T) {
 	archive := &restoreValidationTestArchive{}
 	recorder := &restoreValidationTestRecorder{}
 	testedAt := time.Date(2026, time.August, 26, 1, 2, 3, 0, time.UTC)
-	usecase, err := NewRestoreValidationUsecase(database, archive, recorder, restoreValidationTestClock{now: testedAt}, &restoreValidationTestIDs{values: []string{"operation-one"}})
+	usecase, err := NewRestoreValidationUsecase(database, archive, recorder, restoreValidationTestClock{now: testedAt}, &restoreValidationTestIDs{values: []string{"operation-one"}}, NewMaintenanceGate())
 	if err != nil {
 		t.Fatalf("new restore validation usecase: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestRestoreValidationUsecaseInvalidatesPreviousOperation(t *testing.T) {
 	root := t.TempDir()
 	database := &restoreValidationTestDatabase{root: root}
 	archive := &restoreValidationTestArchive{}
-	usecase, err := NewRestoreValidationUsecase(database, archive, nil, restoreValidationTestClock{}, &restoreValidationTestIDs{values: []string{"operation-one", "operation-two"}})
+	usecase, err := NewRestoreValidationUsecase(database, archive, nil, restoreValidationTestClock{}, &restoreValidationTestIDs{values: []string{"operation-one", "operation-two"}}, NewMaintenanceGate())
 	if err != nil {
 		t.Fatalf("new restore validation usecase: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestRestoreValidationUsecaseFailsWhenTrialCleanupFails(t *testing.T) {
 	}
 	archive := &restoreValidationTestArchive{}
 	testedAt := time.Date(2026, time.August, 26, 4, 5, 6, 0, time.UTC)
-	usecase, err := NewRestoreValidationUsecase(database, archive, nil, restoreValidationTestClock{now: testedAt}, &restoreValidationTestIDs{values: []string{"operation"}})
+	usecase, err := NewRestoreValidationUsecase(database, archive, nil, restoreValidationTestClock{now: testedAt}, &restoreValidationTestIDs{values: []string{"operation"}}, NewMaintenanceGate())
 	if err != nil {
 		t.Fatalf("new restore validation usecase: %v", err)
 	}

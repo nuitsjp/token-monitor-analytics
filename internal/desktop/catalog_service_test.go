@@ -16,7 +16,7 @@ func TestCatalogServiceUpdatesPreserveImmutableFieldsAndUseInjectedClock(t *test
 	}
 	t.Cleanup(func() { _ = lifecycle.Close() })
 	clock := fixedClock{value: time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)}
-	service, err := NewCatalogServiceWithDependencies(lifecycle, clock, randomIDs{})
+	service, err := NewCatalogServiceWithDependencies(lifecycle, clock, randomIDs{}, newDesktopTestMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}

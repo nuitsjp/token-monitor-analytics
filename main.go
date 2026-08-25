@@ -30,15 +30,16 @@ func run() (runErr error) {
 	}()
 
 	windowService, windowController := desktop.NewWindowService(storage.lifecycle)
-	settingsService := desktop.NewSettingsService(storage.lifecycle)
+	maintenanceGate := usecase.NewMaintenanceGate()
+	settingsService := desktop.NewSettingsService(storage.lifecycle, maintenanceGate)
 	credentials := credentialadapter.Manager{}
-	hubService := desktop.NewHubService(storage.lifecycle, credentials)
+	hubService := desktop.NewHubService(storage.lifecycle, credentials, maintenanceGate)
 	auditService := desktop.NewAuditService(storage.lifecycle)
-	catalogService, err := desktop.NewCatalogService(storage.lifecycle)
+	catalogService, err := desktop.NewCatalogService(storage.lifecycle, maintenanceGate)
 	if err != nil {
 		return fmt.Errorf("start catalog service: %w", err)
 	}
-	accountService, err := desktop.NewAccountService(storage.lifecycle)
+	accountService, err := desktop.NewAccountService(storage.lifecycle, maintenanceGate)
 	if err != nil {
 		return fmt.Errorf("start account service: %w", err)
 	}
@@ -55,6 +56,7 @@ func run() (runErr error) {
 		usecase.SystemClock{},
 		desktop.UUIDGenerator{},
 		hubapi.DefaultAllowlist,
+		maintenanceGate,
 	)
 	if err != nil {
 		return fmt.Errorf("start collection usecase: %w", err)

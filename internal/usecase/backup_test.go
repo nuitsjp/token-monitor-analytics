@@ -56,7 +56,7 @@ func TestBackupUsecaseCreatesOnlineBackupAndRecordsArtifact(t *testing.T) {
 		t.Fatalf("create backup writer: %v", err)
 	}
 	recorder := &backupTestRecorder{}
-	usecase, err := NewBackupUsecase(lifecycle, writer, recorder, backupTestClock{}, "0.1.0")
+	usecase, err := NewBackupUsecase(lifecycle, writer, recorder, backupTestClock{}, "0.1.0", NewMaintenanceGate())
 	if err != nil {
 		t.Fatalf("create backup usecase: %v", err)
 	}
@@ -124,7 +124,7 @@ func assertBackupRejectsRawSnapshot(t *testing.T, raw []byte) {
 	if err != nil {
 		t.Fatalf("create backup writer: %v", err)
 	}
-	usecase, err := NewBackupUsecase(lifecycle, writer, nil, backupTestClock{}, "0.1.0")
+	usecase, err := NewBackupUsecase(lifecycle, writer, nil, backupTestClock{}, "0.1.0", NewMaintenanceGate())
 	if err != nil {
 		t.Fatalf("create backup usecase: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestBackupUsecaseReturnsSuccessWarningWhenRecorderFails(t *testing.T) {
 		t.Fatalf("create backup writer: %v", err)
 	}
 	recorder := &backupTestRecorder{err: errors.New("database record failed")}
-	usecase, err := NewBackupUsecase(lifecycle, writer, recorder, backupTestClock{}, "0.1.0")
+	usecase, err := NewBackupUsecase(lifecycle, writer, recorder, backupTestClock{}, "0.1.0", NewMaintenanceGate())
 	if err != nil {
 		t.Fatalf("create backup usecase: %v", err)
 	}

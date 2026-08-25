@@ -39,18 +39,24 @@ type CollectionUsecase struct {
 	clock       Clock
 	ids         IDGenerator
 	allowlist   hubapi.Allowlist
+	gate        *MaintenanceGate
 	mu          sync.Mutex
 	active      map[string]struct{}
 }
 
-func NewCollectionUsecase(store CollectionStore, credentials CredentialReader, factory CollectionClientFactory, clock Clock, ids IDGenerator, allowlist hubapi.Allowlist) (*CollectionUsecase, error) {
-	if store == nil || credentials == nil || factory == nil || clock == nil || ids == nil {
+func NewCollectionUsecase(store CollectionStore, credentials CredentialReader, factory CollectionClientFactory, clock Clock, ids IDGenerator, allowlist hubapi.Allowlist, gate *MaintenanceGate) (*CollectionUsecase, error) {
+	if store == nil || credentials == nil || factory == nil || clock == nil || ids == nil || gate == nil {
 		return nil, errors.New("collection usecase dependencies are required")
 	}
-	return &CollectionUsecase{store: store, credentials: credentials, factory: factory, clock: clock, ids: ids, allowlist: allowlist, active: make(map[string]struct{})}, nil
+	return &CollectionUsecase{store: store, credentials: credentials, factory: factory, clock: clock, ids: ids, allowlist: allowlist, gate: gate, active: make(map[string]struct{})}, nil
 }
 
 func (u *CollectionUsecase) StartCollection(ctx context.Context, hubID string) error {
+	lease, err := u.gate.Acquire(ctx, MaintenanceCollection)
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
 	row, err := u.store.GetHubRow(ctx, hubID)
 	if err != nil {
 		return err
@@ -58,18 +64,40 @@ func (u *CollectionUsecase) StartCollection(ctx context.Context, hubID string) e
 	if !row.Hub.Enabled {
 		return errors.New("disabled Hub cannot start collection")
 	}
+	events, err := u.store.ListCredentialAuditEvents(ctx, hubID)
+	if err != nil {
+		return errors.New("credential state could not be read")
+	}
+	if domain.DeriveCredentialState(toCredentialEvents(events)) != domain.CredentialRegistered {
+		return errors.New("hub credential must be registered before collection starts")
+	}
 	return u.store.SetHubCollectionEnabled(ctx, hubID, true, u.clock.Now().UTC())
 }
 
 func (u *CollectionUsecase) StopCollection(ctx context.Context, hubID string) error {
+	lease, err := u.gate.Acquire(ctx, MaintenanceCollection)
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
 	return u.store.SetHubCollectionEnabled(ctx, hubID, false, u.clock.Now().UTC())
 }
 
 func (u *CollectionUsecase) CollectNow(ctx context.Context, hubID string) error {
+	lease, err := u.gate.Acquire(ctx, MaintenanceCollection)
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
 	return u.collect(ctx, hubID, "manual")
 }
 
 func (u *CollectionUsecase) CollectScheduled(ctx context.Context, hubID string) error {
+	lease, err := u.gate.Acquire(ctx, MaintenanceCollection)
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
 	return u.collect(ctx, hubID, "scheduled")
 }
 
@@ -171,7 +199,7 @@ func (u *CollectionUsecase) fetch(ctx context.Context, row sqliteadapter.HubRow)
 	if err != nil {
 		return hubapi.Result{}, errors.New("credential state could not be read")
 	}
-	if !domain.CredentialReadyForConnection(toCredentialEvents(events)) {
+	if domain.DeriveCredentialState(toCredentialEvents(events)) != domain.CredentialRegistered {
 		return hubapi.Result{}, &hubapi.Error{Classification: hubapi.ClassificationAuth, Operation: "stats", Reason: "credential is not ready"}
 	}
 	client, err := u.factory(row.Hub.URL, u.allowlist)

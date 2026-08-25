@@ -27,6 +27,7 @@ type HubService struct {
 	clock       usecase.Clock
 	ids         usecase.IDGenerator
 	allowlist   hubapi.Allowlist
+	gate        *usecase.MaintenanceGate
 }
 
 type UUIDGenerator struct{}
@@ -63,18 +64,18 @@ type UpdateHubInput struct {
 	CollectionIntervalSeconds int64  `json:"collectionIntervalSeconds"`
 }
 
-func NewHubService(lifecycle *sqliteadapter.Lifecycle, credentials credentialadapter.Manager) *HubService {
-	return NewHubServiceWithDependencies(lifecycle, credentials, usecase.SystemClock{}, UUIDGenerator{})
+func NewHubService(lifecycle *sqliteadapter.Lifecycle, credentials credentialadapter.Manager, gate *usecase.MaintenanceGate) *HubService {
+	return NewHubServiceWithDependencies(lifecycle, credentials, usecase.SystemClock{}, UUIDGenerator{}, gate)
 }
 
-func NewHubServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, credentials CredentialStore, clock usecase.Clock, ids usecase.IDGenerator) *HubService {
+func NewHubServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, credentials CredentialStore, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) *HubService {
 	if clock == nil {
 		clock = usecase.SystemClock{}
 	}
 	if ids == nil {
 		ids = UUIDGenerator{}
 	}
-	return &HubService{lifecycle: lifecycle, credentials: credentials, clock: clock, ids: ids, allowlist: hubapi.DefaultAllowlist}
+	return &HubService{lifecycle: lifecycle, credentials: credentials, clock: clock, ids: ids, allowlist: hubapi.DefaultAllowlist, gate: gate}
 }
 
 func (s *HubService) GetHubs(ctx context.Context) ([]HubSnapshot, error) {
@@ -94,6 +95,11 @@ func (s *HubService) GetHubs(ctx context.Context) ([]HubSnapshot, error) {
 }
 
 func (s *HubService) CreateHub(ctx context.Context, input CreateHubInput) (HubSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return HubSnapshot{}, err
+	}
+	defer release()
 	id, err := s.newUUID()
 	if err != nil {
 		return HubSnapshot{}, err
@@ -116,6 +122,11 @@ func (s *HubService) CreateHub(ctx context.Context, input CreateHubInput) (HubSn
 }
 
 func (s *HubService) UpdateHub(ctx context.Context, input UpdateHubInput) (HubSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return HubSnapshot{}, err
+	}
+	defer release()
 	if err := s.lifecycle.UpdateHub(ctx, input.ID, input.DisplayName, input.URL, input.CollectionIntervalSeconds, s.now()); err != nil {
 		return HubSnapshot{}, err
 	}
@@ -123,6 +134,11 @@ func (s *HubService) UpdateHub(ctx context.Context, input UpdateHubInput) (HubSn
 }
 
 func (s *HubService) SetHubCollectionEnabled(ctx context.Context, hubID string, enabled bool) (HubSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return HubSnapshot{}, err
+	}
+	defer release()
 	if err := s.lifecycle.SetHubCollectionEnabled(ctx, hubID, enabled, s.now()); err != nil {
 		return HubSnapshot{}, err
 	}
@@ -130,6 +146,11 @@ func (s *HubService) SetHubCollectionEnabled(ctx context.Context, hubID string, 
 }
 
 func (s *HubService) SetHubEnabled(ctx context.Context, hubID string, enabled bool) (HubSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return HubSnapshot{}, err
+	}
+	defer release()
 	if err := s.lifecycle.SetHubEnabled(ctx, hubID, enabled, s.now()); err != nil {
 		return HubSnapshot{}, err
 	}
@@ -137,6 +158,11 @@ func (s *HubService) SetHubEnabled(ctx context.Context, hubID string, enabled bo
 }
 
 func (s *HubService) SaveCredential(ctx context.Context, hubID, secret string) (HubSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return HubSnapshot{}, err
+	}
+	defer release()
 	if secret == "" {
 		return HubSnapshot{}, errors.New("credential secret is empty")
 	}
@@ -150,6 +176,11 @@ func (s *HubService) SaveCredential(ctx context.Context, hubID, secret string) (
 }
 
 func (s *HubService) DeleteCredential(ctx context.Context, hubID string) (HubSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return HubSnapshot{}, err
+	}
+	defer release()
 	if _, err := s.lifecycle.GetHubRow(ctx, hubID); err != nil {
 		return HubSnapshot{}, err
 	}
@@ -166,6 +197,11 @@ func (s *HubService) DeleteCredential(ctx context.Context, hubID string) (HubSna
 }
 
 func (s *HubService) CheckHubConnection(ctx context.Context, hubID string) (HubSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return HubSnapshot{}, err
+	}
+	defer release()
 	row, err := s.lifecycle.GetHubRow(ctx, hubID)
 	if err != nil {
 		return HubSnapshot{}, err

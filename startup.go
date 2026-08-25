@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 
 	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
+	"token-monitor-analytics/internal/domain"
 )
 
 type applicationStorage struct {
 	dataDirectory string
 	lifecycle     *sqliteadapter.Lifecycle
+	recovery      domain.RestoreRecoveryResult
 }
 
 func openApplicationStorage(ctx context.Context) (*applicationStorage, error) {
@@ -23,14 +25,15 @@ func openApplicationStorage(ctx context.Context) (*applicationStorage, error) {
 	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
 		return nil, fmt.Errorf("create application data directory: %w", err)
 	}
-	if err := sqliteadapter.RecoverPendingRestore(dataDirectory); err != nil {
+	recovery, err := sqliteadapter.RecoverPendingRestore(dataDirectory)
+	if err != nil {
 		return nil, err
 	}
 	lifecycle := &sqliteadapter.Lifecycle{}
-	if err := lifecycle.Open(ctx, filepath.Join(dataDirectory, "analytics.sqlite3")); err != nil {
+	if err := lifecycle.Open(ctx, filepath.Join(dataDirectory, sqliteadapter.RestoreDatabaseName)); err != nil {
 		return nil, err
 	}
-	return &applicationStorage{dataDirectory: dataDirectory, lifecycle: lifecycle}, nil
+	return &applicationStorage{dataDirectory: dataDirectory, lifecycle: lifecycle, recovery: recovery}, nil
 }
 
 func (s *applicationStorage) Close() error {

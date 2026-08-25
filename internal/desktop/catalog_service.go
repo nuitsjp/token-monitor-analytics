@@ -19,6 +19,7 @@ type CatalogService struct {
 	lifecycle *sqliteadapter.Lifecycle
 	usecase   *usecase.CatalogUsecase
 	clock     usecase.Clock
+	gate      *usecase.MaintenanceGate
 }
 
 type CatalogSnapshot struct {
@@ -245,26 +246,26 @@ type LabelChangeDecisionInput struct {
 	LimitDefinitionID string `json:"limitDefinitionId"`
 }
 
-func NewCatalogService(lifecycle *sqliteadapter.Lifecycle) (*CatalogService, error) {
-	if lifecycle == nil {
-		return nil, errors.New("catalog lifecycle is required")
+func NewCatalogService(lifecycle *sqliteadapter.Lifecycle, gate *usecase.MaintenanceGate) (*CatalogService, error) {
+	if lifecycle == nil || gate == nil {
+		return nil, errors.New("catalog lifecycle and maintenance gate are required")
 	}
 	uc, err := usecase.NewCatalogUsecase(lifecycle, usecase.SystemClock{}, UUIDGenerator{})
 	if err != nil {
 		return nil, err
 	}
-	return &CatalogService{lifecycle: lifecycle, usecase: uc, clock: usecase.SystemClock{}}, nil
+	return &CatalogService{lifecycle: lifecycle, usecase: uc, clock: usecase.SystemClock{}, gate: gate}, nil
 }
 
-func NewCatalogServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, clock usecase.Clock, ids usecase.IDGenerator) (*CatalogService, error) {
-	if lifecycle == nil {
-		return nil, errors.New("catalog lifecycle is required")
+func NewCatalogServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) (*CatalogService, error) {
+	if lifecycle == nil || gate == nil {
+		return nil, errors.New("catalog lifecycle and maintenance gate are required")
 	}
 	uc, err := usecase.NewCatalogUsecase(lifecycle, clock, ids)
 	if err != nil {
 		return nil, err
 	}
-	return &CatalogService{lifecycle: lifecycle, usecase: uc, clock: clock}, nil
+	return &CatalogService{lifecycle: lifecycle, usecase: uc, clock: clock, gate: gate}, nil
 }
 
 func (s *CatalogService) GetCatalog(ctx context.Context) (CatalogSnapshot, error) {
@@ -434,6 +435,11 @@ func (s *CatalogService) GetLabelChangeCandidates(ctx context.Context, state str
 }
 
 func (s *CatalogService) CreateService(ctx context.Context, input CreateServiceInput) (ServiceSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return ServiceSnapshot{}, err
+	}
+	defer release()
 	row, err := s.usecase.RegisterService(ctx, input.Provider, input.Name, input.OfficialKey)
 	if err != nil {
 		return ServiceSnapshot{}, err
@@ -442,6 +448,11 @@ func (s *CatalogService) CreateService(ctx context.Context, input CreateServiceI
 }
 
 func (s *CatalogService) UpdateService(ctx context.Context, input UpdateServiceInput) (ServiceSnapshot, error) {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return ServiceSnapshot{}, err
+	}
+	defer release()
 	row, err := s.serviceByID(ctx, input.ID)
 	if err != nil {
 		return ServiceSnapshot{}, err
@@ -455,10 +466,20 @@ func (s *CatalogService) UpdateService(ctx context.Context, input UpdateServiceI
 }
 
 func (s *CatalogService) ArchiveService(ctx context.Context, serviceID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.lifecycle.ArchiveService(ctx, serviceID, s.now())
 }
 
 func (s *CatalogService) RestoreService(ctx context.Context, serviceID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	row, err := s.serviceByID(ctx, serviceID)
 	if err != nil {
 		return err
@@ -469,6 +490,11 @@ func (s *CatalogService) RestoreService(ctx context.Context, serviceID string) e
 }
 
 func (s *CatalogService) CreateServiceIdentifierMapping(ctx context.Context, input ServiceIdentifierMappingInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	mapping, err := parseMappingInput(input)
 	if err != nil {
 		return err
@@ -477,6 +503,11 @@ func (s *CatalogService) CreateServiceIdentifierMapping(ctx context.Context, inp
 }
 
 func (s *CatalogService) UpdateServiceIdentifierMapping(ctx context.Context, input ServiceIdentifierMappingInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	mapping, err := parseMappingInput(input)
 	if err != nil {
 		return err
@@ -495,6 +526,11 @@ func (s *CatalogService) UpdateServiceIdentifierMapping(ctx context.Context, inp
 }
 
 func (s *CatalogService) CreateLimitDefinition(ctx context.Context, input LimitDefinitionInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	definition, err := parseLimitDefinitionInput(input)
 	if err != nil {
 		return err
@@ -502,6 +538,11 @@ func (s *CatalogService) CreateLimitDefinition(ctx context.Context, input LimitD
 	return s.usecase.RegisterLimitDefinition(ctx, definition)
 }
 func (s *CatalogService) UpdateLimitDefinition(ctx context.Context, input LimitDefinitionInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	definition, err := parseLimitDefinitionInput(input)
 	if err != nil {
 		return err
@@ -523,9 +564,19 @@ func (s *CatalogService) UpdateLimitDefinition(ctx context.Context, input LimitD
 	return errors.New("limit definition was not found")
 }
 func (s *CatalogService) SetBillingConfirmation(ctx context.Context, definitionID, confirmation string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.lifecycle.SetBillingConfirmation(ctx, definitionID, domain.BillingConfirmation(confirmation), s.now())
 }
 func (s *CatalogService) CreatePlan(ctx context.Context, input PlanInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	plan, err := parsePlanInput(input)
 	if err != nil {
 		return err
@@ -533,6 +584,11 @@ func (s *CatalogService) CreatePlan(ctx context.Context, input PlanInput) error 
 	return s.usecase.RegisterPlan(ctx, plan)
 }
 func (s *CatalogService) UpdatePlan(ctx context.Context, input PlanInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	plan, err := parsePlanInput(input)
 	if err != nil {
 		return err
@@ -552,9 +608,19 @@ func (s *CatalogService) UpdatePlan(ctx context.Context, input PlanInput) error 
 	return errors.New("plan was not found")
 }
 func (s *CatalogService) SetBaselinePlan(ctx context.Context, serviceID, planID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.lifecycle.SetBaselinePlan(ctx, serviceID, planID, s.now())
 }
 func (s *CatalogService) CreatePlanVersion(ctx context.Context, input PlanVersionInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	version, err := parsePlanVersionInput(input)
 	if err != nil {
 		return err
@@ -562,6 +628,11 @@ func (s *CatalogService) CreatePlanVersion(ctx context.Context, input PlanVersio
 	return s.usecase.RegisterPlanVersion(ctx, version)
 }
 func (s *CatalogService) CreatePlanLimitRule(ctx context.Context, input PlanLimitRuleInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	rule, err := parsePlanLimitRuleInput(input)
 	if err != nil {
 		return err
@@ -569,6 +640,11 @@ func (s *CatalogService) CreatePlanLimitRule(ctx context.Context, input PlanLimi
 	return s.usecase.RegisterPlanLimitRule(ctx, rule)
 }
 func (s *CatalogService) CreateStandardPrice(ctx context.Context, input StandardPriceInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	price, err := parseStandardPriceInput(input)
 	if err != nil {
 		return err
@@ -577,22 +653,52 @@ func (s *CatalogService) CreateStandardPrice(ctx context.Context, input Standard
 }
 
 func (s *CatalogService) ConfirmIdentificationCandidate(ctx context.Context, input CandidateDecisionInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.ConfirmCandidate(ctx, input.CandidateID, input.ServiceID, input.PlanID)
 }
 func (s *CatalogService) RejectIdentificationCandidate(ctx context.Context, candidateID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.RejectCandidate(ctx, candidateID)
 }
 func (s *CatalogService) ReleaseIdentificationCandidate(ctx context.Context, candidateID string) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.ReleaseCandidate(ctx, candidateID)
 }
 func (s *CatalogService) CorrectIdentificationCandidate(ctx context.Context, input CandidateCorrectionInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.CorrectCandidate(ctx, input.CandidateID, input.RawLimitServiceIdentifier, input.RawReportedPlanName)
 }
 func (s *CatalogService) SplitIdentificationCandidate(ctx context.Context, input CandidateSplitInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	candidate := domain.IdentificationCandidate{RawLimitServiceIdentifier: input.RawLimitServiceIdentifier, RawReportedPlanName: input.RawReportedPlanName}
 	return s.usecase.SplitCandidate(ctx, input.SourceCandidateID, candidate, input.ObservationIDs...)
 }
 func (s *CatalogService) DecideLabelChangeCandidate(ctx context.Context, input LabelChangeDecisionInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.usecase.DecideLimitLabelChangeCandidate(ctx, input.CandidateID, domain.LabelChangeState(input.State), input.LimitDefinitionID)
 }
 
