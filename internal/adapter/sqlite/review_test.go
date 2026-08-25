@@ -1,0 +1,151 @@
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	"token-monitor-analytics/internal/domain"
+)
+
+func TestListReviewItemsAggregatesWarningsAndKeepsFilteredCursorStable(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	database, err := lifecycle.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	insertReviewHub(t, database, "hub-1", now)
+	if _, err := database.Exec(`INSERT INTO usage_cost_sources (usage_cost_source_id, hub_id, device_id, raw_service_identifier, created_at) VALUES ('cost-1', 'hub-1', 'device-1', 'cost.raw', ?), ('cost-2', 'hub-1', 'device-2', 'cost.other', ?)`, utcText(now), utcText(now.Add(time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO usage_limit_sources (usage_limit_source_id, hub_id, device_id, account_key, raw_service_identifier, window_key, normalized_kind, normalized_metric, normalized_label, created_at) VALUES ('limit-1', 'hub-1', 'device-1', '', 'limit.raw', 'window-1', 'window', 'percent', 'label', ?), ('limit-2', 'hub-1', 'device-2', '', 'limit.other', 'window-1', 'window', 'percent', 'label', ?)`, utcText(now), utcText(now.Add(time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	insertReviewObservationParents(t, database, now)
+	insertReviewLimitObservation(t, database, "limit-observation-1", "hub-1", "device-1", "limit.raw", now.Add(10*time.Minute), "conflict")
+	insertReviewLimitObservation(t, database, "limit-observation-2", "hub-1", "device-1", "limit.raw", now.Add(20*time.Minute), "conflict")
+	insertReviewLimitObservation(t, database, "limit-observation-3", "hub-1", "device-2", "limit.other", now.Add(30*time.Minute), "canonical")
+	insertReviewCostObservation(t, database, "cost-observation-1", "hub-1", "device-1", "cost.raw", now.Add(15*time.Minute), "conflict")
+	insertReviewCostObservation(t, database, "cost-observation-2", "hub-1", "device-1", "cost.raw", now.Add(25*time.Minute), "conflict")
+
+	page, err := lifecycle.ListReviewItems(ctx, domain.ReviewFilter{Kind: domain.ReviewKindMissingAccountKey, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || !page.HasMore || page.Items[0].Count != 1 {
+		t.Fatalf("missing account-key page = %#v", page)
+	}
+	if page.Items[0].Impact != domain.ReviewImpactCalculationIntervalImpossible {
+		t.Fatalf("missing account-key impact = %q", page.Items[0].Impact)
+	}
+	second, err := lifecycle.ListReviewItems(ctx, domain.ReviewFilter{Kind: domain.ReviewKindMissingAccountKey, Limit: 1, Cursor: page.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 1 || second.Items[0].Count != 2 || second.HasMore {
+		t.Fatalf("cursor crossed filtered boundary: %#v", second)
+	}
+
+	from, to := now.Add(5*time.Minute), now.Add(31*time.Minute)
+	filtered, err := lifecycle.ListReviewItems(ctx, domain.ReviewFilter{Kind: domain.ReviewKindMissingAccountKey, From: &from, To: &to, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Items) != 1 || !filtered.HasMore || filtered.Items[0].Count != 1 || !filtered.Items[0].LastObservedAt.Equal(now.Add(30*time.Minute)) {
+		t.Fatalf("date-filtered first page = %#v", filtered)
+	}
+	filteredNext, err := lifecycle.ListReviewItems(ctx, domain.ReviewFilter{Kind: domain.ReviewKindMissingAccountKey, From: &from, To: &to, Limit: 1, Cursor: filtered.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filteredNext.Items) != 1 || filteredNext.HasMore || filteredNext.Items[0].Count != 2 || !filteredNext.Items[0].LastObservedAt.Equal(now.Add(20*time.Minute)) {
+		t.Fatalf("date-filtered cursor page = %#v", filteredNext)
+	}
+
+	from, to = now.Add(15*time.Minute), now.Add(26*time.Minute)
+	conflict, err := lifecycle.ListReviewItems(ctx, domain.ReviewFilter{Kind: domain.ReviewKindCostDedupeConflict, From: &from, To: &to, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflict.Items) != 1 || conflict.Items[0].Count != 2 || !conflict.Items[0].LastObservedAt.Equal(now.Add(25*time.Minute)) {
+		t.Fatalf("date-filtered conflict = %#v", conflict)
+	}
+}
+
+func TestListReviewItemsClassifiesCanonicalReviewRowsWithoutHubSwitchCandidates(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	database, err := lifecycle.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+	insertReviewHub(t, database, "hub-2", now)
+	if _, err := database.Exec(`INSERT INTO identification_candidates (candidate_id, raw_limit_service_identifier, raw_reported_plan_name, state, first_observed_at, last_observed_at, created_at, updated_at) VALUES ('candidate-1', 'provider.raw', 'Plan A', 'unconfirmed', ?, ?, ?, ?)`, utcText(now), utcText(now.Add(time.Hour)), utcText(now), utcText(now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO services (service_id, provider, name, official_key, created_at, updated_at) VALUES ('service-review', 'Provider', 'Service', 'official.review', ?, ?)`, utcText(now), utcText(now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO limit_definitions (limit_definition_id, service_id, cycle_type, meaning, unit, billing_confirmation, created_at, updated_at) VALUES ('billing-review', 'service-review', 'billing', 'Monthly', 'percent', 'unconfirmed', ?, ?)`, utcText(now), utcText(now)); err != nil {
+		t.Fatal(err)
+	}
+	page, err := lifecycle.ListReviewItems(context.Background(), domain.ReviewFilter{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasCandidate, hasBilling, hasHubSwitch := false, false, false
+	for _, item := range page.Items {
+		switch item.Kind {
+		case domain.ReviewKindIdentificationCandidate:
+			hasCandidate = item.RawLimitServiceIdentifier == "provider.raw" && item.RawReportedPlanName == "Plan A"
+		case domain.ReviewKindBillingMonthly:
+			hasBilling = true
+		case domain.ReviewKind("hub_switch"):
+			hasHubSwitch = true
+		}
+	}
+	if !hasCandidate || !hasBilling || hasHubSwitch {
+		t.Fatalf("review classifications candidate=%v billing=%v hubSwitch=%v items=%#v", hasCandidate, hasBilling, hasHubSwitch, page.Items)
+	}
+}
+
+func insertReviewHub(t *testing.T, database *sql.DB, hubID string, now time.Time) {
+	t.Helper()
+	// This helper is kept local to the adapter package so review tests do not
+	// need a production write path or any additional test-only API.
+	_, err := database.Exec(`INSERT INTO hubs (hub_id, display_name, url, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES (?, 'Review Hub', 'https://hub.example', 1, 300, ?, ?)`, hubID, utcText(now), utcText(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertReviewObservationParents(t *testing.T, database *sql.DB, now time.Time) {
+	t.Helper()
+	_, err := database.Exec(`INSERT INTO collection_attempts (attempt_id, hub_id, trigger, state, started_at, analytics_interval_seconds) VALUES ('review-attempt', 'hub-1', 'manual', 'succeeded', ?, 300)`, utcText(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.Exec(`INSERT INTO raw_snapshots (snapshot_id, attempt_id, hub_id, response_kind, received_started_at, received_completed_at, http_status, body) VALUES ('review-snapshot', 'review-attempt', 'hub-1', 'stats', ?, ?, 200, ?)`, utcText(now), utcText(now), []byte("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertReviewLimitObservation(t *testing.T, database *sql.DB, id, hubID, deviceID, raw string, observed time.Time, state string) {
+	t.Helper()
+	_, err := database.Exec(`INSERT INTO usage_limit_observations (observation_id, snapshot_id, hub_id, device_id, raw_service_identifier, account_key, provider_updated_at, window_key, normalized_kind, normalized_metric, normalized_label, plan_label, analytics_interval_seconds, normalization_generation, normalization_rule_version, normalization_logic_version, json_path, dedupe_state, dedupe_key, value_fingerprint) VALUES (?, 'review-snapshot', ?, ?, ?, '', ?, 'window-1', 'window', 'percent', 'label', 'Plan', 300, 1, 'rule', 'logic', '$.limit', ?, ?, ?)`, id, hubID, deviceID, raw, utcText(observed), state, "dedupe-"+id, "fingerprint-"+id)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertReviewCostObservation(t *testing.T, database *sql.DB, id, hubID, deviceID, raw string, observed time.Time, state string) {
+	t.Helper()
+	_, err := database.Exec(`INSERT INTO usage_cost_observations (observation_id, snapshot_id, hub_id, device_id, raw_service_identifier, usage_updated_at, cost_usd_text, analytics_interval_seconds, normalization_generation, normalization_rule_version, normalization_logic_version, json_path, dedupe_state, dedupe_key, value_fingerprint) VALUES (?, 'review-snapshot', ?, ?, ?, ?, '1', 300, 1, 'rule', 'logic', '$.cost', ?, ?, ?)`, id, hubID, deviceID, raw, utcText(observed), state, "cost-dedupe-"+id, "cost-fingerprint-"+id)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
