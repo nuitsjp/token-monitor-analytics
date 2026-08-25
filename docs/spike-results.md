@@ -42,6 +42,8 @@ Wails CLI と Go module を `v3.0.0-beta.12` に一致させ、固定した Go 1
 
 ## SP-05 資格情報と機微データ境界
 
-状態: **未完了**
+状態: **一部合格**
 
-Hub ごとの Generic Credential と原 JSON の許可・禁止・未知フィールド分類を T-010 より前に固定する。評価用共有シークレットはソース、fixture、SQLite、ログ、文書へ保存していない。
+Windows Generic Credential の Target を `TokenMonitorAnalytics/Hub/{Hub 識別子}` に固定し、Hub ごとの書込み、読出し、削除、相互分離を Windows 実機試験で確認した。秘密値は UTF-16LE の blob だけに格納し、Target、エラー、監査へ含めない。評価用共有シークレットもソース、fixture、SQLite、ログ、文書へ保存していない。
+
+原 JSON の許可・禁止・未知フィールド分類は、SP-01 で対応 Hub を確認できていないため未完了である。この分類を固定するまで T-012 の原 JSON 保存とバックアップ受入れを完了にしない。
