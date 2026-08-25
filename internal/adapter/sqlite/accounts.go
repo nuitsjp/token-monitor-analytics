@@ -75,48 +75,8 @@ func (l *Lifecycle) UpsertHubAccountCandidate(ctx context.Context, candidate Hub
 		return fmt.Errorf("begin Hub account candidate upsert: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	var existing HubAccountCandidate
-	err = scanHubAccountCandidate(tx.QueryRowContext(ctx, `
-		SELECT hub_account_candidate_id, hub_id, service_id, account_key, display_name, email,
-			workspace_name, device_name, state, logical_account_id, first_observed_at,
-			last_observed_at, created_at, updated_at
-		FROM hub_account_candidates WHERE hub_id = ? AND service_id = ? AND account_key = ?`,
-		candidate.HubID, candidate.ServiceID, candidate.AccountKey), &existing)
-	if errors.Is(err, sql.ErrNoRows) {
-		if err := insertHubAccountCandidateTx(ctx, tx, candidate); err != nil {
-			return err
-		}
-		mutation := accountMutation("create", "hub_account_candidate", candidate.ID, candidate.UpdatedAt, candidate.FirstObservedAt, candidate.LastObservedAt)
-		if err := appendCatalogAuditAndRequest(ctx, tx, mutation, nil, candidateAuditValue(candidate)); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return fmt.Errorf("read Hub account candidate for upsert: %w", err)
-	} else {
-		before := existing
-		merged := mergeHubAccountCandidate(existing, candidate)
-		if archived, err := logicalAccountArchivedTx(ctx, tx, existing.LogicalAccountID); err != nil {
-			return err
-		} else if archived && existing.LogicalAccountID != nil {
-			merged.State = domain.HubAccountCandidateArchivedReconfirmation
-			merged.LogicalAccountID = existing.LogicalAccountID
-		}
-		if err := merged.Validate(); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE hub_account_candidates SET display_name = ?, email = ?, workspace_name = ?, device_name = ?,
-				state = ?, logical_account_id = ?, first_observed_at = ?, last_observed_at = ?, updated_at = ?
-			WHERE hub_account_candidate_id = ?`,
-			merged.DisplayName, merged.Email, merged.WorkspaceName, merged.DeviceName, merged.State,
-			optionalID(merged.LogicalAccountID), optionalPeriodText(merged.FirstObservedAt), optionalPeriodText(merged.LastObservedAt),
-			utcText(merged.UpdatedAt), merged.ID); err != nil {
-			return fmt.Errorf("update Hub account candidate during upsert: %w", err)
-		}
-		mutation := accountMutation("update", "hub_account_candidate", merged.ID, merged.UpdatedAt, merged.FirstObservedAt, merged.LastObservedAt)
-		if err := appendCatalogAuditAndRequest(ctx, tx, mutation, candidateAuditValue(before), candidateAuditValue(merged)); err != nil {
-			return err
-		}
+	if err := upsertHubAccountCandidateTx(ctx, tx, candidate); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit Hub account candidate upsert: %w", err)
@@ -711,6 +671,52 @@ func insertHubAccountCandidateTx(ctx context.Context, tx *sql.Tx, candidate HubA
 		return fmt.Errorf("insert Hub account candidate: %w", err)
 	}
 	return nil
+}
+
+// upsertHubAccountCandidateTx is shared by explicit M05 edits and the
+// collection transaction. It deliberately keeps the observation-side key
+// separate from logical-account association and preserves archived
+// reconfirmation state.
+func upsertHubAccountCandidateTx(ctx context.Context, tx *sql.Tx, candidate HubAccountCandidate) error {
+	var existing HubAccountCandidate
+	err := scanHubAccountCandidate(tx.QueryRowContext(ctx, `
+		SELECT hub_account_candidate_id, hub_id, service_id, account_key, display_name, email,
+			workspace_name, device_name, state, logical_account_id, first_observed_at,
+			last_observed_at, created_at, updated_at
+		FROM hub_account_candidates WHERE hub_id = ? AND service_id = ? AND account_key = ?`,
+		candidate.HubID, candidate.ServiceID, candidate.AccountKey), &existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := insertHubAccountCandidateTx(ctx, tx, candidate); err != nil {
+			return err
+		}
+		mutation := accountMutation("create", "hub_account_candidate", candidate.ID, candidate.UpdatedAt, candidate.FirstObservedAt, candidate.LastObservedAt)
+		return appendCatalogAuditAndRequest(ctx, tx, mutation, nil, candidateAuditValue(candidate))
+	}
+	if err != nil {
+		return fmt.Errorf("read Hub account candidate for transaction upsert: %w", err)
+	}
+	before := existing
+	merged := mergeHubAccountCandidate(existing, candidate)
+	if archived, err := logicalAccountArchivedTx(ctx, tx, existing.LogicalAccountID); err != nil {
+		return err
+	} else if archived && existing.LogicalAccountID != nil {
+		merged.State = domain.HubAccountCandidateArchivedReconfirmation
+		merged.LogicalAccountID = existing.LogicalAccountID
+	}
+	if err := merged.Validate(); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE hub_account_candidates SET display_name = ?, email = ?, workspace_name = ?, device_name = ?,
+			state = ?, logical_account_id = ?, first_observed_at = ?, last_observed_at = ?, updated_at = ?
+		WHERE hub_account_candidate_id = ?`,
+		merged.DisplayName, merged.Email, merged.WorkspaceName, merged.DeviceName, merged.State,
+		optionalID(merged.LogicalAccountID), optionalPeriodText(merged.FirstObservedAt), optionalPeriodText(merged.LastObservedAt),
+		utcText(merged.UpdatedAt), merged.ID); err != nil {
+		return fmt.Errorf("update Hub account candidate in transaction upsert: %w", err)
+	}
+	mutation := accountMutation("update", "hub_account_candidate", merged.ID, merged.UpdatedAt, merged.FirstObservedAt, merged.LastObservedAt)
+	return appendCatalogAuditAndRequest(ctx, tx, mutation, candidateAuditValue(before), candidateAuditValue(merged))
 }
 
 func insertLogicalAccountTx(ctx context.Context, tx *sql.Tx, account LogicalAccount) error {

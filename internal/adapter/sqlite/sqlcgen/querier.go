@@ -10,6 +10,11 @@ import (
 
 type Querier interface {
 	GetDisplaySettings(ctx context.Context) (GetDisplaySettingsRow, error)
+	ListUsageCostAssociationsBySource(ctx context.Context, usageCostSourceID string) ([]UsageCostSourceAccountLink, error)
+	ListUsageCostSourceCompletenessBySource(ctx context.Context, usageCostSourceID string) ([]UsageCostSourceCompleteness, error)
+	ListUsageCostSourcesByHub(ctx context.Context, hubID string) ([]UsageCostSource, error)
+	ListUsageLimitAssociationsBySource(ctx context.Context, usageLimitSourceID string) ([]UsageLimitSourceLink, error)
+	ListUsageLimitSourcesByHub(ctx context.Context, hubID string) ([]UsageLimitSource, error)
 	UpdateDisplayTimezone(ctx context.Context, arg UpdateDisplayTimezoneParams) error
 	UpdateTheme(ctx context.Context, theme string) error
 }

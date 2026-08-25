@@ -1204,7 +1204,7 @@ func scanCandidate(row interface{ Scan(...any) error }, candidate *Identificatio
 	var first, last, created, updated sql.NullString
 	if err := row.Scan(&candidate.ID, &candidate.RawLimitServiceIdentifier, &candidate.RawReportedPlanName, &state, &serviceID, &planID, &first, &last, &created, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("identification candidate was not found")
+			return fmt.Errorf("identification candidate was not found: %w", sql.ErrNoRows)
 		}
 		return fmt.Errorf("scan identification candidate: %w", err)
 	}

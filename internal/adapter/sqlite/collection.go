@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"token-monitor-analytics/internal/domain"
 )
 
 type CollectionAttempt struct {
@@ -40,6 +42,7 @@ type RawSnapshot struct {
 
 type CostObservation struct {
 	ObservationID             string
+	UsageCostSourceID         string
 	SnapshotID                string
 	HubID                     string
 	DeviceID                  string
@@ -61,6 +64,9 @@ type CostObservation struct {
 
 type LimitObservation struct {
 	ObservationID             string
+	UsageLimitSourceID        string
+	HubAccountCandidateID     string
+	IdentificationCandidateID string
 	SnapshotID                string
 	HubID                     string
 	DeviceID                  string
@@ -180,6 +186,14 @@ func (l *Lifecycle) insertCostObservationsTx(ctx context.Context, tx *sql.Tx, ob
 		if err := validateCostObservation(observation); err != nil {
 			return err
 		}
+		if observation.UsageCostSourceID != "" {
+			if err := ensureUsageCostSourceTx(ctx, tx, UsageCostSource{
+				ID: observation.UsageCostSourceID, HubID: observation.HubID, DeviceID: observation.DeviceID,
+				RawServiceIdentifier: observation.RawServiceIdentifier, CreatedAt: observation.UsageUpdatedAt,
+			}); err != nil {
+				return err
+			}
+		}
 		state, err := costDedupeState(ctx, tx, observation)
 		if err != nil {
 			return err
@@ -218,6 +232,29 @@ func (l *Lifecycle) insertLimitObservationsTx(ctx context.Context, tx *sql.Tx, o
 	for _, observation := range observations {
 		if err := validateLimitObservation(observation); err != nil {
 			return err
+		}
+		// A missing window key is retained as an unconfirmed raw observation but
+		// does not identify a UsageLimitSource.
+		if observation.WindowKey != "" && observation.UsageLimitSourceID != "" {
+			if err := ensureUsageLimitSourceTx(ctx, tx, UsageLimitSource{
+				ID: observation.UsageLimitSourceID, HubID: observation.HubID, DeviceID: observation.DeviceID,
+				AccountKey: observation.AccountKey, RawServiceIdentifier: observation.RawServiceIdentifier,
+				WindowKey: observation.WindowKey, NormalizedKind: observation.NormalizedKind,
+				NormalizedMetric: observation.NormalizedMetric, NormalizedLabel: observation.NormalizedLabel,
+				CreatedAt: observation.ProviderUpdatedAt,
+			}); err != nil {
+				return err
+			}
+		}
+		if observation.HubAccountCandidateID != "" {
+			if err := upsertHubAccountCandidateFromLimitObservationTx(ctx, tx, observation); err != nil {
+				return err
+			}
+		}
+		if observation.IdentificationCandidateID != "" && observation.PlanLabel != "" {
+			if err := upsertIdentificationCandidateFromLimitObservationTx(ctx, tx, observation); err != nil {
+				return err
+			}
 		}
 		state, err := limitDedupeState(ctx, tx, observation)
 		if err != nil {
@@ -275,6 +312,78 @@ func (l *Lifecycle) InsertObservations(ctx context.Context, costs []CostObservat
 		return fmt.Errorf("commit observations: %w", err)
 	}
 	return nil
+}
+
+func upsertHubAccountCandidateFromLimitObservationTx(ctx context.Context, tx *sql.Tx, observation LimitObservation) error {
+	if observation.AccountKey == "" {
+		return nil
+	}
+	var serviceID string
+	err := tx.QueryRowContext(ctx, `SELECT service_id FROM service_identifier_mappings WHERE identifier_kind = 'usage_limit' AND raw_identifier = ? AND valid_from <= ? AND (valid_to IS NULL OR ? < valid_to) ORDER BY valid_from DESC LIMIT 1`, observation.RawServiceIdentifier, catalogPeriodText(observation.ProviderUpdatedAt), catalogPeriodText(observation.ProviderUpdatedAt)).Scan(&serviceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolve usage limit service for Hub account candidate: %w", err)
+	}
+	candidate := HubAccountCandidate{
+		ID: observation.HubAccountCandidateID, HubID: observation.HubID, ServiceID: serviceID,
+		AccountKey: observation.AccountKey,
+		State:      domain.HubAccountCandidateUnconfirmed, FirstObservedAt: normalizedTimePtr(&observation.ProviderUpdatedAt),
+		LastObservedAt: normalizedTimePtr(&observation.ProviderUpdatedAt), CreatedAt: observation.ProviderUpdatedAt, UpdatedAt: observation.ProviderUpdatedAt,
+	}
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	return upsertHubAccountCandidateTx(ctx, tx, candidate)
+}
+
+func upsertIdentificationCandidateFromLimitObservationTx(ctx context.Context, tx *sql.Tx, observation LimitObservation) error {
+	candidate := IdentificationCandidate{ID: observation.IdentificationCandidateID, RawLimitServiceIdentifier: observation.RawServiceIdentifier, RawReportedPlanName: observation.PlanLabel, State: domain.CandidateUnconfirmed, FirstObservedAt: normalizedTimePtr(&observation.ProviderUpdatedAt), LastObservedAt: normalizedTimePtr(&observation.ProviderUpdatedAt), CreatedAt: observation.ProviderUpdatedAt, UpdatedAt: observation.ProviderUpdatedAt}
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	var existing IdentificationCandidate
+	err := scanCandidate(tx.QueryRowContext(ctx, `SELECT candidate_id, raw_limit_service_identifier, raw_reported_plan_name, state, service_id, plan_id, first_observed_at, last_observed_at, created_at, updated_at FROM identification_candidates WHERE raw_limit_service_identifier = ? AND raw_reported_plan_name = ? ORDER BY created_at, candidate_id LIMIT 1`, candidate.RawLimitServiceIdentifier, candidate.RawReportedPlanName), &existing)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO identification_candidates (candidate_id, raw_limit_service_identifier, raw_reported_plan_name, state, first_observed_at, last_observed_at, created_at, updated_at) VALUES (?, ?, ?, 'unconfirmed', ?, ?, ?, ?)`, candidate.ID, candidate.RawLimitServiceIdentifier, candidate.RawReportedPlanName, catalogPeriodText(*candidate.FirstObservedAt), catalogPeriodText(*candidate.LastObservedAt), utcText(candidate.CreatedAt), utcText(candidate.UpdatedAt)); err != nil {
+			return fmt.Errorf("insert observed identification candidate: %w", err)
+		}
+		if err := appendCatalogAuditAndRequest(ctx, tx, catalogMutationForObservation("observe", "identification_candidate", candidate.ID, candidate.UpdatedAt, candidate.FirstObservedAt, candidate.LastObservedAt), nil, candidate); err != nil {
+			return err
+		}
+		existing = candidate
+	} else if err != nil {
+		return fmt.Errorf("read observed identification candidate: %w", err)
+	} else {
+		before := existing
+		if _, err := tx.ExecContext(ctx, `UPDATE identification_candidates SET first_observed_at = CASE WHEN first_observed_at IS NULL OR ? < first_observed_at THEN ? ELSE first_observed_at END, last_observed_at = CASE WHEN last_observed_at IS NULL OR ? > last_observed_at THEN ? ELSE last_observed_at END, updated_at = ? WHERE candidate_id = ?`, catalogPeriodText(*candidate.FirstObservedAt), catalogPeriodText(*candidate.FirstObservedAt), catalogPeriodText(*candidate.LastObservedAt), catalogPeriodText(*candidate.LastObservedAt), utcText(candidate.UpdatedAt), existing.ID); err != nil {
+			return fmt.Errorf("update observed identification candidate: %w", err)
+		}
+		existing.FirstObservedAt, existing.LastObservedAt = minTimePtr(existing.FirstObservedAt, candidate.FirstObservedAt), maxTimePtr(existing.LastObservedAt, candidate.LastObservedAt)
+		existing.UpdatedAt = candidate.UpdatedAt
+		if err := appendCatalogAuditAndRequest(ctx, tx, catalogMutationForObservation("observe", "identification_candidate", existing.ID, candidate.UpdatedAt, candidate.FirstObservedAt, candidate.LastObservedAt), before, existing); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO identification_candidate_observations (observation_id, candidate_id, hub_id, hub_account_display, observed_at) VALUES (?, ?, ?, ?, ?)`, observation.ObservationID, existing.ID, observation.HubID, observation.PlanLabel, catalogPeriodText(observation.ProviderUpdatedAt)); err != nil {
+		return fmt.Errorf("insert identification candidate observation: %w", err)
+	}
+	return nil
+}
+
+func minTimePtr(a, b *time.Time) *time.Time {
+	if a == nil || (b != nil && b.Before(*a)) {
+		return normalizedTimePtr(b)
+	}
+	return normalizedTimePtr(a)
+}
+
+func maxTimePtr(a, b *time.Time) *time.Time {
+	if a == nil || (b != nil && b.After(*a)) {
+		return normalizedTimePtr(b)
+	}
+	return normalizedTimePtr(a)
 }
 
 func (l *Lifecycle) ListCollectionAttempts(ctx context.Context, hubID string) ([]CollectionAttempt, error) {

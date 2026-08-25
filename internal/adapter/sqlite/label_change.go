@@ -204,7 +204,7 @@ func scanLimitLabelChangeCandidate(row interface{ Scan(...any) error }, candidat
 		&candidate.RawLimitServiceIdentifier, &candidate.NormalizedKind, &candidate.NormalizedMetric,
 		&candidate.OldLabel, &candidate.NewLabel, &state, &limitID, &first, &last, &created, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("label change candidate was not found")
+			return fmt.Errorf("label change candidate was not found: %w", sql.ErrNoRows)
 		}
 		return fmt.Errorf("scan label change candidate: %w", err)
 	}

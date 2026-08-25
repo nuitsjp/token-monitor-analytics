@@ -103,6 +103,17 @@ type HubConnectionStatus struct {
 	FailureDetail sql.NullString `json:"failure_detail"`
 }
 
+type HubSwitch struct {
+	HubSwitchID        string `json:"hub_switch_id"`
+	OldHubID           string `json:"old_hub_id"`
+	OldDeviceID        string `json:"old_device_id"`
+	NewHubID           string `json:"new_hub_id"`
+	NewDeviceID        string `json:"new_device_id"`
+	CollectionDeviceID string `json:"collection_device_id"`
+	SwitchedAt         string `json:"switched_at"`
+	CreatedAt          string `json:"created_at"`
+}
+
 type IdentificationCandidate struct {
 	CandidateID               string         `json:"candidate_id"`
 	RawLimitServiceIdentifier string         `json:"raw_limit_service_identifier"`
@@ -297,6 +308,36 @@ type UsageCostObservation struct {
 	ValueFingerprint          string         `json:"value_fingerprint"`
 }
 
+type UsageCostSource struct {
+	UsageCostSourceID    string `json:"usage_cost_source_id"`
+	HubID                string `json:"hub_id"`
+	DeviceID             string `json:"device_id"`
+	RawServiceIdentifier string `json:"raw_service_identifier"`
+	CreatedAt            string `json:"created_at"`
+}
+
+type UsageCostSourceAccountLink struct {
+	UsageCostAssociationID string         `json:"usage_cost_association_id"`
+	UsageCostSourceID      string         `json:"usage_cost_source_id"`
+	LogicalAccountID       string         `json:"logical_account_id"`
+	ValidFrom              string         `json:"valid_from"`
+	ValidTo                sql.NullString `json:"valid_to"`
+	CreatedAt              string         `json:"created_at"`
+	UpdatedAt              string         `json:"updated_at"`
+}
+
+type UsageCostSourceCompleteness struct {
+	CompletenessID        string         `json:"completeness_id"`
+	UsageCostSourceID     string         `json:"usage_cost_source_id"`
+	ValidFrom             string         `json:"valid_from"`
+	ValidTo               sql.NullString `json:"valid_to"`
+	State                 string         `json:"state"`
+	LogicalAccountIdsJson string         `json:"logical_account_ids_json"`
+	ExcludedActivityJson  string         `json:"excluded_activity_json"`
+	CreatedAt             string         `json:"created_at"`
+	UpdatedAt             string         `json:"updated_at"`
+}
+
 type UsageLimitObservation struct {
 	ObservationID             string          `json:"observation_id"`
 	SnapshotID                string          `json:"snapshot_id"`
@@ -324,4 +365,28 @@ type UsageLimitObservation struct {
 	DedupeState               string          `json:"dedupe_state"`
 	DedupeKey                 string          `json:"dedupe_key"`
 	ValueFingerprint          string          `json:"value_fingerprint"`
+}
+
+type UsageLimitSource struct {
+	UsageLimitSourceID   string `json:"usage_limit_source_id"`
+	HubID                string `json:"hub_id"`
+	DeviceID             string `json:"device_id"`
+	AccountKey           string `json:"account_key"`
+	RawServiceIdentifier string `json:"raw_service_identifier"`
+	WindowKey            string `json:"window_key"`
+	NormalizedKind       string `json:"normalized_kind"`
+	NormalizedMetric     string `json:"normalized_metric"`
+	NormalizedLabel      string `json:"normalized_label"`
+	CreatedAt            string `json:"created_at"`
+}
+
+type UsageLimitSourceLink struct {
+	UsageLimitAssociationID string         `json:"usage_limit_association_id"`
+	UsageLimitSourceID      string         `json:"usage_limit_source_id"`
+	LogicalAccountID        string         `json:"logical_account_id"`
+	LimitDefinitionID       string         `json:"limit_definition_id"`
+	ValidFrom               string         `json:"valid_from"`
+	ValidTo                 sql.NullString `json:"valid_to"`
+	CreatedAt               string         `json:"created_at"`
+	UpdatedAt               string         `json:"updated_at"`
 }
