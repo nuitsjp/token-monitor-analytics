@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"gonum.org/v1/gonum/mat"
 )
@@ -26,8 +27,25 @@ const (
 )
 
 type EstimationPoint struct {
-	SharedCost  float64
-	Utilization []float64
+	SharedCost              float64
+	Utilization             []float64
+	ID                      string
+	ServiceID               string
+	LimitDefinitionID       string
+	PlanVersionID           string
+	CycleType               string
+	CalculationIntervalID   string
+	CalculationIntervalIDs  []string
+	ReferenceAt             time.Time
+	LimitSeriesIDs          []string
+	CostSourceIDs           []string
+	AssociationIDs          []string
+	CompletenessIDs         []string
+	MatchedObservations     []MatchedObservation
+	MatchingRuleVersion     string
+	CalculationLogicVersion string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 type EstimationResult struct {

@@ -87,6 +87,27 @@ type DisplaySetting struct {
 	MainWindowMonitor    sql.NullString `json:"main_window_monitor"`
 }
 
+type EstimationPoint struct {
+	EstimationPointID          string         `json:"estimation_point_id"`
+	ServiceID                  string         `json:"service_id"`
+	LimitDefinitionID          string         `json:"limit_definition_id"`
+	PlanVersionID              sql.NullString `json:"plan_version_id"`
+	CycleType                  string         `json:"cycle_type"`
+	CalculationIntervalID      string         `json:"calculation_interval_id"`
+	CalculationIntervalIdsJson string         `json:"calculation_interval_ids_json"`
+	ReferenceAt                string         `json:"reference_at"`
+	SharedCost                 float64        `json:"shared_cost"`
+	UtilizationJson            string         `json:"utilization_json"`
+	LimitSeriesIdsJson         string         `json:"limit_series_ids_json"`
+	CostSourceIdsJson          string         `json:"cost_source_ids_json"`
+	AssociationIdsJson         string         `json:"association_ids_json"`
+	CompletenessIdsJson        string         `json:"completeness_ids_json"`
+	MatchingRuleVersion        string         `json:"matching_rule_version"`
+	CalculationLogicVersion    string         `json:"calculation_logic_version"`
+	CreatedAt                  string         `json:"created_at"`
+	UpdatedAt                  string         `json:"updated_at"`
+}
+
 type Hub struct {
 	HubID                     string         `json:"hub_id"`
 	DisplayName               string         `json:"display_name"`
@@ -217,6 +238,24 @@ type LogicalAccount struct {
 	ArchivedAt       sql.NullString `json:"archived_at"`
 	CreatedAt        string         `json:"created_at"`
 	UpdatedAt        string         `json:"updated_at"`
+}
+
+type MatchedObservation struct {
+	MatchedObservationID      string         `json:"matched_observation_id"`
+	EstimationPointID         string         `json:"estimation_point_id"`
+	ObservationRole           string         `json:"observation_role"`
+	SourceID                  string         `json:"source_id"`
+	LogicalAccountID          sql.NullString `json:"logical_account_id"`
+	ObservationID             string         `json:"observation_id"`
+	ObservedAt                string         `json:"observed_at"`
+	TimeDeltaNs               int64          `json:"time_delta_ns"`
+	ToleranceNs               int64          `json:"tolerance_ns"`
+	AnalyticsIntervalSeconds  int64          `json:"analytics_interval_seconds"`
+	SyncUploadIntervalMs      sql.NullInt64  `json:"sync_upload_interval_ms"`
+	LimitsRefreshMs           sql.NullInt64  `json:"limits_refresh_ms"`
+	NormalizationGeneration   int64          `json:"normalization_generation"`
+	NormalizationRuleVersion  string         `json:"normalization_rule_version"`
+	NormalizationLogicVersion string         `json:"normalization_logic_version"`
 }
 
 type Plan struct {
