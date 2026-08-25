@@ -63,14 +63,14 @@ func (f *dataManagementPurgeFake) Purge(_ context.Context, selection domain.Purg
 type dataManagementBackupFake struct {
 	artifact domain.BackupArtifact
 	err      error
-	fn       func(context.Context, string) (domain.BackupArtifact, error)
+	fn       func(context.Context, string, usecase.BackupProgressReporter) (domain.BackupArtifact, error)
 	path     string
 }
 
-func (f *dataManagementBackupFake) CreateBackup(ctx context.Context, path string) (domain.BackupArtifact, error) {
+func (f *dataManagementBackupFake) CreateBackup(ctx context.Context, path string, reporter usecase.BackupProgressReporter) (domain.BackupArtifact, error) {
 	f.path = path
 	if f.fn != nil {
-		return f.fn(ctx, path)
+		return f.fn(ctx, path, reporter)
 	}
 	return f.artifact, f.err
 }
@@ -500,28 +500,61 @@ func TestDataManagementBackupFailureDoesNotExposeRawErrorOrSecret(t *testing.T) 
 	}
 }
 
-func TestDataManagementBackupReportsCreatingButRejectsCancellation(t *testing.T) {
-	started := make(chan struct{})
+func TestDataManagementBackupReportsCreatingThenValidatingButRejectsCancellation(t *testing.T) {
+	reported := make(chan usecase.BackupProgress)
 	release := make(chan struct{})
-	backup := &dataManagementBackupFake{fn: func(context.Context, string) (domain.BackupArtifact, error) {
-		close(started)
-		<-release
+	backup := &dataManagementBackupFake{fn: func(_ context.Context, _ string, reporter usecase.BackupProgressReporter) (domain.BackupArtifact, error) {
+		for _, progress := range []usecase.BackupProgress{
+			usecase.BackupProgressCreating,
+			usecase.BackupProgressValidating,
+			usecase.BackupProgressCreating,
+			usecase.BackupProgressValidating,
+		} {
+			reporter(progress)
+			reported <- progress
+			<-release
+		}
 		return domain.BackupArtifact{Path: `D:\backup\target.zip`, ArtifactSHA256: strings.Repeat("e", 64), SizeBytes: 1, CreatedAt: time.Now().UTC()}, nil
 	}}
 	service := newDataManagementServiceForTest(t, &dataManagementPurgeFake{}, backup, &dataManagementValidationFake{}, &dataManagementApplyFake{}, usecase.NewMaintenanceGate(), domain.RestoreRecoveryResult{Status: domain.RestoreRecoveryNone})
 	result := make(chan DataManagementBackupStateSnapshot, 1)
 	go func() { result <- service.CreateBackup(context.Background(), `D:\backup\target.zip`) }()
-	<-started
-	state := service.GetState(context.Background())
-	if state.Backup.Status != "creating" || state.Maintenance.Phase != "backup_create" || state.Maintenance.CancelAllowed {
-		t.Fatalf("creating backup state = %#v", state)
+	want := []usecase.BackupProgress{
+		usecase.BackupProgressCreating,
+		usecase.BackupProgressValidating,
+		usecase.BackupProgressCreating,
+		usecase.BackupProgressValidating,
 	}
-	if canceled := service.CancelCurrentOperation(); canceled.Error == nil || canceled.Error.Code != "operation_not_cancelable" {
-		t.Fatalf("backup cancellation = %#v", canceled)
+	for index, expected := range want {
+		if actual := <-reported; actual != expected {
+			t.Fatalf("reported progress[%d] = %q, want %q", index, actual, expected)
+		}
+		state := service.GetState(context.Background())
+		if state.Backup.Status != string(expected) || state.Maintenance.Phase != "backup_create" || state.Maintenance.CancelAllowed {
+			t.Fatalf("backup state at progress[%d] = %#v", index, state)
+		}
+		if index == 0 {
+			if canceled := service.CancelCurrentOperation(); canceled.Error == nil || canceled.Error.Code != "operation_not_cancelable" {
+				t.Fatalf("backup cancellation = %#v", canceled)
+			}
+		}
+		release <- struct{}{}
 	}
-	close(release)
 	if completed := <-result; completed.Status != "success" {
 		t.Fatalf("completed backup = %#v", completed)
+	}
+}
+
+func TestDataManagementBackupValidationFailureEndsInFailedState(t *testing.T) {
+	backup := &dataManagementBackupFake{fn: func(_ context.Context, _ string, reporter usecase.BackupProgressReporter) (domain.BackupArtifact, error) {
+		reporter(usecase.BackupProgressCreating)
+		reporter(usecase.BackupProgressValidating)
+		return domain.BackupArtifact{}, errors.New("validation failed with private path")
+	}}
+	service := newDataManagementServiceForTest(t, &dataManagementPurgeFake{}, backup, &dataManagementValidationFake{}, &dataManagementApplyFake{}, usecase.NewMaintenanceGate(), domain.RestoreRecoveryResult{Status: domain.RestoreRecoveryNone})
+	failed := service.CreateBackup(context.Background(), `D:\backup\target.zip`)
+	if failed.Status != "failed" || failed.Error == nil || failed.Error.Code != "backup_failed" {
+		t.Fatalf("failed backup validation state = %#v", failed)
 	}
 }
 

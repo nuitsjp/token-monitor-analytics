@@ -61,7 +61,10 @@ func TestBackupUsecaseCreatesOnlineBackupAndRecordsArtifact(t *testing.T) {
 		t.Fatalf("create backup usecase: %v", err)
 	}
 	destination := filepath.Join(exportDir, "analytics-backup.zip")
-	artifact, err := usecase.CreateBackup(ctx, destination)
+	var progress []BackupProgress
+	artifact, err := usecase.CreateBackup(ctx, destination, func(value BackupProgress) {
+		progress = append(progress, value)
+	})
 	if err != nil {
 		t.Fatalf("create backup: %v", err)
 	}
@@ -70,6 +73,15 @@ func TestBackupUsecaseCreatesOnlineBackupAndRecordsArtifact(t *testing.T) {
 	}
 	if len(recorder.artifacts) != 1 || recorder.artifacts[0].ArtifactSHA256 != artifact.ArtifactSHA256 {
 		t.Fatalf("recorded artifacts = %#v", recorder.artifacts)
+	}
+	wantProgress := []BackupProgress{BackupProgressCreating, BackupProgressValidating, BackupProgressCreating, BackupProgressValidating}
+	if len(progress) != len(wantProgress) {
+		t.Fatalf("backup progress = %#v", progress)
+	}
+	for index := range wantProgress {
+		if progress[index] != wantProgress[index] {
+			t.Fatalf("backup progress[%d] = %q, want %q; all=%#v", index, progress[index], wantProgress[index], progress)
+		}
 	}
 }
 
@@ -133,8 +145,14 @@ func assertBackupRejectsRawSnapshot(t *testing.T, raw []byte) {
 	if err := os.WriteFile(destination, before, 0o600); err != nil {
 		t.Fatalf("write existing artifact: %v", err)
 	}
-	if _, err := usecase.CreateBackup(ctx, destination); err == nil {
+	var progress []BackupProgress
+	if _, err := usecase.CreateBackup(ctx, destination, func(value BackupProgress) {
+		progress = append(progress, value)
+	}); err == nil {
 		t.Fatal("forbidden raw snapshot unexpectedly accepted")
+	}
+	if len(progress) != 2 || progress[0] != BackupProgressCreating || progress[1] != BackupProgressValidating {
+		t.Fatalf("failed backup progress = %#v", progress)
 	}
 	after, err := os.ReadFile(destination)
 	if err != nil {
@@ -170,7 +188,7 @@ func TestBackupUsecaseReturnsSuccessWarningWhenRecorderFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create backup usecase: %v", err)
 	}
-	artifact, err := usecase.CreateBackup(ctx, filepath.Join(exportDir, "analytics-backup.zip"))
+	artifact, err := usecase.CreateBackup(ctx, filepath.Join(exportDir, "analytics-backup.zip"), nil)
 	if err != nil {
 		t.Fatalf("create backup: %v", err)
 	}

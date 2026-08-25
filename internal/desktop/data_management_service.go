@@ -20,7 +20,7 @@ type dataManagementPurgeUsecase interface {
 }
 
 type dataManagementBackupUsecase interface {
-	CreateBackup(context.Context, string) (domain.BackupArtifact, error)
+	CreateBackup(context.Context, string, usecase.BackupProgressReporter) (domain.BackupArtifact, error)
 }
 
 type dataManagementRestoreValidationUsecase interface {
@@ -367,7 +367,7 @@ func (s *DataManagementService) CreateBackup(ctx context.Context, destinationPat
 		return state
 	}
 	s.setBackupState(DataManagementBackupStateSnapshot{Status: "creating"})
-	artifact, err := s.backup.CreateBackup(operationContext, destinationPath)
+	artifact, err := s.backup.CreateBackup(operationContext, destinationPath, s.reportBackupProgress)
 	if err != nil {
 		state := DataManagementBackupStateSnapshot{Status: "failed", Error: mapBackupError(err)}
 		s.setBackupState(state)
@@ -613,6 +613,20 @@ func (s *DataManagementService) setBackupState(state DataManagementBackupStateSn
 	s.mu.Lock()
 	s.backupState = state
 	s.mu.Unlock()
+}
+
+func (s *DataManagementService) reportBackupProgress(progress usecase.BackupProgress) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.operationPhase != "backup_create" {
+		return
+	}
+	switch progress {
+	case usecase.BackupProgressCreating:
+		s.backupState = DataManagementBackupStateSnapshot{Status: "creating"}
+	case usecase.BackupProgressValidating:
+		s.backupState = DataManagementBackupStateSnapshot{Status: "validating"}
+	}
 }
 
 func (s *DataManagementService) setPurgeState(state DataManagementPurgeStateSnapshot) {

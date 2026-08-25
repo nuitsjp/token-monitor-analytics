@@ -23,6 +23,12 @@ type FailureInjector interface {
 	Check(point string) error
 }
 
+type BackupArchiveProgress = string
+
+const BackupArchiveProgressValidating BackupArchiveProgress = "validating"
+
+type BackupArchiveProgressReporter = func(BackupArchiveProgress)
+
 type Writer struct {
 	replacer AtomicReplacer
 	injector FailureInjector
@@ -47,7 +53,7 @@ func NewWriterWithAtomicReplacerAndFailureInjector(replacer AtomicReplacer, inje
 	return &Writer{replacer: replacer, injector: injector}, nil
 }
 
-func (w *Writer) Write(ctx context.Context, destinationPath, applicationDataDir, databasePath string, protectedPaths []string, manifest domain.BackupManifest) (domain.BackupArtifact, error) {
+func (w *Writer) Write(ctx context.Context, destinationPath, applicationDataDir, databasePath string, protectedPaths []string, manifest domain.BackupManifest, reporter BackupArchiveProgressReporter) (domain.BackupArtifact, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.BackupArtifact{}, err
 	}
@@ -140,6 +146,9 @@ func (w *Writer) Write(ctx context.Context, destinationPath, applicationDataDir,
 	}
 	if err := temporaryZip.Close(); err != nil {
 		return domain.BackupArtifact{}, errors.New("close temporary backup ZIP")
+	}
+	if reporter != nil {
+		reporter(BackupArchiveProgressValidating)
 	}
 	if err := validateArchiveFile(temporaryZipPath, manifest); err != nil {
 		return domain.BackupArtifact{}, err

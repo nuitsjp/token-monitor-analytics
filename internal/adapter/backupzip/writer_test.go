@@ -65,7 +65,7 @@ func TestWriterCreatesExactlyTwoEntriesAndReturnsArtifactHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create writer: %v", err)
 	}
-	artifact, err := writer.Write(context.Background(), destination, dataDir, databasePath, []string{databasePath, databasePath + "-wal", databasePath + "-shm"}, testManifest())
+	artifact, err := writer.Write(context.Background(), destination, dataDir, databasePath, []string{databasePath, databasePath + "-wal", databasePath + "-shm"}, testManifest(), nil)
 	if err != nil {
 		t.Fatalf("write backup: %v", err)
 	}
@@ -90,6 +90,62 @@ func TestWriterCreatesExactlyTwoEntriesAndReturnsArtifactHash(t *testing.T) {
 	}
 }
 
+func TestWriterReportsValidationAfterClosingArchiveAndValidationFailureKeepsExistingArtifact(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "app-data")
+	destinationDir := filepath.Join(root, "exports")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("create data directory: %v", err)
+	}
+	if err := os.MkdirAll(destinationDir, 0o700); err != nil {
+		t.Fatalf("create destination directory: %v", err)
+	}
+	databasePath := filepath.Join(dataDir, "backup-temp.sqlite3")
+	if err := os.WriteFile(databasePath, []byte("test"), 0o600); err != nil {
+		t.Fatalf("write database fixture: %v", err)
+	}
+	destination := filepath.Join(destinationDir, "analytics-backup.zip")
+	before := []byte("existing artifact")
+	if err := os.WriteFile(destination, before, 0o600); err != nil {
+		t.Fatalf("write existing artifact: %v", err)
+	}
+	replacer := &renameReplacer{}
+	writer, err := NewWriterWithAtomicReplacer(replacer)
+	if err != nil {
+		t.Fatalf("create writer: %v", err)
+	}
+	reports := 0
+	reportValidating := func(progress BackupArchiveProgress) {
+		if progress != BackupArchiveProgressValidating {
+			t.Fatalf("writer progress = %q", progress)
+		}
+		reports++
+		matches, globErr := filepath.Glob(filepath.Join(destinationDir, ".backup-*.part"))
+		if globErr != nil || len(matches) != 1 {
+			t.Fatalf("temporary archive at validation boundary = %#v, %v", matches, globErr)
+		}
+		if writeErr := os.WriteFile(matches[0], []byte("invalid ZIP"), 0o600); writeErr != nil {
+			t.Fatalf("temporary archive was not closed before validation report: %v", writeErr)
+		}
+	}
+	if _, err := writer.Write(context.Background(), destination, dataDir, databasePath, []string{databasePath}, testManifest(), reportValidating); err == nil {
+		t.Fatal("corrupted readback unexpectedly succeeded")
+	}
+	if reports != 1 {
+		t.Fatalf("validation reports = %d, want 1", reports)
+	}
+	after, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("read existing artifact: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("existing artifact changed from %q to %q", before, after)
+	}
+	if replacer.calls != 0 {
+		t.Fatalf("atomic replacement called %d times", replacer.calls)
+	}
+}
+
 func TestWriterRejectsApplicationDataDestinationAndHardlinkAlias(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "app-data")
@@ -109,14 +165,14 @@ func TestWriterRejectsApplicationDataDestinationAndHardlinkAlias(t *testing.T) {
 		t.Fatalf("create writer: %v", err)
 	}
 	inside := filepath.Join(dataDir, "backup.zip")
-	if _, err := writer.Write(context.Background(), inside, dataDir, databasePath, []string{databasePath}, testManifest()); err == nil {
+	if _, err := writer.Write(context.Background(), inside, dataDir, databasePath, []string{databasePath}, testManifest(), nil); err == nil {
 		t.Fatal("application data destination unexpectedly accepted")
 	}
 	alias := filepath.Join(exportDir, "alias.zip")
 	if err := os.Link(databasePath, alias); err != nil {
 		t.Skipf("hardlink fixture unavailable: %v", err)
 	}
-	if _, err := writer.Write(context.Background(), alias, dataDir, databasePath, []string{databasePath}, testManifest()); err == nil {
+	if _, err := writer.Write(context.Background(), alias, dataDir, databasePath, []string{databasePath}, testManifest(), nil); err == nil {
 		t.Fatal("hardlink alias unexpectedly accepted")
 	}
 }
@@ -148,7 +204,7 @@ func TestWriterPrecommitFailuresKeepExistingArtifactUnchanged(t *testing.T) {
 			if err != nil {
 				t.Fatalf("create writer: %v", err)
 			}
-			if _, err := writer.Write(context.Background(), destination, dataDir, databasePath, []string{databasePath}, testManifest()); err == nil {
+			if _, err := writer.Write(context.Background(), destination, dataDir, databasePath, []string{databasePath}, testManifest(), nil); err == nil {
 				t.Fatal("injected failure unexpectedly succeeded")
 			}
 			after, err := os.ReadFile(destination)
@@ -185,7 +241,7 @@ func TestWriterRechecksDestinationIdentityAtCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create writer: %v", err)
 	}
-	if _, err := writer.Write(context.Background(), destination, dataDir, databasePath, []string{databasePath}, testManifest()); err == nil {
+	if _, err := writer.Write(context.Background(), destination, dataDir, databasePath, []string{databasePath}, testManifest(), nil); err == nil {
 		t.Fatal("destination identity race unexpectedly committed")
 	}
 	if replacer.calls != 0 {
@@ -211,7 +267,7 @@ func TestWriterRejectsReparseDestinationParent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create writer: %v", err)
 	}
-	if _, err := writer.Write(context.Background(), filepath.Join(link, "backup.zip"), dataDir, databasePath, []string{databasePath}, testManifest()); err == nil {
+	if _, err := writer.Write(context.Background(), filepath.Join(link, "backup.zip"), dataDir, databasePath, []string{databasePath}, testManifest(), nil); err == nil {
 		t.Fatal("reparse destination unexpectedly accepted")
 	}
 }

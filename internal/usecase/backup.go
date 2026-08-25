@@ -23,8 +23,17 @@ type BackupSource interface {
 }
 
 type BackupArchiveWriter interface {
-	Write(context.Context, string, string, string, []string, domain.BackupManifest) (domain.BackupArtifact, error)
+	Write(context.Context, string, string, string, []string, domain.BackupManifest, BackupProgressReporter) (domain.BackupArtifact, error)
 }
+
+type BackupProgress = string
+
+const (
+	BackupProgressCreating   BackupProgress = "creating"
+	BackupProgressValidating BackupProgress = "validating"
+)
+
+type BackupProgressReporter = func(BackupProgress)
 
 type BackupResultRecorder interface {
 	RecordBackup(context.Context, domain.BackupArtifact) error
@@ -49,7 +58,7 @@ func NewBackupUsecase(source BackupSource, writer BackupArchiveWriter, recorder 
 	return &BackupUsecase{source: source, writer: writer, recorder: recorder, clock: clock, appVer: appVersion, gate: gate}, nil
 }
 
-func (u *BackupUsecase) CreateBackup(ctx context.Context, destinationPath string) (domain.BackupArtifact, error) {
+func (u *BackupUsecase) CreateBackup(ctx context.Context, destinationPath string, reporter BackupProgressReporter) (domain.BackupArtifact, error) {
 	if strings.TrimSpace(destinationPath) == "" {
 		return domain.BackupArtifact{}, errors.New("backup destination is required")
 	}
@@ -58,6 +67,7 @@ func (u *BackupUsecase) CreateBackup(ctx context.Context, destinationPath string
 		return domain.BackupArtifact{}, err
 	}
 	defer lease.Release()
+	reportBackupProgress(reporter, BackupProgressCreating)
 	dataDir, err := u.source.ApplicationDataDirectory()
 	if err != nil {
 		return domain.BackupArtifact{}, fmt.Errorf("resolve application data directory: %w", err)
@@ -86,9 +96,11 @@ func (u *BackupUsecase) CreateBackup(ctx context.Context, destinationPath string
 	if err := u.source.Backup(ctx, temporaryDatabase); err != nil {
 		return domain.BackupArtifact{}, fmt.Errorf("create online backup: %w", err)
 	}
+	reportBackupProgress(reporter, BackupProgressValidating)
 	if err := u.source.ValidateBackupDatabase(ctx, temporaryDatabase); err != nil {
 		return domain.BackupArtifact{}, fmt.Errorf("validate temporary backup database: %w", err)
 	}
+	reportBackupProgress(reporter, BackupProgressCreating)
 	metadata, err := backupFileMetadata(temporaryDatabase)
 	if err != nil {
 		return domain.BackupArtifact{}, fmt.Errorf("read temporary backup database: %w", err)
@@ -108,7 +120,7 @@ func (u *BackupUsecase) CreateBackup(ctx context.Context, destinationPath string
 	if err := manifest.Validate(); err != nil {
 		return domain.BackupArtifact{}, fmt.Errorf("build backup manifest: %w", err)
 	}
-	artifact, err := u.writer.Write(ctx, destinationPath, dataDir, temporaryDatabase, protectedPaths, manifest)
+	artifact, err := u.writer.Write(ctx, destinationPath, dataDir, temporaryDatabase, protectedPaths, manifest, reporter)
 	if err != nil {
 		return domain.BackupArtifact{}, err
 	}
@@ -121,6 +133,12 @@ func (u *BackupUsecase) CreateBackup(ctx context.Context, destinationPath string
 		}
 	}
 	return artifact, nil
+}
+
+func reportBackupProgress(reporter BackupProgressReporter, progress BackupProgress) {
+	if reporter != nil {
+		reporter(progress)
+	}
 }
 
 type backupFileMetadataResult struct {

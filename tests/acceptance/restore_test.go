@@ -68,7 +68,7 @@ func runRestoreRepresentativeDatabaseFullRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	archivePath := filepath.Join(workspace, "representative-round-trip.zip")
-	if _, err := backup.CreateBackup(ctx, archivePath); err != nil {
+	if _, err := backup.CreateBackup(ctx, archivePath, nil); err != nil {
 		t.Fatal(err)
 	}
 	validation, err := usecase.NewRestoreValidationUsecase(lifecycle, backupzip.NewValidator(), nil, restoreClock{value: createdAt}, restoreIDs{value: "operation-acceptance"}, gate)
