@@ -58,6 +58,17 @@ func runRestoreRepresentativeDatabaseFullRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("P1-DATA-01 representative local database persists source and canonical records", func(t *testing.T) {
+		for _, table := range []string{
+			"raw_snapshots", "usage_cost_observations", "usage_limit_observations",
+			"usage_cost_source_account_links", "usage_limit_source_links", "services",
+			"logical_accounts", "plan_histories", "configuration_audits",
+		} {
+			if len(before[table]) == 0 {
+				t.Fatalf("representative table %s has no persisted rows", table)
+			}
+		}
+	})
 	writer, err := backupzip.NewWriter()
 	if err != nil {
 		t.Fatal(err)
@@ -102,19 +113,31 @@ func runRestoreRepresentativeDatabaseFullRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(before, after) {
-		t.Fatal("logical database contents differ after excluding the one restore audit")
-	}
-	var total, restores int
-	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM configuration_audits`).Scan(&total); err != nil {
-		t.Fatal(err)
-	}
-	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM configuration_audits WHERE action = 'restore_succeeded' AND entity_type = 'restore'`).Scan(&restores); err != nil {
-		t.Fatal(err)
-	}
-	if total != 1 || restores != 1 {
-		t.Fatalf("configuration audits total/restore = %d/%d, want 1/1", total, restores)
-	}
+	t.Run("P1-BACKUP-03 online backup carries representative database contents", func(t *testing.T) {
+		if validated.FormatVersion != domain.BackupFormatVersion || validated.SchemaVersion != sqliteadapter.CurrentSchemaVersion || validated.ArtifactSHA256 == "" {
+			t.Fatalf("validated backup metadata = %#v", validated)
+		}
+		for _, table := range []string{"raw_snapshots", "usage_cost_observations", "usage_limit_observations", "services", "logical_accounts", "plan_histories", "configuration_audits"} {
+			if !reflect.DeepEqual(before[table], after[table]) {
+				t.Fatalf("backup round trip changed representative table %s", table)
+			}
+		}
+	})
+	t.Run("P1-RESTORE-07 empty-database round trip compares counts and history", func(t *testing.T) {
+		if !reflect.DeepEqual(before, after) {
+			t.Fatal("logical database contents differ after excluding the one restore audit")
+		}
+		var total, restores int
+		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM configuration_audits`).Scan(&total); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM configuration_audits WHERE action = 'restore_succeeded' AND entity_type = 'restore'`).Scan(&restores); err != nil {
+			t.Fatal(err)
+		}
+		if total != 2 || restores != 1 {
+			t.Fatalf("configuration audits total/restore = %d/%d, want 2/1", total, restores)
+		}
+	})
 }
 
 func seedRepresentativeRestoreData(t *testing.T, ctx context.Context, lifecycle *sqliteadapter.Lifecycle, database *sql.DB) {
@@ -142,6 +165,7 @@ func seedRepresentativeRestoreData(t *testing.T, ctx context.Context, lifecycle 
 		{`INSERT INTO usage_limit_source_links (usage_limit_association_id, usage_limit_source_id, logical_account_id, limit_definition_id, valid_from, valid_to, created_at, updated_at) VALUES ('limit-association-acceptance', 'limit-source-acceptance', 'account-acceptance', 'definition-acceptance', ?, NULL, ?, ?)`, []any{now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339)}},
 		{`INSERT INTO plan_histories (plan_history_id, logical_account_id, plan_version_id, valid_from, valid_to, created_at, updated_at) VALUES ('plan-history-acceptance', 'account-acceptance', 'plan-version-acceptance', ?, NULL, ?, ?)`, []any{now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339)}},
 		{`INSERT INTO calculation_intervals (calculation_interval_id, service_id, logical_account_id, usage_limit_source_id, limit_definition_id, plan_version_id, cycle_type, valid_from, valid_to, state, exclusion_reason, boundary_ids_json, created_at, updated_at) VALUES ('interval-acceptance', 'service-acceptance', 'account-acceptance', 'limit-source-acceptance', 'definition-acceptance', 'plan-version-acceptance', 'weekly', ?, ?, 'estimable', '', '[]', ?, ?)`, []any{now.Format(time.RFC3339), until.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339)}},
+		{`INSERT INTO configuration_audits (audit_id, occurred_at, actor, action, entity_type, entity_id, before_json, after_json) VALUES ('catalog-audit-acceptance', ?, 'test', 'catalog_change', 'service', 'service-acceptance', '{}', '{}')`, []any{now.Format(time.RFC3339)}},
 	}
 	for _, statement := range statements {
 		if _, err := database.ExecContext(ctx, statement.query, statement.args...); err != nil {

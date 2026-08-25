@@ -23,6 +23,16 @@ func TestACP113AdjacentDifferences(t *testing.T) {
 	}
 	closeEnough(t, costs[0], 2)
 	closeEnough(t, costs[1], 3)
+	t.Run("P1-EST-10 adjacent differences keep informative zero terms", func(t *testing.T) {
+		coefficients, costs, err := AdjacentDifferences([]EstimationPoint{{SharedCost: 0, Utilization: []float64{0}}, {SharedCost: 0, Utilization: []float64{0.1}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := coefficients.Dims()
+		if rows != 1 || len(costs) != 1 || costs[0] != 0 || coefficients.At(0, 0) != 0.1 {
+			t.Fatalf("informative zero row = rows %d costs %#v coefficients %#v", rows, costs, coefficients)
+		}
+	})
 }
 
 func TestACP114ProvisionalSingleAccount(t *testing.T) {
@@ -60,6 +70,11 @@ func TestACP116ModelMismatch(t *testing.T) {
 	}
 	closeEnough(t, result.Limits[0], 150)
 	closeEnough(t, result.AbsoluteErrorRatio, 1.0/3.0)
+	t.Run("P1-EST-11 model mismatch retains the unmodified residual", func(t *testing.T) {
+		if result.Status != EstimationModelMismatch || result.AbsoluteErrorRatio != 1.0/3.0 {
+			t.Fatalf("model mismatch was not retained: %#v", result)
+		}
+	})
 }
 
 func TestACP117InsufficientAndRankDeficient(t *testing.T) {
@@ -77,6 +92,11 @@ func TestACP117InsufficientAndRankDeficient(t *testing.T) {
 	if rankDeficient.Status != EstimationUnidentifiable {
 		t.Fatalf("rank deficient status = %s", rankDeficient.Status)
 	}
+	t.Run("P1-EST-14 rank below effective unknown count is unidentifiable", func(t *testing.T) {
+		if rankDeficient.Rank != 1 || rankDeficient.Status != EstimationUnidentifiable {
+			t.Fatalf("rank result = %#v", rankDeficient)
+		}
+	})
 }
 
 func TestACP118PlanMultiplier(t *testing.T) {
@@ -113,6 +133,11 @@ func TestACP119ZeroSignalAndUnroundedThreshold(t *testing.T) {
 	if above.AbsoluteErrorRatio <= 0.1 || above.Status != EstimationModelMismatch {
 		t.Fatalf("above threshold: status=%s ratio=%.15f", above.Status, above.AbsoluteErrorRatio)
 	}
+	t.Run("P1-EST-16 threshold compares unrounded residual", func(t *testing.T) {
+		if below.Status != EstimationVerified || above.Status != EstimationModelMismatch || above.AbsoluteErrorRatio <= 0.1 {
+			t.Fatalf("unrounded threshold results: below=%#v above=%#v", below, above)
+		}
+	})
 }
 
 func TestNNLSIsInvariantToRowOrder(t *testing.T) {
@@ -127,6 +152,24 @@ func TestNNLSIsInvariantToRowOrder(t *testing.T) {
 	for index := range first.Limits {
 		closeEnough(t, first.Limits[index], second.Limits[index])
 	}
+	t.Run("P1-EST-13 normalized rank ignores zero columns", func(t *testing.T) {
+		rank, err := normalizedRank(mat.NewDense(2, 2, []float64{1, 0, 0, 0}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rank != 1 {
+			t.Fatalf("normalized rank = %d, want 1", rank)
+		}
+	})
+	t.Run("P1-EST-15 NNLS rejects non-positive reported limits", func(t *testing.T) {
+		result, err := EstimateFromDifferences(mat.NewDense(1, 1, []float64{1}), []float64{-1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != EstimationModelMismatch || len(result.Limits) != 1 || result.Limits[0] > NnlsTolerance {
+			t.Fatalf("non-positive solution result = %#v", result)
+		}
+	})
 }
 
 func estimatePoints(t *testing.T, points []EstimationPoint) EstimationResult {

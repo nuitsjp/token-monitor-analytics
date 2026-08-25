@@ -132,7 +132,32 @@ function overview(masked = false): OverviewSnapshot {
       latestSnapshotAt: "2026-08-26T00:05:00Z",
     },
     recentLimits: [1, 2, 3, 4].map((index) => recentLimit(index, masked)),
+    review: {
+      ...emptyOverviewSnapshot.review,
+      recalculationFailures: {
+        ...emptyOverviewSnapshot.review.recalculationFailures,
+        count: 1,
+      },
+    },
   };
+}
+
+function contrastRatio(
+  first: [number, number, number],
+  second: [number, number, number],
+): number {
+  const luminance = (rgb: [number, number, number]) => {
+    const linear = rgb.map((component) => {
+      const value = component / 255;
+      return value <= 0.04045
+        ? value / 12.92
+        : Math.pow((value + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  };
+  const light = Math.max(luminance(first), luminance(second));
+  const dark = Math.min(luminance(first), luminance(second));
+  return (light + 0.05) / (dark + 0.05);
 }
 
 function renderCompact(backend: FrontendAdapter) {
@@ -149,6 +174,27 @@ afterEach(() => {
 });
 
 describe("CompactWindow", () => {
+  it("QL-UI-07 uses a dedicated dark error-counter fill with at least 4.5:1 white-text contrast", async () => {
+    renderCompact(
+      createFakeBackend({
+        overview: overview(false),
+        settings: { theme: "dark" },
+      }),
+    );
+
+    const counter = await screen.findByRole("button", {
+      name: "処理失敗 1 件",
+    });
+    await waitFor(() =>
+      expect(document.documentElement.dataset.theme).toBe("dark"),
+    );
+    const style = getComputedStyle(counter);
+    expect(style.backgroundColor).toBe("rgb(143, 29, 34)");
+    expect(style.color).toBe("rgb(255, 255, 255)");
+    expect(
+      contrastRatio([143, 29, 34], [255, 255, 255]),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
   it("shows two real limits collapsed and four after native expansion", async () => {
     const user = userEvent.setup();
     const expandedStates: boolean[] = [];

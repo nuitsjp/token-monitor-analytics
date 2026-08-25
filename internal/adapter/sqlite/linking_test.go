@@ -39,9 +39,21 @@ func TestT023SourceAssociationsSupportCostNNLimitSingleAndImpactPreview(t *testi
 	}
 	// A cost source can be related to more than one logical account in the
 	// same period; this is shared observed usage, not an allocation.
-	if err := lifecycle.CreateUsageCostAssociation(ctx, UsageCostAssociation{ID: "cost-b", UsageCostSourceID: costSource.ID, LogicalAccountID: accountB.ID, ValidFrom: from, ValidTo: &boundary, CreatedAt: now, UpdatedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	t.Run("DM-REL-01 cost source supports n-to-n account associations", func(t *testing.T) {
+		if err := lifecycle.CreateUsageCostAssociation(ctx, UsageCostAssociation{ID: "cost-b", UsageCostSourceID: costSource.ID, LogicalAccountID: accountB.ID, ValidFrom: from, ValidTo: &boundary, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		associations, err := lifecycle.ListUsageCostAssociations(ctx, costSource.ID)
+		if err != nil || len(associations) != 2 {
+			t.Fatalf("cost associations = %#v err=%v", associations, err)
+		}
+	})
+	t.Run("P1-REL-01 cost source supports multiple account links", func(t *testing.T) {
+		associations, err := lifecycle.ListUsageCostAssociations(ctx, costSource.ID)
+		if err != nil || len(associations) != 2 {
+			t.Fatalf("cost links = %#v err=%v", associations, err)
+		}
+	})
 	if err := lifecycle.CreateUsageCostAssociation(ctx, UsageCostAssociation{ID: "cost-a-overlap", UsageCostSourceID: costSource.ID, LogicalAccountID: accountA.ID, ValidFrom: now.Add(time.Hour), ValidTo: &boundary, CreatedAt: now, UpdatedAt: now}); err == nil {
 		t.Fatal("overlapping cost association was accepted")
 	}
@@ -56,9 +68,17 @@ func TestT023SourceAssociationsSupportCostNNLimitSingleAndImpactPreview(t *testi
 	if err := lifecycle.CreateUsageLimitAssociation(ctx, UsageLimitAssociation{ID: "limit-overlap", UsageLimitSourceID: limitSource.ID, LogicalAccountID: accountB.ID, LimitDefinitionID: definition.ID, ValidFrom: now.Add(time.Hour), ValidTo: &boundary, CreatedAt: now, UpdatedAt: now}); err == nil {
 		t.Fatal("overlapping limit association was accepted")
 	}
-	if err := lifecycle.CreateUsageLimitAssociation(ctx, UsageLimitAssociation{ID: "limit-adjacent", UsageLimitSourceID: limitSource.ID, LogicalAccountID: accountB.ID, LimitDefinitionID: definition.ID, ValidFrom: boundary, CreatedAt: now, UpdatedAt: now}); err != nil {
-		t.Fatalf("adjacent limit association was rejected: %v", err)
-	}
+	t.Run("DM-REL-02 limit source has one account and definition per period", func(t *testing.T) {
+		if err := lifecycle.CreateUsageLimitAssociation(ctx, UsageLimitAssociation{ID: "limit-adjacent", UsageLimitSourceID: limitSource.ID, LogicalAccountID: accountB.ID, LimitDefinitionID: definition.ID, ValidFrom: boundary, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatalf("adjacent limit association was rejected: %v", err)
+		}
+	})
+	t.Run("P1-REL-02 limit source association carries account and definition", func(t *testing.T) {
+		associations, err := lifecycle.ListUsageLimitAssociations(ctx, limitSource.ID)
+		if err != nil || len(associations) != 2 || associations[0].LimitDefinitionID == "" || associations[0].LogicalAccountID == "" {
+			t.Fatalf("limit links = %#v err=%v", associations, err)
+		}
+	})
 
 	attempt := CollectionAttempt{AttemptID: "attempt-linking", HubID: hubID, Trigger: "manual", State: "started", StartedAt: now, AnalyticsIntervalSeconds: 300}
 	if err := lifecycle.CreateCollectionAttempt(ctx, attempt); err != nil {
@@ -74,9 +94,16 @@ func TestT023SourceAssociationsSupportCostNNLimitSingleAndImpactPreview(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(preview.AffectedObservationIDs) != 1 || preview.AffectedObservationIDs[0] != "cost-observation" {
-		t.Fatalf("impact preview observations = %#v", preview.AffectedObservationIDs)
-	}
+	t.Run("DM-REL-04 association preview identifies affected observations", func(t *testing.T) {
+		if len(preview.AffectedObservationIDs) != 1 || preview.AffectedObservationIDs[0] != "cost-observation" {
+			t.Fatalf("impact preview observations = %#v", preview.AffectedObservationIDs)
+		}
+	})
+	t.Run("P1-REL-06 association change previews a bounded recalculation scope", func(t *testing.T) {
+		if len(preview.AffectedSourceIDs) != 1 || preview.AffectedSourceIDs[0] != costSource.ID {
+			t.Fatalf("impact preview sources = %#v", preview.AffectedSourceIDs)
+		}
+	})
 	associations, err := lifecycle.ListUsageCostAssociations(ctx, costSource.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -143,23 +170,34 @@ func TestT023CompletenessRejectsMixedUnconfirmedActivityForWholeInterval(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usable {
-		t.Fatal("mixed completeness interval was estimable")
-	}
+	t.Run("DM-REL-06 mixed unconfirmed activity excludes whole interval", func(t *testing.T) {
+		if usable {
+			t.Fatal("mixed completeness interval was estimable")
+		}
+	})
 	usable, err = lifecycle.CanUseUsageCostSourceForEstimation(ctx, source.ID, now, middle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !usable {
-		t.Fatal("confirmed completeness interval was not estimable")
-	}
+	t.Run("DM-REL-05 completeness names the full active account set", func(t *testing.T) {
+		if !usable {
+			t.Fatal("confirmed completeness interval was not estimable")
+		}
+	})
+	t.Run("P1-REL-05 completeness confirmation gates source interval", func(t *testing.T) {
+		if usable != true {
+			t.Fatal("confirmed completeness was not accepted")
+		}
+	})
 	if err := lifecycle.UpdateUsageCostSourceCompleteness(ctx, UsageCostSourceCompleteness{ID: "complete-after", UsageCostSourceID: source.ID, ValidFrom: middle, ValidTo: &end, State: CompletenessConfirmed, LogicalAccountIDs: []string{account.ID}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	usable, err = lifecycle.CanUseUsageCostSourceForEstimation(ctx, source.ID, now, end)
-	if err != nil || !usable {
-		t.Fatalf("confirmed complete interval usable=%v err=%v", usable, err)
-	}
+	t.Run("DM-REL-05 confirmed complete interval becomes usable", func(t *testing.T) {
+		if err != nil || !usable {
+			t.Fatalf("confirmed complete interval usable=%v err=%v", usable, err)
+		}
+	})
 }
 
 func TestT023RenameArchiveReconfirmationAndHubSwitchRequireExplicitConfirmation(t *testing.T) {
@@ -203,9 +241,16 @@ func TestT023RenameArchiveReconfirmationAndHubSwitchRequireExplicitConfirmation(
 		t.Fatal(err)
 	}
 	rows, err := lifecycle.ListLimitLabelChangeCandidates(ctx, domain.LabelChangeSameLimit)
-	if err != nil || len(rows) != 1 || rows[0].LimitDefinitionID == nil || *rows[0].LimitDefinitionID != definition.ID {
-		t.Fatalf("rename decision rows=%#v err=%v", rows, err)
-	}
+	t.Run("P1-REL-04 window-key change keeps explicit same-limit decision", func(t *testing.T) {
+		if err != nil || len(rows) != 1 || rows[0].LimitDefinitionID == nil || *rows[0].LimitDefinitionID != definition.ID {
+			t.Fatalf("rename decision rows=%#v err=%v", rows, err)
+		}
+	})
+	t.Run("DM-PLAN-06 window-key change is not auto-merged", func(t *testing.T) {
+		if len(rows) != 1 || rows[0].LimitDefinitionID == nil || *rows[0].LimitDefinitionID != definition.ID {
+			t.Fatalf("window-key decision = %#v", rows)
+		}
+	})
 
 	candidate := HubAccountCandidate{ID: "archive-candidate", HubID: hubA, ServiceID: service.ID, AccountKey: "account-key", CreatedAt: now, UpdatedAt: now}
 	if err := lifecycle.CreateHubAccountCandidate(ctx, candidate); err != nil {
@@ -221,19 +266,25 @@ func TestT023RenameArchiveReconfirmationAndHubSwitchRequireExplicitConfirmation(
 		t.Fatal(err)
 	}
 	archivedCandidates, err := lifecycle.ListHubAccountCandidates(ctx, service.ID, domain.HubAccountCandidateArchivedReconfirmation)
-	if err != nil || len(archivedCandidates) != 1 || archivedCandidates[0].ID != candidate.ID {
-		t.Fatalf("archived reconfirmation candidates=%#v err=%v", archivedCandidates, err)
-	}
+	t.Run("DM-ID-07 archived account reconfirmation is explicit", func(t *testing.T) {
+		if err != nil || len(archivedCandidates) != 1 || archivedCandidates[0].ID != candidate.ID {
+			t.Fatalf("archived reconfirmation candidates=%#v err=%v", archivedCandidates, err)
+		}
+	})
 	if err := lifecycle.ConfirmHubSwitch(ctx, HubSwitch{ID: "hub-switch", OldHubID: hubA, OldDeviceID: "device", NewHubID: hubB, NewDeviceID: "device-new", CollectionDeviceID: "collector", SwitchedAt: boundary, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	switches, err := lifecycle.ListHubSwitches(ctx)
-	if err != nil || len(switches) != 1 || switches[0].OldHubID != hubA || switches[0].NewHubID != hubB {
-		t.Fatalf("Hub switches=%#v err=%v", switches, err)
-	}
-	if err := lifecycle.ConfirmHubSwitch(ctx, HubSwitch{ID: "invalid-switch", OldHubID: hubA, OldDeviceID: "device", NewHubID: hubA, NewDeviceID: "device", CollectionDeviceID: "collector", SwitchedAt: boundary, CreatedAt: now}); err == nil {
-		t.Fatal("unchanged Hub switch was accepted")
-	}
+	t.Run("DM-OBS-04 Hub switch records both endpoints", func(t *testing.T) {
+		if err != nil || len(switches) != 1 || switches[0].OldHubID != hubA || switches[0].NewHubID != hubB {
+			t.Fatalf("Hub switches=%#v err=%v", switches, err)
+		}
+	})
+	t.Run("DM-OBS-04 unchanged Hub switch is not a valid confirmation", func(t *testing.T) {
+		if err := lifecycle.ConfirmHubSwitch(ctx, HubSwitch{ID: "invalid-switch", OldHubID: hubA, OldDeviceID: "device", NewHubID: hubA, NewDeviceID: "device", CollectionDeviceID: "collector", SwitchedAt: boundary, CreatedAt: now}); err == nil {
+			t.Fatal("unchanged Hub switch was accepted")
+		}
+	})
 }
 
 func TestT023CollectionObservationCreatesCandidatesInOneTransaction(t *testing.T) {
@@ -291,21 +342,28 @@ func TestT023CollectionObservationCreatesCandidatesInOneTransaction(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(candidates) != 2 {
-		t.Fatalf("Hub account candidates = %#v, want one per Hub", candidates)
-	}
-	for _, candidate := range candidates {
-		if candidate.AccountKey != "account-key" || candidate.DisplayName != "" || candidate.DeviceName != "" {
-			t.Fatalf("observation-derived Hub candidate leaked display evidence: %#v", candidate)
+	t.Run("P1-CAT-02 candidate list keeps source Hub and non-secret fields", func(t *testing.T) {
+		if len(candidates) != 2 {
+			t.Fatalf("Hub account candidates = %#v, want one per Hub", candidates)
 		}
-	}
+		for _, candidate := range candidates {
+			if candidate.HubID != hubA && candidate.HubID != hubB {
+				t.Fatalf("candidate Hub = %#v", candidate)
+			}
+			if candidate.AccountKey != "account-key" || candidate.DisplayName != "" || candidate.DeviceName != "" {
+				t.Fatalf("observation-derived Hub candidate leaked display evidence: %#v", candidate)
+			}
+		}
+	})
 	identifications, err := lifecycle.ListIdentificationCandidates(ctx, domain.CandidateUnconfirmed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(identifications) != 1 || identifications[0].RawLimitServiceIdentifier != "limit.raw" || identifications[0].RawReportedPlanName != "Plan A" {
-		t.Fatalf("identification candidates = %#v, want one exact raw plan candidate", identifications)
-	}
+	t.Run("DM-ID-03 identifies candidates by exact raw provider and plan", func(t *testing.T) {
+		if len(identifications) != 1 || identifications[0].RawLimitServiceIdentifier != "limit.raw" || identifications[0].RawReportedPlanName != "Plan A" {
+			t.Fatalf("identification candidates = %#v, want one exact raw plan candidate", identifications)
+		}
+	})
 	database, err := lifecycle.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -321,9 +379,11 @@ func TestT023CollectionObservationCreatesCandidatesInOneTransaction(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(labelCandidates) != 1 || labelCandidates[0].ID != "candidate-source-new" || labelCandidates[0].OldLabel != "Old label" || labelCandidates[0].NewLabel != "New label" {
-		t.Fatalf("observed label candidates = %#v", labelCandidates)
-	}
+	t.Run("DM-PLAN-10 label change candidate uses observation sequence", func(t *testing.T) {
+		if len(labelCandidates) != 1 || labelCandidates[0].ID != "candidate-source-new" || labelCandidates[0].OldLabel != "Old label" || labelCandidates[0].NewLabel != "New label" {
+			t.Fatalf("observed label candidates = %#v", labelCandidates)
+		}
+	})
 	windows, err := lifecycle.ListLimitLabelChangeWindows(ctx, labelCandidates[0].ID)
 	if err != nil {
 		t.Fatal(err)
@@ -383,21 +443,56 @@ func TestT023CompletenessAndHubSwitchImpactPreviewsAreReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(completenessPreview.AffectedSourceIDs) != 1 || len(completenessPreview.AffectedObservationIDs) != 1 || completenessPreview.AffectedObservationIDs[0] != "preview-cost-observation-a" {
-		t.Fatalf("completeness preview = %#v", completenessPreview)
-	}
+	t.Run("P1-REL-05 completeness preview identifies affected source interval", func(t *testing.T) {
+		if len(completenessPreview.AffectedSourceIDs) != 1 || len(completenessPreview.AffectedObservationIDs) != 1 || completenessPreview.AffectedObservationIDs[0] != "preview-cost-observation-a" {
+			t.Fatalf("completeness preview = %#v", completenessPreview)
+		}
+	})
 	switchPreview, err := lifecycle.PreviewHubSwitch(ctx, HubSwitch{ID: "preview-switch", OldHubID: hubA, OldDeviceID: "device-a", NewHubID: hubB, NewDeviceID: "device-b", CollectionDeviceID: "collector", SwitchedAt: now.Add(30 * time.Minute), CreatedAt: now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(switchPreview.AffectedSourceIDs) != 4 || len(switchPreview.AffectedObservationIDs) != 4 {
-		t.Fatalf("Hub switch preview = %#v", switchPreview)
-	}
+	t.Run("P1-REL-06 Hub switch preview limits affected sources and observations", func(t *testing.T) {
+		if len(switchPreview.AffectedSourceIDs) != 4 || len(switchPreview.AffectedObservationIDs) != 4 {
+			t.Fatalf("Hub switch preview = %#v", switchPreview)
+		}
+	})
 	afterSources, err := lifecycle.ListUsageCostSources(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(beforeSources) != len(afterSources) {
-		t.Fatalf("preview changed persisted sources: before=%#v after=%#v", beforeSources, afterSources)
+	t.Run("DM-REL-04 impact preview is read-only", func(t *testing.T) {
+		if len(beforeSources) != len(afterSources) {
+			t.Fatalf("preview changed persisted sources: before=%#v after=%#v", beforeSources, afterSources)
+		}
+	})
+}
+
+func TestUnmappedLimitObservationDoesNotCreateLogicalAccountCandidate(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	hubID := insertAccountTestHub(t, lifecycle, now, "unmapped-candidate-hub")
+	if err := lifecycle.CreateCollectionAttempt(ctx, CollectionAttempt{AttemptID: "unmapped-attempt", HubID: hubID, Trigger: "manual", State: "started", StartedAt: now, AnalyticsIntervalSeconds: 300}); err != nil {
+		t.Fatal(err)
 	}
+	if err := lifecycle.SaveRawSnapshot(ctx, RawSnapshot{SnapshotID: "unmapped-snapshot", AttemptID: "unmapped-attempt", HubID: hubID, ResponseKind: "stats", ReceivedStartedAt: now, ReceivedCompletedAt: now, HTTPStatus: 200, Body: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.InsertLimitObservations(ctx, []LimitObservation{{
+		ObservationID: "unmapped-observation", SnapshotID: "unmapped-snapshot", HubID: hubID, DeviceID: "device", RawServiceIdentifier: "unknown.limit",
+		AccountKey: "account-key", ProviderUpdatedAt: now, WindowKey: "weekly", PlanLabel: "Plan", AnalyticsIntervalSeconds: 300,
+		JSONPath: "$.limits[0]", DedupeKey: "unmapped-dedupe", ValueFingerprint: "unmapped-value",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("DM-ID-04 unmapped provider does not auto-create logical account candidate", func(t *testing.T) {
+		candidates, err := lifecycle.ListHubAccountCandidates(ctx, "", domain.HubAccountCandidateUnconfirmed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(candidates) != 0 {
+			t.Fatalf("unmapped account candidates = %#v", candidates)
+		}
+	})
 }

@@ -22,7 +22,7 @@ func TestSaveDerivedResultReplacesByResultSetKeyAndRollsBack(t *testing.T) {
 	if err := lifecycle.CreateLimitDefinition(ctx, definition); err != nil {
 		t.Fatal(err)
 	}
-	base := domain.DerivedResult{ID: "derived-old", ServiceID: service.ID, LimitDefinitionID: definition.ID, CycleType: domain.LimitCycleWeekly, CalculationIntervalIDs: []string{"interval-a"}, ValidFrom: now, ValidTo: now.Add(time.Hour), EstimationResult: domain.EstimationResult{Status: domain.EstimationProvisional, CalculationLogicVersion: "logic-old"}, Series: []domain.EstimationResultSeries{{ID: "derived-series", UsageLimitSourceID: "source-a", LogicalAccountID: "account-a", PlanVersionID: "plan-a"}}, CreatedAt: now, UpdatedAt: now}
+	base := domain.DerivedResult{ID: "derived-old", ServiceID: service.ID, LimitDefinitionID: definition.ID, CycleType: domain.LimitCycleWeekly, CalculationIntervalIDs: []string{"interval-a"}, ValidFrom: now, ValidTo: now.Add(time.Hour), EstimationResult: domain.EstimationResult{Status: domain.EstimationProvisional, Reasons: []string{"exactly_identified"}, Limits: []float64{100}, Rank: 1, AbsoluteErrorRatio: 0.01, MaxTimeDelta: 2 * time.Second, CalculationLogicVersion: "logic-old", PointIDs: []string{"point-a"}}, Series: []domain.EstimationResultSeries{{ID: "derived-series", UsageLimitSourceID: "source-a", LogicalAccountID: "account-a", PlanVersionID: "plan-a"}}, Evidence: []domain.EstimationEvidence{{ID: "point-evidence", Kind: "point", PointID: "point-a"}, {ID: "matched-evidence", Kind: "matched_observation", PointID: "point-a", ObservationID: "observation-a"}, {ID: "snapshot-evidence", Kind: "snapshot", PointID: "point-a", SnapshotID: "snapshot-a"}, {ID: "association-evidence", Kind: "association", PointID: "point-a", AssociationID: "association-a"}, {ID: "completeness-evidence", Kind: "completeness", PointID: "point-a", CompletenessID: "completeness-a"}, {ID: "plan-history-evidence", Kind: "plan_history", PointID: "point-a", PlanHistoryID: "history-a", PlanVersionID: "plan-a"}}, CreatedAt: now, UpdatedAt: now}
 	base.ResultSetKey = domain.ResultSetKey(base.ServiceID, base.LimitDefinitionID, base.CycleType, base.ValidFrom, base.ValidTo, base.CalculationIntervalIDs)
 	if err := lifecycle.SaveDerivedResult(ctx, base, nil); err != nil {
 		t.Fatal(err)
@@ -43,6 +43,25 @@ func TestSaveDerivedResultReplacesByResultSetKeyAndRollsBack(t *testing.T) {
 	if len(stored.Series) != 1 || stored.Series[0].Multiplier != nil || stored.Series[0].EstimatedLimit != nil {
 		t.Fatalf("unknown multiplier/limit was not retained as NULL: %#v", stored.Series)
 	}
+	t.Run("P1-RES-01 persisted result retains identity metrics and calculation version", func(t *testing.T) {
+		if stored.ServiceID != service.ID || stored.LimitDefinitionID != definition.ID || stored.CycleType != domain.LimitCycleWeekly || len(stored.CalculationIntervalIDs) != 1 || stored.CalculationIntervalIDs[0] != "interval-a" || stored.Status != domain.EstimationProvisional || len(stored.Limits) != 1 || stored.Limits[0] != 100 || stored.Rank != 1 || stored.AbsoluteErrorRatio != 0.01 || stored.MaxTimeDelta != 2*time.Second || stored.CalculationLogicVersion != "logic-old" {
+			t.Fatalf("persisted result metadata = %#v", stored)
+		}
+		if len(stored.Series) != 1 || stored.Series[0].LogicalAccountID != "account-a" || stored.Series[0].PlanVersionID != "plan-a" {
+			t.Fatalf("persisted series metadata = %#v", stored.Series)
+		}
+	})
+	t.Run("P1-RES-02 result evidence retains point source snapshot and lineage links", func(t *testing.T) {
+		kinds := map[string]bool{}
+		for _, evidence := range stored.Evidence {
+			kinds[evidence.Kind] = true
+		}
+		for _, kind := range []string{"point", "matched_observation", "snapshot", "association", "completeness", "plan_history"} {
+			if !kinds[kind] {
+				t.Fatalf("missing evidence kind %q: %#v", kind, stored.Evidence)
+			}
+		}
+	})
 	if err := lifecycle.SaveDerivedResult(ctx, updated, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +72,14 @@ func TestSaveDerivedResultReplacesByResultSetKeyAndRollsBack(t *testing.T) {
 	if stored.ID != updated.ID || stored.CalculationLogicVersion != updated.CalculationLogicVersion {
 		t.Fatalf("result was not replaced: %#v", stored)
 	}
+	t.Run("P1-RES-03 same result set key replaces the derived generation", func(t *testing.T) {
+		if stored.ID != updated.ID || stored.CalculationLogicVersion != updated.CalculationLogicVersion {
+			t.Fatalf("derived result generation was not replaced: %#v", stored)
+		}
+		if _, err := lifecycle.GetEstimationResult(ctx, base.ResultSetKey); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestClaimRecalculationRequestIsAtomic(t *testing.T) {

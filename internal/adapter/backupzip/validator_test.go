@@ -36,24 +36,26 @@ func TestRestoreValidatorExtractsOnlyValidatedDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate restore archive: %v", err)
 	}
-	if filepath.Dir(directory) != root || !strings.HasPrefix(filepath.Base(directory), "restore-validated-") {
-		t.Fatalf("validation directory = %q", directory)
-	}
-	extracted, err := os.ReadFile(filepath.Join(directory, "data.sqlite3"))
-	if err != nil {
-		t.Fatalf("read extracted database: %v", err)
-	}
-	if !bytes.Equal(extracted, database) || gotManifest.SchemaVersion != 13 {
-		t.Fatalf("extracted database or manifest changed")
-	}
-	archiveBytes, err := os.ReadFile(archivePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectedArtifactHash := sha256.Sum256(archiveBytes)
-	if artifactSHA != hex.EncodeToString(expectedArtifactHash[:]) {
-		t.Fatalf("artifact SHA = %q", artifactSHA)
-	}
+	t.Run("P1-RESTORE-01 validates archive structure manifest CRC size and SHA", func(t *testing.T) {
+		if filepath.Dir(directory) != root || !strings.HasPrefix(filepath.Base(directory), "restore-validated-") {
+			t.Fatalf("validation directory = %q", directory)
+		}
+		extracted, err := os.ReadFile(filepath.Join(directory, "data.sqlite3"))
+		if err != nil {
+			t.Fatalf("read extracted database: %v", err)
+		}
+		if !bytes.Equal(extracted, database) || gotManifest.SchemaVersion != 13 {
+			t.Fatalf("extracted database or manifest changed")
+		}
+		archiveBytes, err := os.ReadFile(archivePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedArtifactHash := sha256.Sum256(archiveBytes)
+		if artifactSHA != hex.EncodeToString(expectedArtifactHash[:]) {
+			t.Fatalf("artifact SHA = %q", artifactSHA)
+		}
+	})
 }
 
 func TestRestoreValidatorRejectsManifestFailuresIndividually(t *testing.T) {

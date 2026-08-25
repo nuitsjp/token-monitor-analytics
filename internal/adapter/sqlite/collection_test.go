@@ -79,7 +79,51 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 		}
 		count++
 	}
-	if count != 2 {
-		t.Fatalf("cost observations = %d, want 2", count)
+	t.Run("DM-OBS-03 dedupe never crosses Hub boundaries", func(t *testing.T) {
+		if count != 2 {
+			t.Fatalf("cost observations = %d, want 2", count)
+		}
+	})
+	duplicate := costs[0]
+	duplicate.ObservationID = "cost-duplicate"
+	if err := lifecycle.InsertCostObservations(ctx, []CostObservation{duplicate}); err != nil {
+		t.Fatal(err)
 	}
+	t.Run("DM-OBS-01 repeated identical cost observation keeps one canonical value", func(t *testing.T) {
+		var canonical, duplicateState int
+		if err := database.QueryRow(`SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'canonical'`, duplicate.HubID, duplicate.DedupeKey).Scan(&canonical); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.QueryRow(`SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'duplicate'`, duplicate.HubID, duplicate.DedupeKey).Scan(&duplicateState); err != nil {
+			t.Fatal(err)
+		}
+		if canonical != 1 || duplicateState != 1 {
+			t.Fatalf("dedupe states canonical=%d duplicate=%d", canonical, duplicateState)
+		}
+	})
+	conflict := costs[0]
+	conflict.ObservationID = "cost-conflict"
+	conflict.CostUSDText = "2"
+	conflict.ValueFingerprint = "different-value"
+	if err := lifecycle.InsertCostObservations(ctx, []CostObservation{conflict}); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("API-COST-06 conflicting value at one usage timestamp is unusable", func(t *testing.T) {
+		var states int
+		if err := database.QueryRow(`SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'conflict'`, conflict.HubID, conflict.DedupeKey).Scan(&states); err != nil {
+			t.Fatal(err)
+		}
+		if states != 3 {
+			t.Fatalf("conflict rows = %d, want 3", states)
+		}
+	})
+	t.Run("DM-OBS-02 conflicting cost observations are marked conflict", func(t *testing.T) {
+		var state string
+		if err := database.QueryRow(`SELECT dedupe_state FROM usage_cost_observations WHERE observation_id = ?`, conflict.ObservationID).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		if state != "conflict" {
+			t.Fatalf("conflict observation state = %q", state)
+		}
+	})
 }

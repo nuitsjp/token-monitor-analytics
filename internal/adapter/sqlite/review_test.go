@@ -30,6 +30,7 @@ func TestListReviewItemsAggregatesWarningsAndKeepsFilteredCursorStable(t *testin
 	insertReviewLimitObservation(t, database, "limit-observation-3", "hub-1", "device-2", "limit.other", now.Add(30*time.Minute), "canonical")
 	insertReviewCostObservation(t, database, "cost-observation-1", "hub-1", "device-1", "cost.raw", now.Add(15*time.Minute), "conflict")
 	insertReviewCostObservation(t, database, "cost-observation-2", "hub-1", "device-1", "cost.raw", now.Add(25*time.Minute), "conflict")
+	insertReviewCostObservation(t, database, "cost-observation-unassociated", "hub-1", "device-2", "cost.other", now.Add(35*time.Minute), "canonical")
 
 	page, err := lifecycle.ListReviewItems(ctx, domain.ReviewFilter{Kind: domain.ReviewKindMissingAccountKey, Limit: 1})
 	if err != nil {
@@ -73,6 +74,21 @@ func TestListReviewItemsAggregatesWarningsAndKeepsFilteredCursorStable(t *testin
 	if len(conflict.Items) != 1 || conflict.Items[0].Count != 2 || !conflict.Items[0].LastObservedAt.Equal(now.Add(25*time.Minute)) {
 		t.Fatalf("date-filtered conflict = %#v", conflict)
 	}
+	unassociated, err := lifecycle.ListReviewItems(ctx, domain.ReviewFilter{Kind: domain.ReviewKindUsageCostUnassociated, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("P1-REL-03 unassociated cost observations remain reviewable but are not linked", func(t *testing.T) {
+		found := false
+		for _, item := range unassociated.Items {
+			if item.SourceID == "cost-2" && item.Count == 1 {
+				found = true
+			}
+		}
+		if len(unassociated.Items) != 2 || !found {
+			t.Fatalf("unassociated review items = %#v", unassociated.Items)
+		}
+	})
 }
 
 func TestListReviewItemsClassifiesCanonicalReviewRowsWithoutHubSwitchCandidates(t *testing.T) {
@@ -158,16 +174,20 @@ func TestListReviewItemsIncludesCurrentLimitAssociationAndPlanPeriod(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 {
-		t.Fatalf("plan history review items = %#v", page.Items)
-	}
+	t.Run("DM-PLAN-04 reported plan mismatch is surfaced", func(t *testing.T) {
+		if len(page.Items) != 1 {
+			t.Fatalf("plan history review items = %#v", page.Items)
+		}
+	})
 	association := page.Items[0].CurrentAssociation
-	if association == nil || association.LogicalAccountDisplayName != "Logical account" || association.LimitMeaning != "Input limit" || association.PlanVersionName != "Plan v1" {
-		t.Fatalf("current association = %#v", association)
-	}
-	if association.AssociationValidFrom == nil || association.AssociationValidTo == nil || association.PlanValidFrom == nil || association.PlanValidTo == nil || !association.AssociationValidFrom.Equal(now.Add(-2*time.Hour)) || !association.AssociationValidTo.Equal(now.Add(4*time.Hour)) || !association.PlanValidFrom.Equal(now.Add(-time.Hour)) || !association.PlanValidTo.Equal(now.Add(2*time.Hour)) {
-		t.Fatalf("association periods were overwritten: %#v", association)
-	}
+	t.Run("P1-CAT-07 review shows mismatch and exact effective periods", func(t *testing.T) {
+		if association == nil || association.LogicalAccountDisplayName != "Logical account" || association.LimitMeaning != "Input limit" || association.PlanVersionName != "Plan v1" {
+			t.Fatalf("current association = %#v", association)
+		}
+		if association.AssociationValidFrom == nil || association.AssociationValidTo == nil || association.PlanValidFrom == nil || association.PlanValidTo == nil || !association.AssociationValidFrom.Equal(now.Add(-2*time.Hour)) || !association.AssociationValidTo.Equal(now.Add(4*time.Hour)) || !association.PlanValidFrom.Equal(now.Add(-time.Hour)) || !association.PlanValidTo.Equal(now.Add(2*time.Hour)) {
+			t.Fatalf("association periods were overwritten: %#v", association)
+		}
+	})
 }
 
 func TestListReviewItemsUsesCostAssociationForCompleteness(t *testing.T) {
@@ -213,9 +233,11 @@ func TestListReviewItemsUsesCostAssociationForCompleteness(t *testing.T) {
 			found = true
 		}
 	}
-	if !found {
-		t.Fatalf("cost completeness association = %#v", page.Items)
-	}
+	t.Run("DM-REL-05 completeness review uses cost association", func(t *testing.T) {
+		if !found {
+			t.Fatalf("cost completeness association = %#v", page.Items)
+		}
+	})
 }
 
 func insertReviewHub(t *testing.T, database *sql.DB, hubID string, now time.Time) {

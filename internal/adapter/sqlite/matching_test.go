@@ -112,6 +112,19 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if inputs[0].PlanVersionID != "" || len(inputs[0].LimitSeries) != 2 || inputs[0].LimitSeries[0].PlanVersionID == inputs[0].LimitSeries[1].PlanVersionID {
 		t.Fatalf("plan versions were collapsed: %#v", inputs[0])
 	}
+	t.Run("P1-MATCH-03 one service definition and interval target one equation set", func(t *testing.T) {
+		if inputs[0].ServiceID != service.ID || inputs[0].LimitDefinitionID != definition.ID || len(inputs[0].CalculationIntervalIDs) != 2 || len(inputs[0].LimitSeries) != 2 {
+			t.Fatalf("matching target set = %#v", inputs[0])
+		}
+		for _, series := range inputs[0].LimitSeries {
+			if series.CalculationIntervalID == "" || len(series.AssociationIDs) == 0 {
+				t.Fatalf("series trace = %#v", series)
+			}
+		}
+		if len(inputs[0].CostSources) != 1 || len(inputs[0].CostSources[0].AssociationIDs) == 0 || len(inputs[0].CostSources[0].CompletenessIDs) == 0 || !inputs[0].CostSources[0].Complete {
+			t.Fatalf("cost source completeness trace = %#v", inputs[0].CostSources)
+		}
+	})
 	nextID := 0
 	points, err := domain.BuildEstimationPoints(inputs[0], func() string {
 		nextID++
@@ -120,9 +133,21 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(points) != 2 || points[1].MatchedObservations[2].ObservationID != "matching-cost-observation-1ns" || points[1].SharedCost != 18 || len(points[1].Utilization) != 2 || points[1].Utilization[0] != 0.3 || points[1].Utilization[1] != 0.4 {
-		t.Fatalf("points = %#v", points)
-	}
+	t.Run("DM-REL-07 shared cost observation is counted once", func(t *testing.T) {
+		if len(points) != 2 || points[1].MatchedObservations[2].ObservationID != "matching-cost-observation-1ns" || points[1].SharedCost != 18 || len(points[1].Utilization) != 2 || points[1].Utilization[0] != 0.3 || points[1].Utilization[1] != 0.4 {
+			t.Fatalf("points = %#v", points)
+		}
+	})
+	t.Run("DM-PLAN-08 mixed plan versions retain separate limit series", func(t *testing.T) {
+		if len(points[1].LimitSeriesIDs) != 2 || points[1].LimitSeriesPlanVersionIDs[0] == points[1].LimitSeriesPlanVersionIDs[1] {
+			t.Fatalf("point plan series = %#v", points[1])
+		}
+	})
+	t.Run("P1-EST-04 shared cost source is counted once across account links", func(t *testing.T) {
+		if len(points[1].CostSourceIDs) != 1 || points[1].CostSourceIDs[0] != costSource.ID || points[1].SharedCost != 18 {
+			t.Fatalf("shared cost aggregation = %#v", points[1])
+		}
+	})
 	if err := lifecycle.SaveEstimationPoints(ctx, points); err != nil {
 		t.Fatal(err)
 	}
@@ -189,9 +214,11 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(points) != 0 {
-		t.Fatalf("unsupported contract points = %#v", points)
-	}
+	t.Run("DM-OBS-02 unsupported contract observations are excluded", func(t *testing.T) {
+		if len(points) != 0 {
+			t.Fatalf("unsupported contract points = %#v", points)
+		}
+	})
 	if _, err := database.Exec(`UPDATE raw_snapshots SET api_contract = ?`, contract); err != nil {
 		t.Fatal(err)
 	}
@@ -206,9 +233,11 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(points) != 0 {
-		t.Fatalf("dedupe conflict points = %#v", points)
-	}
+	t.Run("DM-OBS-02 dedupe conflict observations are excluded", func(t *testing.T) {
+		if len(points) != 0 {
+			t.Fatalf("dedupe conflict points = %#v", points)
+		}
+	})
 	if _, err := database.Exec(`UPDATE usage_cost_observations SET dedupe_state = 'canonical'`); err != nil {
 		t.Fatal(err)
 	}
@@ -226,9 +255,11 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(points) != 0 {
-		t.Fatalf("partial completeness points = %#v", points)
-	}
+	t.Run("DM-REL-06 partial completeness excludes the whole interval", func(t *testing.T) {
+		if len(points) != 0 {
+			t.Fatalf("partial completeness points = %#v", points)
+		}
+	})
 	if _, err := database.Exec(`UPDATE usage_cost_source_completeness SET logical_account_ids_json = ?`, `["matching-account-a","matching-account-b"]`); err != nil {
 		t.Fatal(err)
 	}
@@ -243,9 +274,11 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(points) != 0 {
-		t.Fatalf("incomplete points = %#v", points)
-	}
+	t.Run("DM-REL-05 unconfirmed completeness excludes estimation", func(t *testing.T) {
+		if len(points) != 0 {
+			t.Fatalf("incomplete points = %#v", points)
+		}
+	})
 	extraAccount := LogicalAccount{ID: "matching-account-extra", ServiceID: service.ID, DisplayName: "extra", CreatedAt: start, UpdatedAt: start}
 	if err := lifecycle.CreateLogicalAccount(ctx, extraAccount); err != nil {
 		t.Fatal(err)
@@ -264,9 +297,11 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(points) != 0 {
-		t.Fatalf("mixed cost account points = %#v", points)
-	}
+	t.Run("DM-REL-06 mixed account activity excludes interval", func(t *testing.T) {
+		if len(points) != 0 {
+			t.Fatalf("mixed cost account points = %#v", points)
+		}
+	})
 	if _, err := database.Exec(`UPDATE calculation_intervals SET state = 'excluded', exclusion_reason = 'completeness_unconfirmed' WHERE calculation_interval_id = ?`, "matching-interval-1ns"); err != nil {
 		t.Fatal(err)
 	}

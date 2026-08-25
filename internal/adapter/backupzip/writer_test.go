@@ -4,9 +4,12 @@ import (
 	"archive/zip"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"token-monitor-analytics/internal/domain"
 )
 
 type renameReplacer struct {
@@ -80,14 +83,35 @@ func TestWriterCreatesExactlyTwoEntriesAndReturnsArtifactHash(t *testing.T) {
 		t.Fatalf("open artifact: %v", err)
 	}
 	defer archive.Close()
-	if len(archive.File) != 2 || archive.File[0].Name != "manifest.json" || archive.File[1].Name != "data.sqlite3" {
-		t.Fatalf("archive entries = %#v", archive.File)
-	}
-	if matches, err := filepath.Glob(filepath.Join(destinationDir, ".backup-*.part")); err != nil {
-		t.Fatalf("inspect temporary archives: %v", err)
-	} else if len(matches) != 0 {
-		t.Fatalf("temporary archives unexpectedly remain: %#v", matches)
-	}
+	t.Run("P1-BACKUP-02 strict two-entry ZIP and manifest", func(t *testing.T) {
+		if len(archive.File) != 2 || archive.File[0].Name != "manifest.json" || archive.File[1].Name != "data.sqlite3" {
+			t.Fatalf("archive entries = %#v", archive.File)
+		}
+		manifestReader, err := archive.File[0].Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifestBytes, err := io.ReadAll(manifestReader)
+		_ = manifestReader.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(manifestBytes) >= 3 && string(manifestBytes[:3]) == "\xEF\xBB\xBF" {
+			t.Fatal("manifest unexpectedly has a BOM")
+		}
+		manifest, err := parseManifest(manifestBytes)
+		if err != nil {
+			t.Fatalf("parse written manifest: %v", err)
+		}
+		if !sameManifest(manifest, testManifest()) || manifest.Database.Path != "data.sqlite3" || manifest.FormatVersion != domain.BackupFormatVersion {
+			t.Fatalf("written manifest = %#v", manifest)
+		}
+		if matches, err := filepath.Glob(filepath.Join(destinationDir, ".backup-*.part")); err != nil {
+			t.Fatalf("inspect temporary archives: %v", err)
+		} else if len(matches) != 0 {
+			t.Fatalf("temporary archives unexpectedly remain: %#v", matches)
+		}
+	})
 }
 
 func TestWriterReportsValidationAfterClosingArchiveAndValidationFailureKeepsExistingArtifact(t *testing.T) {
@@ -131,19 +155,26 @@ func TestWriterReportsValidationAfterClosingArchiveAndValidationFailureKeepsExis
 	if _, err := writer.Write(context.Background(), destination, dataDir, databasePath, []string{databasePath}, testManifest(), reportValidating); err == nil {
 		t.Fatal("corrupted readback unexpectedly succeeded")
 	}
-	if reports != 1 {
-		t.Fatalf("validation reports = %d, want 1", reports)
-	}
-	after, err := os.ReadFile(destination)
-	if err != nil {
-		t.Fatalf("read existing artifact: %v", err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("existing artifact changed from %q to %q", before, after)
-	}
-	if replacer.calls != 0 {
-		t.Fatalf("atomic replacement called %d times", replacer.calls)
-	}
+	t.Run("P1-BACKUP-06 readback validation and atomic replacement", func(t *testing.T) {
+		if reports != 1 {
+			t.Fatalf("validation reports = %d, want 1", reports)
+		}
+		after, err := os.ReadFile(destination)
+		if err != nil {
+			t.Fatalf("read existing artifact: %v", err)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("existing artifact changed from %q to %q", before, after)
+		}
+		if replacer.calls != 0 {
+			t.Fatalf("atomic replacement called %d times", replacer.calls)
+		}
+		if matches, err := filepath.Glob(filepath.Join(destinationDir, ".backup-*.part")); err != nil {
+			t.Fatalf("inspect temporary archives after failed validation: %v", err)
+		} else if len(matches) != 0 {
+			t.Fatalf("temporary archives remain after failed validation: %#v", matches)
+		}
+	})
 }
 
 func TestWriterRejectsApplicationDataDestinationAndHardlinkAlias(t *testing.T) {

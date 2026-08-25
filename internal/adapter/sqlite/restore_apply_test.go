@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -52,28 +53,52 @@ func TestRestoreApplierRoundTripsLogicalContentsAndAddsOneGlobalAudit(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Warning != "" || result.RollbackSucceeded {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-	database, err := lifecycle.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := logicalSnapshotDatabase(ctx, database, "audit-one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatal("restored logical contents differ from candidate")
-	}
-	var count int
-	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM configuration_audits WHERE entity_type = 'restore' AND action = 'restore_succeeded'`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("global restore audit count = %d, want 1", count)
-	}
-	assertRestoreWorkspaceClean(t, lifecycle)
+	t.Run("P1-RESTORE-04 atomic database and sidecar replacement", func(t *testing.T) {
+		if result.Warning != "" || result.RollbackSucceeded {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+		database, err := lifecycle.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := logicalSnapshotDatabase(ctx, database, "audit-one")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatal("restored logical contents differ from candidate")
+		}
+		var count int
+		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM configuration_audits WHERE entity_type = 'restore' AND action = 'restore_succeeded'`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("global restore audit count = %d, want 1", count)
+		}
+		assertRestoreWorkspaceClean(t, lifecycle)
+	})
+	t.Run("P1-RESTORE-10 success audit records artifact and versions", func(t *testing.T) {
+		database, err := lifecycle.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var afterJSON string
+		if err := database.QueryRow(`SELECT after_json FROM configuration_audits WHERE audit_id = 'audit-one' AND action = 'restore_succeeded'`).Scan(&afterJSON); err != nil {
+			t.Fatal(err)
+		}
+		var audit struct {
+			ArtifactSHA256 string `json:"artifactSha256"`
+			FormatVersion  int    `json:"formatVersion"`
+			SchemaVersion  int64  `json:"schemaVersion"`
+			RestoredAt     string `json:"restoredAt"`
+		}
+		if err := json.Unmarshal([]byte(afterJSON), &audit); err != nil {
+			t.Fatalf("restore audit JSON = %q: %v", afterJSON, err)
+		}
+		if audit.ArtifactSHA256 != repeatHex("a") || audit.FormatVersion != manifest.FormatVersion || audit.SchemaVersion != manifest.SchemaVersion || audit.RestoredAt != "2026-08-26T01:02:03.000000004Z" {
+			t.Fatalf("restore audit payload = %#v", audit)
+		}
+	})
 }
 
 func TestRestoreApplierRollsBackEveryPrecommitFailurePoint(t *testing.T) {
@@ -83,42 +108,44 @@ func TestRestoreApplierRollsBackEveryPrecommitFailurePoint(t *testing.T) {
 		"journal_original_moved", "replacement_moved", "journal_replacement_moved",
 		"replacement_validated", "reopened", "audit_written", "journal_audit_written", "contents_verified", "verified",
 	}
-	for _, point := range points {
-		t.Run(point, func(t *testing.T) {
-			ctx := context.Background()
-			lifecycle, candidate, manifest := newRestoreApplyFixture(t, "dark")
-			defer lifecycle.Close()
-			applier, err := NewRestoreApplier(lifecycle, restorePointFailure(point))
-			if err != nil {
-				t.Fatal(err)
-			}
-			result, err := applier.ApplyValidatedRestore(ctx, candidate, "operation-one", repeatHex("b"), manifest, "audit-one", time.Date(2026, 8, 26, 1, 2, 3, 0, time.UTC))
-			if err == nil {
-				t.Fatal("restore unexpectedly succeeded")
-			}
-			if !result.RollbackSucceeded {
-				t.Fatalf("rollback was not reported successful: %+v, %v", result, err)
-			}
-			database, dbErr := lifecycle.DB()
-			if dbErr != nil {
-				t.Fatal(dbErr)
-			}
-			var theme string
-			if err := database.QueryRowContext(ctx, `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
-				t.Fatal(err)
-			}
-			if theme != "system" {
-				t.Fatalf("operational theme = %q, want original system", theme)
-			}
-			var audits int
-			if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM configuration_audits WHERE action = 'restore_succeeded'`).Scan(&audits); err != nil {
-				t.Fatal(err)
-			}
-			if audits != 0 {
-				t.Fatalf("rolled back restore audits = %d, want 0", audits)
-			}
-		})
-	}
+	t.Run("P1-RESTORE-05 failed validation or apply preserves the original database", func(t *testing.T) {
+		for _, point := range points {
+			t.Run(point, func(t *testing.T) {
+				ctx := context.Background()
+				lifecycle, candidate, manifest := newRestoreApplyFixture(t, "dark")
+				defer lifecycle.Close()
+				applier, err := NewRestoreApplier(lifecycle, restorePointFailure(point))
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := applier.ApplyValidatedRestore(ctx, candidate, "operation-one", repeatHex("b"), manifest, "audit-one", time.Date(2026, 8, 26, 1, 2, 3, 0, time.UTC))
+				if err == nil {
+					t.Fatal("restore unexpectedly succeeded")
+				}
+				if !result.RollbackSucceeded {
+					t.Fatalf("rollback was not reported successful: %+v, %v", result, err)
+				}
+				database, dbErr := lifecycle.DB()
+				if dbErr != nil {
+					t.Fatal(dbErr)
+				}
+				var theme string
+				if err := database.QueryRowContext(ctx, `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+					t.Fatal(err)
+				}
+				if theme != "system" {
+					t.Fatalf("operational theme = %q, want original system", theme)
+				}
+				var audits int
+				if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM configuration_audits WHERE action = 'restore_succeeded'`).Scan(&audits); err != nil {
+					t.Fatal(err)
+				}
+				if audits != 0 {
+					t.Fatalf("rolled back restore audits = %d, want 0", audits)
+				}
+			})
+		}
+	})
 }
 
 func TestRestoreApplierTreatsPostcommitFailureAsCleanupWarning(t *testing.T) {

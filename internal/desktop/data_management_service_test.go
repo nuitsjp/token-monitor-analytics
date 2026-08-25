@@ -246,26 +246,33 @@ func TestDataManagementStateMapsCapacityBackupRecoveryAndMaintenance(t *testing.
 func TestDataManagementPurgePreservesHalfOpenSelectionConfirmationAndRollback(t *testing.T) {
 	start := "2026-08-01T09:00:00+09:00"
 	end := "2026-09-01T09:00:00+09:00"
-	previewCapacity := domain.DataCapacity{RawSnapshotCount: 4, RawJSONBytes: 500}
+	oldest := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	latest := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	previewCapacity := domain.DataCapacity{DatabaseSizeBytes: 4096, RawSnapshotCount: 4, OldestCompletedAt: &oldest, LatestCompletedAt: &latest, RawJSONBytes: 500}
 	purge := &dataManagementPurgeFake{preview: domain.PurgePreview{Capacity: previewCapacity}}
 	service := newDataManagementServiceForTest(t, purge, &dataManagementBackupFake{}, &dataManagementValidationFake{}, &dataManagementApplyFake{}, usecase.NewMaintenanceGate(), domain.RestoreRecoveryResult{Status: domain.RestoreRecoveryNone})
 	input := DataManagementPurgeSelectionInput{HubIDs: []string{"hub-b", "hub-a"}, StartAt: start, EndAt: end}
 
-	preview := service.PreviewPurge(context.Background(), input)
-	if preview.Status != "ready" || preview.Preview == nil || preview.Preview.Capacity.RawSnapshotCount != 4 {
-		t.Fatalf("preview = %#v", preview)
-	}
-	if strings.Join(purge.previewInput.HubIDs, ",") != "hub-a,hub-b" || purge.previewInput.Start == nil || purge.previewInput.Start.Format(time.RFC3339) != "2026-08-01T00:00:00Z" || purge.previewInput.End == nil || purge.previewInput.End.Format(time.RFC3339) != "2026-09-01T00:00:00Z" {
-		t.Fatalf("normalized selection = %#v", purge.previewInput)
-	}
-	if preview.Preview.Selection.StartAt != "2026-08-01T00:00:00Z" || preview.Preview.Selection.EndAt != "2026-09-01T00:00:00Z" {
-		t.Fatalf("preview UTC selection = %#v", preview.Preview.Selection)
-	}
+	t.Run("P1-PURGE-02 preview capacity and explicit confirmation", func(t *testing.T) {
+		preview := service.PreviewPurge(context.Background(), input)
+		if preview.Status != "ready" || preview.Preview == nil || preview.Preview.Capacity.RawSnapshotCount != 4 || preview.Preview.Capacity.DatabaseSizeBytes != 4096 || preview.Preview.Capacity.RawJSONBytes != 500 {
+			t.Fatalf("preview = %#v", preview)
+		}
+		if preview.Preview.Capacity.OldestCompletedAt != oldest.Format(time.RFC3339Nano) || preview.Preview.Capacity.LatestCompletedAt != latest.Format(time.RFC3339Nano) {
+			t.Fatalf("preview completion range = %#v", preview.Preview.Capacity)
+		}
+		if strings.Join(purge.previewInput.HubIDs, ",") != "hub-a,hub-b" || purge.previewInput.Start == nil || purge.previewInput.Start.Format(time.RFC3339) != "2026-08-01T00:00:00Z" || purge.previewInput.End == nil || purge.previewInput.End.Format(time.RFC3339) != "2026-09-01T00:00:00Z" {
+			t.Fatalf("normalized selection = %#v", purge.previewInput)
+		}
+		if preview.Preview.Selection.StartAt != "2026-08-01T00:00:00Z" || preview.Preview.Selection.EndAt != "2026-09-01T00:00:00Z" {
+			t.Fatalf("preview UTC selection = %#v", preview.Preview.Selection)
+		}
 
-	notConfirmed := service.ApplyPurge(context.Background(), input, false)
-	if notConfirmed.Error == nil || notConfirmed.Error.Code != "purge_confirmation_required" || purge.purgeCalls != 1 || purge.purgeConfirmed {
-		t.Fatalf("unconfirmed purge = %#v, calls=%d", notConfirmed, purge.purgeCalls)
-	}
+		notConfirmed := service.ApplyPurge(context.Background(), input, false)
+		if notConfirmed.Error == nil || notConfirmed.Error.Code != "purge_confirmation_required" || purge.purgeCalls != 1 || purge.purgeConfirmed {
+			t.Fatalf("unconfirmed purge = %#v, calls=%d", notConfirmed, purge.purgeCalls)
+		}
+	})
 	purge.purgeErr = errors.New("database raw failure at C:\\private\\data.sqlite3")
 	failed := service.ApplyPurge(context.Background(), input, true)
 	if failed.Error == nil || failed.Error.Code != "purge_failed_rolled_back" || !failed.Error.RolledBack || !failed.Error.CurrentDataUnchanged || !purge.purgeConfirmed {

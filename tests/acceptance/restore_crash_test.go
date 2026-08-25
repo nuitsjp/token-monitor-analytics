@@ -48,73 +48,75 @@ var restoreCrashFailurePoints = []string{
 }
 
 func TestACP124RestoreCrashRecoveryAtEverySwapStage(t *testing.T) {
-	for _, point := range restoreCrashFailurePoints {
-		point := point
-		t.Run("AC-P1-24/"+point, func(t *testing.T) {
-			dataDirectory, candidatePath, original, replacement := prepareRestoreCrashFixture(t)
-			command := exec.Command(os.Args[0], "-test.run=^TestACP124RestoreCrashHelper$", "-test.count=1")
-			command.Env = append(os.Environ(),
-				restoreCrashHelperModeEnv+"=1",
-				restoreCrashDataDirectoryEnv+"="+dataDirectory,
-				restoreCrashCandidatePathEnv+"="+candidatePath,
-				restoreCrashFailurePointEnv+"="+point,
-			)
-			output, err := command.CombinedOutput()
-			var exitError *exec.ExitError
-			if !errors.As(err, &exitError) || exitError.ExitCode() != restoreCrashExitCode {
-				t.Fatalf("crash helper point %q = %v, output:\n%s", point, err, output)
-			}
-			assertRestoreCrashJournalHasNoAbsolutePath(t, dataDirectory)
-
-			recovery, err := sqliteadapter.RecoverPendingRestore(dataDirectory)
-			if err != nil {
-				t.Fatalf("recover point %q: %v", point, err)
-			}
-			lifecycle := &sqliteadapter.Lifecycle{}
-			if err := lifecycle.Open(context.Background(), filepath.Join(dataDirectory, sqliteadapter.RestoreDatabaseName)); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = lifecycle.Close() })
-			database, err := lifecycle.DB()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if point != "committed" {
-				if recovery.Status != domain.RestoreRecoveryRolledBack {
-					t.Fatalf("recovery status at %q = %q, want %q", point, recovery.Status, domain.RestoreRecoveryRolledBack)
+	t.Run("P1-RESTORE-09 startup journal recovery after process stop", func(t *testing.T) {
+		for _, point := range restoreCrashFailurePoints {
+			point := point
+			t.Run("AC-P1-24/"+point, func(t *testing.T) {
+				dataDirectory, candidatePath, original, replacement := prepareRestoreCrashFixture(t)
+				command := exec.Command(os.Args[0], "-test.run=^TestACP124RestoreCrashHelper$", "-test.count=1")
+				command.Env = append(os.Environ(),
+					restoreCrashHelperModeEnv+"=1",
+					restoreCrashDataDirectoryEnv+"="+dataDirectory,
+					restoreCrashCandidatePathEnv+"="+candidatePath,
+					restoreCrashFailurePointEnv+"="+point,
+				)
+				output, err := command.CombinedOutput()
+				var exitError *exec.ExitError
+				if !errors.As(err, &exitError) || exitError.ExitCode() != restoreCrashExitCode {
+					t.Fatalf("crash helper point %q = %v, output:\n%s", point, err, output)
 				}
-				after, err := acceptanceLogicalContents(context.Background(), database, "")
+				assertRestoreCrashJournalHasNoAbsolutePath(t, dataDirectory)
+
+				recovery, err := sqliteadapter.RecoverPendingRestore(dataDirectory)
+				if err != nil {
+					t.Fatalf("recover point %q: %v", point, err)
+				}
+				lifecycle := &sqliteadapter.Lifecycle{}
+				if err := lifecycle.Open(context.Background(), filepath.Join(dataDirectory, sqliteadapter.RestoreDatabaseName)); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = lifecycle.Close() })
+				database, err := lifecycle.DB()
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !reflect.DeepEqual(original, after) {
-					t.Fatalf("original logical contents changed after recovery at %q", point)
+				if point != "committed" {
+					if recovery.Status != domain.RestoreRecoveryRolledBack {
+						t.Fatalf("recovery status at %q = %q, want %q", point, recovery.Status, domain.RestoreRecoveryRolledBack)
+					}
+					after, err := acceptanceLogicalContents(context.Background(), database, "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(original, after) {
+						t.Fatalf("original logical contents changed after recovery at %q", point)
+					}
+					return
 				}
-				return
-			}
 
-			if recovery.Status != domain.RestoreRecoveryCommittedCleaned {
-				t.Fatalf("recovery status at committed = %q, want %q", recovery.Status, domain.RestoreRecoveryCommittedCleaned)
-			}
-			after, err := acceptanceLogicalContents(context.Background(), database, restoreCrashAuditID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(replacement, after) {
-				t.Fatal("committed replacement logical contents differ after excluding the restore audit")
-			}
-			var total, restores int
-			if err := database.QueryRow(`SELECT COUNT(*) FROM configuration_audits`).Scan(&total); err != nil {
-				t.Fatal(err)
-			}
-			if err := database.QueryRow(`SELECT COUNT(*) FROM configuration_audits WHERE audit_id = ? AND action = 'restore_succeeded' AND entity_type = 'restore'`, restoreCrashAuditID).Scan(&restores); err != nil {
-				t.Fatal(err)
-			}
-			if total != 1 || restores != 1 {
-				t.Fatalf("committed audit total/restore = %d/%d, want 1/1", total, restores)
-			}
-		})
-	}
+				if recovery.Status != domain.RestoreRecoveryCommittedCleaned {
+					t.Fatalf("recovery status at committed = %q, want %q", recovery.Status, domain.RestoreRecoveryCommittedCleaned)
+				}
+				after, err := acceptanceLogicalContents(context.Background(), database, restoreCrashAuditID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(replacement, after) {
+					t.Fatal("committed replacement logical contents differ after excluding the restore audit")
+				}
+				var total, restores int
+				if err := database.QueryRow(`SELECT COUNT(*) FROM configuration_audits`).Scan(&total); err != nil {
+					t.Fatal(err)
+				}
+				if err := database.QueryRow(`SELECT COUNT(*) FROM configuration_audits WHERE audit_id = ? AND action = 'restore_succeeded' AND entity_type = 'restore'`, restoreCrashAuditID).Scan(&restores); err != nil {
+					t.Fatal(err)
+				}
+				if total != 1 || restores != 1 {
+					t.Fatalf("committed audit total/restore = %d/%d, want 1/1", total, restores)
+				}
+			})
+		}
+	})
 }
 
 func TestACP124RestoreCrashHelper(t *testing.T) {

@@ -30,13 +30,24 @@ func TestPreviewAndPurgeUseSnapshotReceivedCompletionHalfOpenSelection(t *testin
 	insertPurgeSnapshot(t, lifecycle, hubA, "a-end", start.Add(time.Hour), []byte("excluded"))
 	insertPurgeSnapshot(t, lifecycle, hubB, "b-in", start.Add(2*time.Minute), []byte("bravo"))
 	periodEnd := start.Add(time.Hour)
-	preview, err := lifecycle.PreviewPurge(ctx, domain.PurgeSelection{HubIDs: []string{hubA}, Start: &start, End: &periodEnd})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if preview.Capacity.RawSnapshotCount != 1 || preview.Capacity.RawJSONBytes != int64(len("alpha")) || !preview.Capacity.OldestCompletedAt.Equal(start.Add(time.Minute)) || !preview.Capacity.LatestCompletedAt.Equal(start.Add(time.Minute)) {
-		t.Fatalf("preview = %#v", preview)
-	}
+	var preview domain.PurgePreview
+	t.Run("P1-PURGE-01 Hub set and half-open completion interval", func(t *testing.T) {
+		var err error
+		preview, err = lifecycle.PreviewPurge(ctx, domain.PurgeSelection{HubIDs: []string{hubA}, Start: &start, End: &periodEnd})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if preview.Capacity.RawSnapshotCount != 1 || preview.Capacity.RawJSONBytes != int64(len("alpha")) || !preview.Capacity.OldestCompletedAt.Equal(start.Add(time.Minute)) || !preview.Capacity.LatestCompletedAt.Equal(start.Add(time.Minute)) {
+			t.Fatalf("preview = %#v", preview)
+		}
+		allHubs, err := lifecycle.PreviewPurge(ctx, domain.PurgeSelection{AllHubs: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if allHubs.Capacity.RawSnapshotCount != 3 || allHubs.Capacity.RawJSONBytes != int64(len("alpha")+len("excluded")+len("bravo")) {
+			t.Fatalf("all-hub unbounded preview = %#v", allHubs)
+		}
+	})
 	result, err := lifecycle.Purge(ctx, preview.Selection, start.Add(2*time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -74,24 +85,26 @@ func TestPurgeFailureRollsBackLogicalDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	selection := domain.PurgeSelection{HubIDs: []string{hubID}}
-	for _, injectedPoint := range []string{"after-selection", "after-dependency-selection", "after-results", "after-points", "after-intervals", "after-observations", "after-recalculation", "before-commit"} {
-		_, err = lifecycle.purgeWithInjector(ctx, selection, now.Add(time.Hour), purgeFailureInjector(func(point string) error {
-			if point == injectedPoint {
-				return errors.New("injected purge failure")
+	t.Run("P1-PURGE-05 rollback preserves local canonical database", func(t *testing.T) {
+		for _, injectedPoint := range []string{"after-selection", "after-dependency-selection", "after-results", "after-points", "after-intervals", "after-observations", "after-recalculation", "before-commit"} {
+			_, err = lifecycle.purgeWithInjector(ctx, selection, now.Add(time.Hour), purgeFailureInjector(func(point string) error {
+				if point == injectedPoint {
+					return errors.New("injected purge failure")
+				}
+				return nil
+			}))
+			if err == nil {
+				t.Fatalf("purge failure injection %q succeeded", injectedPoint)
 			}
-			return nil
-		}))
-		if err == nil {
-			t.Fatalf("purge failure injection %q succeeded", injectedPoint)
+			after, dumpErr := purgeLogicalDump(database)
+			if dumpErr != nil {
+				t.Fatal(dumpErr)
+			}
+			if before != after {
+				t.Fatalf("logical dump changed after rollback at %s: before=%s after=%s", injectedPoint, before, after)
+			}
 		}
-		after, dumpErr := purgeLogicalDump(database)
-		if dumpErr != nil {
-			t.Fatal(dumpErr)
-		}
-		if before != after {
-			t.Fatalf("logical dump changed after rollback at %s: before=%s after=%s", injectedPoint, before, after)
-		}
-	}
+	})
 }
 
 func TestPurgeRemovesDependentDerivedDataAndKeepsConfiguration(t *testing.T) {
@@ -113,19 +126,21 @@ func TestPurgeRemovesDependentDerivedDataAndKeepsConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.EstimationResultCount != 1 || result.EstimationEvidenceCount != 2 || result.EstimationPointCount != 1 || result.CalculationIntervalCount != 0 || result.CalculationBoundaryCount != 0 || result.RecalculatedResultCount != 1 {
-		t.Fatalf("dependent purge result = %#v", result)
-	}
-	for _, table := range []string{"raw_snapshots", "usage_cost_observations", "usage_limit_observations", "matched_observations", "estimation_points", "estimation_results", "estimation_result_evidence", "calculation_intervals", "calculation_boundaries"} {
-		want := 1
-		if table == "matched_observations" {
-			want = 2
+	t.Run("P1-PURGE-03 deletes selected snapshot dependencies as one unit", func(t *testing.T) {
+		if result.EstimationResultCount != 1 || result.EstimationEvidenceCount != 2 || result.EstimationPointCount != 1 || result.CalculationIntervalCount != 0 || result.CalculationBoundaryCount != 0 || result.RecalculatedResultCount != 1 {
+			t.Fatalf("dependent purge result = %#v", result)
 		}
-		if table == "estimation_result_evidence" {
-			want = 7
+		for _, table := range []string{"raw_snapshots", "usage_cost_observations", "usage_limit_observations", "matched_observations", "estimation_points", "estimation_results", "estimation_result_evidence", "calculation_intervals", "calculation_boundaries"} {
+			want := 1
+			if table == "matched_observations" {
+				want = 2
+			}
+			if table == "estimation_result_evidence" {
+				want = 7
+			}
+			assertPurgeCount(t, database, table, want)
 		}
-		assertPurgeCount(t, database, table, want)
-	}
+	})
 	var resultStatus string
 	if err := database.QueryRow(`SELECT status FROM estimation_results WHERE estimation_result_id <> 'purge-result'`).Scan(&resultStatus); err != nil {
 		t.Fatal(err)
@@ -133,15 +148,27 @@ func TestPurgeRemovesDependentDerivedDataAndKeepsConfiguration(t *testing.T) {
 	if resultStatus != string(domain.EstimationInsufficient) {
 		t.Fatalf("recalculated result status = %s", resultStatus)
 	}
-	for _, table := range []string{"hubs", "collection_attempts", "services", "limit_definitions", "plans", "plan_versions", "plan_histories", "logical_accounts", "usage_cost_source_account_links", "usage_limit_source_links", "usage_cost_source_completeness", "configuration_audits"} {
-		var count int
-		if err := database.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+	t.Run("P1-PURGE-04 retains configuration and recalculates retained data", func(t *testing.T) {
+		if result.RecalculatedResultCount != 1 {
+			t.Fatalf("recalculated result count = %d, want 1", result.RecalculatedResultCount)
+		}
+		var resultStatus string
+		if err := database.QueryRow(`SELECT status FROM estimation_results WHERE estimation_result_id <> 'purge-result'`).Scan(&resultStatus); err != nil {
 			t.Fatal(err)
 		}
-		if count == 0 {
-			t.Fatalf("%s was removed by purge", table)
+		if resultStatus != string(domain.EstimationInsufficient) {
+			t.Fatalf("recalculated result status = %s", resultStatus)
 		}
-	}
+		for _, table := range []string{"hubs", "collection_attempts", "services", "limit_definitions", "plans", "plan_versions", "plan_histories", "logical_accounts", "usage_cost_source_account_links", "usage_limit_source_links", "usage_cost_source_completeness", "configuration_audits"} {
+			var count int
+			if err := database.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count == 0 {
+				t.Fatalf("%s was removed by purge", table)
+			}
+		}
+	})
 }
 
 func insertPurgeRetainedPointFixture(t *testing.T, database *sql.DB, observedAt time.Time) {

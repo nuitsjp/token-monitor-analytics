@@ -45,9 +45,17 @@ func TestReadOverviewDataReturnsOnlyRecentIncreaseWithinCurrentEstimableInterval
 	if len(result.Hubs) != 1 || result.Hubs[0].DisplayName != "Hub overview" || !result.Hubs[0].CollectionRunning || result.Hubs[0].LastCollectionState != "succeeded" || result.Hubs[0].LastSuccessAt == nil {
 		t.Fatalf("overview Hubs = %#v", result.Hubs)
 	}
-	if result.RawSnapshotCount != 1 || result.DatabaseSizeBytes <= 0 {
-		t.Fatalf("overview capacity = count %d, size %d", result.RawSnapshotCount, result.DatabaseSizeBytes)
-	}
+	t.Run("P1-DATA-02 capacity count size and completion range", func(t *testing.T) {
+		if result.RawSnapshotCount != 1 || result.DatabaseSizeBytes <= 0 {
+			t.Fatalf("overview capacity = count %d, size %d", result.RawSnapshotCount, result.DatabaseSizeBytes)
+		}
+		if result.OldestSnapshotAt == nil || !result.OldestSnapshotAt.Equal(now) {
+			t.Fatalf("oldest snapshot = %v, want %v", result.OldestSnapshotAt, now)
+		}
+		if result.LatestSnapshotAt == nil || !result.LatestSnapshotAt.Equal(now) {
+			t.Fatalf("latest snapshot = %v, want %v", result.LatestSnapshotAt, now)
+		}
+	})
 	if len(result.RecentLimits) != 1 {
 		t.Fatalf("recent limits = %#v", result.RecentLimits)
 	}

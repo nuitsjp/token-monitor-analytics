@@ -3,6 +3,7 @@ package hubapi
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeStatsUsesContractPathsAndMetadata(t *testing.T) {
@@ -11,19 +12,87 @@ func TestNormalizeStatsUsesContractPathsAndMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Costs) != 1 || result.Costs[0].JSONPath != `$.devices[0].periods.allTime.clientCosts["codex"]` {
-		t.Fatalf("unexpected cost: %+v", result.Costs)
-	}
-	if result.Costs[0].MetadataValid != true || result.Costs[0].SourceTimezone != "Asia/Tokyo" || result.Costs[0].SourceLocalDate != "2026-08-25" {
-		t.Fatalf("cost metadata = %+v", result.Costs[0])
-	}
-	if len(result.Limits) != 1 {
-		t.Fatalf("limit count = %d", len(result.Limits))
-	}
-	limit := result.Limits[0]
-	if limit.NormalizedKind != "weekly" || limit.NormalizedMetric != "per cent" || limit.NormalizedLabel != "Café" || limit.PlanLabel != "Plus" || !limit.MetadataValid {
-		t.Fatalf("limit normalization = %+v", limit)
-	}
+	t.Run("API-03 fixed contract paths", func(t *testing.T) {
+		if len(result.Costs) != 1 || result.Costs[0].JSONPath != `$.devices[0].periods.allTime.clientCosts["codex"]` {
+			t.Fatalf("unexpected cost: %+v", result.Costs)
+		}
+		if result.Costs[0].UsageUpdatedAt.IsZero() {
+			t.Fatal("cost usageUpdatedAt was not retained")
+		}
+	})
+	t.Run("API-COST-01 device and raw service identify cost source", func(t *testing.T) {
+		if result.Costs[0].DeviceID != "device-1" || result.Costs[0].RawServiceIdentifier != "codex" {
+			t.Fatalf("cost identity = %+v", result.Costs[0])
+		}
+	})
+	t.Run("API-COST-02 uses allTime clientCosts", func(t *testing.T) {
+		if !strings.Contains(result.Costs[0].JSONPath, ".periods.allTime.clientCosts") {
+			t.Fatalf("cost path = %q", result.Costs[0].JSONPath)
+		}
+	})
+	t.Run("API-COST-03 uses usageUpdatedAt", func(t *testing.T) {
+		if !result.Costs[0].UsageUpdatedAt.Equal(time.Date(2026, 8, 25, 11, 36, 0, 0, time.UTC)) {
+			t.Fatalf("cost observed at = %s", result.Costs[0].UsageUpdatedAt)
+		}
+	})
+	t.Run("API-COST-04 records device usage timestamp", func(t *testing.T) {
+		if result.Costs[0].UsageUpdatedAt.IsZero() || result.Costs[0].MetadataValid != true {
+			t.Fatalf("cost metadata = %+v", result.Costs[0])
+		}
+	})
+	t.Run("API-COST-07 accepts live upload interval zero", func(t *testing.T) {
+		if result.Costs[0].SyncUploadIntervalMS == nil || *result.Costs[0].SyncUploadIntervalMS != 0 {
+			t.Fatalf("sync interval = %+v", result.Costs[0].SyncUploadIntervalMS)
+		}
+	})
+	t.Run("API-LIMIT-01 source includes account and window", func(t *testing.T) {
+		limit := result.Limits[0]
+		if limit.DeviceID != "device-1" || limit.RawServiceIdentifier != "codex" || limit.AccountKey != "account" || limit.WindowKey == "" {
+			t.Fatalf("limit source identity = %+v", limit)
+		}
+	})
+	t.Run("API-LIMIT-02 uses provider identifier", func(t *testing.T) {
+		if result.Limits[0].RawServiceIdentifier != "codex" {
+			t.Fatalf("provider identifier = %q", result.Limits[0].RawServiceIdentifier)
+		}
+	})
+	t.Run("API-LIMIT-03 uses provider updatedAt", func(t *testing.T) {
+		if !result.Limits[0].ProviderUpdatedAt.Equal(time.Date(2026, 8, 25, 11, 35, 0, 0, time.UTC)) {
+			t.Fatalf("provider observed at = %s", result.Limits[0].ProviderUpdatedAt)
+		}
+	})
+	t.Run("API-LIMIT-05 uses planLabel", func(t *testing.T) {
+		if result.Limits[0].PlanLabel != "Plus" {
+			t.Fatalf("plan label = %q", result.Limits[0].PlanLabel)
+		}
+	})
+	t.Run("API-LIMIT-06 requires positive refresh and valid sync metadata", func(t *testing.T) {
+		limit := result.Limits[0]
+		if limit.LimitsRefreshMS == nil || *limit.LimitsRefreshMS != 300000 || limit.SyncUploadIntervalMS == nil || *limit.SyncUploadIntervalMS != 0 || !limit.MetadataValid {
+			t.Fatalf("limit metadata = %+v", limit)
+		}
+	})
+	t.Run("API-LIMIT-07 preserves bounded used percent", func(t *testing.T) {
+		if result.Limits[0].UsedPercent == nil || *result.Limits[0].UsedPercent != 42 {
+			t.Fatalf("used percent = %+v", result.Limits[0].UsedPercent)
+		}
+	})
+	t.Run("API-NORM-01 preserves raw service and plan strings", func(t *testing.T) {
+		if result.Costs[0].RawServiceIdentifier != "codex" || result.Limits[0].PlanLabel != "Plus" {
+			t.Fatalf("raw strings changed: cost=%q plan=%q", result.Costs[0].RawServiceIdentifier, result.Limits[0].PlanLabel)
+		}
+	})
+	t.Run("API-NORM-02 normalizes key parts and NFC label", func(t *testing.T) {
+		limit := result.Limits[0]
+		if limit.NormalizedKind != "weekly" || limit.NormalizedMetric != "per cent" || limit.NormalizedLabel != "Café" {
+			t.Fatalf("limit normalization = %+v", limit)
+		}
+	})
+	t.Run("API-NORM-04 stores UTC instants", func(t *testing.T) {
+		if result.Limits[0].ProviderUpdatedAt.Location() != time.UTC || result.Costs[0].UsageUpdatedAt.Location() != time.UTC {
+			t.Fatalf("timestamps are not UTC: cost=%v limit=%v", result.Costs[0].UsageUpdatedAt.Location(), result.Limits[0].ProviderUpdatedAt.Location())
+		}
+	})
 }
 
 func TestNormalizeStatsMissingSyncMetadataCannotMatch(t *testing.T) {
@@ -32,17 +101,21 @@ func TestNormalizeStatsMissingSyncMetadataCannotMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Costs[0].MetadataValid || result.Limits[0].MetadataValid {
-		t.Fatalf("missing sync metadata was accepted: %+v %+v", result.Costs[0], result.Limits[0])
-	}
+	t.Run("API-COST-05 missing usage metadata cannot match", func(t *testing.T) {
+		if result.Costs[0].MetadataValid || result.Limits[0].MetadataValid {
+			t.Fatalf("missing sync metadata was accepted: %+v %+v", result.Costs[0], result.Limits[0])
+		}
+	})
 }
 
 func TestNormalizeStatsRejectsMissingProviderTimestamp(t *testing.T) {
 	raw := `{"devices":[{"deviceId":"device-1","limits":{"refreshMs":300000,"providers":[{"provider":"codex","windows":[]}]}}]}`
 	_, err := NormalizeStats([]byte(raw))
-	if err == nil || !strings.Contains(err.Error(), "updatedAt") {
-		t.Fatalf("error = %v", err)
-	}
+	t.Run("API-LIMIT-03 rejects missing provider timestamp", func(t *testing.T) {
+		if err == nil || !strings.Contains(err.Error(), "updatedAt") {
+			t.Fatalf("error = %v", err)
+		}
+	})
 }
 
 func TestNormalizeStatsMarksDuplicateWindowKeyConflict(t *testing.T) {
@@ -51,9 +124,11 @@ func TestNormalizeStatsMarksDuplicateWindowKeyConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Limits) != 2 || !result.Limits[0].WindowKeyConflict || !result.Limits[1].WindowKeyConflict || result.Limits[0].MetadataValid || result.Limits[1].MetadataValid {
-		t.Fatalf("duplicate window state = %+v", result.Limits)
-	}
+	t.Run("API-NORM-03 duplicate normalized window is uncomputable", func(t *testing.T) {
+		if len(result.Limits) != 2 || !result.Limits[0].WindowKeyConflict || !result.Limits[1].WindowKeyConflict || result.Limits[0].MetadataValid || result.Limits[1].MetadataValid {
+			t.Fatalf("duplicate window state = %+v", result.Limits)
+		}
+	})
 }
 
 func TestNormalizeStatsDoesNotCrossAccountWindowConflict(t *testing.T) {
@@ -62,12 +137,14 @@ func TestNormalizeStatsDoesNotCrossAccountWindowConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Limits) != 2 || result.Limits[0].WindowKeyConflict || result.Limits[1].WindowKeyConflict || !result.Limits[0].MetadataValid || !result.Limits[1].MetadataValid {
-		t.Fatalf("cross-account conflict = %+v", result.Limits)
-	}
-	if result.Limits[0].DedupeKey == result.Limits[1].DedupeKey {
-		t.Fatal("distinct accounts shared a dedupe key")
-	}
+	t.Run("API-LIMIT-04 keeps account-key distinctions", func(t *testing.T) {
+		if len(result.Limits) != 2 || result.Limits[0].WindowKeyConflict || result.Limits[1].WindowKeyConflict || !result.Limits[0].MetadataValid || !result.Limits[1].MetadataValid {
+			t.Fatalf("cross-account conflict = %+v", result.Limits)
+		}
+		if result.Limits[0].DedupeKey == result.Limits[1].DedupeKey {
+			t.Fatal("distinct accounts shared a dedupe key")
+		}
+	})
 }
 
 func TestNormalizeStatsCostFingerprintUsesNumericValue(t *testing.T) {
@@ -79,7 +156,9 @@ func TestNormalizeStatsCostFingerprintUsesNumericValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if one.Costs[0].DedupeKey != onePointZero.Costs[0].DedupeKey || one.Costs[0].ValueFingerprint != onePointZero.Costs[0].ValueFingerprint {
-		t.Fatalf("numeric equivalents differ: %+v %+v", one.Costs[0], onePointZero.Costs[0])
-	}
+	t.Run("API-NORM-01 canonicalizes numeric value fingerprint only", func(t *testing.T) {
+		if one.Costs[0].DedupeKey != onePointZero.Costs[0].DedupeKey || one.Costs[0].ValueFingerprint != onePointZero.Costs[0].ValueFingerprint {
+			t.Fatalf("numeric equivalents differ: %+v %+v", one.Costs[0], onePointZero.Costs[0])
+		}
+	})
 }

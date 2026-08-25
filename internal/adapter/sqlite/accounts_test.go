@@ -37,9 +37,16 @@ func TestAccountsKeepCrossHubSameKeyAsCandidatesAndFlagArchivedReconfirmation(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(candidates) != 2 {
-		t.Fatalf("cross-Hub candidates = %d, want 2", len(candidates))
-	}
+	t.Run("DM-ID-05 same account key stays Hub-scoped", func(t *testing.T) {
+		if len(candidates) != 2 {
+			t.Fatalf("cross-Hub candidates = %d, want 2", len(candidates))
+		}
+	})
+	t.Run("DM-ID-06 display and email do not auto-merge candidates", func(t *testing.T) {
+		if candidates[0].DisplayName != "Display" || candidates[1].DisplayName != "Display" || candidates[0].Email != "person@example.test" || candidates[1].Email != "person@example.test" {
+			t.Fatalf("candidate display evidence changed: %#v", candidates)
+		}
+	})
 
 	account := LogicalAccount{ID: "logical-a", ServiceID: service.ID, DisplayName: "Logical", CreatedAt: now, UpdatedAt: now}
 	if err := lifecycle.CreateLogicalAccountFromHubAccountCandidate(ctx, "candidate-a", account); err != nil {
@@ -55,9 +62,25 @@ func TestAccountsKeepCrossHubSameKeyAsCandidatesAndFlagArchivedReconfirmation(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(candidates) != 1 || candidates[0].ID != "candidate-a" {
-		t.Fatalf("archived reconfirmation candidates = %#v", candidates)
-	}
+	t.Run("DM-ID-07 archived account requires reconfirmation", func(t *testing.T) {
+		if len(candidates) != 1 || candidates[0].ID != "candidate-a" {
+			t.Fatalf("archived reconfirmation candidates = %#v", candidates)
+		}
+	})
+	t.Run("P1-CAT-05 account archive keeps candidate history", func(t *testing.T) {
+		if len(candidates) != 1 || candidates[0].ID != "candidate-a" {
+			t.Fatalf("account archive candidates = %#v", candidates)
+		}
+	})
+	t.Run("P1-CAT-08 archived account does not auto-return to active list", func(t *testing.T) {
+		active, err := lifecycle.ListHubAccountCandidates(ctx, service.ID, domain.HubAccountCandidateUnconfirmed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(active) != 1 || active[0].ID != "candidate-b" {
+			t.Fatalf("active candidates after archive = %#v", active)
+		}
+	})
 
 	database, err := lifecycle.DB()
 	if err != nil {
@@ -131,9 +154,22 @@ func TestPlanHistoryRejectsOverlapReverseAndPlanVersionOutsidePeriod(t *testing.
 	if err := lifecycle.CreatePlanVersion(ctx, otherVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := lifecycle.CreatePlanHistory(ctx, PlanHistory{ID: "history-service-mismatch", LogicalAccountID: account.ID, PlanVersionID: otherVersion.ID, ValidFrom: versionStart, ValidTo: &versionEnd, CreatedAt: now, UpdatedAt: now}); err == nil {
-		t.Fatalf("service mismatch history error = %v", err)
-	}
+	t.Run("DM-PLAN-03 plan history is bounded by half-open plan version", func(t *testing.T) {
+		if err := lifecycle.CreatePlanHistory(ctx, PlanHistory{ID: "history-service-mismatch", LogicalAccountID: account.ID, PlanVersionID: otherVersion.ID, ValidFrom: versionStart, ValidTo: &versionEnd, CreatedAt: now, UpdatedAt: now}); err == nil {
+			t.Fatal("service mismatch history was accepted")
+		}
+	})
+	t.Run("P1-CAT-06 plan history rejects reverse and outside periods", func(t *testing.T) {
+		reverseEnd := versionStart.Add(-time.Minute)
+		if err := lifecycle.CreatePlanHistory(ctx, PlanHistory{ID: "history-reverse-check", LogicalAccountID: account.ID, PlanVersionID: version.ID, ValidFrom: versionStart, ValidTo: &reverseEnd, CreatedAt: now, UpdatedAt: now}); err == nil {
+			t.Fatal("reverse history was accepted")
+		}
+		outside := versionStart.Add(-time.Minute)
+		outsideEnd := versionStart.Add(30 * time.Minute)
+		if err := lifecycle.CreatePlanHistory(ctx, PlanHistory{ID: "history-outside-check", LogicalAccountID: account.ID, PlanVersionID: version.ID, ValidFrom: outside, ValidTo: &outsideEnd, CreatedAt: now, UpdatedAt: now}); err == nil {
+			t.Fatal("outside plan-version history was accepted")
+		}
+	})
 }
 
 func TestLogicalAccountSplitAndMergePreserveAuditAndArchiveSource(t *testing.T) {

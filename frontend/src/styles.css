@@ -71,7 +71,23 @@ textarea {
   --wails-draggable: no-drag;
 }
 
+[data-theme="dark"] [data-error-counter="true"] {
+  background-color: #8f1d22 !important;
+  color: #fff !important;
+}
+
+[data-theme="dark"] [data-error-counter="true"]:hover {
+  background-color: #74171b !important;
+  color: #fff !important;
+}
+
 @media (forced-colors: active) {
+  [data-theme="dark"] [data-error-counter="true"] {
+    color: HighlightText !important;
+    background: Highlight !important;
+    border-color: HighlightText !important;
+  }
+
   *:focus-visible {
     outline: 2px solid Highlight;
   }

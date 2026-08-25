@@ -113,14 +113,16 @@ func TestValidateRestoreDatabaseRejectsSemanticFailuresIndividually(t *testing.T
 			code:   domain.RestoreValidationRecalculation,
 		},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			path := createRestoreTestDatabase(t)
-			test.mutate(t, path)
-			err := (&Lifecycle{}).ValidateRestoreDatabase(context.Background(), path, restoreManifestForPath(t, path))
-			assertSQLiteRestoreCode(t, err, test.code)
-		})
-	}
+	t.Run("P1-RESTORE-02 validates SQLite integrity schema enums time references intervals and secrets", func(t *testing.T) {
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				path := createRestoreTestDatabase(t)
+				test.mutate(t, path)
+				err := (&Lifecycle{}).ValidateRestoreDatabase(context.Background(), path, restoreManifestForPath(t, path))
+				assertSQLiteRestoreCode(t, err, test.code)
+			})
+		}
+	})
 }
 
 func TestValidateRestoreDatabaseRejectsSchemaVersionAndCorruption(t *testing.T) {
@@ -177,20 +179,22 @@ func TestRunIsolatedRestoreTrialPreservesOperationalDatabaseAndComparesLogicalCo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(operationalBefore, operationalAfter) {
-		t.Fatal("operational database changed during isolated restore trial")
-	}
-	sourceSnapshot, err := logicalSnapshot(ctx, sourcePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	isolatedSnapshot, err := logicalSnapshot(ctx, filepath.Join(trialDirectory, "data.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(sourceSnapshot, isolatedSnapshot) {
-		t.Fatal("isolated database differs from source")
-	}
+	t.Run("P1-RESTORE-03 isolated trial reads and recalculates before apply", func(t *testing.T) {
+		if !reflect.DeepEqual(operationalBefore, operationalAfter) {
+			t.Fatal("operational database changed during isolated restore trial")
+		}
+		sourceSnapshot, err := logicalSnapshot(ctx, sourcePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		isolatedSnapshot, err := logicalSnapshot(ctx, filepath.Join(trialDirectory, "data.sqlite3"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(sourceSnapshot, isolatedSnapshot) {
+			t.Fatal("isolated database differs from source")
+		}
+	})
 }
 
 func TestRunIsolatedRestoreTrialRevalidatesBoundDatabase(t *testing.T) {

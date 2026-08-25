@@ -40,6 +40,50 @@ func TestCatalogPersistsServicesMappingsAndCandidatesInFileDatabase(t *testing.T
 	}); err == nil || !strings.Contains(err.Error(), "overlap") {
 		t.Fatalf("overlapping mapping error = %v", err)
 	}
+	if err := lifecycle.CreateServiceIdentifierMapping(ctx, ServiceIdentifierMapping{
+		ID: "mapping-limit", Kind: domain.UsageLimitIdentifier, RawIdentifier: "limit.raw", ServiceID: service.ID,
+		ValidFrom: from, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	database, err := lifecycle.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("DM-ID-02 cost and limit identifiers map separately", func(t *testing.T) {
+		var cost, limit int
+		if err := database.QueryRow(`SELECT count(*) FROM service_identifier_mappings WHERE identifier_kind = 'usage_cost'`).Scan(&cost); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.QueryRow(`SELECT count(*) FROM service_identifier_mappings WHERE identifier_kind = 'usage_limit'`).Scan(&limit); err != nil {
+			t.Fatal(err)
+		}
+		if cost != 2 || limit != 1 {
+			t.Fatalf("identifier mapping counts cost=%d limit=%d", cost, limit)
+		}
+	})
+	t.Run("P1-CAT-01 lists raw identifier mappings", func(t *testing.T) {
+		costRows, err := lifecycle.ListServiceIdentifierMappings(ctx, domain.UsageCostIdentifier, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		limitRows, err := lifecycle.ListServiceIdentifierMappings(ctx, domain.UsageLimitIdentifier, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(costRows) != 2 || len(limitRows) != 1 {
+			t.Fatalf("identifier mapping rows cost=%#v limit=%#v", costRows, limitRows)
+		}
+	})
+	t.Run("P1-CAT-04 registered service has a stable official key", func(t *testing.T) {
+		var officialKey string
+		if err := database.QueryRow(`SELECT official_key FROM services WHERE service_id = ?`, service.ID).Scan(&officialKey); err != nil {
+			t.Fatal(err)
+		}
+		if service.ID == "" || officialKey != "official.service" {
+			t.Fatalf("service catalog entry = %#v officialKey=%q", service, officialKey)
+		}
+	})
 
 	candidate := IdentificationCandidate{
 		ID: "candidate-1", RawLimitServiceIdentifier: "limit.raw", RawReportedPlanName: " Plan  A ",
@@ -58,9 +102,11 @@ func TestCatalogPersistsServicesMappingsAndCandidatesInFileDatabase(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].RawReportedPlanName != " Plan  A " || rows[0].FirstObservedAt == nil || rows[0].LastObservedAt == nil {
-		t.Fatalf("candidate rows = %#v", rows)
-	}
+	t.Run("DM-ID-03 candidate preserves exact raw identifier and plan", func(t *testing.T) {
+		if len(rows) != 1 || rows[0].RawReportedPlanName != " Plan  A " || rows[0].FirstObservedAt == nil || rows[0].LastObservedAt == nil {
+			t.Fatalf("candidate rows = %#v", rows)
+		}
+	})
 }
 
 func TestCatalogRejectsPlanVersionAndPriceOverlapAndReversePeriods(t *testing.T) {
@@ -94,6 +140,14 @@ func TestCatalogRejectsPlanVersionAndPriceOverlapAndReversePeriods(t *testing.T)
 	if err := lifecycle.CreatePlanVersion(ctx, PlanVersion{ID: "version-2", PlanID: plan.ID, Name: "v2", ValidFrom: adjacentStart, ValidTo: &adjacentEnd, OfficialSourceURL: "https://vendor.example/plans", CreatedAt: now}); err != nil {
 		t.Fatalf("adjacent plan version rejected: %v", err)
 	}
+	t.Run("DM-PLAN-02 plan versions reject overlap and allow adjacency", func(t *testing.T) {
+		if !adjacentStart.Equal(end) || !adjacentEnd.After(adjacentStart) {
+			t.Fatalf("adjacent period = %s..%s", adjacentStart, adjacentEnd)
+		}
+		if err := lifecycle.CreatePlanVersion(ctx, PlanVersion{ID: "version-check-overlap", PlanID: plan.ID, Name: "overlap", ValidFrom: start.Add(30 * time.Minute), OfficialSourceURL: "https://vendor.example/plans", CreatedAt: now}); err == nil {
+			t.Fatal("overlapping plan version was accepted")
+		}
+	})
 
 	priceEnd := start.Add(time.Hour)
 	if err := lifecycle.CreateStandardPrice(ctx, StandardPrice{ID: "price-1", PlanVersionID: version.ID, USDMonthlyPerSeat: 20, SourceURL: "https://vendor.example/prices", ValidFrom: start, ValidTo: &priceEnd, CreatedAt: now}); err != nil {
@@ -122,13 +176,18 @@ func TestCatalogEnforcesCrossServiceReferencesAndCandidateDecision(t *testing.T)
 		t.Fatal(err)
 	}
 	planA := Plan{ID: "plan-a", ServiceID: serviceA.ID, Name: "Plan A", CreatedAt: now, UpdatedAt: now}
-	planB := Plan{ID: "plan-b", ServiceID: serviceB.ID, Name: "Plan B", CreatedAt: now, UpdatedAt: now}
+	planB := Plan{ID: "plan-b", ServiceID: serviceA.ID, Name: "Plan B", CreatedAt: now, UpdatedAt: now}
 	if err := lifecycle.CreatePlan(ctx, planA); err != nil {
 		t.Fatal(err)
 	}
 	if err := lifecycle.CreatePlan(ctx, planB); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("DM-PLAN-01 supports multiple plans per service", func(t *testing.T) {
+		if planA.ServiceID != planB.ServiceID || planA.ID == planB.ID {
+			t.Fatalf("plans were not kept distinct: A=%#v B=%#v", planA, planB)
+		}
+	})
 	versionA := PlanVersion{ID: "version-a", PlanID: planA.ID, Name: "A", ValidFrom: now, OfficialSourceURL: "https://vendor.example/a", CreatedAt: now}
 	if err := lifecycle.CreatePlanVersion(ctx, versionA); err != nil {
 		t.Fatal(err)
@@ -138,9 +197,16 @@ func TestCatalogEnforcesCrossServiceReferencesAndCandidateDecision(t *testing.T)
 		t.Fatal(err)
 	}
 	multiplier := 2.0
-	if err := lifecycle.CreatePlanLimitRule(ctx, PlanLimitRule{ID: "rule-cross-service", PlanVersionID: versionA.ID, LimitDefinitionID: definitionB.ID, Multiplier: &multiplier, OfficialSourceURL: "https://vendor.example/rules", CreatedAt: now}); err == nil || !strings.Contains(err.Error(), "different services") {
-		t.Fatalf("cross-service rule error = %v", err)
-	}
+	t.Run("DM-PLAN-07 plan limit rules do not cross services", func(t *testing.T) {
+		if err := lifecycle.CreatePlanLimitRule(ctx, PlanLimitRule{ID: "rule-cross-service", PlanVersionID: versionA.ID, LimitDefinitionID: definitionB.ID, Multiplier: &multiplier, OfficialSourceURL: "https://vendor.example/rules", CreatedAt: now}); err == nil || !strings.Contains(err.Error(), "different services") {
+			t.Fatalf("cross-service rule error = %v", err)
+		}
+	})
+	t.Run("DM-PLAN-05 limit definition belongs to one service", func(t *testing.T) {
+		if definitionB.ServiceID != serviceB.ID || planA.ServiceID == definitionB.ServiceID {
+			t.Fatalf("definition service = %q, plan service = %q", definitionB.ServiceID, planA.ServiceID)
+		}
+	})
 
 	candidate := IdentificationCandidate{ID: "candidate-confirm", RawLimitServiceIdentifier: "limit", RawReportedPlanName: "Plan A", CreatedAt: now, UpdatedAt: now}
 	if err := lifecycle.CreateIdentificationCandidate(ctx, candidate); err != nil {
@@ -156,9 +222,11 @@ func TestCatalogEnforcesCrossServiceReferencesAndCandidateDecision(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].State != domain.CandidateRejected || rows[0].ServiceID != nil || rows[0].PlanID != nil {
-		t.Fatalf("candidate after rejection = %#v", rows)
-	}
+	t.Run("P1-CAT-03 candidate decision can be revoked to rejected", func(t *testing.T) {
+		if len(rows) != 1 || rows[0].State != domain.CandidateRejected || rows[0].ServiceID != nil || rows[0].PlanID != nil {
+			t.Fatalf("candidate after rejection = %#v", rows)
+		}
+	})
 }
 
 func TestCatalogDomainRejectsNonFiniteAndInvalidSourceValues(t *testing.T) {
@@ -215,9 +283,30 @@ func TestCatalogSupportsCandidateReleaseCorrectionSplitAndLabelChangeEvidence(t 
 	if err := lifecycle.SplitIdentificationCandidate(ctx, candidate.ID, IdentificationCandidate{ID: "candidate-split", RawLimitServiceIdentifier: "provider.raw.changed", RawReportedPlanName: "Plan A exact", CreatedAt: now.Add(4 * time.Minute), UpdatedAt: now.Add(4 * time.Minute)}, "obs-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := lifecycle.ListIdentificationCandidates(ctx, ""); err != nil {
-		t.Fatal(err)
-	}
+	t.Run("P1-CAT-03 candidate can be confirmed released corrected and split", func(t *testing.T) {
+		rows, err := lifecycle.ListIdentificationCandidates(ctx, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("candidate correction rows = %#v", rows)
+		}
+	})
+	t.Run("P1-CAT-09 split preserves correction target", func(t *testing.T) {
+		rows, err := lifecycle.ListIdentificationCandidates(ctx, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, row := range rows {
+			if row.ID == "candidate-split" && row.RawLimitServiceIdentifier == "provider.raw.changed" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("split candidate not found: %#v", rows)
+		}
+	})
 
 	limit := LimitDefinition{ID: "limit-1", ServiceID: service.ID, CycleType: "weekly", Meaning: "tokens", Unit: "percent", CreatedAt: now, UpdatedAt: now}
 	if err := lifecycle.CreateLimitDefinition(ctx, limit); err != nil {
@@ -238,9 +327,11 @@ func TestCatalogSupportsCandidateReleaseCorrectionSplitAndLabelChangeEvidence(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(labelRows) != 1 || labelRows[0].LimitDefinitionID == nil || *labelRows[0].LimitDefinitionID != limit.ID {
-		t.Fatalf("label change candidates = %#v", labelRows)
-	}
+	t.Run("DM-PLAN-10 label change candidate retains old and new evidence", func(t *testing.T) {
+		if len(labelRows) != 1 || labelRows[0].LimitDefinitionID == nil || *labelRows[0].LimitDefinitionID != limit.ID {
+			t.Fatalf("label change candidates = %#v", labelRows)
+		}
+	})
 	windows, err := lifecycle.ListLimitLabelChangeWindows(ctx, labelCandidate.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -256,9 +347,18 @@ func TestCatalogSupportsCandidateReleaseCorrectionSplitAndLabelChangeEvidence(t 
 	if err := database.QueryRow(`SELECT count(*) FROM recalculation_requests`).Scan(&requests); err != nil {
 		t.Fatal(err)
 	}
-	if audits == 0 || requests < audits {
-		t.Fatalf("catalog audits=%d requests=%d", audits, requests)
-	}
+	t.Run("DM-REL-03 catalog changes append audit and recalculation records", func(t *testing.T) {
+		if audits == 0 || requests < audits {
+			t.Fatalf("catalog audits=%d requests=%d", audits, requests)
+		}
+		var actor, occurred, before, after string
+		if err := database.QueryRow(`SELECT actor, occurred_at, COALESCE(before_json, ''), COALESCE(after_json, '') FROM configuration_audits WHERE entity_type = 'catalog_identification_candidate' ORDER BY sequence DESC LIMIT 1`).Scan(&actor, &occurred, &before, &after); err != nil {
+			t.Fatal(err)
+		}
+		if actor == "" || occurred == "" || before == "" || after == "" {
+			t.Fatalf("audit fields actor=%q occurred=%q before=%q after=%q", actor, occurred, before, after)
+		}
+	})
 }
 
 func TestSplitRecomputesBothObservationRangesAndRollsBackInvalidSelection(t *testing.T) {
@@ -295,19 +395,23 @@ func TestSplitRecomputesBothObservationRangesAndRollsBackInvalidSelection(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("candidate count = %d, want 2", len(rows))
-	}
+	t.Run("P1-CAT-09 split creates both corrected observation ranges", func(t *testing.T) {
+		if len(rows) != 2 {
+			t.Fatalf("candidate count = %d, want 2", len(rows))
+		}
+	})
 	byID := make(map[string]IdentificationCandidate, len(rows))
 	for _, row := range rows {
 		byID[row.ID] = row
 	}
-	if byID["source"].FirstObservedAt == nil || !byID["source"].FirstObservedAt.Equal(now.Add(3*time.Hour)) || byID["source"].LastObservedAt == nil || !byID["source"].LastObservedAt.Equal(now.Add(3*time.Hour)) {
-		t.Fatalf("source bounds = %#v", byID["source"])
-	}
-	if byID["split"].FirstObservedAt == nil || !byID["split"].FirstObservedAt.Equal(now.Add(time.Hour)) || byID["split"].LastObservedAt == nil || !byID["split"].LastObservedAt.Equal(now.Add(2*time.Hour)) {
-		t.Fatalf("split bounds = %#v", byID["split"])
-	}
+	t.Run("P1-CAT-09 split recomputes both source bounds", func(t *testing.T) {
+		if byID["source"].FirstObservedAt == nil || !byID["source"].FirstObservedAt.Equal(now.Add(3*time.Hour)) || byID["source"].LastObservedAt == nil || !byID["source"].LastObservedAt.Equal(now.Add(3*time.Hour)) {
+			t.Fatalf("source bounds = %#v", byID["source"])
+		}
+		if byID["split"].FirstObservedAt == nil || !byID["split"].FirstObservedAt.Equal(now.Add(time.Hour)) || byID["split"].LastObservedAt == nil || !byID["split"].LastObservedAt.Equal(now.Add(2*time.Hour)) {
+			t.Fatalf("split bounds = %#v", byID["split"])
+		}
+	})
 	if err := lifecycle.UpsertIdentificationCandidate(ctx, IdentificationCandidate{ID: "split", RawLimitServiceIdentifier: "raw", RawReportedPlanName: "Plan", FirstObservedAt: ptrTime(now.Add(4 * time.Hour)), LastObservedAt: ptrTime(now.Add(4 * time.Hour)), CreatedAt: now, UpdatedAt: now.Add(4 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
@@ -346,9 +450,11 @@ func TestSplitRecomputesBothObservationRangesAndRollsBackInvalidSelection(t *tes
 	if err := database.QueryRow(`SELECT count(*) FROM identification_candidates WHERE candidate_id = 'invalid-split'`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatalf("invalid split candidate count = %d", count)
-	}
+	t.Run("P1-CAT-03 invalid split selection rolls back", func(t *testing.T) {
+		if count != 0 {
+			t.Fatalf("invalid split candidate count = %d", count)
+		}
+	})
 	var owner string
 	if err := database.QueryRow(`SELECT candidate_id FROM identification_candidate_observations WHERE observation_id = 'other-observation'`).Scan(&owner); err != nil {
 		t.Fatal(err)

@@ -284,21 +284,23 @@ func TestConcurrentCollectionSkipsSecondRequest(t *testing.T) {
 }
 
 func TestPostRestorePendingSkipsCredentialRead(t *testing.T) {
-	credentials := &countingCollectionCredentials{found: true}
-	fixture := newCollectionFixture(t, true, `{"devices":[]}`, []string{"restore_succeeded"}, credentials, nil)
-	if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); err != nil {
-		t.Fatal(err)
-	}
-	if credentials.reads.Load() != 0 || fixture.statsCalls.Load() != 0 {
-		t.Fatalf("credential reads=%d stats calls=%d", credentials.reads.Load(), fixture.statsCalls.Load())
-	}
-	attempts, err := fixture.database.ListCollectionAttempts(fixture.ctx, fixture.hubID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(attempts) != 1 || attempts[0].FailureCode != string(hubapi.ClassificationAuth) {
-		t.Fatalf("attempts = %+v", attempts)
-	}
+	t.Run("P1-RESTORE-06 post-restore credential is required before collection", func(t *testing.T) {
+		credentials := &countingCollectionCredentials{found: true}
+		fixture := newCollectionFixture(t, true, `{"devices":[]}`, []string{"restore_succeeded"}, credentials, nil)
+		if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); err != nil {
+			t.Fatal(err)
+		}
+		if credentials.reads.Load() != 0 || fixture.statsCalls.Load() != 0 {
+			t.Fatalf("credential reads=%d stats calls=%d", credentials.reads.Load(), fixture.statsCalls.Load())
+		}
+		attempts, err := fixture.database.ListCollectionAttempts(fixture.ctx, fixture.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(attempts) != 1 || attempts[0].FailureCode != string(hubapi.ClassificationAuth) {
+			t.Fatalf("attempts = %+v", attempts)
+		}
+	})
 }
 
 type collectionFixture struct {

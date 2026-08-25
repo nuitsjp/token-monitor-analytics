@@ -86,7 +86,21 @@ func TestBackupUsecaseCreatesOnlineBackupAndRecordsArtifact(t *testing.T) {
 }
 
 func TestBackupUsecaseRejectsSecretRawSnapshotBeforeCommit(t *testing.T) {
-	assertBackupRejectsRawSnapshot(t, []byte(`{"devices":[{"accessToken":"secret-sentinel"}]}`))
+	t.Run("P1-BACKUP-04 excludes credential and token data from artifact", func(t *testing.T) {
+		for _, test := range []struct {
+			name string
+			body string
+		}{
+			{name: "access token", body: `{"devices":[{"accessToken":"secret-sentinel"}]}`},
+			{name: "cookie", body: `{"devices":[{"cookie":"secret-sentinel"}]}`},
+			{name: "authorization", body: `{"devices":[{"authorization":"secret-sentinel"}]}`},
+			{name: "password", body: `{"devices":[{"password":"secret-sentinel"}]}`},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				assertBackupRejectsRawSnapshot(t, []byte(test.body))
+			})
+		}
+	})
 }
 
 func TestBackupUsecaseRejectsUnknownRawSnapshotBeforeCommit(t *testing.T) {

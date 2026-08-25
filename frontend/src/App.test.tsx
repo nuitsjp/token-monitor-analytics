@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { createFakeBackend, emitFakeBackendEvent } from "./lib/backend";
 import { identifyWindow } from "./lib/window";
@@ -74,7 +74,27 @@ describe("compact window", () => {
     ).toBeVisible();
   });
 
-  it("saves the M11 theme choice through the typed adapter", async () => {
+  it("QL-UI-05 saves all theme choices, follows the OS in system mode, and applies Go events", async () => {
+    const listeners = new Set<(event: MediaQueryListEvent) => void>();
+    const media = {
+      matches: false,
+      media: "(prefers-color-scheme: dark)",
+      onchange: null,
+      addEventListener: (
+        _: string,
+        listener: (event: MediaQueryListEvent) => void,
+      ) => listeners.add(listener),
+      removeEventListener: (
+        _: string,
+        listener: (event: MediaQueryListEvent) => void,
+      ) => listeners.delete(listener),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+    const matchMedia = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation(() => media as MediaQueryList);
     const backend = createFakeBackend({
       canOpenMain: true,
       settings: { theme: "light" },
@@ -89,6 +109,54 @@ describe("compact window", () => {
       expect((await backend.getSettings()).theme).toBe("dark"),
     );
     expect(document.documentElement.dataset.theme).toBe("dark");
+
+    await user.click(screen.getByRole("radio", { name: "ライト" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(async () =>
+      expect((await backend.getSettings()).theme).toBe("light"),
+    );
+    expect(document.documentElement.dataset.theme).toBe("light");
+
+    await user.click(
+      screen.getByRole("radio", { name: "システム設定に合わせる" }),
+    );
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(async () =>
+      expect((await backend.getSettings()).theme).toBe("system"),
+    );
+    expect(document.documentElement.dataset.theme).toBe("light");
+
+    media.matches = true;
+    act(() =>
+      listeners.forEach((listener) =>
+        listener({ matches: true } as MediaQueryListEvent),
+      ),
+    );
+    await waitFor(() =>
+      expect(document.documentElement.dataset.theme).toBe("dark"),
+    );
+
+    act(() =>
+      emitFakeBackendEvent(backend, "settings:theme-changed", {
+        theme: "light",
+        displayTimeZone: "UTC",
+        timezoneConfirmed: true,
+        systemDark: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(document.documentElement.dataset.theme).toBe("light"),
+    );
+    matchMedia.mockImplementation((query) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
   });
 
   it("shows the shared dirty-state guard for a main close request", async () => {

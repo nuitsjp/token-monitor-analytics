@@ -103,6 +103,14 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: tokens.spacingHorizontalXS,
   },
+  errorCounter: {
+    borderRadius: tokens.borderRadiusMedium,
+    "@media (forced-colors: active)": {
+      backgroundColor: "Highlight",
+      color: "HighlightText",
+      border: "1px solid HighlightText",
+    },
+  },
   stale: {
     color: tokens.colorPaletteDarkOrangeForeground1,
     "@media (forced-colors: active)": {
@@ -120,7 +128,7 @@ const useStyles = makeStyles({
 
 export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
   const styles = useStyles();
-  const { settings } = useSettings();
+  const { settings, dark } = useSettings();
   const [expanded, setExpanded] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -512,6 +520,13 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                     <Button
                       size="small"
                       appearance="subtle"
+                      className={styles.errorCounter}
+                      data-error-counter="true"
+                      style={
+                        dark
+                          ? { backgroundColor: "#8f1d22", color: "#ffffff" }
+                          : undefined
+                      }
                       onClick={() => openMainRoute("/review")}
                     >
                       処理失敗 {snapshot.review.recalculationFailures.count} 件

@@ -32,6 +32,11 @@ func TestT032EstimateFromPointsAppliesPlanMultiplierAndTracesSeries(t *testing.T
 	if len(result.LimitSeriesLogicalAccountIDs) != 2 || len(result.LimitSeriesCalculationIntervalIDs) != 2 || len(result.SeriesMultipliers) != 2 {
 		t.Fatalf("series trace = %#v", result)
 	}
+	t.Run("P1-EST-07 all non-baseline plan versions require explicit multipliers", func(t *testing.T) {
+		if len(result.SeriesMultipliers) != 2 || result.SeriesMultipliers[0] != 1 || result.SeriesMultipliers[1] != multiplier || len(result.PlanLimitRuleIDs) != 1 {
+			t.Fatalf("plan multiplier trace = %#v", result)
+		}
+	})
 }
 
 func TestT032MissingPlanMultiplierIsUncomputed(t *testing.T) {
@@ -43,6 +48,11 @@ func TestT032MissingPlanMultiplierIsUncomputed(t *testing.T) {
 	if result.Status != EstimationUncomputed || len(result.Reasons) != 1 || result.Reasons[0] != EstimationReasonMultiplierMissing {
 		t.Fatalf("result = %#v", result)
 	}
+	t.Run("P1-EST-08 missing official multiplier is not inferred", func(t *testing.T) {
+		if result.Status != EstimationUncomputed || len(result.Reasons) != 1 || result.Reasons[0] != EstimationReasonMultiplierMissing {
+			t.Fatalf("missing multiplier result = %#v", result)
+		}
+	})
 }
 
 func TestT032BaselinePlanIDAllowsMultipleVersions(t *testing.T) {
@@ -91,6 +101,17 @@ func TestT032EstimateFromPointsClassifiesSevenStates(t *testing.T) {
 			}
 		})
 	}
+	t.Run("P1-EST-24 every estimation state carries a reason", func(t *testing.T) {
+		for _, testCase := range cases {
+			result, err := EstimateFromPoints(testCase.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != testCase.status || len(result.Reasons) == 0 {
+				t.Fatalf("state %s = %#v", testCase.name, result)
+			}
+		}
+	})
 }
 
 func TestT032EstimateFromPointsRejectsMixedInterval(t *testing.T) {
@@ -104,6 +125,32 @@ func TestT032EstimateFromPointsRejectsMixedInterval(t *testing.T) {
 	if result.Status != EstimationUncomputed || len(result.Reasons) != 1 || result.Reasons[0] != EstimationReasonMixedInterval {
 		t.Fatalf("result = %#v", result)
 	}
+	t.Run("P1-EST-03 mixed calculation intervals are not combined", func(t *testing.T) {
+		if result.Status != EstimationUncomputed || len(result.Reasons) != 1 || result.Reasons[0] != EstimationReasonMixedInterval {
+			t.Fatalf("mixed interval result = %#v", result)
+		}
+		cases := []struct {
+			name   string
+			mutate func(*EstimationPoint)
+			reason string
+		}{
+			{name: "definition", mutate: func(point *EstimationPoint) { point.LimitDefinitionID = "other-definition" }, reason: EstimationReasonMixedDefinition},
+			{name: "cycle", mutate: func(point *EstimationPoint) { point.CycleType = LimitCycleBilling }, reason: EstimationReasonMixedCycle},
+			{name: "logic", mutate: func(point *EstimationPoint) { point.CalculationLogicVersion = "old-logic" }, reason: EstimationReasonMixedLogic},
+			{name: "target", mutate: func(point *EstimationPoint) { point.LimitSeriesIDs = []string{"other-series"} }, reason: EstimationReasonTargetMismatch},
+		}
+		for _, testCase := range cases {
+			points := t032SinglePoints([]float64{0.1}, []float64{0.2}, 0, 10)
+			testCase.mutate(&points[1])
+			got, err := EstimateFromPoints(EstimationInput{Points: points})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != EstimationUncomputed || len(got.Reasons) != 1 || got.Reasons[0] != testCase.reason {
+				t.Fatalf("mixed %s result = %#v", testCase.name, got)
+			}
+		}
+	})
 }
 
 func TestT032AdjacentDifferencesDropsNegativeAndAllZeroRows(t *testing.T) {
@@ -119,6 +166,11 @@ func TestT032AdjacentDifferencesDropsNegativeAndAllZeroRows(t *testing.T) {
 	if coefficients != nil || len(costs) != 0 {
 		t.Fatalf("filtered differences = coefficients %#v costs %#v", coefficients, costs)
 	}
+	t.Run("P1-EST-09 negative cost and utilization deltas are excluded", func(t *testing.T) {
+		if coefficients != nil || len(costs) != 0 {
+			t.Fatalf("negative deltas were corrected or used: coefficients %#v costs %#v", coefficients, costs)
+		}
+	})
 }
 
 func TestT032LowLevelUnidentifiableReason(t *testing.T) {
