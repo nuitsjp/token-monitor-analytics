@@ -23,6 +23,14 @@ export function AssociateHubAccountCandidate(candidateID: string, logicalAccount
     return $Call.ByID(1769254192, candidateID, logicalAccountID);
 }
 
+export function ConfirmHubSwitch(input: $models.HubSwitchInput): $CancellablePromise<$models.HubSwitchSnapshot> {
+    return $Call.ByID(1101677674, input);
+}
+
+export function ConfirmUsageCostSourceCompleteness(input: $models.UsageCostSourceCompletenessInput): $CancellablePromise<$models.UsageCostSourceCompletenessSnapshot> {
+    return $Call.ByID(3052602698, input);
+}
+
 export function CreateLogicalAccount(input: $models.CreateLogicalAccountInput): $CancellablePromise<$models.LogicalAccountSnapshot> {
     return $Call.ByID(1045424751, input);
 }
@@ -35,12 +43,24 @@ export function CreatePlanHistory(input: $models.CreatePlanHistoryInput): $Cance
     return $Call.ByID(1963657406, input);
 }
 
+export function CreateUsageCostAssociation(input: $models.UsageCostAssociationInput): $CancellablePromise<$models.UsageCostAssociationSnapshot> {
+    return $Call.ByID(636840432, input);
+}
+
+export function CreateUsageLimitAssociation(input: $models.UsageLimitAssociationInput): $CancellablePromise<$models.UsageLimitAssociationSnapshot> {
+    return $Call.ByID(4128043978, input);
+}
+
 export function GetAccounts(): $CancellablePromise<$models.AccountSnapshot> {
     return $Call.ByID(774551111);
 }
 
 export function GetHubAccountCandidates(serviceID: string, state: string): $CancellablePromise<$models.HubAccountCandidateSnapshot[] | null> {
     return $Call.ByID(1199573395, serviceID, state);
+}
+
+export function GetLinkingSnapshot(): $CancellablePromise<$models.LinkingSnapshot> {
+    return $Call.ByID(3619603625);
 }
 
 export function GetLogicalAccounts(serviceID: string, includeArchived: boolean): $CancellablePromise<$models.LogicalAccountSnapshot[] | null> {
@@ -53,6 +73,22 @@ export function GetPlanHistories(logicalAccountID: string): $CancellablePromise<
 
 export function MergeLogicalAccounts(sourceID: string, targetID: string): $CancellablePromise<void> {
     return $Call.ByID(3506941314, sourceID, targetID);
+}
+
+export function PreviewHubSwitch(input: $models.HubSwitchInput): $CancellablePromise<$models.ImpactPreviewSnapshot> {
+    return $Call.ByID(1835284450, input);
+}
+
+export function PreviewUsageCostAssociation(input: $models.UsageCostAssociationInput): $CancellablePromise<$models.ImpactPreviewSnapshot> {
+    return $Call.ByID(767914646, input);
+}
+
+export function PreviewUsageCostSourceCompleteness(input: $models.UsageCostSourceCompletenessInput): $CancellablePromise<$models.ImpactPreviewSnapshot> {
+    return $Call.ByID(2883949874, input);
+}
+
+export function PreviewUsageLimitAssociation(input: $models.UsageLimitAssociationInput): $CancellablePromise<$models.ImpactPreviewSnapshot> {
+    return $Call.ByID(3204980576, input);
 }
 
 export function RejectHubAccountCandidate(candidateID: string): $CancellablePromise<void> {
@@ -77,4 +113,16 @@ export function UpdateLogicalAccount(input: $models.UpdateLogicalAccountInput): 
 
 export function UpdatePlanHistory(input: $models.UpdatePlanHistoryInput): $CancellablePromise<void> {
     return $Call.ByID(1701591733, input);
+}
+
+export function UpdateUsageCostAssociation(input: $models.UsageCostAssociationInput): $CancellablePromise<void> {
+    return $Call.ByID(352947873, input);
+}
+
+export function UpdateUsageCostSourceCompleteness(input: $models.UsageCostSourceCompletenessInput): $CancellablePromise<void> {
+    return $Call.ByID(3554310483, input);
+}
+
+export function UpdateUsageLimitAssociation(input: $models.UsageLimitAssociationInput): $CancellablePromise<void> {
+    return $Call.ByID(3764110637, input);
 }

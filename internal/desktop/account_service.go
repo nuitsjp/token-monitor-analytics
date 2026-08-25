@@ -16,6 +16,7 @@ import (
 type AccountService struct {
 	lifecycle *sqliteadapter.Lifecycle
 	usecase   *usecase.AccountUsecase
+	linking   *usecase.LinkingUsecase
 }
 
 type AccountSnapshot struct {
@@ -99,6 +100,132 @@ type UpdatePlanHistoryInput struct {
 	ValidTo          string `json:"validTo"`
 }
 
+type LinkingSnapshot struct {
+	UsageCostSources            []UsageCostSourceSnapshot             `json:"usageCostSources"`
+	UsageLimitSources           []UsageLimitSourceSnapshot            `json:"usageLimitSources"`
+	UsageCostAssociations       []UsageCostAssociationSnapshot        `json:"usageCostAssociations"`
+	UsageLimitAssociations      []UsageLimitAssociationSnapshot       `json:"usageLimitAssociations"`
+	UsageCostSourceCompleteness []UsageCostSourceCompletenessSnapshot `json:"usageCostSourceCompleteness"`
+	HubSwitches                 []HubSwitchSnapshot                   `json:"hubSwitches"`
+}
+
+type UsageCostSourceSnapshot struct {
+	ID                   string `json:"id"`
+	HubID                string `json:"hubId"`
+	DeviceID             string `json:"deviceId"`
+	RawServiceIdentifier string `json:"rawServiceIdentifier"`
+	CreatedAt            string `json:"createdAt"`
+}
+
+type UsageLimitSourceSnapshot struct {
+	ID                   string `json:"id"`
+	HubID                string `json:"hubId"`
+	DeviceID             string `json:"deviceId"`
+	AccountKey           string `json:"accountKey"`
+	RawServiceIdentifier string `json:"rawServiceIdentifier"`
+	WindowKey            string `json:"windowKey"`
+	NormalizedKind       string `json:"normalizedKind"`
+	NormalizedMetric     string `json:"normalizedMetric"`
+	NormalizedLabel      string `json:"normalizedLabel"`
+	CreatedAt            string `json:"createdAt"`
+}
+
+type UsageCostAssociationSnapshot struct {
+	ID                string `json:"id"`
+	UsageCostSourceID string `json:"usageCostSourceId"`
+	LogicalAccountID  string `json:"logicalAccountId"`
+	ValidFrom         string `json:"validFrom"`
+	ValidTo           string `json:"validTo"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
+}
+
+type UsageLimitAssociationSnapshot struct {
+	ID                 string `json:"id"`
+	UsageLimitSourceID string `json:"usageLimitSourceId"`
+	LogicalAccountID   string `json:"logicalAccountId"`
+	LimitDefinitionID  string `json:"limitDefinitionId"`
+	ValidFrom          string `json:"validFrom"`
+	ValidTo            string `json:"validTo"`
+	CreatedAt          string `json:"createdAt"`
+	UpdatedAt          string `json:"updatedAt"`
+}
+
+type UsageCostSourceCompletenessSnapshot struct {
+	ID                string   `json:"id"`
+	UsageCostSourceID string   `json:"usageCostSourceId"`
+	ValidFrom         string   `json:"validFrom"`
+	ValidTo           string   `json:"validTo"`
+	State             string   `json:"state"`
+	LogicalAccountIDs []string `json:"logicalAccountIds"`
+	ExcludedActivity  []string `json:"excludedActivity"`
+	CreatedAt         string   `json:"createdAt"`
+	UpdatedAt         string   `json:"updatedAt"`
+}
+
+type HubSwitchSnapshot struct {
+	ID                 string `json:"id"`
+	OldHubID           string `json:"oldHubId"`
+	OldDeviceID        string `json:"oldDeviceId"`
+	NewHubID           string `json:"newHubId"`
+	NewDeviceID        string `json:"newDeviceId"`
+	CollectionDeviceID string `json:"collectionDeviceId"`
+	SwitchedAt         string `json:"switchedAt"`
+	CreatedAt          string `json:"createdAt"`
+}
+
+type ImpactIntervalSnapshot struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+type ImpactPreviewSnapshot struct {
+	SourceID                     string                   `json:"sourceId"`
+	SourceKind                   string                   `json:"sourceKind"`
+	IntervalStart                string                   `json:"intervalStart"`
+	IntervalEnd                  string                   `json:"intervalEnd"`
+	AffectedObservationIDs       []string                 `json:"affectedObservationIds"`
+	AffectedCalculationIntervals []ImpactIntervalSnapshot `json:"affectedCalculationIntervals"`
+	AffectedDerivedResultIDs     []string                 `json:"affectedDerivedResultIds"`
+}
+
+type UsageCostAssociationInput struct {
+	ID                string `json:"id"`
+	UsageCostSourceID string `json:"usageCostSourceId"`
+	LogicalAccountID  string `json:"logicalAccountId"`
+	ValidFrom         string `json:"validFrom"`
+	ValidTo           string `json:"validTo"`
+}
+
+type UsageLimitAssociationInput struct {
+	ID                 string `json:"id"`
+	UsageLimitSourceID string `json:"usageLimitSourceId"`
+	LogicalAccountID   string `json:"logicalAccountId"`
+	LimitDefinitionID  string `json:"limitDefinitionId"`
+	ValidFrom          string `json:"validFrom"`
+	ValidTo            string `json:"validTo"`
+}
+
+type UsageCostSourceCompletenessInput struct {
+	ID                string   `json:"id"`
+	UsageCostSourceID string   `json:"usageCostSourceId"`
+	ValidFrom         string   `json:"validFrom"`
+	ValidTo           string   `json:"validTo"`
+	State             string   `json:"state"`
+	LogicalAccountIDs []string `json:"logicalAccountIds"`
+	ExcludedActivity  []string `json:"excludedActivity"`
+}
+
+type HubSwitchInput struct {
+	ID                 string `json:"id"`
+	OldHubID           string `json:"oldHubId"`
+	OldDeviceID        string `json:"oldDeviceId"`
+	NewHubID           string `json:"newHubId"`
+	NewDeviceID        string `json:"newDeviceId"`
+	CollectionDeviceID string `json:"collectionDeviceId"`
+	SwitchedAt         string `json:"switchedAt"`
+}
+
 func NewAccountService(lifecycle *sqliteadapter.Lifecycle) (*AccountService, error) {
 	return NewAccountServiceWithDependencies(lifecycle, usecase.SystemClock{}, UUIDGenerator{})
 }
@@ -111,7 +238,11 @@ func NewAccountServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, clock
 	if err != nil {
 		return nil, err
 	}
-	return &AccountService{lifecycle: lifecycle, usecase: uc}, nil
+	linking, err := usecase.NewLinkingUsecase(lifecycle, clock, ids)
+	if err != nil {
+		return nil, err
+	}
+	return &AccountService{lifecycle: lifecycle, usecase: uc, linking: linking}, nil
 }
 
 func (s *AccountService) GetAccounts(ctx context.Context) (AccountSnapshot, error) {
@@ -164,6 +295,176 @@ func (s *AccountService) GetPlanHistories(ctx context.Context, logicalAccountID 
 		result = append(result, planHistorySnapshot(row))
 	}
 	return result, nil
+}
+
+func (s *AccountService) GetLinkingSnapshot(ctx context.Context) (LinkingSnapshot, error) {
+	costSources, err := s.lifecycle.ListUsageCostSources(ctx, "")
+	if err != nil {
+		return LinkingSnapshot{}, err
+	}
+	limitSources, err := s.lifecycle.ListUsageLimitSources(ctx, "")
+	if err != nil {
+		return LinkingSnapshot{}, err
+	}
+	costAssociations, err := s.lifecycle.ListUsageCostAssociations(ctx, "")
+	if err != nil {
+		return LinkingSnapshot{}, err
+	}
+	limitAssociations, err := s.lifecycle.ListUsageLimitAssociations(ctx, "")
+	if err != nil {
+		return LinkingSnapshot{}, err
+	}
+	completeness, err := s.lifecycle.ListUsageCostSourceCompleteness(ctx, "")
+	if err != nil {
+		return LinkingSnapshot{}, err
+	}
+	switches, err := s.lifecycle.ListHubSwitches(ctx)
+	if err != nil {
+		return LinkingSnapshot{}, err
+	}
+	return LinkingSnapshot{
+		UsageCostSources:            mapUsageCostSources(costSources),
+		UsageLimitSources:           mapUsageLimitSources(limitSources),
+		UsageCostAssociations:       mapUsageCostAssociations(costAssociations),
+		UsageLimitAssociations:      mapUsageLimitAssociations(limitAssociations),
+		UsageCostSourceCompleteness: mapCompleteness(completeness),
+		HubSwitches:                 mapHubSwitches(switches),
+	}, nil
+}
+
+func (s *AccountService) CreateUsageCostAssociation(ctx context.Context, input UsageCostAssociationInput) (UsageCostAssociationSnapshot, error) {
+	association, err := usageCostAssociationFromInput(input)
+	if err != nil {
+		return UsageCostAssociationSnapshot{}, err
+	}
+	created, err := s.linking.AssociateUsageCostSource(ctx, association)
+	if err != nil {
+		return UsageCostAssociationSnapshot{}, err
+	}
+	return usageCostAssociationSnapshot(created), nil
+}
+
+func (s *AccountService) UpdateUsageCostAssociation(ctx context.Context, input UsageCostAssociationInput) error {
+	existing, err := s.usageCostAssociationByID(ctx, input.ID)
+	if err != nil {
+		return err
+	}
+	association, err := usageCostAssociationFromInput(input)
+	if err != nil {
+		return err
+	}
+	association.CreatedAt = existing.CreatedAt
+	return s.linking.UpdateUsageCostAssociation(ctx, association)
+}
+
+func (s *AccountService) PreviewUsageCostAssociation(ctx context.Context, input UsageCostAssociationInput) (ImpactPreviewSnapshot, error) {
+	association, err := usageCostAssociationFromInput(input)
+	if err != nil {
+		return ImpactPreviewSnapshot{}, err
+	}
+	preview, err := s.linking.PreviewUsageCostAssociation(ctx, association)
+	if err != nil {
+		return ImpactPreviewSnapshot{}, err
+	}
+	return impactPreviewSnapshot(preview), nil
+}
+
+func (s *AccountService) CreateUsageLimitAssociation(ctx context.Context, input UsageLimitAssociationInput) (UsageLimitAssociationSnapshot, error) {
+	association, err := usageLimitAssociationFromInput(input)
+	if err != nil {
+		return UsageLimitAssociationSnapshot{}, err
+	}
+	created, err := s.linking.AssociateUsageLimitSource(ctx, association)
+	if err != nil {
+		return UsageLimitAssociationSnapshot{}, err
+	}
+	return usageLimitAssociationSnapshot(created), nil
+}
+
+func (s *AccountService) UpdateUsageLimitAssociation(ctx context.Context, input UsageLimitAssociationInput) error {
+	existing, err := s.usageLimitAssociationByID(ctx, input.ID)
+	if err != nil {
+		return err
+	}
+	association, err := usageLimitAssociationFromInput(input)
+	if err != nil {
+		return err
+	}
+	association.CreatedAt = existing.CreatedAt
+	return s.linking.UpdateUsageLimitAssociation(ctx, association)
+}
+
+func (s *AccountService) PreviewUsageLimitAssociation(ctx context.Context, input UsageLimitAssociationInput) (ImpactPreviewSnapshot, error) {
+	association, err := usageLimitAssociationFromInput(input)
+	if err != nil {
+		return ImpactPreviewSnapshot{}, err
+	}
+	preview, err := s.linking.PreviewUsageLimitAssociation(ctx, association)
+	if err != nil {
+		return ImpactPreviewSnapshot{}, err
+	}
+	return impactPreviewSnapshot(preview), nil
+}
+
+func (s *AccountService) PreviewUsageCostSourceCompleteness(ctx context.Context, input UsageCostSourceCompletenessInput) (ImpactPreviewSnapshot, error) {
+	completeness, err := completenessFromInput(input)
+	if err != nil {
+		return ImpactPreviewSnapshot{}, err
+	}
+	preview, err := s.linking.PreviewUsageCostSourceCompleteness(ctx, completeness)
+	if err != nil {
+		return ImpactPreviewSnapshot{}, err
+	}
+	return impactPreviewSnapshot(preview), nil
+}
+
+func (s *AccountService) ConfirmUsageCostSourceCompleteness(ctx context.Context, input UsageCostSourceCompletenessInput) (UsageCostSourceCompletenessSnapshot, error) {
+	completeness, err := completenessFromInput(input)
+	if err != nil {
+		return UsageCostSourceCompletenessSnapshot{}, err
+	}
+	confirmed, err := s.linking.ConfirmUsageCostSourceCompleteness(ctx, completeness)
+	if err != nil {
+		return UsageCostSourceCompletenessSnapshot{}, err
+	}
+	return completenessSnapshot(confirmed), nil
+}
+
+func (s *AccountService) UpdateUsageCostSourceCompleteness(ctx context.Context, input UsageCostSourceCompletenessInput) error {
+	existing, err := s.completenessByID(ctx, input.ID)
+	if err != nil {
+		return err
+	}
+	completeness, err := completenessFromInput(input)
+	if err != nil {
+		return err
+	}
+	completeness.CreatedAt = existing.CreatedAt
+	return s.linking.UpdateUsageCostSourceCompleteness(ctx, completeness)
+}
+
+func (s *AccountService) PreviewHubSwitch(ctx context.Context, input HubSwitchInput) (ImpactPreviewSnapshot, error) {
+	switchRecord, err := hubSwitchFromInput(input)
+	if err != nil {
+		return ImpactPreviewSnapshot{}, err
+	}
+	preview, err := s.linking.PreviewHubSwitch(ctx, switchRecord)
+	if err != nil {
+		return ImpactPreviewSnapshot{}, err
+	}
+	return impactPreviewSnapshot(preview), nil
+}
+
+func (s *AccountService) ConfirmHubSwitch(ctx context.Context, input HubSwitchInput) (HubSwitchSnapshot, error) {
+	switchRecord, err := hubSwitchFromInput(input)
+	if err != nil {
+		return HubSwitchSnapshot{}, err
+	}
+	confirmed, err := s.linking.ConfirmHubSwitch(ctx, switchRecord)
+	if err != nil {
+		return HubSwitchSnapshot{}, err
+	}
+	return hubSwitchSnapshot(confirmed), nil
 }
 
 func (s *AccountService) CreateLogicalAccount(ctx context.Context, input CreateLogicalAccountInput) (LogicalAccountSnapshot, error) {
@@ -344,4 +645,210 @@ func accountTimePtr(value *time.Time) string {
 		return ""
 	}
 	return accountTime(*value)
+}
+
+func usageCostAssociationFromInput(input UsageCostAssociationInput) (domain.UsageCostAssociation, error) {
+	from, to, err := parseAccountPeriod(input.ValidFrom, input.ValidTo)
+	if err != nil {
+		return domain.UsageCostAssociation{}, err
+	}
+	return domain.UsageCostAssociation{
+		ID:                input.ID,
+		UsageCostSourceID: input.UsageCostSourceID,
+		LogicalAccountID:  input.LogicalAccountID,
+		ValidFrom:         from,
+		ValidTo:           to,
+	}, nil
+}
+
+func usageLimitAssociationFromInput(input UsageLimitAssociationInput) (domain.UsageLimitAssociation, error) {
+	from, to, err := parseAccountPeriod(input.ValidFrom, input.ValidTo)
+	if err != nil {
+		return domain.UsageLimitAssociation{}, err
+	}
+	return domain.UsageLimitAssociation{
+		ID:                 input.ID,
+		UsageLimitSourceID: input.UsageLimitSourceID,
+		LogicalAccountID:   input.LogicalAccountID,
+		LimitDefinitionID:  input.LimitDefinitionID,
+		ValidFrom:          from,
+		ValidTo:            to,
+	}, nil
+}
+
+func completenessFromInput(input UsageCostSourceCompletenessInput) (domain.UsageCostSourceCompleteness, error) {
+	from, to, err := parseAccountPeriod(input.ValidFrom, input.ValidTo)
+	if err != nil {
+		return domain.UsageCostSourceCompleteness{}, err
+	}
+	return domain.UsageCostSourceCompleteness{
+		ID:                input.ID,
+		UsageCostSourceID: input.UsageCostSourceID,
+		ValidFrom:         from,
+		ValidTo:           to,
+		State:             domain.CompletenessState(input.State),
+		LogicalAccountIDs: append([]string(nil), input.LogicalAccountIDs...),
+		ExcludedActivity:  append([]string(nil), input.ExcludedActivity...),
+	}, nil
+}
+
+func hubSwitchFromInput(input HubSwitchInput) (domain.HubSwitch, error) {
+	switchedAt, err := parseAccountTimestamp(input.SwitchedAt)
+	if err != nil {
+		return domain.HubSwitch{}, fmt.Errorf("switchedAt must be RFC3339Nano: %w", err)
+	}
+	return domain.HubSwitch{
+		ID:                 input.ID,
+		OldHubID:           input.OldHubID,
+		OldDeviceID:        input.OldDeviceID,
+		NewHubID:           input.NewHubID,
+		NewDeviceID:        input.NewDeviceID,
+		CollectionDeviceID: input.CollectionDeviceID,
+		SwitchedAt:         switchedAt,
+	}, nil
+}
+
+func (s *AccountService) usageCostAssociationByID(ctx context.Context, id string) (domain.UsageCostAssociation, error) {
+	items, err := s.lifecycle.ListUsageCostAssociations(ctx, "")
+	if err != nil {
+		return domain.UsageCostAssociation{}, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return domain.UsageCostAssociation{}, errors.New("usage cost association was not found")
+}
+
+func (s *AccountService) usageLimitAssociationByID(ctx context.Context, id string) (domain.UsageLimitAssociation, error) {
+	items, err := s.lifecycle.ListUsageLimitAssociations(ctx, "")
+	if err != nil {
+		return domain.UsageLimitAssociation{}, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return domain.UsageLimitAssociation{}, errors.New("usage limit association was not found")
+}
+
+func (s *AccountService) completenessByID(ctx context.Context, id string) (domain.UsageCostSourceCompleteness, error) {
+	items, err := s.lifecycle.ListUsageCostSourceCompleteness(ctx, "")
+	if err != nil {
+		return domain.UsageCostSourceCompleteness{}, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return domain.UsageCostSourceCompleteness{}, errors.New("usage cost source completeness was not found")
+}
+
+func mapUsageCostSources(items []domain.UsageCostSource) []UsageCostSourceSnapshot {
+	result := make([]UsageCostSourceSnapshot, 0, len(items))
+	for _, item := range items {
+		result = append(result, UsageCostSourceSnapshot{
+			ID: item.ID, HubID: item.HubID, DeviceID: item.DeviceID,
+			RawServiceIdentifier: item.RawServiceIdentifier, CreatedAt: accountTime(item.CreatedAt),
+		})
+	}
+	return result
+}
+
+func mapUsageLimitSources(items []domain.UsageLimitSource) []UsageLimitSourceSnapshot {
+	result := make([]UsageLimitSourceSnapshot, 0, len(items))
+	for _, item := range items {
+		result = append(result, UsageLimitSourceSnapshot{
+			ID: item.ID, HubID: item.HubID, DeviceID: item.DeviceID, AccountKey: item.AccountKey,
+			RawServiceIdentifier: item.RawServiceIdentifier, WindowKey: item.WindowKey,
+			NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric,
+			NormalizedLabel: item.NormalizedLabel, CreatedAt: accountTime(item.CreatedAt),
+		})
+	}
+	return result
+}
+
+func mapUsageCostAssociations(items []domain.UsageCostAssociation) []UsageCostAssociationSnapshot {
+	result := make([]UsageCostAssociationSnapshot, 0, len(items))
+	for _, item := range items {
+		result = append(result, usageCostAssociationSnapshot(item))
+	}
+	return result
+}
+
+func mapUsageLimitAssociations(items []domain.UsageLimitAssociation) []UsageLimitAssociationSnapshot {
+	result := make([]UsageLimitAssociationSnapshot, 0, len(items))
+	for _, item := range items {
+		result = append(result, usageLimitAssociationSnapshot(item))
+	}
+	return result
+}
+
+func mapCompleteness(items []domain.UsageCostSourceCompleteness) []UsageCostSourceCompletenessSnapshot {
+	result := make([]UsageCostSourceCompletenessSnapshot, 0, len(items))
+	for _, item := range items {
+		result = append(result, completenessSnapshot(item))
+	}
+	return result
+}
+
+func mapHubSwitches(items []domain.HubSwitch) []HubSwitchSnapshot {
+	result := make([]HubSwitchSnapshot, 0, len(items))
+	for _, item := range items {
+		result = append(result, hubSwitchSnapshot(item))
+	}
+	return result
+}
+
+func usageCostAssociationSnapshot(value domain.UsageCostAssociation) UsageCostAssociationSnapshot {
+	return UsageCostAssociationSnapshot{
+		ID: value.ID, UsageCostSourceID: value.UsageCostSourceID, LogicalAccountID: value.LogicalAccountID,
+		ValidFrom: accountTime(value.ValidFrom), ValidTo: accountTimePtr(value.ValidTo),
+		CreatedAt: accountTime(value.CreatedAt), UpdatedAt: accountTime(value.UpdatedAt),
+	}
+}
+
+func usageLimitAssociationSnapshot(value domain.UsageLimitAssociation) UsageLimitAssociationSnapshot {
+	return UsageLimitAssociationSnapshot{
+		ID: value.ID, UsageLimitSourceID: value.UsageLimitSourceID, LogicalAccountID: value.LogicalAccountID,
+		LimitDefinitionID: value.LimitDefinitionID, ValidFrom: accountTime(value.ValidFrom),
+		ValidTo: accountTimePtr(value.ValidTo), CreatedAt: accountTime(value.CreatedAt),
+		UpdatedAt: accountTime(value.UpdatedAt),
+	}
+}
+
+func completenessSnapshot(value domain.UsageCostSourceCompleteness) UsageCostSourceCompletenessSnapshot {
+	return UsageCostSourceCompletenessSnapshot{
+		ID: value.ID, UsageCostSourceID: value.UsageCostSourceID, ValidFrom: accountTime(value.ValidFrom),
+		ValidTo: accountTimePtr(value.ValidTo), State: string(value.State),
+		LogicalAccountIDs: append([]string(nil), value.LogicalAccountIDs...),
+		ExcludedActivity:  append([]string(nil), value.ExcludedActivity...),
+		CreatedAt:         accountTime(value.CreatedAt), UpdatedAt: accountTime(value.UpdatedAt),
+	}
+}
+
+func hubSwitchSnapshot(value domain.HubSwitch) HubSwitchSnapshot {
+	return HubSwitchSnapshot{
+		ID: value.ID, OldHubID: value.OldHubID, OldDeviceID: value.OldDeviceID,
+		NewHubID: value.NewHubID, NewDeviceID: value.NewDeviceID,
+		CollectionDeviceID: value.CollectionDeviceID, SwitchedAt: accountTime(value.SwitchedAt),
+		CreatedAt: accountTime(value.CreatedAt),
+	}
+}
+
+func impactPreviewSnapshot(value domain.ImpactPreview) ImpactPreviewSnapshot {
+	intervals := make([]ImpactIntervalSnapshot, 0, len(value.AffectedCalculationIntervals))
+	for _, item := range value.AffectedCalculationIntervals {
+		intervals = append(intervals, ImpactIntervalSnapshot{Start: accountTime(item.Start), End: accountTime(item.End)})
+	}
+	return ImpactPreviewSnapshot{
+		SourceID: value.SourceID, SourceKind: value.SourceKind,
+		IntervalStart: accountTime(value.IntervalStart), IntervalEnd: accountTime(value.IntervalEnd),
+		AffectedObservationIDs:       append([]string(nil), value.AffectedObservationIDs...),
+		AffectedCalculationIntervals: intervals,
+		AffectedDerivedResultIDs:     append([]string(nil), value.AffectedDerivedResultIDs...),
+	}
 }

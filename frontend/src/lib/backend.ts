@@ -5,6 +5,7 @@ import {
   CatalogService,
   CollectionService,
   HubService,
+  ReviewService,
   SettingsService,
   WindowService,
 } from "../../bindings/token-monitor-analytics/internal/desktop/index.js";
@@ -33,6 +34,9 @@ import type {
   PlanVersionInput,
   RawSnapshotDetail,
   RawSnapshotSnapshot,
+  ReviewFilterInput,
+  ReviewItemSnapshot,
+  ReviewPage,
   ServiceIdentifierMappingInput,
   ServiceSnapshot,
   SplitLogicalAccountInput,
@@ -41,6 +45,16 @@ import type {
   UpdateLogicalAccountInput,
   UpdatePlanHistoryInput,
   UpdateServiceInput,
+  HubSwitchInput,
+  HubSwitchSnapshot,
+  ImpactPreviewSnapshot,
+  LinkingSnapshot,
+  UsageCostAssociationInput,
+  UsageCostAssociationSnapshot,
+  UsageCostSourceCompletenessInput,
+  UsageCostSourceCompletenessSnapshot,
+  UsageLimitAssociationInput,
+  UsageLimitAssociationSnapshot,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -71,6 +85,9 @@ export type {
   PlanVersionInput,
   RawSnapshotDetail,
   RawSnapshotSnapshot,
+  ReviewFilterInput,
+  ReviewItemSnapshot,
+  ReviewPage,
   ServiceIdentifierMappingInput,
   ServiceSnapshot,
   SplitLogicalAccountInput,
@@ -78,6 +95,16 @@ export type {
   UpdateLogicalAccountInput,
   UpdatePlanHistoryInput,
   UpdateServiceInput,
+  HubSwitchInput,
+  HubSwitchSnapshot,
+  ImpactPreviewSnapshot,
+  LinkingSnapshot,
+  UsageCostAssociationInput,
+  UsageCostAssociationSnapshot,
+  UsageCostSourceCompletenessInput,
+  UsageCostSourceCompletenessSnapshot,
+  UsageLimitAssociationInput,
+  UsageLimitAssociationSnapshot,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type {
@@ -137,6 +164,7 @@ export interface FrontendAdapter {
   getCostObservations(hubID: string): Promise<CostObservationSnapshot[]>;
   getLimitObservations(hubID: string): Promise<LimitObservationSnapshot[]>;
   getAudits(filter: AuditFilterInput): Promise<AuditPage>;
+  getReviewItems(filter: ReviewFilterInput): Promise<ReviewPage>;
   getCatalog(): Promise<CatalogSnapshot>;
   getAccounts(): Promise<AccountSnapshot>;
   getHubAccountCandidates(
@@ -173,6 +201,32 @@ export interface FrontendAdapter {
     input: CreatePlanHistoryInput,
   ): Promise<NonNullable<AccountSnapshot["planHistories"]>[number]>;
   updatePlanHistory(input: UpdatePlanHistoryInput): Promise<void>;
+  getLinkingSnapshot(): Promise<LinkingSnapshot>;
+  createUsageCostAssociation(
+    input: UsageCostAssociationInput,
+  ): Promise<UsageCostAssociationSnapshot>;
+  updateUsageCostAssociation(input: UsageCostAssociationInput): Promise<void>;
+  previewUsageCostAssociation(
+    input: UsageCostAssociationInput,
+  ): Promise<ImpactPreviewSnapshot>;
+  createUsageLimitAssociation(
+    input: UsageLimitAssociationInput,
+  ): Promise<UsageLimitAssociationSnapshot>;
+  updateUsageLimitAssociation(input: UsageLimitAssociationInput): Promise<void>;
+  previewUsageLimitAssociation(
+    input: UsageLimitAssociationInput,
+  ): Promise<ImpactPreviewSnapshot>;
+  previewUsageCostSourceCompleteness(
+    input: UsageCostSourceCompletenessInput,
+  ): Promise<ImpactPreviewSnapshot>;
+  confirmUsageCostSourceCompleteness(
+    input: UsageCostSourceCompletenessInput,
+  ): Promise<UsageCostSourceCompletenessSnapshot>;
+  updateUsageCostSourceCompleteness(
+    input: UsageCostSourceCompletenessInput,
+  ): Promise<void>;
+  previewHubSwitch(input: HubSwitchInput): Promise<ImpactPreviewSnapshot>;
+  confirmHubSwitch(input: HubSwitchInput): Promise<HubSwitchSnapshot>;
   createService(input: CreateServiceInput): Promise<ServiceSnapshot>;
   updateService(input: UpdateServiceInput): Promise<ServiceSnapshot>;
   archiveService(serviceID: string): Promise<void>;
@@ -259,8 +313,10 @@ export interface FakeBackendOptions {
   costObservations?: CostObservationSnapshot[];
   limitObservations?: LimitObservationSnapshot[];
   audits?: AuditRecord[];
+  reviewItems?: ReviewItemSnapshot[];
   catalog?: Partial<CatalogSnapshot>;
   accounts?: Partial<AccountSnapshot>;
+  linking?: Partial<LinkingSnapshot>;
 }
 
 export interface FakeFrontendAdapter extends FrontendAdapter {
@@ -282,6 +338,7 @@ export function createFakeBackend(
   const costObservations = [...(options.costObservations ?? [])];
   const limitObservations = [...(options.limitObservations ?? [])];
   const audits = [...(options.audits ?? [])];
+  const reviewItems = [...(options.reviewItems ?? [])];
   let catalog = {
     services: options.catalog?.services ?? [],
     serviceIdentifierMappings: options.catalog?.serviceIdentifierMappings ?? [],
@@ -298,10 +355,36 @@ export function createFakeBackend(
     logicalAccounts: options.accounts?.logicalAccounts ?? [],
     planHistories: options.accounts?.planHistories ?? [],
   };
+  let linking: LinkingSnapshot = {
+    usageCostSources: options.linking?.usageCostSources ?? [],
+    usageLimitSources: options.linking?.usageLimitSources ?? [],
+    usageCostAssociations: options.linking?.usageCostAssociations ?? [],
+    usageLimitAssociations: options.linking?.usageLimitAssociations ?? [],
+    usageCostSourceCompleteness:
+      options.linking?.usageCostSourceCompleteness ?? [],
+    hubSwitches: options.linking?.hubSwitches ?? [],
+  };
   const accountNow = () => new Date().toISOString();
   const accountWithUpdatedAt = <T extends { updatedAt: string }>(
     value: T,
   ): T => ({ ...value, updatedAt: accountNow() });
+  const linkingNow = () => new Date().toISOString();
+  const fakeImpactPreview = (
+    sourceId: string,
+    sourceKind: string,
+    intervalStart: string,
+    intervalEnd: string,
+  ): ImpactPreviewSnapshot => ({
+    sourceId,
+    sourceKind,
+    intervalStart,
+    intervalEnd: intervalEnd || "9999-12-31T23:59:59.999999999Z",
+    affectedObservationIds: [],
+    affectedCalculationIntervals: intervalEnd
+      ? [{ start: intervalStart, end: intervalEnd }]
+      : [],
+    affectedDerivedResultIds: [],
+  });
   const createFakeLogicalAccount = (input: CreateLogicalAccountInput) => {
     const now = accountNow();
     const account = {
@@ -445,6 +528,32 @@ export function createFakeBackend(
           (!filter.entityType || audit.entityType === filter.entityType) &&
           (!filter.from || audit.occurredAt >= filter.from) &&
           (!filter.to || audit.occurredAt < filter.to),
+      );
+      const limit = filter.limit > 0 ? filter.limit : 50;
+      const offset = filter.cursor
+        ? Number.parseInt(atob(filter.cursor), 10)
+        : 0;
+      const items = Number.isFinite(offset)
+        ? filtered.slice(offset, offset + limit + 1)
+        : filtered.slice(0, limit + 1);
+      const hasMore = items.length > limit;
+      return {
+        items: hasMore ? items.slice(0, limit) : items,
+        hasMore,
+        nextCursor: hasMore
+          ? btoa(String((Number.isFinite(offset) ? offset : 0) + limit))
+          : "",
+      };
+    },
+    getReviewItems: async (filter) => {
+      const filtered = reviewItems.filter(
+        (item) =>
+          (!filter.kind || item.kind === filter.kind) &&
+          (!filter.state || item.state === filter.state) &&
+          (!filter.impact || item.impact === filter.impact) &&
+          (!filter.hubId || item.hubId === filter.hubId) &&
+          (!filter.from || item.lastObservedAt >= filter.from) &&
+          (!filter.to || item.lastObservedAt < filter.to),
       );
       const limit = filter.limit > 0 ? filter.limit : 50;
       const offset = filter.cursor
@@ -648,6 +757,152 @@ export function createFakeBackend(
             : item,
         ),
       };
+    },
+    getLinkingSnapshot: async () => linking,
+    createUsageCostAssociation: async (input) => {
+      const now = linkingNow();
+      const association: UsageCostAssociationSnapshot = {
+        id:
+          input.id ||
+          `fake-cost-association-${(linking.usageCostAssociations ?? []).length + 1}`,
+        usageCostSourceId: input.usageCostSourceId,
+        logicalAccountId: input.logicalAccountId,
+        validFrom: input.validFrom,
+        validTo: input.validTo,
+        createdAt: now,
+        updatedAt: now,
+      };
+      linking = {
+        ...linking,
+        usageCostAssociations: [
+          ...(linking.usageCostAssociations ?? []),
+          association,
+        ],
+      };
+      return association;
+    },
+    updateUsageCostAssociation: async (input) => {
+      linking = {
+        ...linking,
+        usageCostAssociations: (linking.usageCostAssociations ?? []).map(
+          (item) =>
+            item.id === input.id
+              ? { ...item, ...input, updatedAt: linkingNow() }
+              : item,
+        ),
+      };
+    },
+    previewUsageCostAssociation: async (input) =>
+      fakeImpactPreview(
+        input.usageCostSourceId,
+        "usage_cost",
+        input.validFrom,
+        input.validTo,
+      ),
+    createUsageLimitAssociation: async (input) => {
+      const now = linkingNow();
+      const association: UsageLimitAssociationSnapshot = {
+        id:
+          input.id ||
+          `fake-limit-association-${(linking.usageLimitAssociations ?? []).length + 1}`,
+        usageLimitSourceId: input.usageLimitSourceId,
+        logicalAccountId: input.logicalAccountId,
+        limitDefinitionId: input.limitDefinitionId,
+        validFrom: input.validFrom,
+        validTo: input.validTo,
+        createdAt: now,
+        updatedAt: now,
+      };
+      linking = {
+        ...linking,
+        usageLimitAssociations: [
+          ...(linking.usageLimitAssociations ?? []),
+          association,
+        ],
+      };
+      return association;
+    },
+    updateUsageLimitAssociation: async (input) => {
+      linking = {
+        ...linking,
+        usageLimitAssociations: (linking.usageLimitAssociations ?? []).map(
+          (item) =>
+            item.id === input.id
+              ? { ...item, ...input, updatedAt: linkingNow() }
+              : item,
+        ),
+      };
+    },
+    previewUsageLimitAssociation: async (input) =>
+      fakeImpactPreview(
+        input.usageLimitSourceId,
+        "usage_limit",
+        input.validFrom,
+        input.validTo,
+      ),
+    previewUsageCostSourceCompleteness: async (input) =>
+      fakeImpactPreview(
+        input.usageCostSourceId,
+        "usage_cost_completeness",
+        input.validFrom,
+        input.validTo,
+      ),
+    confirmUsageCostSourceCompleteness: async (input) => {
+      const now = linkingNow();
+      const completeness: UsageCostSourceCompletenessSnapshot = {
+        id:
+          input.id ||
+          `fake-completeness-${(linking.usageCostSourceCompleteness ?? []).length + 1}`,
+        usageCostSourceId: input.usageCostSourceId,
+        validFrom: input.validFrom,
+        validTo: input.validTo,
+        state: input.state || "unconfirmed",
+        logicalAccountIds: input.logicalAccountIds,
+        excludedActivity: input.excludedActivity,
+        createdAt: now,
+        updatedAt: now,
+      };
+      linking = {
+        ...linking,
+        usageCostSourceCompleteness: [
+          ...(linking.usageCostSourceCompleteness ?? []),
+          completeness,
+        ],
+      };
+      return completeness;
+    },
+    updateUsageCostSourceCompleteness: async (input) => {
+      linking = {
+        ...linking,
+        usageCostSourceCompleteness: (
+          linking.usageCostSourceCompleteness ?? []
+        ).map((item) =>
+          item.id === input.id
+            ? { ...item, ...input, updatedAt: linkingNow() }
+            : item,
+        ),
+      };
+    },
+    previewHubSwitch: async (input) =>
+      fakeImpactPreview(
+        input.newHubId,
+        "hub_switch",
+        input.switchedAt,
+        input.switchedAt,
+      ),
+    confirmHubSwitch: async (input) => {
+      const record: HubSwitchSnapshot = {
+        ...input,
+        id:
+          input.id ||
+          `fake-hub-switch-${(linking.hubSwitches ?? []).length + 1}`,
+        createdAt: linkingNow(),
+      };
+      linking = {
+        ...linking,
+        hubSwitches: [...(linking.hubSwitches ?? []), record],
+      };
+      return record;
     },
     createService: async (input) => {
       const service: ServiceSnapshot = {
@@ -1027,6 +1282,10 @@ export function createProductionBackend(
         (value) => value ?? [],
       ),
     getAudits: (filter) => asPromise(AuditService.GetAudits(filter)),
+    getReviewItems: (filter) =>
+      asPromise(ReviewService.GetReviewItems(filter)).then(
+        (value) => value ?? { items: [], hasMore: false, nextCursor: "" },
+      ),
     getCatalog: () => asPromise(CatalogService.GetCatalog()),
     getAccounts: () => asPromise(AccountService.GetAccounts()),
     getHubAccountCandidates: (serviceID, state) =>
@@ -1070,6 +1329,29 @@ export function createProductionBackend(
       asPromise(AccountService.CreatePlanHistory(input)),
     updatePlanHistory: (input) =>
       asPromise(AccountService.UpdatePlanHistory(input)),
+    getLinkingSnapshot: () => asPromise(AccountService.GetLinkingSnapshot()),
+    createUsageCostAssociation: (input) =>
+      asPromise(AccountService.CreateUsageCostAssociation(input)),
+    updateUsageCostAssociation: (input) =>
+      asPromise(AccountService.UpdateUsageCostAssociation(input)),
+    previewUsageCostAssociation: (input) =>
+      asPromise(AccountService.PreviewUsageCostAssociation(input)),
+    createUsageLimitAssociation: (input) =>
+      asPromise(AccountService.CreateUsageLimitAssociation(input)),
+    updateUsageLimitAssociation: (input) =>
+      asPromise(AccountService.UpdateUsageLimitAssociation(input)),
+    previewUsageLimitAssociation: (input) =>
+      asPromise(AccountService.PreviewUsageLimitAssociation(input)),
+    previewUsageCostSourceCompleteness: (input) =>
+      asPromise(AccountService.PreviewUsageCostSourceCompleteness(input)),
+    confirmUsageCostSourceCompleteness: (input) =>
+      asPromise(AccountService.ConfirmUsageCostSourceCompleteness(input)),
+    updateUsageCostSourceCompleteness: (input) =>
+      asPromise(AccountService.UpdateUsageCostSourceCompleteness(input)),
+    previewHubSwitch: (input) =>
+      asPromise(AccountService.PreviewHubSwitch(input)),
+    confirmHubSwitch: (input) =>
+      asPromise(AccountService.ConfirmHubSwitch(input)),
     createService: (input) => asPromise(CatalogService.CreateService(input)),
     updateService: (input) => asPromise(CatalogService.UpdateService(input)),
     archiveService: (serviceID) =>

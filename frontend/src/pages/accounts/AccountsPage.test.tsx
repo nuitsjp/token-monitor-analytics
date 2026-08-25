@@ -6,6 +6,7 @@ import type {
   AccountSnapshot,
   CatalogSnapshot,
   HubSnapshot,
+  LinkingSnapshot,
 } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { createFakeBackend } from "../../lib/backend";
 import { AccountsPage } from "./AccountsPage";
@@ -23,6 +24,12 @@ const hub: HubSnapshot = {
   connectionState: "connected",
   connectionCheckedAt: "2026-08-25T00:00:00Z",
   connectionFailureNote: "",
+};
+
+const secondHub: HubSnapshot = {
+  ...hub,
+  id: "hub-2",
+  displayName: "第2検証Hub",
 };
 
 const catalog: Partial<CatalogSnapshot> = {
@@ -46,6 +53,39 @@ const catalog: Partial<CatalogSnapshot> = {
       validTo: "",
       officialSourceUrl: "https://provider.example/plan",
       createdAt: "2026-08-24T00:00:00Z",
+    },
+  ],
+  serviceIdentifierMappings: [
+    {
+      id: "mapping-cost-1",
+      kind: "usage_cost",
+      rawIdentifier: "provider.cost",
+      serviceId: "service-1",
+      validFrom: "2026-08-01T00:00:00Z",
+      validTo: "",
+      createdAt: "2026-08-24T00:00:00Z",
+    },
+    {
+      id: "mapping-limit-1",
+      kind: "usage_limit",
+      rawIdentifier: "provider.limit",
+      serviceId: "service-1",
+      validFrom: "2026-08-01T00:00:00Z",
+      validTo: "",
+      createdAt: "2026-08-24T00:00:00Z",
+    },
+  ],
+  limitDefinitions: [
+    {
+      id: "limit-definition-1",
+      serviceId: "service-1",
+      cycleType: "weekly",
+      meaning: "週次利用枠",
+      unit: "%",
+      billingConfirmation: "not_applicable",
+      archivedAt: "",
+      createdAt: "2026-08-24T00:00:00Z",
+      updatedAt: "2026-08-24T00:00:00Z",
     },
   ],
 };
@@ -82,8 +122,53 @@ const accounts: AccountSnapshot = {
   planHistories: [],
 };
 
+const linking: LinkingSnapshot = {
+  usageCostSources: [
+    {
+      id: "cost-source-1",
+      hubId: "hub-1",
+      deviceId: "device-1",
+      rawServiceIdentifier: "provider.cost",
+      createdAt: "2026-08-24T00:00:00Z",
+    },
+  ],
+  usageLimitSources: [
+    {
+      id: "limit-source-1",
+      hubId: "hub-2",
+      deviceId: "device-2",
+      accountKey: "provider-key",
+      rawServiceIdentifier: "provider.limit",
+      windowKey: "weekly-percent",
+      normalizedKind: "weekly",
+      normalizedMetric: "percent",
+      normalizedLabel: "Weekly",
+      createdAt: "2026-08-24T00:00:00Z",
+    },
+  ],
+  usageCostAssociations: [
+    {
+      id: "cost-association-1",
+      usageCostSourceId: "cost-source-1",
+      logicalAccountId: "logical-1",
+      validFrom: "2026-08-24T00:00:00Z",
+      validTo: "",
+      createdAt: "2026-08-24T00:00:00Z",
+      updatedAt: "2026-08-24T00:00:00Z",
+    },
+  ],
+  usageLimitAssociations: [],
+  usageCostSourceCompleteness: [],
+  hubSwitches: [],
+};
+
 function renderPage() {
-  const backend = createFakeBackend({ accounts, hubs: [hub], catalog });
+  const backend = createFakeBackend({
+    accounts,
+    hubs: [hub, secondHub],
+    catalog,
+    linking,
+  });
   const onDirtyChange = vi.fn();
   render(
     <main aria-label="メイン画面">
@@ -100,7 +185,7 @@ function renderPage() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("AccountsPage", () => {
-  it("shows only the three implemented M05 tabs and supports account editing", async () => {
+  it("shows the seven M05 tabs and supports account editing", async () => {
     const { backend, onDirtyChange } = renderPage();
     const user = userEvent.setup();
 
@@ -110,7 +195,12 @@ describe("AccountsPage", () => {
     expect(screen.getByRole("tab", { name: "論理アカウント" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Hubアカウント" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "プラン履歴" })).toBeVisible();
-    expect(screen.queryByText("利用額関連付け")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "利用額関連付け" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "利用枠関連付け" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "活動主体の完全性" })).toBeVisible();
+    expect(
+      screen.getByRole("tab", { name: "収集端末・Hub切替" }),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "編集" }));
     expect(screen.getByRole("textbox", { name: "表示名" })).toHaveValue(
@@ -193,7 +283,140 @@ describe("AccountsPage", () => {
         }),
       ),
     );
-    expect(await screen.findByText(/有効期間:/)).toBeVisible();
+    expect((await screen.findAllByText(/有効期間:/)).length).toBeGreaterThan(0);
+  });
+
+  it("previews and confirms usage-cost and usage-limit associations", async () => {
+    const { backend } = renderPage();
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const costPreview = vi.spyOn(backend, "previewUsageCostAssociation");
+    const costCreate = vi.spyOn(backend, "createUsageCostAssociation");
+    await screen.findByRole("heading", { name: "既存アカウント" });
+    await user.click(screen.getByRole("tab", { name: "利用額関連付け" }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "利用額ソース" }),
+      "cost-source-1",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "論理アカウント" }),
+      "logical-1",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "開始（RFC3339Nano UTC）" }),
+      "2026-08-25T00:00:00Z",
+    );
+    await user.click(screen.getByRole("button", { name: "影響を確認" }));
+    await waitFor(() => expect(costPreview).toHaveBeenCalled());
+    expect(await screen.findByText("対象観測: 0件")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "確定" }));
+    await waitFor(() => expect(costCreate).toHaveBeenCalled());
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("影響"));
+
+    const limitPreview = vi.spyOn(backend, "previewUsageLimitAssociation");
+    const limitCreate = vi.spyOn(backend, "createUsageLimitAssociation");
+    await user.click(screen.getByRole("tab", { name: "利用枠関連付け" }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "利用枠ソース" }),
+      "limit-source-1",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "論理アカウント" }),
+      "logical-1",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "利用枠定義" }),
+      "limit-definition-1",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "開始（RFC3339Nano UTC）" }),
+      "2026-08-25T00:00:00Z",
+    );
+    await user.click(screen.getByRole("button", { name: "影響を確認" }));
+    await waitFor(() => expect(limitPreview).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "確定" }));
+    await waitFor(() => expect(limitCreate).toHaveBeenCalled());
+  });
+
+  it("limits completeness candidates to linked accounts and requires a preview before saving", async () => {
+    const { backend } = renderPage();
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const previewCompleteness = vi.spyOn(
+      backend,
+      "previewUsageCostSourceCompleteness",
+    );
+    const confirmCompleteness = vi.spyOn(
+      backend,
+      "confirmUsageCostSourceCompleteness",
+    );
+    await screen.findByRole("heading", { name: "既存アカウント" });
+    await user.click(screen.getByRole("tab", { name: "活動主体の完全性" }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "利用額ソース" }),
+      "cost-source-1",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "開始（RFC3339Nano UTC）" }),
+      "2026-08-25T00:00:00Z",
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "既存アカウント" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "確定" })).toBeDisabled();
+    await user.click(screen.getByRole("checkbox", { name: "既存アカウント" }));
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "上記の全有効論理アカウントを含み、除外対象がないことを明示確認する",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "影響を確認" }));
+    await waitFor(() => expect(previewCompleteness).toHaveBeenCalled());
+    expect(await screen.findByText("影響計算区間（半開）:")).toBeVisible();
+    expect(screen.getByRole("button", { name: "確定" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "確定" }));
+    await waitFor(() => expect(confirmCompleteness).toHaveBeenCalled());
+  });
+
+  it("requires a preview before confirming a Hub switch", async () => {
+    const { backend } = renderPage();
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const previewSwitch = vi.spyOn(backend, "previewHubSwitch");
+    const confirmSwitch = vi.spyOn(backend, "confirmHubSwitch");
+    await screen.findByRole("heading", { name: "既存アカウント" });
+    await user.click(screen.getByRole("tab", { name: "収集端末・Hub切替" }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "旧Hub" }),
+      "hub-1",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "旧Hub端末レコード" }),
+      "device-1",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "新Hub" }),
+      "hub-2",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "新Hub端末レコード" }),
+      "device-2",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "収集端末" }),
+      "device-1",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "切替日時（RFC3339Nano UTC）" }),
+      "2026-08-25T00:00:00Z",
+    );
+    expect(screen.getByRole("button", { name: "確定" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "影響を確認" }));
+    await waitFor(() => expect(previewSwitch).toHaveBeenCalled());
+    expect(await screen.findByText("影響計算区間（半開）:")).toBeVisible();
+    expect(screen.getByRole("button", { name: "確定" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "確定" }));
+    await waitFor(() => expect(confirmSwitch).toHaveBeenCalled());
   });
 
   it("has no automatically detectable accessibility violations", async () => {

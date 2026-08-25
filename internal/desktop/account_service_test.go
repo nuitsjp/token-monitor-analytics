@@ -218,3 +218,113 @@ func TestNewAccountServiceRequiresDependencies(t *testing.T) {
 		t.Fatal("nil ID generator was accepted")
 	}
 }
+
+func TestAccountServiceExposesT023LinkingWithStrictPeriods(t *testing.T) {
+	service, lifecycle, now := newAccountTestService(t)
+	ctx := context.Background()
+	serviceID, hubID := createAccountCatalogFixture(t, lifecycle, now)
+	account, err := service.CreateLogicalAccount(ctx, CreateLogicalAccountInput{ServiceID: serviceID, DisplayName: "Linked account"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	costSource := domain.UsageCostSource{
+		ID: "cost-source-1", HubID: hubID, DeviceID: "device-1",
+		RawServiceIdentifier: "provider.cost", CreatedAt: now,
+	}
+	if err := lifecycle.CreateUsageCostSource(ctx, costSource); err != nil {
+		t.Fatal(err)
+	}
+	limitSource := domain.UsageLimitSource{
+		ID: "limit-source-1", HubID: hubID, DeviceID: "device-1", AccountKey: "account-key",
+		RawServiceIdentifier: "provider.limit", WindowKey: "weekly-percent",
+		NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", CreatedAt: now,
+	}
+	if err := lifecycle.CreateUsageLimitSource(ctx, limitSource); err != nil {
+		t.Fatal(err)
+	}
+	catalogService, err := NewCatalogServiceWithDependencies(lifecycle, fixedClock{value: now}, randomIDs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := catalogService.CreateLimitDefinition(ctx, LimitDefinitionInput{ID: "limit-definition-1", ServiceID: serviceID, CycleType: "weekly", Meaning: "Weekly limit", Unit: "%"}); err != nil {
+		t.Fatal(err)
+	}
+	from := now.UTC().Add(-time.Hour).Format(time.RFC3339Nano)
+	to := now.UTC().Add(time.Hour).Format(time.RFC3339Nano)
+	cost, err := service.CreateUsageCostAssociation(ctx, UsageCostAssociationInput{
+		UsageCostSourceID: costSource.ID, LogicalAccountID: account.ID, ValidFrom: from, ValidTo: to,
+	})
+	if err != nil || cost.ID == "" {
+		t.Fatalf("cost association = %+v, err = %v", cost, err)
+	}
+	preview, err := service.PreviewUsageCostAssociation(ctx, UsageCostAssociationInput{
+		UsageCostSourceID: costSource.ID, LogicalAccountID: account.ID, ValidFrom: from, ValidTo: to,
+	})
+	if err != nil || preview.SourceID != costSource.ID || preview.IntervalStart != from || preview.IntervalEnd != to {
+		t.Fatalf("cost preview = %+v, err = %v", preview, err)
+	}
+	if _, err := service.PreviewUsageCostAssociation(ctx, UsageCostAssociationInput{
+		UsageCostSourceID: costSource.ID, LogicalAccountID: account.ID, ValidFrom: "2026/08/25 12:00:00",
+	}); err == nil || !strings.Contains(err.Error(), "RFC3339Nano") {
+		t.Fatalf("invalid cost preview error = %v", err)
+	}
+	if err := service.UpdateUsageCostAssociation(ctx, UsageCostAssociationInput{
+		ID: cost.ID, UsageCostSourceID: costSource.ID, LogicalAccountID: account.ID, ValidFrom: from, ValidTo: "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	limit, err := service.CreateUsageLimitAssociation(ctx, UsageLimitAssociationInput{
+		UsageLimitSourceID: limitSource.ID, LogicalAccountID: account.ID, LimitDefinitionID: "limit-definition-1", ValidFrom: from, ValidTo: to,
+	})
+	if err != nil || limit.ID == "" {
+		t.Fatalf("limit association = %+v, err = %v", limit, err)
+	}
+	if _, err := service.PreviewUsageLimitAssociation(ctx, UsageLimitAssociationInput{
+		UsageLimitSourceID: limitSource.ID, LogicalAccountID: account.ID, LimitDefinitionID: "limit-definition-1", ValidFrom: from, ValidTo: to,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateUsageLimitAssociation(ctx, UsageLimitAssociationInput{
+		ID: limit.ID, UsageLimitSourceID: limitSource.ID, LogicalAccountID: account.ID, LimitDefinitionID: "limit-definition-1", ValidFrom: from, ValidTo: "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	completenessPreview, err := service.PreviewUsageCostSourceCompleteness(ctx, UsageCostSourceCompletenessInput{
+		UsageCostSourceID: costSource.ID, ValidFrom: from, ValidTo: to, State: string(domain.CompletenessConfirmed), LogicalAccountIDs: []string{account.ID}, ExcludedActivity: []string{},
+	})
+	if err != nil || completenessPreview.SourceID != costSource.ID || completenessPreview.SourceKind != "usage_cost_completeness" || completenessPreview.IntervalStart != from || completenessPreview.IntervalEnd != to {
+		t.Fatalf("completeness preview = %+v, err = %v", completenessPreview, err)
+	}
+	completeness, err := service.ConfirmUsageCostSourceCompleteness(ctx, UsageCostSourceCompletenessInput{
+		UsageCostSourceID: costSource.ID, ValidFrom: from, ValidTo: to, State: string(domain.CompletenessConfirmed), LogicalAccountIDs: []string{account.ID}, ExcludedActivity: []string{},
+	})
+	if err != nil || completeness.State != string(domain.CompletenessConfirmed) {
+		t.Fatalf("completeness = %+v, err = %v", completeness, err)
+	}
+	if err := service.UpdateUsageCostSourceCompleteness(ctx, UsageCostSourceCompletenessInput{
+		ID: completeness.ID, UsageCostSourceID: costSource.ID, ValidFrom: from, ValidTo: "", State: string(domain.CompletenessConfirmed), LogicalAccountIDs: []string{account.ID}, ExcludedActivity: []string{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hubService := NewHubServiceWithDependencies(lifecycle, &memoryCredentials{values: make(map[string]string)}, fixedClock{value: now}, randomIDs{})
+	newHub, err := hubService.CreateHub(ctx, CreateHubInput{DisplayName: "New Hub", URL: "https://new-hub.example", CollectionIntervalSeconds: 300, CollectionEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchPreview, err := service.PreviewHubSwitch(ctx, HubSwitchInput{
+		OldHubID: hubID, OldDeviceID: "device-1", NewHubID: newHub.ID, NewDeviceID: "device-2", CollectionDeviceID: "collector-1", SwitchedAt: now.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil || switchPreview.SourceKind != "hub_switch" || switchPreview.IntervalStart != now.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("Hub switch preview = %+v, err = %v", switchPreview, err)
+	}
+	switchSnapshot, err := service.ConfirmHubSwitch(ctx, HubSwitchInput{
+		OldHubID: hubID, OldDeviceID: "device-1", NewHubID: newHub.ID, NewDeviceID: "device-2", CollectionDeviceID: "collector-1", SwitchedAt: now.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil || switchSnapshot.ID == "" || switchSnapshot.SwitchedAt != now.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("Hub switch = %+v, err = %v", switchSnapshot, err)
+	}
+	linking, err := service.GetLinkingSnapshot(ctx)
+	if err != nil || len(linking.UsageCostSources) != 1 || len(linking.UsageLimitSources) != 1 || len(linking.UsageCostAssociations) != 1 || len(linking.UsageLimitAssociations) != 1 || len(linking.UsageCostSourceCompleteness) != 1 || len(linking.HubSwitches) != 1 {
+		t.Fatalf("linking snapshot = %+v, err = %v", linking, err)
+	}
+}

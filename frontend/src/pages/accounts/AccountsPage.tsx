@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AccountSnapshot,
+  CatalogSnapshot,
   CreateLogicalAccountFromCandidateInput,
   CreateLogicalAccountInput,
   CreatePlanHistoryInput,
@@ -28,6 +29,12 @@ import type {
   SplitLogicalAccountInput,
   UpdateLogicalAccountInput,
   UpdatePlanHistoryInput,
+  HubSwitchInput,
+  ImpactPreviewSnapshot,
+  LinkingSnapshot,
+  UsageCostAssociationInput,
+  UsageCostSourceCompletenessInput,
+  UsageLimitAssociationInput,
 } from "../../lib/backend";
 
 const useStyles = makeStyles({
@@ -90,7 +97,14 @@ const useStyles = makeStyles({
   },
 });
 
-type AccountTab = "logical" | "hub" | "history";
+type AccountTab =
+  | "logical"
+  | "hub"
+  | "history"
+  | "usage-cost"
+  | "usage-limit"
+  | "completeness"
+  | "switch";
 type DirtyForm = "logical" | "split" | "merge" | "candidate" | "history";
 type AccountsData = {
   accounts: NonNullable<AccountSnapshot["logicalAccounts"]>;
@@ -99,6 +113,8 @@ type AccountsData = {
   hubs: HubSnapshot[];
   services: ServiceSnapshot[];
   versions: PlanVersionSnapshot[];
+  linking: LinkingSnapshot;
+  catalog: CatalogSnapshot;
 };
 
 const emptyData: AccountsData = {
@@ -108,6 +124,25 @@ const emptyData: AccountsData = {
   hubs: [],
   services: [],
   versions: [],
+  linking: {
+    usageCostSources: [],
+    usageLimitSources: [],
+    usageCostAssociations: [],
+    usageLimitAssociations: [],
+    usageCostSourceCompleteness: [],
+    hubSwitches: [],
+  },
+  catalog: {
+    services: [],
+    serviceIdentifierMappings: [],
+    limitDefinitions: [],
+    plans: [],
+    planVersions: [],
+    planLimitRules: [],
+    standardPrices: [],
+    identificationCandidates: [],
+    labelChangeCandidates: [],
+  },
 };
 
 const emptyAccountForm: CreateLogicalAccountInput = {
@@ -150,6 +185,7 @@ export function AccountsPage({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [linkingDirty, setLinkingDirty] = useState(false);
   const [dirtyForms, setDirtyForms] =
     useState<Record<DirtyForm, boolean>>(emptyDirtyForms);
   const [search, setSearch] = useState("");
@@ -176,10 +212,11 @@ export function AccountsPage({
     setLoading(true);
     setError("");
     try {
-      const [accounts, hubs, catalog] = await Promise.all([
+      const [accounts, hubs, catalog, linking] = await Promise.all([
         backend.getAccounts(),
         backend.getHubs(),
         backend.getCatalog(),
+        backend.getLinkingSnapshot(),
       ]);
       setData({
         accounts: accounts.logicalAccounts ?? [],
@@ -188,6 +225,8 @@ export function AccountsPage({
         hubs,
         services: catalog.services ?? [],
         versions: catalog.planVersions ?? [],
+        linking,
+        catalog,
       });
     } catch (cause) {
       setError(errorMessage(cause));
@@ -203,8 +242,10 @@ export function AccountsPage({
   }, [refresh]);
 
   useEffect(() => {
-    onDirtyChange(Object.values(dirtyForms).some(Boolean) && !saving);
-  }, [dirtyForms, onDirtyChange, saving]);
+    onDirtyChange(
+      (Object.values(dirtyForms).some(Boolean) || linkingDirty) && !saving,
+    );
+  }, [dirtyForms, linkingDirty, onDirtyChange, saving]);
 
   const setFormDirty = useCallback((form: DirtyForm, value: boolean) => {
     setDirtyForms((current) =>
@@ -379,6 +420,10 @@ export function AccountsPage({
             <Tab value="logical">論理アカウント</Tab>
             <Tab value="hub">Hubアカウント</Tab>
             <Tab value="history">プラン履歴</Tab>
+            <Tab value="usage-cost">利用額関連付け</Tab>
+            <Tab value="usage-limit">利用枠関連付け</Tab>
+            <Tab value="completeness">活動主体の完全性</Tab>
+            <Tab value="switch">収集端末・Hub切替</Tab>
           </TabList>
 
           <div className={styles.content} hidden={tab !== "logical"}>
@@ -1104,6 +1149,17 @@ export function AccountsPage({
               )}
             </div>
           </div>
+          <LinkingTabs
+            backend={backend}
+            linking={data.linking}
+            accounts={data.accounts}
+            hubs={data.hubs}
+            catalog={data.catalog}
+            selectedTab={tab}
+            displayTimeZone={displayTimeZone}
+            onDirtyChange={setLinkingDirty}
+            onRefresh={refresh}
+          />
         </>
       )}
     </div>
@@ -1121,6 +1177,1220 @@ function candidateStateLabel(state: string): string {
     default:
       return "未確認";
   }
+}
+
+type LinkingDirtyForm = "cost" | "limit" | "completeness" | "switch";
+
+const emptyLinkingDirtyForms: Record<LinkingDirtyForm, boolean> = {
+  cost: false,
+  limit: false,
+  completeness: false,
+  switch: false,
+};
+
+const emptyCostAssociation: UsageCostAssociationInput = {
+  id: "",
+  usageCostSourceId: "",
+  logicalAccountId: "",
+  validFrom: "",
+  validTo: "",
+};
+
+const emptyLimitAssociation: UsageLimitAssociationInput = {
+  id: "",
+  usageLimitSourceId: "",
+  logicalAccountId: "",
+  limitDefinitionId: "",
+  validFrom: "",
+  validTo: "",
+};
+
+const emptyCompleteness: UsageCostSourceCompletenessInput = {
+  id: "",
+  usageCostSourceId: "",
+  validFrom: "",
+  validTo: "",
+  state: "unconfirmed",
+  logicalAccountIds: [],
+  excludedActivity: [],
+};
+
+const emptyHubSwitch: HubSwitchInput = {
+  id: "",
+  oldHubId: "",
+  oldDeviceId: "",
+  newHubId: "",
+  newDeviceId: "",
+  collectionDeviceId: "",
+  switchedAt: "",
+};
+
+function LinkingTabs({
+  backend,
+  linking,
+  accounts,
+  hubs,
+  catalog,
+  selectedTab,
+  displayTimeZone,
+  onDirtyChange,
+  onRefresh,
+}: {
+  backend: FrontendAdapter;
+  linking: LinkingSnapshot;
+  accounts: NonNullable<AccountSnapshot["logicalAccounts"]>;
+  hubs: HubSnapshot[];
+  catalog: CatalogSnapshot;
+  selectedTab: AccountTab;
+  displayTimeZone: string;
+  onDirtyChange: (dirty: boolean) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const styles = useStyles();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [search, setSearch] = useState("");
+  const [dirtyForms, setDirtyForms] = useState(emptyLinkingDirtyForms);
+  const [costForm, setCostForm] = useState(emptyCostAssociation);
+  const [costPreview, setCostPreview] = useState<ImpactPreviewSnapshot | null>(
+    null,
+  );
+  const [editingCostID, setEditingCostID] = useState("");
+  const [limitForm, setLimitForm] = useState(emptyLimitAssociation);
+  const [limitPreview, setLimitPreview] =
+    useState<ImpactPreviewSnapshot | null>(null);
+  const [editingLimitID, setEditingLimitID] = useState("");
+  const [completenessForm, setCompletenessForm] = useState(emptyCompleteness);
+  const [completenessConfirmed, setCompletenessConfirmed] = useState(false);
+  const [completenessPreview, setCompletenessPreview] =
+    useState<ImpactPreviewSnapshot | null>(null);
+  const [editingCompletenessID, setEditingCompletenessID] = useState("");
+  const [switchForm, setSwitchForm] = useState(emptyHubSwitch);
+  const [switchPreview, setSwitchPreview] =
+    useState<ImpactPreviewSnapshot | null>(null);
+
+  const setFormDirty = useCallback((form: LinkingDirtyForm, dirty: boolean) => {
+    setDirtyForms((current) =>
+      current[form] === dirty ? current : { ...current, [form]: dirty },
+    );
+  }, []);
+  useEffect(() => {
+    onDirtyChange(Object.values(dirtyForms).some(Boolean) && !saving);
+  }, [dirtyForms, onDirtyChange, saving]);
+
+  const runSave = useCallback(
+    async (action: () => Promise<void>, message: string): Promise<boolean> => {
+      setSaving(true);
+      setError("");
+      setSuccess("");
+      try {
+        await action();
+        await onRefresh();
+        setSuccess(message);
+        return true;
+      } catch (cause) {
+        setError(errorMessage(cause));
+        return false;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [onRefresh],
+  );
+
+  const serviceName = useCallback(
+    (kind: string, rawIdentifier: string) => {
+      const mapping = (catalog.serviceIdentifierMappings ?? []).find(
+        (item) => item.kind === kind && item.rawIdentifier === rawIdentifier,
+      );
+      const service = mapping
+        ? (catalog.services ?? []).find((item) => item.id === mapping.serviceId)
+        : undefined;
+      return service
+        ? `${service.provider} / ${service.name}`
+        : "サービス未対応";
+    },
+    [catalog.serviceIdentifierMappings, catalog.services],
+  );
+  const accountName = useCallback(
+    (id: string) =>
+      accounts.find((item) => item.id === id)?.displayName ??
+      "論理アカウント未表示",
+    [accounts],
+  );
+  const hubName = useCallback(
+    (id: string) =>
+      hubs.find((item) => item.id === id)?.displayName ?? "Hub未表示",
+    [hubs],
+  );
+  const sourceName = useCallback(
+    (kind: "usage_cost" | "usage_limit", sourceID: string) => {
+      if (kind === "usage_cost") {
+        const source = (linking.usageCostSources ?? []).find(
+          (item) => item.id === sourceID,
+        );
+        return source
+          ? `${hubName(source.hubId)} / ${source.deviceId} / ${source.rawServiceIdentifier}`
+          : "利用額ソース未表示";
+      }
+      const source = (linking.usageLimitSources ?? []).find(
+        (item) => item.id === sourceID,
+      );
+      return source
+        ? `${hubName(source.hubId)} / ${source.deviceId} / ${source.rawServiceIdentifier} / ${source.windowKey}`
+        : "利用枠ソース未表示";
+    },
+    [hubName, linking.usageCostSources, linking.usageLimitSources],
+  );
+  const query = search.trim().toLocaleLowerCase();
+  const matches = useCallback(
+    (values: string[]) =>
+      !query || values.join(" ").toLocaleLowerCase().includes(query),
+    [query],
+  );
+  const activeAccounts = useMemo(
+    () => accounts.filter((item) => !item.archivedAt),
+    [accounts],
+  );
+  const completenessEligibleAccounts = useMemo(() => {
+    if (!completenessForm.usageCostSourceId || !completenessForm.validFrom) {
+      return [];
+    }
+    const selectedStart = Date.parse(completenessForm.validFrom);
+    if (!Number.isFinite(selectedStart)) return [];
+    const selectedEnd = completenessForm.validTo
+      ? Date.parse(completenessForm.validTo)
+      : Number.POSITIVE_INFINITY;
+    if (Number.isNaN(selectedEnd) || selectedStart >= selectedEnd) return [];
+    const linkedIDs = new Set(
+      (linking.usageCostAssociations ?? [])
+        .filter(
+          (item) =>
+            item.usageCostSourceId === completenessForm.usageCostSourceId &&
+            intervalsOverlap(
+              item.validFrom,
+              item.validTo,
+              completenessForm.validFrom,
+              completenessForm.validTo,
+            ),
+        )
+        .map((item) => item.logicalAccountId),
+    );
+    return accounts.filter((item) => linkedIDs.has(item.id));
+  }, [
+    accounts,
+    completenessForm.usageCostSourceId,
+    completenessForm.validFrom,
+    completenessForm.validTo,
+    linking.usageCostAssociations,
+  ]);
+
+  const devices = useMemo(() => {
+    const result: { hubId: string; deviceId: string }[] = [];
+    const seen = new Set<string>();
+    for (const source of [
+      ...(linking.usageCostSources ?? []),
+      ...(linking.usageLimitSources ?? []),
+    ]) {
+      const key = `${source.hubId}\u0000${source.deviceId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({ hubId: source.hubId, deviceId: source.deviceId });
+    }
+    return result;
+  }, [linking.usageCostSources, linking.usageLimitSources]);
+
+  const resetCost = () => {
+    setCostForm(emptyCostAssociation);
+    setCostPreview(null);
+    setEditingCostID("");
+    setFormDirty("cost", false);
+  };
+  const resetLimit = () => {
+    setLimitForm(emptyLimitAssociation);
+    setLimitPreview(null);
+    setEditingLimitID("");
+    setFormDirty("limit", false);
+  };
+  const resetCompleteness = () => {
+    setCompletenessForm(emptyCompleteness);
+    setCompletenessConfirmed(false);
+    setCompletenessPreview(null);
+    setEditingCompletenessID("");
+    setFormDirty("completeness", false);
+  };
+  const resetSwitch = () => {
+    setSwitchForm(emptyHubSwitch);
+    setSwitchPreview(null);
+    setFormDirty("switch", false);
+  };
+
+  const costSources = (linking.usageCostSources ?? []).filter((item) =>
+    matches([
+      sourceName("usage_cost", item.id),
+      serviceName("usage_cost", item.rawServiceIdentifier),
+    ]),
+  );
+  const limitSources = (linking.usageLimitSources ?? []).filter((item) =>
+    matches([
+      sourceName("usage_limit", item.id),
+      item.accountKey,
+      item.normalizedLabel,
+      serviceName("usage_limit", item.rawServiceIdentifier),
+    ]),
+  );
+  const costAssociations = (linking.usageCostAssociations ?? []).filter(
+    (item) =>
+      matches([
+        sourceName("usage_cost", item.usageCostSourceId),
+        accountName(item.logicalAccountId),
+      ]),
+  );
+  const limitAssociations = (linking.usageLimitAssociations ?? []).filter(
+    (item) =>
+      matches([
+        sourceName("usage_limit", item.usageLimitSourceId),
+        accountName(item.logicalAccountId),
+      ]),
+  );
+  const completenessItems = (linking.usageCostSourceCompleteness ?? []).filter(
+    (item) =>
+      matches([
+        sourceName("usage_cost", item.usageCostSourceId),
+        item.state,
+        ...(item.logicalAccountIds ?? []).map(accountName),
+      ]),
+  );
+  const switches = (linking.hubSwitches ?? []).filter((item) =>
+    matches([
+      hubName(item.oldHubId),
+      item.oldDeviceId,
+      hubName(item.newHubId),
+      item.newDeviceId,
+      item.collectionDeviceId,
+    ]),
+  );
+
+  const saveCost = () => {
+    if (!costPreview) return;
+    if (
+      !window.confirm(
+        `影響を確認しました。利用額関連付けを${editingCostID ? "修正" : "登録"}しますか？`,
+      )
+    )
+      return;
+    void runSave(
+      () =>
+        editingCostID
+          ? backend.updateUsageCostAssociation({
+              ...costForm,
+              id: editingCostID,
+            })
+          : backend.createUsageCostAssociation(costForm).then(() => undefined),
+      editingCostID
+        ? "利用額関連付けを修正しました。"
+        : "利用額関連付けを登録しました。",
+    ).then((ok) => {
+      if (ok) resetCost();
+    });
+  };
+  const saveLimit = () => {
+    if (!limitPreview) return;
+    if (
+      !window.confirm(
+        `影響を確認しました。利用枠関連付けを${editingLimitID ? "修正" : "登録"}しますか？`,
+      )
+    )
+      return;
+    void runSave(
+      () =>
+        editingLimitID
+          ? backend.updateUsageLimitAssociation({
+              ...limitForm,
+              id: editingLimitID,
+            })
+          : backend
+              .createUsageLimitAssociation(limitForm)
+              .then(() => undefined),
+      editingLimitID
+        ? "利用枠関連付けを修正しました。"
+        : "利用枠関連付けを登録しました。",
+    ).then((ok) => {
+      if (ok) resetLimit();
+    });
+  };
+  const saveCompleteness = () => {
+    if (!completenessPreview || !completenessConfirmed) return;
+    if (
+      !window.confirm(
+        `影響を確認しました。完全性を${editingCompletenessID ? "修正" : "登録"}しますか？`,
+      )
+    )
+      return;
+    const input = {
+      ...completenessForm,
+      state: completenessConfirmed ? "confirmed" : "unconfirmed",
+      id: editingCompletenessID || completenessForm.id,
+    };
+    void runSave(
+      () =>
+        editingCompletenessID
+          ? backend.updateUsageCostSourceCompleteness(input)
+          : backend
+              .confirmUsageCostSourceCompleteness(input)
+              .then(() => undefined),
+      editingCompletenessID
+        ? "完全性を修正しました。"
+        : "完全性を登録しました。",
+    ).then((ok) => {
+      if (ok) resetCompleteness();
+    });
+  };
+  const saveSwitch = () => {
+    if (!switchPreview) return;
+    if (
+      !window.confirm(
+        "影響を確認しました。旧Hub端末から新Hub端末への切替を確定しますか？",
+      )
+    )
+      return;
+    void runSave(
+      () => backend.confirmHubSwitch(switchForm).then(() => undefined),
+      "Hub切替を記録しました。",
+    ).then((ok) => {
+      if (ok) resetSwitch();
+    });
+  };
+
+  return (
+    <>
+      <div className={styles.content} hidden={selectedTab !== "usage-cost"}>
+        <Field label="関連付けを検索">
+          <Input
+            value={search}
+            onChange={(_, value) => setSearch(value.value)}
+            placeholder="Hub、端末、生識別子、論理アカウント"
+          />
+        </Field>
+        {error ? (
+          <MessageBar intent="error">
+            <MessageBarBody>{error}</MessageBarBody>
+          </MessageBar>
+        ) : null}
+        {success ? (
+          <MessageBar intent="success">
+            <MessageBarBody>{success}</MessageBarBody>
+          </MessageBar>
+        ) : null}
+        <form
+          className={styles.form}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (
+              !costForm.usageCostSourceId ||
+              !costForm.logicalAccountId ||
+              !costForm.validFrom
+            )
+              return;
+            setSaving(true);
+            setError("");
+            void backend
+              .previewUsageCostAssociation(costForm)
+              .then((preview) => {
+                setCostPreview(preview);
+                setSuccess("対象観測と影響計算区間を確認してください。");
+              })
+              .catch((cause) => setError(errorMessage(cause)))
+              .finally(() => setSaving(false));
+          }}
+        >
+          <Subtitle1 as="h2">
+            {editingCostID ? "利用額関連付けを修正" : "利用額関連付けを登録"}
+          </Subtitle1>
+          <Field label="利用額ソース" required>
+            <Select
+              value={costForm.usageCostSourceId}
+              onChange={(event) => {
+                setCostForm({
+                  ...costForm,
+                  usageCostSourceId: event.target.value,
+                });
+                setCostPreview(null);
+                setFormDirty("cost", true);
+              }}
+            >
+              <option value="">選択してください</option>
+              {costSources.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {sourceName("usage_cost", item.id)} /{" "}
+                  {serviceName("usage_cost", item.rawServiceIdentifier)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="論理アカウント" required>
+            <Select
+              value={costForm.logicalAccountId}
+              onChange={(event) => {
+                setCostForm({
+                  ...costForm,
+                  logicalAccountId: event.target.value,
+                });
+                setCostPreview(null);
+                setFormDirty("cost", true);
+              }}
+            >
+              <option value="">選択してください</option>
+              {activeAccounts.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.displayName}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className={styles.grid}>
+            <Field label="開始（RFC3339Nano UTC）" required>
+              <Input
+                value={costForm.validFrom}
+                onChange={(_, value) => {
+                  setCostForm({ ...costForm, validFrom: value.value });
+                  setCostPreview(null);
+                  setFormDirty("cost", true);
+                }}
+              />
+            </Field>
+            <Field label="終了（RFC3339Nano UTC、空欄可）">
+              <Input
+                value={costForm.validTo}
+                onChange={(_, value) => {
+                  setCostForm({ ...costForm, validTo: value.value });
+                  setCostPreview(null);
+                  setFormDirty("cost", true);
+                }}
+              />
+            </Field>
+          </div>
+          <div className={styles.meta}>
+            半開区間 [開始, 終了)。影響を確認後に確定します。
+          </div>
+          {costPreview ? (
+            <ImpactPreviewSummary
+              preview={costPreview}
+              displayTimeZone={displayTimeZone}
+            />
+          ) : null}
+          <div className={styles.actions}>
+            <Button appearance="primary" type="submit" disabled={saving}>
+              影響を確認
+            </Button>
+            <Button
+              type="button"
+              disabled={!costPreview || saving}
+              onClick={saveCost}
+            >
+              確定
+            </Button>
+            <Button type="button" onClick={resetCost}>
+              クリア
+            </Button>
+          </div>
+        </form>
+        <div className={styles.list} aria-label="利用額関連付け一覧">
+          {costAssociations.length === 0 ? (
+            <Body1>利用額関連付けはありません。</Body1>
+          ) : (
+            costAssociations.map((item) => (
+              <article className={styles.card} key={item.id}>
+                <div className={styles.sectionTitle}>
+                  <Subtitle1 as="h2">
+                    {accountName(item.logicalAccountId)}
+                  </Subtitle1>
+                  <Button
+                    onClick={() => {
+                      setEditingCostID(item.id);
+                      setCostForm({
+                        id: item.id,
+                        usageCostSourceId: item.usageCostSourceId,
+                        logicalAccountId: item.logicalAccountId,
+                        validFrom: item.validFrom,
+                        validTo: item.validTo,
+                      });
+                      setCostPreview(null);
+                      setFormDirty("cost", true);
+                    }}
+                  >
+                    期間を修正
+                  </Button>
+                </div>
+                <div>{sourceName("usage_cost", item.usageCostSourceId)}</div>
+                <div className={styles.meta}>
+                  有効期間: [{formatInstant(item.validFrom, displayTimeZone)},{" "}
+                  {formatInstant(item.validTo, displayTimeZone, "継続中")}) /
+                  UTC: [{item.validFrom}, {item.validTo || "継続中"})
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className={styles.content} hidden={selectedTab !== "usage-limit"}>
+        <Field label="関連付けを検索">
+          <Input
+            value={search}
+            onChange={(_, value) => setSearch(value.value)}
+            placeholder="Hub、端末、生識別子、論理アカウント"
+          />
+        </Field>
+        <form
+          className={styles.form}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (
+              !limitForm.usageLimitSourceId ||
+              !limitForm.logicalAccountId ||
+              !limitForm.limitDefinitionId ||
+              !limitForm.validFrom
+            )
+              return;
+            setSaving(true);
+            setError("");
+            void backend
+              .previewUsageLimitAssociation(limitForm)
+              .then((preview) => {
+                setLimitPreview(preview);
+                setSuccess("対象観測と影響計算区間を確認してください。");
+              })
+              .catch((cause) => setError(errorMessage(cause)))
+              .finally(() => setSaving(false));
+          }}
+        >
+          <Subtitle1 as="h2">
+            {editingLimitID ? "利用枠関連付けを修正" : "利用枠関連付けを登録"}
+          </Subtitle1>
+          <Field label="利用枠ソース" required>
+            <Select
+              value={limitForm.usageLimitSourceId}
+              onChange={(event) => {
+                setLimitForm({
+                  ...limitForm,
+                  usageLimitSourceId: event.target.value,
+                });
+                setLimitPreview(null);
+                setFormDirty("limit", true);
+              }}
+            >
+              <option value="">選択してください</option>
+              {limitSources.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {sourceName("usage_limit", item.id)} /{" "}
+                  {item.normalizedLabel || item.accountKey}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="論理アカウント" required>
+            <Select
+              value={limitForm.logicalAccountId}
+              onChange={(event) => {
+                setLimitForm({
+                  ...limitForm,
+                  logicalAccountId: event.target.value,
+                });
+                setLimitPreview(null);
+                setFormDirty("limit", true);
+              }}
+            >
+              <option value="">選択してください</option>
+              {activeAccounts.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.displayName}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="利用枠定義" required>
+            <Select
+              value={limitForm.limitDefinitionId}
+              onChange={(event) => {
+                setLimitForm({
+                  ...limitForm,
+                  limitDefinitionId: event.target.value,
+                });
+                setLimitPreview(null);
+                setFormDirty("limit", true);
+              }}
+            >
+              <option value="">選択してください</option>
+              {(catalog.limitDefinitions ?? [])
+                .filter((item) => !item.archivedAt)
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.meaning} / {item.unit} / {item.cycleType}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+          <div className={styles.grid}>
+            <Field label="開始（RFC3339Nano UTC）" required>
+              <Input
+                value={limitForm.validFrom}
+                onChange={(_, value) => {
+                  setLimitForm({ ...limitForm, validFrom: value.value });
+                  setLimitPreview(null);
+                  setFormDirty("limit", true);
+                }}
+              />
+            </Field>
+            <Field label="終了（RFC3339Nano UTC、空欄可）">
+              <Input
+                value={limitForm.validTo}
+                onChange={(_, value) => {
+                  setLimitForm({ ...limitForm, validTo: value.value });
+                  setLimitPreview(null);
+                  setFormDirty("limit", true);
+                }}
+              />
+            </Field>
+          </div>
+          <div className={styles.meta}>
+            半開区間 [開始,
+            終了)。利用枠ソースは単一の論理アカウントへ関連付けます。
+          </div>
+          {limitPreview ? (
+            <ImpactPreviewSummary
+              preview={limitPreview}
+              displayTimeZone={displayTimeZone}
+            />
+          ) : null}
+          <div className={styles.actions}>
+            <Button appearance="primary" type="submit" disabled={saving}>
+              影響を確認
+            </Button>
+            <Button
+              type="button"
+              disabled={!limitPreview || saving}
+              onClick={saveLimit}
+            >
+              確定
+            </Button>
+            <Button type="button" onClick={resetLimit}>
+              クリア
+            </Button>
+          </div>
+        </form>
+        <div className={styles.list} aria-label="利用枠関連付け一覧">
+          {limitAssociations.length === 0 ? (
+            <Body1>利用枠関連付けはありません。</Body1>
+          ) : (
+            limitAssociations.map((item) => (
+              <article className={styles.card} key={item.id}>
+                <div className={styles.sectionTitle}>
+                  <Subtitle1 as="h2">
+                    {accountName(item.logicalAccountId)}
+                  </Subtitle1>
+                  <Button
+                    onClick={() => {
+                      setEditingLimitID(item.id);
+                      setLimitForm({
+                        id: item.id,
+                        usageLimitSourceId: item.usageLimitSourceId,
+                        logicalAccountId: item.logicalAccountId,
+                        limitDefinitionId: item.limitDefinitionId,
+                        validFrom: item.validFrom,
+                        validTo: item.validTo,
+                      });
+                      setLimitPreview(null);
+                      setFormDirty("limit", true);
+                    }}
+                  >
+                    期間を修正
+                  </Button>
+                </div>
+                <div>{sourceName("usage_limit", item.usageLimitSourceId)}</div>
+                <div>
+                  {(catalog.limitDefinitions ?? []).find(
+                    (definition) => definition.id === item.limitDefinitionId,
+                  )?.meaning ?? "利用枠定義未表示"}
+                </div>
+                <div className={styles.meta}>
+                  有効期間: [{formatInstant(item.validFrom, displayTimeZone)},{" "}
+                  {formatInstant(item.validTo, displayTimeZone, "継続中")}) /
+                  UTC: [{item.validFrom}, {item.validTo || "継続中"})
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className={styles.content} hidden={selectedTab !== "completeness"}>
+        <Field label="完全性を検索">
+          <Input
+            value={search}
+            onChange={(_, value) => setSearch(value.value)}
+            placeholder="Hub、利用額ソース、状態、論理アカウント"
+          />
+        </Field>
+        <form
+          className={styles.form}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (
+              !completenessForm.usageCostSourceId ||
+              !completenessForm.validFrom
+            )
+              return;
+            const input = {
+              ...completenessForm,
+              state: completenessConfirmed ? "confirmed" : "unconfirmed",
+              id: editingCompletenessID || completenessForm.id,
+            };
+            setSaving(true);
+            setError("");
+            void backend
+              .previewUsageCostSourceCompleteness(input)
+              .then((preview) => {
+                setCompletenessPreview(preview);
+                setSuccess(
+                  "対象観測と影響計算区間を確認してください。確定前に内容を再確認してください。",
+                );
+              })
+              .catch((cause) => setError(errorMessage(cause)))
+              .finally(() => setSaving(false));
+          }}
+        >
+          <Subtitle1 as="h2">
+            {editingCompletenessID
+              ? "活動主体の完全性を修正"
+              : "活動主体の完全性を登録"}
+          </Subtitle1>
+          <Field label="利用額ソース" required>
+            <Select
+              value={completenessForm.usageCostSourceId}
+              onChange={(event) => {
+                setCompletenessForm({
+                  ...completenessForm,
+                  usageCostSourceId: event.target.value,
+                  logicalAccountIds: [],
+                });
+                setCompletenessConfirmed(false);
+                setCompletenessPreview(null);
+                setFormDirty("completeness", true);
+              }}
+            >
+              <option value="">選択してください</option>
+              {costSources.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {sourceName("usage_cost", item.id)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className={styles.grid}>
+            <Field label="開始（RFC3339Nano UTC）" required>
+              <Input
+                value={completenessForm.validFrom}
+                onChange={(_, value) => {
+                  setCompletenessForm({
+                    ...completenessForm,
+                    validFrom: value.value,
+                    logicalAccountIds: [],
+                  });
+                  setCompletenessConfirmed(false);
+                  setCompletenessPreview(null);
+                  setFormDirty("completeness", true);
+                }}
+              />
+            </Field>
+            <Field label="終了（RFC3339Nano UTC、空欄可）">
+              <Input
+                value={completenessForm.validTo}
+                onChange={(_, value) => {
+                  setCompletenessForm({
+                    ...completenessForm,
+                    validTo: value.value,
+                    logicalAccountIds: [],
+                  });
+                  setCompletenessConfirmed(false);
+                  setCompletenessPreview(null);
+                  setFormDirty("completeness", true);
+                }}
+              />
+            </Field>
+          </div>
+          <div className={styles.detail}>
+            <strong>有効な全論理アカウント（除外なし）</strong>
+            {completenessEligibleAccounts.length === 0 ? (
+              <span>
+                選択したソース・期間に有効な利用額関連付けはありません。
+              </span>
+            ) : (
+              completenessEligibleAccounts.map((item) => (
+                <Checkbox
+                  key={item.id}
+                  label={item.displayName}
+                  checked={(completenessForm.logicalAccountIds ?? []).includes(
+                    item.id,
+                  )}
+                  onChange={(_, value) => {
+                    const currentIDs = completenessForm.logicalAccountIds ?? [];
+                    const ids =
+                      value.checked === true
+                        ? [...currentIDs, item.id]
+                        : currentIDs.filter((id) => id !== item.id);
+                    setCompletenessForm({
+                      ...completenessForm,
+                      logicalAccountIds: ids,
+                    });
+                    setCompletenessConfirmed(false);
+                    setCompletenessPreview(null);
+                    setFormDirty("completeness", true);
+                  }}
+                />
+              ))
+            )}
+          </div>
+          <Checkbox
+            label="上記の全有効論理アカウントを含み、除外対象がないことを明示確認する"
+            checked={completenessConfirmed}
+            disabled={
+              completenessEligibleAccounts.some(
+                (item) =>
+                  !(completenessForm.logicalAccountIds ?? []).includes(item.id),
+              ) || (completenessForm.excludedActivity ?? []).length > 0
+            }
+            onChange={(_, value) => {
+              setCompletenessConfirmed(value.checked === true);
+              setCompletenessPreview(null);
+              setFormDirty("completeness", true);
+            }}
+          />
+          <div className={styles.meta}>
+            対象区間は半開区間 [開始,
+            終了)。確定前に対象期間と全主体の選択内容を確認してください。保存後は完全性未確認・除外ありの区間を推定対象外として扱います。
+          </div>
+          {completenessPreview ? (
+            <ImpactPreviewSummary
+              preview={completenessPreview}
+              displayTimeZone={displayTimeZone}
+            />
+          ) : null}
+          <div className={styles.actions}>
+            <Button appearance="primary" type="submit" disabled={saving}>
+              影響を確認
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                !completenessPreview || !completenessConfirmed || saving
+              }
+              onClick={saveCompleteness}
+            >
+              確定
+            </Button>
+            <Button type="button" onClick={resetCompleteness}>
+              クリア
+            </Button>
+          </div>
+        </form>
+        <div className={styles.list} aria-label="活動主体の完全性一覧">
+          {completenessItems.length === 0 ? (
+            <Body1>完全性の記録はありません。</Body1>
+          ) : (
+            completenessItems.map((item) => (
+              <article className={styles.card} key={item.id}>
+                <Subtitle1 as="h2">
+                  {sourceName("usage_cost", item.usageCostSourceId)}
+                </Subtitle1>
+                <div>
+                  状態: {item.state === "confirmed" ? "確認済み" : "未確認"} /
+                  対象主体:{" "}
+                  {(item.logicalAccountIds ?? []).map(accountName).join("、") ||
+                    "なし"}{" "}
+                  / 除外対象:{" "}
+                  {(item.excludedActivity ?? []).length > 0 ? "あり" : "なし"}
+                </div>
+                <div className={styles.meta}>
+                  対象期間: [{formatInstant(item.validFrom, displayTimeZone)},{" "}
+                  {formatInstant(item.validTo, displayTimeZone, "継続中")}) /
+                  UTC: [{item.validFrom}, {item.validTo || "継続中"})
+                </div>
+                <Button
+                  onClick={() => {
+                    setEditingCompletenessID(item.id);
+                    setCompletenessForm({
+                      id: item.id,
+                      usageCostSourceId: item.usageCostSourceId,
+                      validFrom: item.validFrom,
+                      validTo: item.validTo,
+                      state: item.state,
+                      logicalAccountIds: item.logicalAccountIds ?? [],
+                      excludedActivity: item.excludedActivity ?? [],
+                    });
+                    setCompletenessConfirmed(
+                      item.state === "confirmed" &&
+                        (item.excludedActivity ?? []).length === 0 &&
+                        completenessEligibleAccounts.every((account) =>
+                          (item.logicalAccountIds ?? []).includes(account.id),
+                        ),
+                    );
+                    setCompletenessPreview(null);
+                    setFormDirty("completeness", true);
+                  }}
+                >
+                  期間を修正
+                </Button>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className={styles.content} hidden={selectedTab !== "switch"}>
+        <Field label="Hub切替を検索">
+          <Input
+            value={search}
+            onChange={(_, value) => setSearch(value.value)}
+            placeholder="Hub、端末"
+          />
+        </Field>
+        <form
+          className={styles.form}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (
+              !switchForm.oldHubId ||
+              !switchForm.oldDeviceId ||
+              !switchForm.newHubId ||
+              !switchForm.newDeviceId ||
+              !switchForm.collectionDeviceId ||
+              !switchForm.switchedAt
+            )
+              return;
+            setSaving(true);
+            setError("");
+            void backend
+              .previewHubSwitch(switchForm)
+              .then((preview) => {
+                setSwitchPreview(preview);
+                setSuccess(
+                  "対象観測と影響計算区間を確認してください。確定前に内容を再確認してください。",
+                );
+              })
+              .catch((cause) => setError(errorMessage(cause)))
+              .finally(() => setSaving(false));
+          }}
+        >
+          <Subtitle1 as="h2">収集端末・Hub切替を記録</Subtitle1>
+          <div className={styles.grid}>
+            <Field label="旧Hub">
+              <Select
+                value={switchForm.oldHubId}
+                onChange={(event) => {
+                  setSwitchForm({
+                    ...switchForm,
+                    oldHubId: event.target.value,
+                    oldDeviceId: "",
+                  });
+                  setSwitchPreview(null);
+                  setFormDirty("switch", true);
+                }}
+              >
+                <option value="">選択してください</option>
+                {hubs.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.displayName}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="旧Hub端末レコード">
+              <Select
+                value={switchForm.oldDeviceId}
+                onChange={(event) => {
+                  setSwitchForm({
+                    ...switchForm,
+                    oldDeviceId: event.target.value,
+                  });
+                  setSwitchPreview(null);
+                  setFormDirty("switch", true);
+                }}
+              >
+                <option value="">選択してください</option>
+                {devices
+                  .filter((item) => item.hubId === switchForm.oldHubId)
+                  .map((item) => (
+                    <option
+                      key={`${item.hubId}-${item.deviceId}`}
+                      value={item.deviceId}
+                    >
+                      {item.deviceId}
+                    </option>
+                  ))}
+              </Select>
+            </Field>
+            <Field label="新Hub">
+              <Select
+                value={switchForm.newHubId}
+                onChange={(event) => {
+                  setSwitchForm({
+                    ...switchForm,
+                    newHubId: event.target.value,
+                    newDeviceId: "",
+                  });
+                  setSwitchPreview(null);
+                  setFormDirty("switch", true);
+                }}
+              >
+                <option value="">選択してください</option>
+                {hubs.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.displayName}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="新Hub端末レコード">
+              <Select
+                value={switchForm.newDeviceId}
+                onChange={(event) => {
+                  setSwitchForm({
+                    ...switchForm,
+                    newDeviceId: event.target.value,
+                  });
+                  setSwitchPreview(null);
+                  setFormDirty("switch", true);
+                }}
+              >
+                <option value="">選択してください</option>
+                {devices
+                  .filter((item) => item.hubId === switchForm.newHubId)
+                  .map((item) => (
+                    <option
+                      key={`${item.hubId}-${item.deviceId}`}
+                      value={item.deviceId}
+                    >
+                      {item.deviceId}
+                    </option>
+                  ))}
+              </Select>
+            </Field>
+          </div>
+          <Field label="収集端末">
+            <Select
+              value={switchForm.collectionDeviceId}
+              onChange={(event) => {
+                setSwitchForm({
+                  ...switchForm,
+                  collectionDeviceId: event.target.value,
+                });
+                setSwitchPreview(null);
+                setFormDirty("switch", true);
+              }}
+            >
+              <option value="">選択してください</option>
+              {devices.map((item) => (
+                <option
+                  key={`${item.hubId}-${item.deviceId}`}
+                  value={item.deviceId}
+                >
+                  {hubName(item.hubId)} / {item.deviceId}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="切替日時（RFC3339Nano UTC）" required>
+            <Input
+              value={switchForm.switchedAt}
+              onChange={(_, value) => {
+                setSwitchForm({ ...switchForm, switchedAt: value.value });
+                setSwitchPreview(null);
+                setFormDirty("switch", true);
+              }}
+            />
+          </Field>
+          <div className={styles.meta}>
+            切替日時以降を新しいHub端末の境界として記録します。画面日時と保存UTCを併記します。
+          </div>
+          {switchPreview ? (
+            <ImpactPreviewSummary
+              preview={switchPreview}
+              displayTimeZone={displayTimeZone}
+            />
+          ) : null}
+          <div className={styles.actions}>
+            <Button appearance="primary" type="submit" disabled={saving}>
+              影響を確認
+            </Button>
+            <Button
+              type="button"
+              disabled={!switchPreview || saving}
+              onClick={saveSwitch}
+            >
+              確定
+            </Button>
+            <Button type="button" onClick={resetSwitch}>
+              クリア
+            </Button>
+          </div>
+        </form>
+        <div className={styles.list} aria-label="Hub切替一覧">
+          {switches.length === 0 ? (
+            <Body1>Hub切替の記録はありません。</Body1>
+          ) : (
+            switches.map((item) => (
+              <article className={styles.card} key={item.id}>
+                <Subtitle1 as="h2">
+                  {hubName(item.oldHubId)} / {item.oldDeviceId} →{" "}
+                  {hubName(item.newHubId)} / {item.newDeviceId}
+                </Subtitle1>
+                <div>収集端末: {item.collectionDeviceId}</div>
+                <div className={styles.meta}>
+                  切替日時:{" "}
+                  {formatInstantPair(item.switchedAt, displayTimeZone)}
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ImpactPreviewSummary({
+  preview,
+  displayTimeZone,
+}: {
+  preview: ImpactPreviewSnapshot;
+  displayTimeZone: string;
+}) {
+  const intervals = preview.affectedCalculationIntervals ?? [];
+  return (
+    <div className="impact-preview" aria-label="影響プレビュー">
+      <strong>影響プレビュー</strong>
+      <span>対象観測: {(preview.affectedObservationIds ?? []).length}件</span>
+      <span>影響計算区間（半開）:</span>
+      {intervals.length === 0 ? (
+        <span>影響計算区間はありません。</span>
+      ) : (
+        <ul>
+          {intervals.map((interval, index) => (
+            <li key={`${interval.start}-${interval.end}-${index}`}>
+              [{formatInstant(interval.start, displayTimeZone)},{" "}
+              {formatInstant(interval.end, displayTimeZone)}) / UTC: [
+              {interval.start}, {interval.end})
+            </li>
+          ))}
+        </ul>
+      )}
+      <span>
+        影響する派生結果: {(preview.affectedDerivedResultIds ?? []).length}件
+      </span>
+    </div>
+  );
 }
 
 function formatInstant(
@@ -1142,4 +2412,19 @@ function formatInstant(
 
 function formatInstantPair(value: string, timeZone: string): string {
   return value ? `${formatInstant(value, timeZone)} / UTC: ${value}` : "不明";
+}
+
+function intervalsOverlap(
+  firstStart: string,
+  firstEnd: string,
+  secondStart: string,
+  secondEnd: string,
+): boolean {
+  const firstFrom = Date.parse(firstStart);
+  const secondFrom = Date.parse(secondStart);
+  if (!Number.isFinite(firstFrom) || !Number.isFinite(secondFrom)) return false;
+  const firstTo = firstEnd ? Date.parse(firstEnd) : Number.POSITIVE_INFINITY;
+  const secondTo = secondEnd ? Date.parse(secondEnd) : Number.POSITIVE_INFINITY;
+  if (Number.isNaN(firstTo) || Number.isNaN(secondTo)) return false;
+  return firstFrom < secondTo && secondFrom < firstTo;
 }

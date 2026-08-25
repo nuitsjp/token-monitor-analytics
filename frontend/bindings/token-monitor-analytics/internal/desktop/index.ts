@@ -6,6 +6,7 @@ import * as AuditService from "./auditservice.js";
 import * as CatalogService from "./catalogservice.js";
 import * as CollectionService from "./collectionservice.js";
 import * as HubService from "./hubservice.js";
+import * as ReviewService from "./reviewservice.js";
 import * as SettingsService from "./settingsservice.js";
 import * as WindowService from "./windowservice.js";
 export {
@@ -14,6 +15,7 @@ export {
     CatalogService,
     CollectionService,
     HubService,
+    ReviewService,
     SettingsService,
     WindowService
 };
@@ -37,13 +39,18 @@ export type {
     CreateServiceInput,
     HubAccountCandidateSnapshot,
     HubSnapshot,
+    HubSwitchInput,
+    HubSwitchSnapshot,
     IdentificationCandidateSnapshot,
+    ImpactIntervalSnapshot,
+    ImpactPreviewSnapshot,
     LabelChangeCandidateSnapshot,
     LabelChangeDecisionInput,
     LabelChangeWindowSnapshot,
     LimitDefinitionInput,
     LimitDefinitionSnapshot,
     LimitObservationSnapshot,
+    LinkingSnapshot,
     LogicalAccountSnapshot,
     PlanHistorySnapshot,
     PlanInput,
@@ -54,6 +61,9 @@ export type {
     PlanVersionSnapshot,
     RawSnapshotDetail,
     RawSnapshotSnapshot,
+    ReviewFilterInput,
+    ReviewItemSnapshot,
+    ReviewPage,
     SaveSettingsInput,
     ServiceIdentifierMappingInput,
     ServiceIdentifierMappingSnapshot,
@@ -65,5 +75,13 @@ export type {
     UpdateHubInput,
     UpdateLogicalAccountInput,
     UpdatePlanHistoryInput,
-    UpdateServiceInput
+    UpdateServiceInput,
+    UsageCostAssociationInput,
+    UsageCostAssociationSnapshot,
+    UsageCostSourceCompletenessInput,
+    UsageCostSourceCompletenessSnapshot,
+    UsageCostSourceSnapshot,
+    UsageLimitAssociationInput,
+    UsageLimitAssociationSnapshot,
+    UsageLimitSourceSnapshot
 } from "./models.js";

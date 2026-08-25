@@ -176,6 +176,27 @@ export interface HubSnapshot {
     "connectionFailureNote": string;
 }
 
+export interface HubSwitchInput {
+    "id": string;
+    "oldHubId": string;
+    "oldDeviceId": string;
+    "newHubId": string;
+    "newDeviceId": string;
+    "collectionDeviceId": string;
+    "switchedAt": string;
+}
+
+export interface HubSwitchSnapshot {
+    "id": string;
+    "oldHubId": string;
+    "oldDeviceId": string;
+    "newHubId": string;
+    "newDeviceId": string;
+    "collectionDeviceId": string;
+    "switchedAt": string;
+    "createdAt": string;
+}
+
 export interface IdentificationCandidateSnapshot {
     "id": string;
     "rawLimitServiceIdentifier": string;
@@ -188,6 +209,21 @@ export interface IdentificationCandidateSnapshot {
     "createdAt": string;
     "updatedAt": string;
     "observations": CandidateObservationSnapshot[] | null;
+}
+
+export interface ImpactIntervalSnapshot {
+    "start": string;
+    "end": string;
+}
+
+export interface ImpactPreviewSnapshot {
+    "sourceId": string;
+    "sourceKind": string;
+    "intervalStart": string;
+    "intervalEnd": string;
+    "affectedObservationIds": string[] | null;
+    "affectedCalculationIntervals": ImpactIntervalSnapshot[] | null;
+    "affectedDerivedResultIds": string[] | null;
 }
 
 export interface LabelChangeCandidateSnapshot {
@@ -273,6 +309,15 @@ export interface LimitObservationSnapshot {
     "dedupeKey": string;
     "valueFingerprint": string;
     "windowKeyConflict": boolean;
+}
+
+export interface LinkingSnapshot {
+    "usageCostSources": UsageCostSourceSnapshot[] | null;
+    "usageLimitSources": UsageLimitSourceSnapshot[] | null;
+    "usageCostAssociations": UsageCostAssociationSnapshot[] | null;
+    "usageLimitAssociations": UsageLimitAssociationSnapshot[] | null;
+    "usageCostSourceCompleteness": UsageCostSourceCompletenessSnapshot[] | null;
+    "hubSwitches": HubSwitchSnapshot[] | null;
 }
 
 export interface LogicalAccountSnapshot {
@@ -376,6 +421,47 @@ export interface RawSnapshotSnapshot {
     "apiContract": string;
 }
 
+export interface ReviewFilterInput {
+    "cursor": string;
+    "limit": number;
+    "from": string;
+    "to": string;
+    "kind": string;
+    "state": string;
+    "impact": string;
+    "hubId": string;
+}
+
+export interface ReviewItemSnapshot {
+    "id": string;
+    "kind": string;
+    "state": string;
+    "impact": string;
+    "hubId": string;
+    "sourceId": string;
+    "targetId": string;
+    "target": string;
+    "rawLimitServiceIdentifier": string;
+    "rawReportedPlanName": string;
+    "accountKey": string;
+    "accountDisplayName": string;
+    "workspaceName": string;
+    "deviceName": string;
+    "firstObservedAt": string;
+    "lastObservedAt": string;
+    "targetPeriodStart": string;
+    "targetPeriodEnd": string;
+    "count": number;
+    "evidenceIds": string[] | null;
+    "estimationExclusionReason": string;
+}
+
+export interface ReviewPage {
+    "items": ReviewItemSnapshot[] | null;
+    "nextCursor": string;
+    "hasMore": boolean;
+}
+
 export interface SaveSettingsInput {
     "theme": string;
     "displayTimeZone": string;
@@ -470,4 +556,85 @@ export interface UpdateServiceInput {
     "name": string;
     "officialKey": string;
     "archived": boolean;
+}
+
+export interface UsageCostAssociationInput {
+    "id": string;
+    "usageCostSourceId": string;
+    "logicalAccountId": string;
+    "validFrom": string;
+    "validTo": string;
+}
+
+export interface UsageCostAssociationSnapshot {
+    "id": string;
+    "usageCostSourceId": string;
+    "logicalAccountId": string;
+    "validFrom": string;
+    "validTo": string;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+export interface UsageCostSourceCompletenessInput {
+    "id": string;
+    "usageCostSourceId": string;
+    "validFrom": string;
+    "validTo": string;
+    "state": string;
+    "logicalAccountIds": string[] | null;
+    "excludedActivity": string[] | null;
+}
+
+export interface UsageCostSourceCompletenessSnapshot {
+    "id": string;
+    "usageCostSourceId": string;
+    "validFrom": string;
+    "validTo": string;
+    "state": string;
+    "logicalAccountIds": string[] | null;
+    "excludedActivity": string[] | null;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+export interface UsageCostSourceSnapshot {
+    "id": string;
+    "hubId": string;
+    "deviceId": string;
+    "rawServiceIdentifier": string;
+    "createdAt": string;
+}
+
+export interface UsageLimitAssociationInput {
+    "id": string;
+    "usageLimitSourceId": string;
+    "logicalAccountId": string;
+    "limitDefinitionId": string;
+    "validFrom": string;
+    "validTo": string;
+}
+
+export interface UsageLimitAssociationSnapshot {
+    "id": string;
+    "usageLimitSourceId": string;
+    "logicalAccountId": string;
+    "limitDefinitionId": string;
+    "validFrom": string;
+    "validTo": string;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+export interface UsageLimitSourceSnapshot {
+    "id": string;
+    "hubId": string;
+    "deviceId": string;
+    "accountKey": string;
+    "rawServiceIdentifier": string;
+    "windowKey": string;
+    "normalizedKind": string;
+    "normalizedMetric": string;
+    "normalizedLabel": string;
+    "createdAt": string;
 }

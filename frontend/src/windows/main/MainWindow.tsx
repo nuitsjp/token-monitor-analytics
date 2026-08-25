@@ -9,6 +9,7 @@ import {
   Settings16Regular,
   Cloud16Regular,
   History16Regular,
+  Warning16Regular,
 } from "@fluentui/react-icons";
 import {
   MemoryRouter,
@@ -30,6 +31,7 @@ import { AuditPage } from "../../pages/audit/AuditPage";
 import { CatalogPage } from "../../pages/catalog/CatalogPage";
 import { AccountsPage } from "../../pages/accounts/AccountsPage";
 import { EvidencePage } from "../../pages/evidence/EvidencePage";
+import { ReviewPage } from "../../pages/review/ReviewPage";
 import { useSettings } from "../../app/providers";
 
 const useStyles = makeStyles({
@@ -115,6 +117,12 @@ function MainRoutes({
         path="/audit"
         element={
           <AuditPage backend={backend} displayTimeZone={displayTimeZone} />
+        }
+      />
+      <Route
+        path="/review"
+        element={
+          <ReviewPage backend={backend} displayTimeZone={displayTimeZone} />
         }
       />
       <Route
@@ -233,6 +241,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <History16Regular aria-hidden="true" />
             <span>監査記録</span>
+          </NavLink>
+          <NavLink
+            to="/review"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/review");
+              }
+            }}
+          >
+            <Warning16Regular aria-hidden="true" />
+            <span>要確認</span>
           </NavLink>
           <NavLink
             to="/settings"
