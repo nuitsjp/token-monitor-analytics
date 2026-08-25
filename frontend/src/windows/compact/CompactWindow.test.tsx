@@ -230,6 +230,29 @@ describe("CompactWindow", () => {
     expect(routes).toEqual(["/overview", "/hubs"]);
   });
 
+  it("shows restore maintenance instead of compact values", async () => {
+    const snapshot = overview();
+    snapshot.maintenance = {
+      operation: "restore",
+      phase: "restore_apply",
+      status: {
+        code: "restore_apply",
+        label: "復元中",
+        intent: "warning",
+        icon: "warning",
+        description: "バックアップを復元しています。完了後に値を再表示します。",
+        nextAction: "",
+        nextRoute: "",
+      },
+    };
+    renderCompact(createFakeBackend({ canOpenMain: true, overview: snapshot }));
+    expect(await screen.findByText("復元中")).toBeVisible();
+    expect(screen.getByText(/異常 Hub/)).not.toBeVisible();
+    for (const item of screen.queryAllByText(/残量/)) {
+      expect(item).not.toBeVisible();
+    }
+  });
+
   it("shows loading, empty and retryable error states", async () => {
     let reject = true;
     const backend = createFakeBackend({

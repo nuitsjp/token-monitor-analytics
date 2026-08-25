@@ -4,6 +4,7 @@ import {
   AuditService,
   CatalogService,
   CollectionService,
+  DataManagementService,
   EstimationService,
   HubService,
   OverviewService,
@@ -61,6 +62,14 @@ import type {
   LimitSeriesFilterInput,
   LimitSeriesSnapshot,
   LimitSeriesDetailSnapshot,
+  DataManagementBackupStateSnapshot,
+  DataManagementCancellationSnapshot,
+  DataManagementPurgeSelectionInput,
+  DataManagementPurgeStateSnapshot,
+  DataManagementRestoreApplyStateSnapshot,
+  DataManagementRestoreTrialStateSnapshot,
+  DataManagementRestoreValidationStateSnapshot,
+  DataManagementStateSnapshot,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -116,6 +125,24 @@ export type {
   LimitSeriesSnapshot,
   LimitSeriesDetailSnapshot,
   EstimationEvidenceSnapshot,
+  DataManagementArtifactSnapshot,
+  DataManagementBackupStateSnapshot,
+  DataManagementCancellationSnapshot,
+  DataManagementCapacityResultSnapshot,
+  DataManagementCapacitySnapshot,
+  DataManagementErrorSnapshot,
+  DataManagementMaintenanceSnapshot,
+  DataManagementPurgePreviewSnapshot,
+  DataManagementPurgeResultSnapshot,
+  DataManagementPurgeSelectionInput,
+  DataManagementPurgeSelectionSnapshot,
+  DataManagementPurgeStateSnapshot,
+  DataManagementRecoveryNoticeSnapshot,
+  DataManagementRestoreApplyStateSnapshot,
+  DataManagementRestoreStateSnapshot,
+  DataManagementRestoreTrialStateSnapshot,
+  DataManagementRestoreValidationStateSnapshot,
+  DataManagementStateSnapshot,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type {
@@ -160,6 +187,28 @@ export interface FrontendAdapter {
   getOverview(privacyMode: boolean): Promise<OverviewSnapshot>;
   getLimitSeries(input: LimitSeriesFilterInput): Promise<LimitSeriesSnapshot[]>;
   getLimitSeriesDetail(seriesID: string): Promise<LimitSeriesDetailSnapshot>;
+  getDataManagementState(): Promise<DataManagementStateSnapshot>;
+  createBackup(
+    destinationPath: string,
+  ): Promise<DataManagementBackupStateSnapshot>;
+  validateRestore(
+    archivePath: string,
+  ): Promise<DataManagementRestoreValidationStateSnapshot>;
+  runRestoreTrial(
+    operationID: string,
+  ): Promise<DataManagementRestoreTrialStateSnapshot>;
+  applyRestore(
+    operationID: string,
+    confirmed: boolean,
+  ): Promise<DataManagementRestoreApplyStateSnapshot>;
+  previewPurge(
+    input: DataManagementPurgeSelectionInput,
+  ): Promise<DataManagementPurgeStateSnapshot>;
+  applyPurge(
+    input: DataManagementPurgeSelectionInput,
+    confirmed: boolean,
+  ): Promise<DataManagementPurgeStateSnapshot>;
+  cancelCurrentOperation(): Promise<DataManagementCancellationSnapshot>;
   getHubs(): Promise<HubSnapshot[]>;
   createHub(input: CreateHubInput): Promise<HubSnapshot>;
   updateHub(input: UpdateHubInput): Promise<HubSnapshot>;
@@ -328,6 +377,7 @@ export interface FakeBackendOptions {
   overview?: OverviewSnapshot;
   limitSeries?: LimitSeriesSnapshot[];
   limitSeriesDetails?: Record<string, LimitSeriesDetailSnapshot>;
+  dataManagementState?: DataManagementStateSnapshot;
   onGetOverview?: (
     privacyMode: boolean,
   ) => Promise<OverviewSnapshot> | OverviewSnapshot;
@@ -363,6 +413,7 @@ const fakeStatus = (
 
 export const emptyOverviewSnapshot: OverviewSnapshot = {
   generatedAt: "2026-08-26T00:00:00Z",
+  maintenance: null,
   timezoneConfirmed: false,
   recoveryNotice: null,
   checklist: [
@@ -413,6 +464,64 @@ export const emptyOverviewSnapshot: OverviewSnapshot = {
   recentLimits: [],
 };
 
+export const emptyDataManagementState: DataManagementStateSnapshot = {
+  capacity: { status: "ready", capacity: null, error: null },
+  purge: {
+    status: "not_run",
+    cancelAllowed: false,
+    preview: null,
+    result: null,
+    error: null,
+  },
+  backup: {
+    status: "not_run",
+    cancelAllowed: false,
+    artifact: null,
+    error: null,
+  },
+  restore: {
+    validation: {
+      status: "not_run",
+      cancelAllowed: false,
+      applyAllowed: false,
+      operationId: "",
+      artifact: null,
+      error: null,
+    },
+    trial: {
+      status: "not_run",
+      cancelAllowed: false,
+      artifactSha256: "",
+      testedAt: "",
+      warning: "",
+      error: null,
+    },
+    apply: {
+      status: "not_run",
+      phase: "",
+      cancelAllowed: false,
+      cancellationBoundary: "",
+      operationId: "",
+      artifact: null,
+      restoredAt: "",
+      auditId: "",
+      rollbackSucceeded: false,
+      warning: "",
+      credentialState: "",
+      requiresCredentialReregistration: false,
+      error: null,
+    },
+  },
+  recovery: { status: "none", artifactSha256: "", message: "" },
+  maintenance: {
+    active: false,
+    operation: "",
+    phase: "",
+    cancelAllowed: false,
+    cancellationBoundary: "",
+  },
+};
+
 /** A deterministic adapter for component tests and browser development. */
 export function createFakeBackend(
   options: FakeBackendOptions = {},
@@ -423,6 +532,8 @@ export function createFakeBackend(
   );
   const limitSeries = [...(options.limitSeries ?? [])];
   const limitSeriesDetails = { ...(options.limitSeriesDetails ?? {}) };
+  const dataManagementState =
+    options.dataManagementState ?? emptyDataManagementState;
   const listeners = new Map<FrontendEventName, Set<(data: unknown) => void>>();
   let hubs = [...(options.hubs ?? [])];
   const collectionAttempts = [...(options.collectionAttempts ?? [])];
@@ -529,6 +640,21 @@ export function createFakeBackend(
       if (!series) throw new Error("limit series was not found");
       return { series, current: series.currentInterval, history: [] };
     },
+    getDataManagementState: async () => dataManagementState,
+    createBackup: async () => dataManagementState.backup,
+    validateRestore: async () => dataManagementState.restore.validation,
+    runRestoreTrial: async () => dataManagementState.restore.trial,
+    applyRestore: async () => dataManagementState.restore.apply,
+    previewPurge: async () => dataManagementState.purge,
+    applyPurge: async () => dataManagementState.purge,
+    cancelCurrentOperation: async () => ({
+      status: "not_running",
+      phase: "",
+      cancelAllowed: false,
+      cancellationBoundary: "",
+      message: "実行中の処理はありません。",
+      error: null,
+    }),
     getHubs: async () => hubs,
     createHub: async (input) => {
       const hub: HubSnapshot = {
@@ -1373,6 +1499,21 @@ export function createProductionBackend(
       ),
     getLimitSeriesDetail: (seriesID) =>
       asPromise(EstimationService.GetLimitSeriesDetail(seriesID)),
+    getDataManagementState: () => asPromise(DataManagementService.GetState()),
+    createBackup: (destinationPath) =>
+      asPromise(DataManagementService.CreateBackup(destinationPath)),
+    validateRestore: (archivePath) =>
+      asPromise(DataManagementService.ValidateRestore(archivePath)),
+    runRestoreTrial: (operationID) =>
+      asPromise(DataManagementService.RunRestoreTrial(operationID)),
+    applyRestore: (operationID, confirmed) =>
+      asPromise(DataManagementService.ApplyRestore(operationID, confirmed)),
+    previewPurge: (input) =>
+      asPromise(DataManagementService.PreviewPurge(input)),
+    applyPurge: (input, confirmed) =>
+      asPromise(DataManagementService.ApplyPurge(input, confirmed)),
+    cancelCurrentOperation: () =>
+      asPromise(DataManagementService.CancelCurrentOperation()),
     getHubs: () => asPromise(HubService.GetHubs()).then((value) => value ?? []),
     createHub: (input) => asPromise(HubService.CreateHub(input)),
     updateHub: (input) => asPromise(HubService.UpdateHub(input)),

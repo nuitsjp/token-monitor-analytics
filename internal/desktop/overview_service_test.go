@@ -26,6 +26,26 @@ func (r *overviewServiceReader) ListCredentialAuditEvents(_ context.Context, hub
 	return r.events[hubID], nil
 }
 
+func TestOverviewServiceSuppressesValuesDuringRestoreApply(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	reader := &overviewServiceReader{}
+	service, err := NewOverviewServiceWithDependencies(reader, fixedClock{value: now}, domain.RestoreRecoveryResult{Status: domain.RestoreRecoveryNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.maintenance = windowMaintenanceFake{state: DataManagementMaintenanceSnapshot{Active: true, Operation: "restore", Phase: "restore_apply"}}
+	snapshot, err := service.GetOverview(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Maintenance == nil || snapshot.Maintenance.Status.Label != "復元中" || len(snapshot.RecentLimits) != 0 {
+		t.Fatalf("maintenance overview = %#v", snapshot)
+	}
+	if !reader.readDataAt.IsZero() {
+		t.Fatal("overview reader was accessed while restore apply was active")
+	}
+}
+
 func TestOverviewServiceComputesRemainingFreshnessAndUsesOneStatusMapper(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	reset := now.Add(time.Hour)

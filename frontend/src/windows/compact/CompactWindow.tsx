@@ -304,235 +304,252 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
           ) : null}
           {snapshot ? (
             <>
-              <div className={styles.summary} aria-label="Hub 収集状態">
-                <SummaryButton
-                  label="定期収集"
-                  value={`${snapshot.hubs.scheduledCount} / ${snapshot.hubs.enabledCount}`}
-                  onClick={() => openMainRoute("/hubs")}
-                  styles={styles}
-                />
-                <SummaryButton
-                  label="実行中"
-                  value={`${snapshot.hubs.runningCount} 件`}
-                  onClick={() => openMainRoute("/hubs")}
-                  styles={styles}
-                />
-                <SummaryButton
-                  label="異常 Hub"
-                  value={`${snapshot.hubs.abnormalCount} 件`}
-                  onClick={() => openMainRoute("/hubs")}
-                  styles={styles}
-                />
-              </div>
-
-              {expanded ? (
-                <div className={styles.limits} aria-label="Hub 別状態">
-                  {(snapshot.hubs.items ?? []).map((hub) => (
-                    <div className={styles.limit} key={hub.id}>
-                      <Body1>{hub.displayName}</Body1>
-                      <div className={styles.stateLine}>
-                        <Caption1>接続</Caption1>
-                        <StatusBadge status={hub.connection} />
-                      </div>
-                      <div className={styles.stateLine}>
-                        <Caption1>定期収集</Caption1>
-                        <Body1>
-                          {hub.enabled && hub.collectionEnabled
-                            ? "有効"
-                            : "停止"}
-                        </Body1>
-                      </div>
-                      <div className={styles.stateLine}>
-                        <Caption1>現在の実行</Caption1>
-                        <StatusBadge status={hub.currentCollection} />
-                      </div>
-                      <div className={styles.stateLine}>
-                        <Caption1>最終取得</Caption1>
-                        <StatusBadge status={hub.lastCollection} />
-                      </div>
-                      {hub.lastSuccessAt ? (
-                        <Caption1>
-                          最終成功:{" "}
-                          <span title={hub.lastSuccessAt}>
-                            {formatOverviewInstant(
-                              hub.lastSuccessAt,
-                              settings.displayTimeZone,
-                            )}
-                          </span>
-                        </Caption1>
-                      ) : null}
-                      {hub.lastFailureAt ? (
-                        <Caption1>
-                          最終失敗:{" "}
-                          <span title={hub.lastFailureAt}>
-                            {formatOverviewInstant(
-                              hub.lastFailureAt,
-                              settings.displayTimeZone,
-                            )}
-                          </span>
-                        </Caption1>
-                      ) : null}
-                      {hub.lastSkippedAt ? (
-                        <Caption1>
-                          最終スキップ:{" "}
-                          <span title={hub.lastSkippedAt}>
-                            {formatOverviewInstant(
-                              hub.lastSkippedAt,
-                              settings.displayTimeZone,
-                            )}
-                          </span>
-                        </Caption1>
-                      ) : null}
-                    </div>
-                  ))}
+              {snapshot.maintenance ? (
+                <div role="status" aria-live="polite">
+                  <StatusBadge status={snapshot.maintenance.status} />
+                  <Body1>{snapshot.maintenance.status.description}</Body1>
+                  <Button size="small" onClick={() => openMainRoute("/data")}>
+                    データ管理を開く
+                  </Button>
                 </div>
               ) : null}
+              <div hidden={Boolean(snapshot.maintenance)}>
+                <div className={styles.summary} aria-label="Hub 収集状態">
+                  <SummaryButton
+                    label="定期収集"
+                    value={`${snapshot.hubs.scheduledCount} / ${snapshot.hubs.enabledCount}`}
+                    onClick={() => openMainRoute("/hubs")}
+                    styles={styles}
+                  />
+                  <SummaryButton
+                    label="実行中"
+                    value={`${snapshot.hubs.runningCount} 件`}
+                    onClick={() => openMainRoute("/hubs")}
+                    styles={styles}
+                  />
+                  <SummaryButton
+                    label="異常 Hub"
+                    value={`${snapshot.hubs.abnormalCount} 件`}
+                    onClick={() => openMainRoute("/hubs")}
+                    styles={styles}
+                  />
+                </div>
 
-              {snapshot.hubs.totalCount === 0 ? (
-                <div>
-                  <Body1>Hub が登録されていません</Body1>
-                  <Button size="small" onClick={() => openMainRoute("/hubs")}>
-                    Hub を登録
-                  </Button>
-                </div>
-              ) : snapshot.capacity.rawSnapshotCount === 0 ? (
-                <div>
-                  <Body1>観測データがありません</Body1>
-                  <Button size="small" onClick={() => openMainRoute("/hubs")}>
-                    今すぐ取得
-                  </Button>
-                </div>
-              ) : limits.length === 0 ? (
-                <div>
-                  <Body1>利用増加を確認できる利用枠はありません</Body1>
-                  <Caption1>
-                    同一利用周期内の二つ以上の有効観測が必要です。
-                  </Caption1>
-                </div>
-              ) : (
-                <section
-                  className={styles.limits}
-                  data-region="limit-list"
-                  aria-label="利用増加を最近確認した利用枠"
-                >
-                  {limits.map((item) => (
-                    <article
-                      className={styles.limit}
-                      key={`${item.logicalAccountId}:${item.limitDefinitionId}`}
-                      aria-label={item.accessibleLabel}
-                    >
-                      <div className={styles.limitHeader}>
-                        <div>
-                          <Body1>
-                            {item.serviceName} / {item.accountName}
-                          </Body1>
-                          <Caption1>{item.limitName}</Caption1>
+                {expanded ? (
+                  <div className={styles.limits} aria-label="Hub 別状態">
+                    {(snapshot.hubs.items ?? []).map((hub) => (
+                      <div className={styles.limit} key={hub.id}>
+                        <Body1>{hub.displayName}</Body1>
+                        <div className={styles.stateLine}>
+                          <Caption1>接続</Caption1>
+                          <StatusBadge status={hub.connection} />
                         </div>
-                        <StatusBadge status={item.remaining} />
+                        <div className={styles.stateLine}>
+                          <Caption1>定期収集</Caption1>
+                          <Body1>
+                            {hub.enabled && hub.collectionEnabled
+                              ? "有効"
+                              : "停止"}
+                          </Body1>
+                        </div>
+                        <div className={styles.stateLine}>
+                          <Caption1>現在の実行</Caption1>
+                          <StatusBadge status={hub.currentCollection} />
+                        </div>
+                        <div className={styles.stateLine}>
+                          <Caption1>最終取得</Caption1>
+                          <StatusBadge status={hub.lastCollection} />
+                        </div>
+                        {hub.lastSuccessAt ? (
+                          <Caption1>
+                            最終成功:{" "}
+                            <span title={hub.lastSuccessAt}>
+                              {formatOverviewInstant(
+                                hub.lastSuccessAt,
+                                settings.displayTimeZone,
+                              )}
+                            </span>
+                          </Caption1>
+                        ) : null}
+                        {hub.lastFailureAt ? (
+                          <Caption1>
+                            最終失敗:{" "}
+                            <span title={hub.lastFailureAt}>
+                              {formatOverviewInstant(
+                                hub.lastFailureAt,
+                                settings.displayTimeZone,
+                              )}
+                            </span>
+                          </Caption1>
+                        ) : null}
+                        {hub.lastSkippedAt ? (
+                          <Caption1>
+                            最終スキップ:{" "}
+                            <span title={hub.lastSkippedAt}>
+                              {formatOverviewInstant(
+                                hub.lastSkippedAt,
+                                settings.displayTimeZone,
+                              )}
+                            </span>
+                          </Caption1>
+                        ) : null}
                       </div>
-                      {item.remainingPercent === null ? (
-                        <Body1>{item.remainingLabel}</Body1>
-                      ) : (
-                        <ProgressBar
-                          value={item.remainingPercent}
-                          max={100}
-                          color={progressColor(item.remaining)}
-                          thickness="medium"
-                          aria-label={item.accessibleLabel}
-                        />
-                      )}
-                      <Body1 className={styles.value} title={item.tooltip}>
-                        残量 {item.remainingLabel}
-                      </Body1>
-                      <Caption1 title={item.resetAt}>
-                        {item.resetAt
-                          ? `${formatOverviewInstant(item.resetAt, settings.displayTimeZone)} リセット`
-                          : item.reset.label}
-                      </Caption1>
-                      <Caption1 title={item.lastIncrease.occurredAt}>
-                        利用増加:{" "}
-                        {formatOverviewInstant(
-                          item.lastIncrease.occurredAt,
-                          settings.displayTimeZone,
-                        )}
-                        （{item.lastIncrease.ageLabel}）
-                      </Caption1>
-                      <Caption1
-                        title={item.freshness.observationAt}
-                        className={
-                          item.freshness.status.code === "freshness_stale"
-                            ? styles.stale
-                            : undefined
-                        }
-                      >
-                        最新観測:{" "}
-                        {formatOverviewInstant(
-                          item.freshness.observationAt,
-                          settings.displayTimeZone,
-                        )}
-                        （{item.freshness.ageLabel}）
-                      </Caption1>
-                      <div className={styles.stateLine}>
-                        <StatusBadge status={item.freshness.status} />
-                        <Caption1>{item.freshness.reason}</Caption1>
-                      </div>
-                    </article>
-                  ))}
-                </section>
-              )}
+                    ))}
+                  </div>
+                ) : null}
 
-              <footer className={styles.footer}>
-                <Button
-                  size="small"
-                  appearance="subtle"
-                  onClick={() => openMainRoute("/review")}
-                >
-                  要確認 {snapshot.review.actionItems.count} 件
-                </Button>
-                {snapshot.review.warnings.count > 0 ? (
+                {snapshot.hubs.totalCount === 0 ? (
+                  <div>
+                    <Body1>Hub が登録されていません</Body1>
+                    <Button size="small" onClick={() => openMainRoute("/hubs")}>
+                      Hub を登録
+                    </Button>
+                  </div>
+                ) : snapshot.capacity.rawSnapshotCount === 0 ? (
+                  <div>
+                    <Body1>観測データがありません</Body1>
+                    <Button size="small" onClick={() => openMainRoute("/hubs")}>
+                      今すぐ取得
+                    </Button>
+                  </div>
+                ) : limits.length === 0 ? (
+                  <div>
+                    <Body1>利用増加を確認できる利用枠はありません</Body1>
+                    <Caption1>
+                      同一利用周期内の二つ以上の有効観測が必要です。
+                    </Caption1>
+                  </div>
+                ) : (
+                  <section
+                    className={styles.limits}
+                    data-region="limit-list"
+                    aria-label="利用増加を最近確認した利用枠"
+                  >
+                    {limits.map((item) => (
+                      <article
+                        className={styles.limit}
+                        key={`${item.logicalAccountId}:${item.limitDefinitionId}`}
+                        aria-label={item.accessibleLabel}
+                      >
+                        <div className={styles.limitHeader}>
+                          <div>
+                            <Body1>
+                              {item.serviceName} / {item.accountName}
+                            </Body1>
+                            <Caption1>{item.limitName}</Caption1>
+                          </div>
+                          <StatusBadge status={item.remaining} />
+                        </div>
+                        {item.remainingPercent === null ? (
+                          <Body1>{item.remainingLabel}</Body1>
+                        ) : (
+                          <ProgressBar
+                            value={item.remainingPercent}
+                            max={100}
+                            color={progressColor(item.remaining)}
+                            thickness="medium"
+                            aria-label={item.accessibleLabel}
+                          />
+                        )}
+                        <Body1 className={styles.value} title={item.tooltip}>
+                          残量 {item.remainingLabel}
+                        </Body1>
+                        <Caption1 title={item.resetAt}>
+                          {item.resetAt
+                            ? `${formatOverviewInstant(item.resetAt, settings.displayTimeZone)} リセット`
+                            : item.reset.label}
+                        </Caption1>
+                        <Caption1 title={item.lastIncrease.occurredAt}>
+                          利用増加:{" "}
+                          {formatOverviewInstant(
+                            item.lastIncrease.occurredAt,
+                            settings.displayTimeZone,
+                          )}
+                          （{item.lastIncrease.ageLabel}）
+                        </Caption1>
+                        <Caption1
+                          title={item.freshness.observationAt}
+                          className={
+                            item.freshness.status.code === "freshness_stale"
+                              ? styles.stale
+                              : undefined
+                          }
+                        >
+                          最新観測:{" "}
+                          {formatOverviewInstant(
+                            item.freshness.observationAt,
+                            settings.displayTimeZone,
+                          )}
+                          （{item.freshness.ageLabel}）
+                        </Caption1>
+                        <div className={styles.stateLine}>
+                          <StatusBadge status={item.freshness.status} />
+                          <Caption1>{item.freshness.reason}</Caption1>
+                        </div>
+                      </article>
+                    ))}
+                  </section>
+                )}
+
+                <footer className={styles.footer}>
                   <Button
                     size="small"
                     appearance="subtle"
                     onClick={() => openMainRoute("/review")}
                   >
-                    警告 {snapshot.review.warnings.count} 件
+                    要確認 {snapshot.review.actionItems.count} 件
                   </Button>
-                ) : null}
-                {snapshot.review.recalculationFailures.count > 0 ? (
+                  {snapshot.review.warnings.count > 0 ? (
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      onClick={() => openMainRoute("/review")}
+                    >
+                      警告 {snapshot.review.warnings.count} 件
+                    </Button>
+                  ) : null}
+                  {snapshot.review.recalculationFailures.count > 0 ? (
+                    <Button
+                      size="small"
+                      appearance="subtle"
+                      onClick={() => openMainRoute("/review")}
+                    >
+                      処理失敗 {snapshot.review.recalculationFailures.count} 件
+                    </Button>
+                  ) : null}
+                </footer>
+                <div className={styles.actions}>
                   <Button
-                    size="small"
                     appearance="subtle"
-                    onClick={() => openMainRoute("/review")}
+                    icon={
+                      expanded ? (
+                        <ChevronUp16Regular />
+                      ) : (
+                        <ChevronDown16Regular />
+                      )
+                    }
+                    aria-expanded={expanded}
+                    aria-label={
+                      expanded ? "利用枠を折りたたむ" : "利用枠を展開"
+                    }
+                    onClick={toggleExpanded}
                   >
-                    処理失敗 {snapshot.review.recalculationFailures.count} 件
+                    {expanded ? "折りたたむ" : "展開"}
                   </Button>
-                ) : null}
-              </footer>
-              <div className={styles.actions}>
-                <Button
-                  appearance="subtle"
-                  icon={
-                    expanded ? <ChevronUp16Regular /> : <ChevronDown16Regular />
-                  }
-                  aria-expanded={expanded}
-                  aria-label={expanded ? "利用枠を折りたたむ" : "利用枠を展開"}
-                  onClick={toggleExpanded}
-                >
-                  {expanded ? "折りたたむ" : "展開"}
-                </Button>
-                <Button
-                  icon={<Open16Regular />}
-                  disabled={!backend.canOpenMain}
-                  onClick={() => openMainRoute("/overview")}
-                >
-                  詳細
-                </Button>
+                  <Button
+                    icon={<Open16Regular />}
+                    disabled={!backend.canOpenMain}
+                    onClick={() => openMainRoute("/overview")}
+                  >
+                    詳細
+                  </Button>
+                </div>
+                <Caption1 role="status" aria-live="polite">
+                  {updating
+                    ? "更新中"
+                    : `更新: ${formatOverviewInstant(snapshot.generatedAt, settings.displayTimeZone)}`}
+                </Caption1>
               </div>
-              <Caption1 role="status" aria-live="polite">
-                {updating
-                  ? "更新中"
-                  : `更新: ${formatOverviewInstant(snapshot.generatedAt, settings.displayTimeZone)}`}
-              </Caption1>
             </>
           ) : null}
         </div>

@@ -7,12 +7,16 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"token-monitor-analytics/internal/adapter/backupzip"
 	credentialadapter "token-monitor-analytics/internal/adapter/credential"
 	"token-monitor-analytics/internal/adapter/hubapi"
 	collectionscheduler "token-monitor-analytics/internal/adapter/scheduler"
+	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/desktop"
 	"token-monitor-analytics/internal/usecase"
 )
+
+const appVersion = "0.1.0"
 
 func main() {
 	if err := run(); err != nil {
@@ -47,10 +51,6 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("start review service: %w", err)
 	}
-	overviewService, err := desktop.NewOverviewService(storage.lifecycle, storage.recovery)
-	if err != nil {
-		return fmt.Errorf("start overview service: %w", err)
-	}
 	estimationService, err := desktop.NewEstimationService(storage.lifecycle)
 	if err != nil {
 		return fmt.Errorf("start estimation service: %w", err)
@@ -83,6 +83,42 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("start collection service: %w", err)
 	}
+	backupWriter, err := backupzip.NewWriter()
+	if err != nil {
+		return fmt.Errorf("start backup writer: %w", err)
+	}
+	backupUsecase, err := usecase.NewBackupUsecase(storage.lifecycle, backupWriter, nil, usecase.SystemClock{}, appVersion, maintenanceGate)
+	if err != nil {
+		return fmt.Errorf("start backup usecase: %w", err)
+	}
+	purgeUsecase, err := usecase.NewPurgeUsecase(storage.lifecycle, usecase.SystemClock{}, maintenanceGate)
+	if err != nil {
+		return fmt.Errorf("start purge usecase: %w", err)
+	}
+	restoreValidation, err := usecase.NewRestoreValidationUsecase(storage.lifecycle, backupzip.NewValidator(), nil, usecase.SystemClock{}, desktop.UUIDGenerator{}, maintenanceGate)
+	if err != nil {
+		return fmt.Errorf("start restore validation: %w", err)
+	}
+	defer func() {
+		runErr = errors.Join(runErr, restoreValidation.Close())
+	}()
+	restoreApplier, err := sqliteadapter.NewRestoreApplier(storage.lifecycle, nil)
+	if err != nil {
+		return fmt.Errorf("start restore applier: %w", err)
+	}
+	restoreApply, err := usecase.NewRestoreApplyUsecase(restoreValidation, restoreApplier, collectionScheduler, usecase.SystemClock{}, desktop.UUIDGenerator{}, maintenanceGate)
+	if err != nil {
+		return fmt.Errorf("start restore apply usecase: %w", err)
+	}
+	dataManagementService, err := desktop.NewDataManagementService(purgeUsecase, backupUsecase, restoreValidation, restoreApply, maintenanceGate, storage.recovery, appVersion, sqliteadapter.CurrentSchemaVersion)
+	if err != nil {
+		return fmt.Errorf("start data management service: %w", err)
+	}
+	windowController.SetMaintenanceReader(dataManagementService)
+	overviewService, err := desktop.NewOverviewServiceWithMaintenance(storage.lifecycle, storage.recovery, dataManagementService)
+	if err != nil {
+		return fmt.Errorf("start overview service: %w", err)
+	}
 	app := application.New(application.Options{
 		Name:        "Token Monitor Analytics",
 		Description: "Local-first analytics for Token Monitor hubs",
@@ -100,6 +136,7 @@ func run() (runErr error) {
 			application.NewService(reviewService),
 			application.NewService(overviewService),
 			application.NewService(estimationService),
+			application.NewService(dataManagementService),
 		},
 	})
 	windowController.Attach(app)

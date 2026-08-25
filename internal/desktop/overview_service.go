@@ -20,9 +20,10 @@ type OverviewReader interface {
 }
 
 type OverviewService struct {
-	reader   OverviewReader
-	clock    usecase.Clock
-	recovery domain.RestoreRecoveryResult
+	reader      OverviewReader
+	clock       usecase.Clock
+	recovery    domain.RestoreRecoveryResult
+	maintenance maintenanceStateReader
 }
 
 type OverviewSnapshot struct {
@@ -35,6 +36,13 @@ type OverviewSnapshot struct {
 	Estimation        OverviewEstimationSummarySnapshot `json:"estimation"`
 	Capacity          OverviewCapacitySnapshot          `json:"capacity"`
 	RecentLimits      []OverviewRecentLimitSnapshot     `json:"recentLimits"`
+	Maintenance       *OverviewMaintenanceSnapshot      `json:"maintenance"`
+}
+
+type OverviewMaintenanceSnapshot struct {
+	Operation string                     `json:"operation"`
+	Phase     string                     `json:"phase"`
+	Status    StatusPresentationSnapshot `json:"status"`
 }
 
 type OverviewRecoveryNoticeSnapshot struct {
@@ -144,6 +152,15 @@ func NewOverviewService(lifecycle *sqliteadapter.Lifecycle, recovery domain.Rest
 	return NewOverviewServiceWithDependencies(lifecycle, usecase.SystemClock{}, recovery)
 }
 
+func NewOverviewServiceWithMaintenance(lifecycle *sqliteadapter.Lifecycle, recovery domain.RestoreRecoveryResult, maintenance maintenanceStateReader) (*OverviewService, error) {
+	service, err := NewOverviewService(lifecycle, recovery)
+	if err != nil {
+		return nil, err
+	}
+	service.maintenance = maintenance
+	return service, nil
+}
+
 func NewOverviewServiceWithDependencies(reader OverviewReader, clock usecase.Clock, recovery domain.RestoreRecoveryResult) (*OverviewService, error) {
 	if reader == nil {
 		return nil, errors.New("overview reader is required")
@@ -161,6 +178,9 @@ func (s *OverviewService) GetOverview(ctx context.Context, privacyMode bool) (Ov
 		return OverviewSnapshot{}, errors.New("overview service is unavailable")
 	}
 	now := s.clock.Now().UTC()
+	if maintenance := s.activeDataMaintenance(); maintenance != nil {
+		return OverviewSnapshot{GeneratedAt: now.Format(time.RFC3339Nano), Maintenance: maintenance}, nil
+	}
 	data, err := s.reader.ReadOverviewData(ctx, now)
 	if err != nil {
 		return OverviewSnapshot{}, err
@@ -202,6 +222,27 @@ func (s *OverviewService) GetOverview(ctx context.Context, privacyMode bool) (Ov
 			OldestSnapshotAt: formatOverviewTime(data.OldestSnapshotAt), LatestSnapshotAt: formatOverviewTime(data.LatestSnapshotAt),
 		},
 	}, nil
+}
+
+func (s *OverviewService) activeDataMaintenance() *OverviewMaintenanceSnapshot {
+	if s.maintenance == nil {
+		return nil
+	}
+	state := s.maintenance.GetMaintenanceState()
+	if !state.Active || (state.Phase != "purge_apply" && state.Phase != "restore_apply") {
+		return nil
+	}
+	label := "パージ・再計算中"
+	description := "保存済みデータを更新しています。完了後に値を再表示します。"
+	if state.Phase == "restore_apply" {
+		label = "復元中"
+		description = "バックアップを復元しています。完了後に値を再表示します。"
+	}
+	return &OverviewMaintenanceSnapshot{
+		Operation: state.Operation,
+		Phase:     state.Phase,
+		Status:    StatusPresentationSnapshot{Code: state.Phase, Label: label, Intent: "warning", Icon: "warning", Description: description},
+	}
 }
 
 func (s *OverviewService) mapHubSummary(ctx context.Context, hubs []sqliteadapter.OverviewHub) (OverviewHubSummarySnapshot, error) {

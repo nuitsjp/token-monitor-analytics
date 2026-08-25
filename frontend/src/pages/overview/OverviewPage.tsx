@@ -186,6 +186,30 @@ export function OverviewPage({
     );
   }
 
+  if (snapshot.maintenance) {
+    return (
+      <div className={styles.page}>
+        <header className={styles.intro}>
+          <Caption1>利用状況</Caption1>
+          <h1 className={styles.title} tabIndex={-1} ref={heading}>
+            概要
+          </h1>
+        </header>
+        <MessageBar intent="warning">
+          <MessageBarBody>
+            <StatusBadge status={snapshot.maintenance.status} />{" "}
+            {snapshot.maintenance.status.description}
+            <div className={styles.errorActions}>
+              <Button onClick={() => navigate("/data")}>
+                データ管理を開く
+              </Button>
+            </div>
+          </MessageBarBody>
+        </MessageBar>
+      </div>
+    );
+  }
+
   const checklist = snapshot.checklist ?? [];
   const pending = checklist.filter((item) => item.status.code !== "complete");
   const completed = checklist.filter((item) => item.status.code === "complete");

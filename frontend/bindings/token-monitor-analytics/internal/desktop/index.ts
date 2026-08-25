@@ -5,6 +5,7 @@ import * as AccountService from "./accountservice.js";
 import * as AuditService from "./auditservice.js";
 import * as CatalogService from "./catalogservice.js";
 import * as CollectionService from "./collectionservice.js";
+import * as DataManagementService from "./datamanagementservice.js";
 import * as EstimationService from "./estimationservice.js";
 import * as HubService from "./hubservice.js";
 import * as OverviewService from "./overviewservice.js";
@@ -16,6 +17,7 @@ export {
     AuditService,
     CatalogService,
     CollectionService,
+    DataManagementService,
     EstimationService,
     HubService,
     OverviewService,
@@ -43,6 +45,24 @@ export type {
     CreateLogicalAccountInput,
     CreatePlanHistoryInput,
     CreateServiceInput,
+    DataManagementArtifactSnapshot,
+    DataManagementBackupStateSnapshot,
+    DataManagementCancellationSnapshot,
+    DataManagementCapacityResultSnapshot,
+    DataManagementCapacitySnapshot,
+    DataManagementErrorSnapshot,
+    DataManagementMaintenanceSnapshot,
+    DataManagementPurgePreviewSnapshot,
+    DataManagementPurgeResultSnapshot,
+    DataManagementPurgeSelectionInput,
+    DataManagementPurgeSelectionSnapshot,
+    DataManagementPurgeStateSnapshot,
+    DataManagementRecoveryNoticeSnapshot,
+    DataManagementRestoreApplyStateSnapshot,
+    DataManagementRestoreStateSnapshot,
+    DataManagementRestoreTrialStateSnapshot,
+    DataManagementRestoreValidationStateSnapshot,
+    DataManagementStateSnapshot,
     EstimationDifferenceRowSnapshot,
     EstimationEvidenceSnapshot,
     EstimationReferenceSnapshot,
@@ -72,6 +92,7 @@ export type {
     OverviewHubSnapshot,
     OverviewHubSummarySnapshot,
     OverviewKindCountSnapshot,
+    OverviewMaintenanceSnapshot,
     OverviewRecentLimitSnapshot,
     OverviewRecoveryNoticeSnapshot,
     OverviewReviewSummarySnapshot,

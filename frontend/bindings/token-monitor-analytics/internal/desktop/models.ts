@@ -173,6 +173,162 @@ export interface CreateServiceInput {
     "officialKey": string;
 }
 
+export interface DataManagementArtifactSnapshot {
+    "path": string;
+    "artifactSha256": string;
+    "sizeBytes": number;
+    "formatVersion": number;
+    "schemaVersion": number;
+    "appVersion": string;
+    "createdAt": string;
+    "warning": string;
+}
+
+export interface DataManagementBackupStateSnapshot {
+    "status": string;
+    "cancelAllowed": boolean;
+    "artifact": DataManagementArtifactSnapshot | null;
+    "error": DataManagementErrorSnapshot | null;
+}
+
+export interface DataManagementCancellationSnapshot {
+    "status": string;
+    "phase": string;
+    "cancelAllowed": boolean;
+    "cancellationBoundary": string;
+    "message": string;
+    "error": DataManagementErrorSnapshot | null;
+}
+
+export interface DataManagementCapacityResultSnapshot {
+    "status": string;
+    "capacity": DataManagementCapacitySnapshot | null;
+    "error": DataManagementErrorSnapshot | null;
+}
+
+export interface DataManagementCapacitySnapshot {
+    "databaseSizeBytes": number;
+    "rawSnapshotCount": number;
+    "oldestCompletedAt": string;
+    "latestCompletedAt": string;
+    "rawJsonBytes": number;
+}
+
+export interface DataManagementErrorSnapshot {
+    "code": string;
+    "message": string;
+    "details": string[] | null;
+    "rolledBack": boolean;
+    "currentDataUnchanged": boolean;
+}
+
+export interface DataManagementMaintenanceSnapshot {
+    "active": boolean;
+    "operation": string;
+    "phase": string;
+    "cancelAllowed": boolean;
+    "cancellationBoundary": string;
+}
+
+export interface DataManagementPurgePreviewSnapshot {
+    "selection": DataManagementPurgeSelectionSnapshot;
+    "capacity": DataManagementCapacitySnapshot;
+    "requiredConfirmationText": string;
+}
+
+export interface DataManagementPurgeResultSnapshot {
+    "auditId": string;
+    "executedAt": string;
+    "rawSnapshotCount": number;
+    "costObservationCount": number;
+    "limitObservationCount": number;
+    "matchedObservationCount": number;
+    "estimationPointCount": number;
+    "estimationResultCount": number;
+    "estimationEvidenceCount": number;
+    "calculationIntervalCount": number;
+    "calculationBoundaryCount": number;
+    "recalculatedResultCount": number;
+}
+
+export interface DataManagementPurgeSelectionInput {
+    "allHubs": boolean;
+    "hubIds": string[] | null;
+    "startAt": string;
+    "endAt": string;
+    "confirmationText": string;
+}
+
+export interface DataManagementPurgeSelectionSnapshot {
+    "allHubs": boolean;
+    "hubIds": string[] | null;
+    "startAt": string;
+    "endAt": string;
+}
+
+export interface DataManagementPurgeStateSnapshot {
+    "status": string;
+    "cancelAllowed": boolean;
+    "preview": DataManagementPurgePreviewSnapshot | null;
+    "result": DataManagementPurgeResultSnapshot | null;
+    "error": DataManagementErrorSnapshot | null;
+}
+
+export interface DataManagementRecoveryNoticeSnapshot {
+    "status": string;
+    "artifactSha256": string;
+    "message": string;
+}
+
+export interface DataManagementRestoreApplyStateSnapshot {
+    "status": string;
+    "phase": string;
+    "cancelAllowed": boolean;
+    "cancellationBoundary": string;
+    "operationId": string;
+    "artifact": DataManagementArtifactSnapshot | null;
+    "restoredAt": string;
+    "auditId": string;
+    "rollbackSucceeded": boolean;
+    "warning": string;
+    "credentialState": string;
+    "requiresCredentialReregistration": boolean;
+    "error": DataManagementErrorSnapshot | null;
+}
+
+export interface DataManagementRestoreStateSnapshot {
+    "validation": DataManagementRestoreValidationStateSnapshot;
+    "trial": DataManagementRestoreTrialStateSnapshot;
+    "apply": DataManagementRestoreApplyStateSnapshot;
+}
+
+export interface DataManagementRestoreTrialStateSnapshot {
+    "status": string;
+    "cancelAllowed": boolean;
+    "artifactSha256": string;
+    "testedAt": string;
+    "warning": string;
+    "error": DataManagementErrorSnapshot | null;
+}
+
+export interface DataManagementRestoreValidationStateSnapshot {
+    "status": string;
+    "cancelAllowed": boolean;
+    "applyAllowed": boolean;
+    "operationId": string;
+    "artifact": DataManagementArtifactSnapshot | null;
+    "error": DataManagementErrorSnapshot | null;
+}
+
+export interface DataManagementStateSnapshot {
+    "capacity": DataManagementCapacityResultSnapshot;
+    "purge": DataManagementPurgeStateSnapshot;
+    "backup": DataManagementBackupStateSnapshot;
+    "restore": DataManagementRestoreStateSnapshot;
+    "recovery": DataManagementRecoveryNoticeSnapshot;
+    "maintenance": DataManagementMaintenanceSnapshot;
+}
+
 export interface EstimationDifferenceRowSnapshot {
     "id": string;
     "startPointId": string;
@@ -538,6 +694,12 @@ export interface OverviewKindCountSnapshot {
     "count": number;
 }
 
+export interface OverviewMaintenanceSnapshot {
+    "operation": string;
+    "phase": string;
+    "status": StatusPresentationSnapshot;
+}
+
 export interface OverviewRecentLimitSnapshot {
     "logicalAccountId": string;
     "limitDefinitionId": string;
@@ -581,6 +743,7 @@ export interface OverviewSnapshot {
     "estimation": OverviewEstimationSummarySnapshot;
     "capacity": OverviewCapacitySnapshot;
     "recentLimits": OverviewRecentLimitSnapshot[] | null;
+    "maintenance": OverviewMaintenanceSnapshot | null;
 }
 
 export interface OverviewStatusCountSnapshot {

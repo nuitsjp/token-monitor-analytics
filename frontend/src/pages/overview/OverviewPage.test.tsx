@@ -150,6 +150,35 @@ describe("OverviewPage", () => {
     expect(screen.queryByText(/当日.*トークン/)).not.toBeInTheDocument();
   });
 
+  it("shows restore maintenance instead of operational values", async () => {
+    renderPage({
+      ...populatedOverview(),
+      maintenance: {
+        operation: "restore",
+        phase: "restore_apply",
+        status: {
+          code: "restore_apply",
+          label: "復元中",
+          intent: "warning",
+          icon: "warning",
+          description:
+            "バックアップを復元しています。完了後に値を再表示します。",
+          nextAction: "",
+          nextRoute: "",
+        },
+      },
+    });
+    expect(
+      await screen.findByLabelText(
+        "復元中。バックアップを復元しています。完了後に値を再表示します。",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("推定状態")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("利用増加を最近確認した利用枠"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a retryable error after the loading state", async () => {
     let reject = true;
     const backend = createFakeBackend({

@@ -35,6 +35,7 @@ import { EvidencePage } from "../../pages/evidence/EvidencePage";
 import { ReviewPage } from "../../pages/review/ReviewPage";
 import { OverviewPage } from "../../pages/overview/OverviewPage";
 import { LimitsPage } from "../../pages/limits/LimitsPage";
+import { DataManagementPage } from "../../pages/data-management/DataManagementPage";
 import { useSettings } from "../../app/providers";
 
 const useStyles = makeStyles({
@@ -135,6 +136,7 @@ function MainRoutes({
           <LimitsPage backend={backend} displayTimeZone={displayTimeZone} />
         }
       />
+      <Route path="/data" element={<DataManagementPage backend={backend} />} />
       <Route
         path="/settings"
         element={<SettingsPage onDirtyChange={setDirty} />}
@@ -329,6 +331,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <Warning16Regular aria-hidden="true" />
             <span>要確認</span>
+          </NavLink>
+          <NavLink
+            to="/data"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/data");
+              }
+            }}
+          >
+            <span aria-hidden="true">▣</span>
+            <span>データ管理</span>
           </NavLink>
           <NavLink
             to="/settings"

@@ -85,7 +85,7 @@ func TestPlaceWindowWithoutOverlapKeepsPreferredPositionWhenClear(t *testing.T) 
 }
 
 func TestMainWindowRouteAllowlistRejectsArbitraryURLs(t *testing.T) {
-	for _, route := range []string{"/overview", "/hubs", "/review", "/settings", "/limits", "/limits/series-1"} {
+	for _, route := range []string{"/overview", "/hubs", "/review", "/settings", "/limits", "/limits/series-1", "/data"} {
 		if !validMainRoute(route) {
 			t.Fatalf("fixed main route %q was rejected", route)
 		}
@@ -94,5 +94,25 @@ func TestMainWindowRouteAllowlistRejectsArbitraryURLs(t *testing.T) {
 		if validMainRoute(route) {
 			t.Fatalf("arbitrary main route %q was accepted", route)
 		}
+	}
+}
+
+type windowMaintenanceFake struct {
+	state DataManagementMaintenanceSnapshot
+}
+
+func (f windowMaintenanceFake) GetMaintenanceState() DataManagementMaintenanceSnapshot {
+	return f.state
+}
+
+func TestWindowControllerBlocksOnlyRestoreApply(t *testing.T) {
+	controller := &WindowController{}
+	controller.SetMaintenanceReader(windowMaintenanceFake{state: DataManagementMaintenanceSnapshot{Active: true, Operation: "restore", Phase: "restore_apply"}})
+	if !controller.restoreApplyActive() {
+		t.Fatal("restore apply was not treated as an exit-blocking operation")
+	}
+	controller.SetMaintenanceReader(windowMaintenanceFake{state: DataManagementMaintenanceSnapshot{Active: true, Operation: "restore", Phase: "restore_validation"}})
+	if controller.restoreApplyActive() {
+		t.Fatal("restore validation was treated as an exit-blocking operation")
 	}
 }

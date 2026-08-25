@@ -18,6 +18,10 @@ type WindowService struct {
 	controller *WindowController
 }
 
+type maintenanceStateReader interface {
+	GetMaintenanceState() DataManagementMaintenanceSnapshot
+}
+
 type WindowController struct {
 	app *application.App
 
@@ -27,6 +31,7 @@ type WindowController struct {
 	main            *application.WebviewWindow
 	mainDirty       bool
 	storage         *sqliteadapter.Lifecycle
+	maintenance     maintenanceStateReader
 }
 
 const (
@@ -48,6 +53,12 @@ func (s *WindowController) Attach(app *application.App) {
 	s.app = app
 }
 
+func (s *WindowController) SetMaintenanceReader(reader maintenanceStateReader) {
+	s.mu.Lock()
+	s.maintenance = reader
+	s.mu.Unlock()
+}
+
 func (s *WindowController) SetCompact(window *application.WebviewWindow) {
 	s.mu.Lock()
 	s.compact = window
@@ -60,6 +71,10 @@ func (s *WindowController) SetCompact(window *application.WebviewWindow) {
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		s.savePlacement(window, "compact")
 		event.Cancel()
+		if s.restoreApplyActive() {
+			window.EmitEvent("maintenance:close-blocked", "復元中はアプリを終了できません。")
+			return
+		}
 		window.EmitEvent("app:quit-requested")
 	})
 }
@@ -114,6 +129,11 @@ func (s *WindowController) OpenMainRoute(_ context.Context, route string) {
 	s.registerPlacement(window, "main", 1280, 800, 1024, 640)
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		s.savePlacement(window, "main")
+		if s.restoreApplyActive() {
+			event.Cancel()
+			window.EmitEvent("maintenance:close-blocked", "復元中はウィンドウを閉じられません。")
+			return
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.mainDirty {
@@ -128,7 +148,7 @@ func (s *WindowController) OpenMainRoute(_ context.Context, route string) {
 
 func validMainRoute(route string) bool {
 	switch route {
-	case "/overview", "/hubs", "/review", "/catalog", "/accounts", "/evidence", "/audit", "/settings", "/limits":
+	case "/overview", "/hubs", "/review", "/catalog", "/accounts", "/evidence", "/audit", "/settings", "/limits", "/data":
 		return true
 	}
 	if !strings.HasPrefix(route, "/limits/") {
@@ -153,6 +173,9 @@ func (s *WindowService) ConfirmCloseMain(ctx context.Context) {
 }
 
 func (s *WindowController) ConfirmCloseMain(context.Context) {
+	if s.restoreApplyActive() {
+		return
+	}
 	s.mu.Lock()
 	window := s.main
 	s.main = nil
@@ -164,7 +187,21 @@ func (s *WindowController) ConfirmCloseMain(context.Context) {
 }
 
 func (s *WindowService) ConfirmQuit(context.Context) {
+	if s.controller.restoreApplyActive() {
+		return
+	}
 	s.controller.app.Quit()
+}
+
+func (s *WindowController) restoreApplyActive() bool {
+	s.mu.Lock()
+	reader := s.maintenance
+	s.mu.Unlock()
+	if reader == nil {
+		return false
+	}
+	state := reader.GetMaintenanceState()
+	return state.Active && state.Phase == "restore_apply"
 }
 
 func (s *WindowController) SetCompactExpanded(expanded bool) {
