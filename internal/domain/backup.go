@@ -32,6 +32,75 @@ type BackupArtifact struct {
 	Warning        string
 }
 
+type RestoreValidationCode string
+
+const (
+	RestoreValidationArchive        RestoreValidationCode = "archive"
+	RestoreValidationZIPEntry       RestoreValidationCode = "zip_entry"
+	RestoreValidationZIPCRC         RestoreValidationCode = "zip_crc"
+	RestoreValidationManifestBOM    RestoreValidationCode = "manifest_bom"
+	RestoreValidationManifestJSON   RestoreValidationCode = "manifest_json"
+	RestoreValidationManifestKey    RestoreValidationCode = "manifest_key"
+	RestoreValidationFormatVersion  RestoreValidationCode = "format_version"
+	RestoreValidationSchemaVersion  RestoreValidationCode = "schema_version"
+	RestoreValidationDeclaredSize   RestoreValidationCode = "declared_size"
+	RestoreValidationFreeSpace      RestoreValidationCode = "free_space"
+	RestoreValidationDatabaseSHA    RestoreValidationCode = "database_sha256"
+	RestoreValidationIntegrity      RestoreValidationCode = "integrity"
+	RestoreValidationRequiredSchema RestoreValidationCode = "required_schema"
+	RestoreValidationEnum           RestoreValidationCode = "enum"
+	RestoreValidationDatetime       RestoreValidationCode = "datetime"
+	RestoreValidationForeignKey     RestoreValidationCode = "foreign_key"
+	RestoreValidationInterval       RestoreValidationCode = "interval_overlap"
+	RestoreValidationSecret         RestoreValidationCode = "secret"
+	RestoreValidationRecalculation  RestoreValidationCode = "recalculation"
+	RestoreValidationComparison     RestoreValidationCode = "logical_comparison"
+)
+
+type RestoreValidationError struct {
+	Code RestoreValidationCode
+	Err  error
+}
+
+func (e *RestoreValidationError) Error() string {
+	if e == nil || e.Err == nil {
+		return "restore validation failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *RestoreValidationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+type RestoreValidationResult struct {
+	OperationID       string
+	ArtifactSHA256    string
+	FormatVersion     int
+	SchemaVersion     int64
+	ArtifactCreatedAt time.Time
+}
+
+type RestoreTrialStatus string
+
+const (
+	RestoreTrialNotRun  RestoreTrialStatus = "not_run"
+	RestoreTrialRunning RestoreTrialStatus = "running"
+	RestoreTrialPassed  RestoreTrialStatus = "passed"
+	RestoreTrialFailed  RestoreTrialStatus = "failed"
+)
+
+type RestoreTrialState struct {
+	Status         RestoreTrialStatus
+	ArtifactSHA256 string
+	TestedAt       time.Time
+	FailureCode    RestoreValidationCode
+	Warning        string
+}
+
 func (m BackupManifest) Validate() error {
 	if m.FormatVersion != BackupFormatVersion {
 		return fmt.Errorf("unsupported backup format version %d", m.FormatVersion)
