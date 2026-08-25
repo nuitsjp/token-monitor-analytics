@@ -8,7 +8,10 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	credentialadapter "token-monitor-analytics/internal/adapter/credential"
+	"token-monitor-analytics/internal/adapter/hubapi"
+	collectionscheduler "token-monitor-analytics/internal/adapter/scheduler"
 	"token-monitor-analytics/internal/desktop"
+	"token-monitor-analytics/internal/usecase"
 )
 
 func main() {
@@ -28,11 +31,39 @@ func run() (runErr error) {
 
 	windowService, windowController := desktop.NewWindowService(storage.lifecycle)
 	settingsService := desktop.NewSettingsService(storage.lifecycle)
-	hubService := desktop.NewHubService(storage.lifecycle, credentialadapter.Manager{})
+	credentials := credentialadapter.Manager{}
+	hubService := desktop.NewHubService(storage.lifecycle, credentials)
 	auditService := desktop.NewAuditService(storage.lifecycle)
 	catalogService, err := desktop.NewCatalogService(storage.lifecycle)
 	if err != nil {
 		return fmt.Errorf("start catalog service: %w", err)
+	}
+	collector, err := usecase.NewCollectionUsecase(
+		storage.lifecycle,
+		credentials,
+		func(rawURL string, allowlist hubapi.Allowlist) (usecase.CollectionClient, error) {
+			return hubapi.NewClient(rawURL, allowlist)
+		},
+		usecase.SystemClock{},
+		desktop.UUIDGenerator{},
+		hubapi.DefaultAllowlist,
+	)
+	if err != nil {
+		return fmt.Errorf("start collection usecase: %w", err)
+	}
+	collectionScheduler, err := collectionscheduler.New(collector, storage.lifecycle)
+	if err != nil {
+		return fmt.Errorf("start collection scheduler: %w", err)
+	}
+	if err := collectionScheduler.Restore(context.Background()); err != nil {
+		return fmt.Errorf("restore collection scheduler: %w", err)
+	}
+	defer func() {
+		runErr = errors.Join(runErr, collectionScheduler.Close())
+	}()
+	collectionService, err := desktop.NewCollectionService(storage.lifecycle, collectionScheduler)
+	if err != nil {
+		return fmt.Errorf("start collection service: %w", err)
 	}
 	app := application.New(application.Options{
 		Name:        "Token Monitor Analytics",
@@ -46,6 +77,7 @@ func run() (runErr error) {
 			application.NewService(hubService),
 			application.NewService(auditService),
 			application.NewService(catalogService),
+			application.NewService(collectionService),
 		},
 	})
 	windowController.Attach(app)

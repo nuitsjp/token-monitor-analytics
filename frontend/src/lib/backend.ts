@@ -2,6 +2,7 @@ import { Events } from "@wailsio/runtime";
 import {
   AuditService,
   CatalogService,
+  CollectionService,
   HubService,
   SettingsService,
   WindowService,
@@ -10,6 +11,8 @@ import type {
   AuditFilterInput,
   AuditPage,
   AuditRecord,
+  CollectionAttemptSnapshot,
+  CostObservationSnapshot,
   CandidateCorrectionInput,
   CandidateDecisionInput,
   CandidateSplitInput,
@@ -17,11 +20,14 @@ import type {
   CreateHubInput,
   CreateServiceInput,
   HubSnapshot,
+  LimitObservationSnapshot,
   LabelChangeDecisionInput,
   LimitDefinitionInput,
   PlanInput,
   PlanLimitRuleInput,
   PlanVersionInput,
+  RawSnapshotDetail,
+  RawSnapshotSnapshot,
   ServiceIdentifierMappingInput,
   ServiceSnapshot,
   StandardPriceInput,
@@ -35,6 +41,8 @@ export type {
   AuditFilterInput,
   AuditPage,
   AuditRecord,
+  CollectionAttemptSnapshot,
+  CostObservationSnapshot,
   CandidateCorrectionInput,
   CandidateDecisionInput,
   CandidateSplitInput,
@@ -44,9 +52,12 @@ export type {
   LabelChangeCandidateSnapshot,
   LabelChangeDecisionInput,
   LimitDefinitionInput,
+  LimitObservationSnapshot,
   PlanInput,
   PlanLimitRuleInput,
   PlanVersionInput,
+  RawSnapshotDetail,
+  RawSnapshotSnapshot,
   ServiceIdentifierMappingInput,
   ServiceSnapshot,
   StandardPriceInput,
@@ -91,9 +102,18 @@ export interface FrontendAdapter {
     hubID: string,
     enabled: boolean,
   ): Promise<HubSnapshot>;
+  setHubEnabled(hubID: string, enabled: boolean): Promise<HubSnapshot>;
   saveCredential(hubID: string, secret: string): Promise<HubSnapshot>;
   deleteCredential(hubID: string): Promise<HubSnapshot>;
   checkHubConnection(hubID: string): Promise<HubSnapshot>;
+  startCollection(hubID: string): Promise<void>;
+  stopCollection(hubID: string): Promise<void>;
+  collectNow(hubID: string): Promise<void>;
+  getCollectionAttempts(hubID: string): Promise<CollectionAttemptSnapshot[]>;
+  getRawSnapshots(hubID: string): Promise<RawSnapshotSnapshot[]>;
+  getRawSnapshot(snapshotID: string): Promise<RawSnapshotDetail>;
+  getCostObservations(hubID: string): Promise<CostObservationSnapshot[]>;
+  getLimitObservations(hubID: string): Promise<LimitObservationSnapshot[]>;
   getAudits(filter: AuditFilterInput): Promise<AuditPage>;
   getCatalog(): Promise<CatalogSnapshot>;
   createService(input: CreateServiceInput): Promise<ServiceSnapshot>;
@@ -177,6 +197,10 @@ export interface FakeBackendOptions {
   onConfirmCloseMain?: () => void;
   onConfirmQuit?: () => void;
   hubs?: HubSnapshot[];
+  collectionAttempts?: CollectionAttemptSnapshot[];
+  rawSnapshots?: RawSnapshotDetail[];
+  costObservations?: CostObservationSnapshot[];
+  limitObservations?: LimitObservationSnapshot[];
   audits?: AuditRecord[];
   catalog?: Partial<CatalogSnapshot>;
 }
@@ -195,6 +219,10 @@ export function createFakeBackend(
   );
   const listeners = new Map<FrontendEventName, Set<(data: unknown) => void>>();
   let hubs = [...(options.hubs ?? [])];
+  const collectionAttempts = [...(options.collectionAttempts ?? [])];
+  const rawSnapshots = [...(options.rawSnapshots ?? [])];
+  const costObservations = [...(options.costObservations ?? [])];
+  const limitObservations = [...(options.limitObservations ?? [])];
   const audits = [...(options.audits ?? [])];
   let catalog = {
     services: options.catalog?.services ?? [],
@@ -225,6 +253,7 @@ export function createFakeBackend(
         id: `fake-${hubs.length + 1}`,
         displayName: input.displayName,
         url: input.url,
+        enabled: true,
         collectionEnabled: input.collectionEnabled,
         collectionIntervalSeconds: input.collectionIntervalSeconds,
         apiContract: "",
@@ -255,6 +284,18 @@ export function createFakeBackend(
       );
       return hubs.find((hub) => hub.id === hubID)!;
     },
+    setHubEnabled: async (hubID, enabled) => {
+      hubs = hubs.map((hub) =>
+        hub.id === hubID
+          ? {
+              ...hub,
+              enabled,
+              collectionEnabled: enabled ? hub.collectionEnabled : false,
+            }
+          : hub,
+      );
+      return hubs.find((hub) => hub.id === hubID)!;
+    },
     saveCredential: async (hubID) => {
       hubs = hubs.map((hub) =>
         hub.id === hubID
@@ -277,6 +318,43 @@ export function createFakeBackend(
       );
       return hubs.find((hub) => hub.id === hubID)!;
     },
+    startCollection: async (hubID) => {
+      hubs = hubs.map((hub) =>
+        hub.id === hubID ? { ...hub, collectionEnabled: true } : hub,
+      );
+    },
+    stopCollection: async (hubID) => {
+      hubs = hubs.map((hub) =>
+        hub.id === hubID ? { ...hub, collectionEnabled: false } : hub,
+      );
+    },
+    collectNow: async () => undefined,
+    getCollectionAttempts: async (hubID) =>
+      collectionAttempts.filter((item) => item.hubId === hubID),
+    getRawSnapshots: async (hubID) =>
+      rawSnapshots
+        .filter((item) => item.hubId === hubID)
+        .map((item) => ({
+          snapshotId: item.snapshotId,
+          attemptId: item.attemptId,
+          hubId: item.hubId,
+          responseKind: item.responseKind,
+          receivedStartedAt: item.receivedStartedAt,
+          receivedCompletedAt: item.receivedCompletedAt,
+          httpStatus: item.httpStatus,
+          apiContract: item.apiContract,
+        })),
+    getRawSnapshot: async (snapshotID) => {
+      const item = rawSnapshots.find(
+        (snapshot) => snapshot.snapshotId === snapshotID,
+      );
+      if (!item) throw new Error("raw snapshot was not found");
+      return item;
+    },
+    getCostObservations: async (hubID) =>
+      costObservations.filter((item) => item.hubId === hubID),
+    getLimitObservations: async (hubID) =>
+      limitObservations.filter((item) => item.hubId === hubID),
     getAudits: async (filter) => {
       const filtered = audits.filter(
         (audit) =>
@@ -649,11 +727,36 @@ export function createProductionBackend(
     updateHub: (input) => asPromise(HubService.UpdateHub(input)),
     setHubCollectionEnabled: (hubID, enabled) =>
       asPromise(HubService.SetHubCollectionEnabled(hubID, enabled)),
+    setHubEnabled: (hubID, enabled) =>
+      asPromise(HubService.SetHubEnabled(hubID, enabled)),
     saveCredential: (hubID, secret) =>
       asPromise(HubService.SaveCredential(hubID, secret)),
     deleteCredential: (hubID) => asPromise(HubService.DeleteCredential(hubID)),
     checkHubConnection: (hubID) =>
       asPromise(HubService.CheckHubConnection(hubID)),
+    startCollection: (hubID) =>
+      asPromise(CollectionService.StartCollection(hubID)),
+    stopCollection: (hubID) =>
+      asPromise(CollectionService.StopCollection(hubID)),
+    collectNow: (hubID) => asPromise(CollectionService.CollectNow(hubID)),
+    getCollectionAttempts: (hubID) =>
+      asPromise(CollectionService.GetCollectionAttempts(hubID)).then(
+        (value) => value ?? [],
+      ),
+    getRawSnapshots: (hubID) =>
+      asPromise(CollectionService.GetRawSnapshots(hubID)).then(
+        (value) => value ?? [],
+      ),
+    getRawSnapshot: (snapshotID) =>
+      asPromise(CollectionService.GetRawSnapshot(snapshotID)),
+    getCostObservations: (hubID) =>
+      asPromise(CollectionService.GetCostObservations(hubID)).then(
+        (value) => value ?? [],
+      ),
+    getLimitObservations: (hubID) =>
+      asPromise(CollectionService.GetLimitObservations(hubID)).then(
+        (value) => value ?? [],
+      ),
     getAudits: (filter) => asPromise(AuditService.GetAudits(filter)),
     getCatalog: () => asPromise(CatalogService.GetCatalog()),
     createService: (input) => asPromise(CatalogService.CreateService(input)),

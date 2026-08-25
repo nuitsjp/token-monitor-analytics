@@ -1,7 +1,6 @@
 import {
   Body1,
   Button,
-  Checkbox,
   Field,
   Input,
   MessageBar,
@@ -14,6 +13,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type {
+  CollectionAttemptSnapshot,
   CreateHubInput,
   HubSnapshot,
   UpdateHubInput,
@@ -56,7 +56,6 @@ type FormValues = {
   displayName: string;
   url: string;
   collectionIntervalSeconds: number;
-  collectionEnabled: boolean;
   secret: string;
 };
 export function HubsPage({
@@ -74,6 +73,8 @@ export function HubsPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [historyHubID, setHistoryHubID] = useState("");
+  const [attempts, setAttempts] = useState<CollectionAttemptSnapshot[]>([]);
   const {
     register,
     handleSubmit,
@@ -84,7 +85,6 @@ export function HubsPage({
       displayName: "",
       url: "",
       collectionIntervalSeconds: 300,
-      collectionEnabled: true,
       secret: "",
     },
   });
@@ -118,7 +118,6 @@ export function HubsPage({
       displayName: "",
       url: "",
       collectionIntervalSeconds: 300,
-      collectionEnabled: true,
       secret: "",
     });
   };
@@ -128,7 +127,6 @@ export function HubsPage({
       displayName: hub.displayName,
       url: hub.url,
       collectionIntervalSeconds: hub.collectionIntervalSeconds,
-      collectionEnabled: hub.collectionEnabled,
       secret: "",
     });
   };
@@ -145,15 +143,14 @@ export function HubsPage({
           collectionIntervalSeconds: values.collectionIntervalSeconds,
         };
         saved = await backend.updateHub(input);
-        if (values.collectionEnabled !== editing.collectionEnabled)
-          saved = await backend.setHubCollectionEnabled(
-            saved.id,
-            values.collectionEnabled,
-          );
         if (values.secret)
           saved = await backend.saveCredential(saved.id, values.secret);
       } else {
-        const input: CreateHubInput = { ...values, secret: values.secret };
+        const input: CreateHubInput = {
+          ...values,
+          collectionEnabled: false,
+          secret: values.secret,
+        };
         saved = await backend.createHub(input);
       }
       setHubs((current) =>
@@ -176,10 +173,48 @@ export function HubsPage({
     )
       return;
     try {
-      const saved = await backend.setHubCollectionEnabled(hub.id, false);
+      if (hub.collectionEnabled) await backend.stopCollection(hub.id);
+      const saved = await backend.setHubEnabled(hub.id, false);
       setHubs((current) =>
         current.map((item) => (item.id === saved.id ? saved : item)),
       );
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  const enable = async (hub: HubSnapshot) => {
+    try {
+      const saved = await backend.setHubEnabled(hub.id, true);
+      setHubs((current) =>
+        current.map((item) => (item.id === saved.id ? saved : item)),
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  const changeCollection = async (hub: HubSnapshot, enabled: boolean) => {
+    try {
+      if (enabled) await backend.startCollection(hub.id);
+      else await backend.stopCollection(hub.id);
+      await refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  const collectNow = async (hub: HubSnapshot) => {
+    try {
+      await backend.collectNow(hub.id);
+      await refresh();
+      if (historyHubID === hub.id)
+        setAttempts(await backend.getCollectionAttempts(hub.id));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  const showHistory = async (hub: HubSnapshot) => {
+    try {
+      setHistoryHubID(hub.id);
+      setAttempts(await backend.getCollectionAttempts(hub.id));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -256,7 +291,6 @@ export function HubsPage({
               })}
             />
           </Field>
-          <Checkbox label="有効" {...register("collectionEnabled")} />
           <Field
             label="共有秘密（保存済みは再表示しません）"
             hint="更新する場合だけ入力してください"
@@ -295,7 +329,8 @@ export function HubsPage({
               <div className={styles.meta}>識別子: {hub.id}</div>
               <div>{hub.url}</div>
               <div>
-                状態: {hub.collectionEnabled ? "有効" : "無効"} / 資格情報:{" "}
+                Hub: {hub.enabled ? "有効" : "無効"} / 定期収集:{" "}
+                {hub.collectionEnabled ? "実行中" : "停止"} / 資格情報:{" "}
                 {presentStatus(hub.credentialState).label} / 接続:{" "}
                 {presentStatus(hub.connectionState).label}
               </div>
@@ -306,30 +341,37 @@ export function HubsPage({
                 <Button onClick={() => beginEdit(hub)}>編集</Button>
                 <Button
                   onClick={() => void checkConnection(hub)}
-                  disabled={!hub.collectionEnabled || !hub.credentialReady}
+                  disabled={!hub.enabled || !hub.credentialReady}
                 >
                   接続確認
                 </Button>
-                {hub.collectionEnabled ? (
+                {hub.enabled ? (
                   <Button onClick={() => void disable(hub)}>無効化</Button>
                 ) : (
+                  <Button onClick={() => void enable(hub)}>再有効化</Button>
+                )}
+                {hub.collectionEnabled ? (
                   <Button
-                    onClick={() =>
-                      void backend
-                        .setHubCollectionEnabled(hub.id, true)
-                        .then((saved) =>
-                          setHubs((current) =>
-                            current.map((item) =>
-                              item.id === saved.id ? saved : item,
-                            ),
-                          ),
-                        )
-                        .catch((err) => setError(errorMessage(err)))
-                    }
+                    disabled={!hub.enabled}
+                    onClick={() => void changeCollection(hub, false)}
                   >
-                    再有効化
+                    定期収集を停止
+                  </Button>
+                ) : (
+                  <Button
+                    disabled={!hub.enabled || !hub.credentialReady}
+                    onClick={() => void changeCollection(hub, true)}
+                  >
+                    定期収集を開始
                   </Button>
                 )}
+                <Button
+                  disabled={!hub.enabled || !hub.credentialReady}
+                  onClick={() => void collectNow(hub)}
+                >
+                  今すぐ取得
+                </Button>
+                <Button onClick={() => void showHistory(hub)}>取得履歴</Button>
                 <Button
                   onClick={() => void deleteSecret(hub)}
                   disabled={hub.credentialState === "unregistered"}
@@ -337,6 +379,21 @@ export function HubsPage({
                   共有秘密を削除
                 </Button>
               </div>
+              {historyHubID === hub.id && (
+                <div className={styles.list} aria-label="取得履歴">
+                  {attempts.length === 0 ? (
+                    <Body1>取得履歴はありません。</Body1>
+                  ) : (
+                    attempts.map((attempt) => (
+                      <div className={styles.meta} key={attempt.attemptId}>
+                        {attempt.startedAt} / {attempt.trigger} /{" "}
+                        {attempt.state}
+                        {attempt.failureCode ? ` / ${attempt.failureCode}` : ""}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </article>
           ))}
         </div>

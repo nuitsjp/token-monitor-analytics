@@ -28,6 +28,7 @@ import { SettingsPage } from "../../pages/settings/SettingsPage";
 import { HubsPage } from "../../pages/hubs/HubsPage";
 import { AuditPage } from "../../pages/audit/AuditPage";
 import { CatalogPage } from "../../pages/catalog/CatalogPage";
+import { EvidencePage } from "../../pages/evidence/EvidencePage";
 import { useSettings } from "../../app/providers";
 
 const useStyles = makeStyles({
@@ -104,6 +105,12 @@ function MainRoutes({
         element={<HubsPage backend={backend} onDirtyChange={setDirty} />}
       />
       <Route
+        path="/evidence"
+        element={
+          <EvidencePage backend={backend} displayTimeZone={displayTimeZone} />
+        }
+      />
+      <Route
         path="/audit"
         element={
           <AuditPage backend={backend} displayTimeZone={displayTimeZone} />
@@ -155,6 +162,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <Cloud16Regular aria-hidden="true" />
             <span>Hub・収集</span>
+          </NavLink>
+          <NavLink
+            to="/evidence"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/evidence");
+              }
+            }}
+          >
+            <span aria-hidden="true">◎</span>
+            <span>観測と根拠</span>
           </NavLink>
           <NavLink
             to="/catalog"

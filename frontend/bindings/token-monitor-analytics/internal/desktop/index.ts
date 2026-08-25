@@ -3,12 +3,14 @@
 
 import * as AuditService from "./auditservice.js";
 import * as CatalogService from "./catalogservice.js";
+import * as CollectionService from "./collectionservice.js";
 import * as HubService from "./hubservice.js";
 import * as SettingsService from "./settingsservice.js";
 import * as WindowService from "./windowservice.js";
 export {
     AuditService,
     CatalogService,
+    CollectionService,
     HubService,
     SettingsService,
     WindowService
@@ -23,6 +25,8 @@ export type {
     CandidateObservationSnapshot,
     CandidateSplitInput,
     CatalogSnapshot,
+    CollectionAttemptSnapshot,
+    CostObservationSnapshot,
     CreateHubInput,
     CreateServiceInput,
     HubSnapshot,
@@ -32,12 +36,15 @@ export type {
     LabelChangeWindowSnapshot,
     LimitDefinitionInput,
     LimitDefinitionSnapshot,
+    LimitObservationSnapshot,
     PlanInput,
     PlanLimitRuleInput,
     PlanLimitRuleSnapshot,
     PlanSnapshot,
     PlanVersionInput,
     PlanVersionSnapshot,
+    RawSnapshotDetail,
+    RawSnapshotSnapshot,
     SaveSettingsInput,
     ServiceIdentifierMappingInput,
     ServiceIdentifierMappingSnapshot,

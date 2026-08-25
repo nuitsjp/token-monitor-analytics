@@ -37,6 +37,10 @@ export function SetHubCollectionEnabled(hubID: string, enabled: boolean): $Cance
     return $Call.ByID(3831218191, hubID, enabled);
 }
 
+export function SetHubEnabled(hubID: string, enabled: boolean): $CancellablePromise<$models.HubSnapshot> {
+    return $Call.ByID(3354054623, hubID, enabled);
+}
+
 export function UpdateHub(input: $models.UpdateHubInput): $CancellablePromise<$models.HubSnapshot> {
     return $Call.ByID(3150729307, input);
 }

@@ -67,6 +67,45 @@ export interface CatalogSnapshot {
     "labelChangeCandidates": LabelChangeCandidateSnapshot[] | null;
 }
 
+export interface CollectionAttemptSnapshot {
+    "attemptId": string;
+    "hubId": string;
+    "trigger": string;
+    "state": string;
+    "startedAt": string;
+    "completedAt": string;
+    "analyticsIntervalSeconds": number;
+    "healthHttpStatus"?: number | null;
+    "statsHttpStatus"?: number | null;
+    "apiContract": string;
+    "healthSnapshotId": string;
+    "statsSnapshotId": string;
+    "failureCode": string;
+    "failureDetail": string;
+    "normalizationErrorPath": string;
+}
+
+export interface CostObservationSnapshot {
+    "observationId": string;
+    "snapshotId": string;
+    "hubId": string;
+    "deviceId": string;
+    "rawServiceIdentifier": string;
+    "usageUpdatedAt": string;
+    "costUsdText": string;
+    "syncUploadIntervalMs"?: number | null;
+    "analyticsIntervalSeconds": number;
+    "sourceTimezone": string;
+    "sourceLocalDate": string;
+    "normalizationGeneration": number;
+    "normalizationRuleVersion": string;
+    "normalizationLogicVersion": string;
+    "jsonPath": string;
+    "dedupeState": string;
+    "dedupeKey": string;
+    "valueFingerprint": string;
+}
+
 export interface CreateHubInput {
     "displayName": string;
     "url": string;
@@ -85,6 +124,7 @@ export interface HubSnapshot {
     "id": string;
     "displayName": string;
     "url": string;
+    "enabled": boolean;
     "collectionEnabled": boolean;
     "collectionIntervalSeconds": number;
     "apiContract": string;
@@ -163,6 +203,37 @@ export interface LimitDefinitionSnapshot {
     "updatedAt": string;
 }
 
+export interface LimitObservationSnapshot {
+    "observationId": string;
+    "snapshotId": string;
+    "hubId": string;
+    "deviceId": string;
+    "rawServiceIdentifier": string;
+    "accountKey": string;
+    "providerUpdatedAt": string;
+    "windowKey": string;
+    "normalizedKind": string;
+    "normalizedMetric": string;
+    "normalizedLabel": string;
+    "planLabel": string;
+    "usedPercent"?: number | null;
+    "remainingPercent"?: number | null;
+    "resetsAt": string;
+    "syncUploadIntervalMs"?: number | null;
+    "limitsRefreshMs"?: number | null;
+    "analyticsIntervalSeconds": number;
+    "sourceTimezone": string;
+    "sourceLocalDate": string;
+    "normalizationGeneration": number;
+    "normalizationRuleVersion": string;
+    "normalizationLogicVersion": string;
+    "jsonPath": string;
+    "dedupeState": string;
+    "dedupeKey": string;
+    "valueFingerprint": string;
+    "windowKeyConflict": boolean;
+}
+
 export interface PlanInput {
     "id": string;
     "serviceId": string;
@@ -216,6 +287,33 @@ export interface PlanVersionSnapshot {
     "validTo": string;
     "officialSourceUrl": string;
     "createdAt": string;
+}
+
+export interface RawSnapshotDetail {
+    "snapshotId": string;
+    "attemptId": string;
+    "hubId": string;
+    "responseKind": string;
+    "receivedStartedAt": string;
+    "receivedCompletedAt": string;
+    "httpStatus": number;
+    "apiContract": string;
+
+    /**
+     * Body is the redacted display text, never the persisted raw bytes.
+     */
+    "body": string;
+}
+
+export interface RawSnapshotSnapshot {
+    "snapshotId": string;
+    "attemptId": string;
+    "hubId": string;
+    "responseKind": string;
+    "receivedStartedAt": string;
+    "receivedCompletedAt": string;
+    "httpStatus": number;
+    "apiContract": string;
 }
 
 export interface SaveSettingsInput {

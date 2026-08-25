@@ -284,7 +284,7 @@ func (l *Lifecycle) ListCollectionAttempts(ctx context.Context, hubID string) ([
 	}
 	rows, err := database.QueryContext(ctx, `SELECT attempt_id, hub_id, trigger, state, started_at, completed_at,
 		analytics_interval_seconds, health_http_status, stats_http_status, api_contract, health_snapshot_id, stats_snapshot_id,
-		failure_code, failure_detail, normalization_error_path FROM collection_attempts WHERE hub_id = ? ORDER BY started_at, attempt_id`, hubID)
+		failure_code, failure_detail, normalization_error_path FROM collection_attempts WHERE hub_id = ? ORDER BY started_at DESC, attempt_id DESC`, hubID)
 	if err != nil {
 		return nil, fmt.Errorf("list collection attempts: %w", err)
 	}
@@ -319,7 +319,7 @@ func (l *Lifecycle) ListRawSnapshots(ctx context.Context, hubID string) ([]RawSn
 	}
 	rows, err := database.QueryContext(ctx, `SELECT snapshot_id, attempt_id, hub_id, response_kind,
 		received_started_at, received_completed_at, http_status, api_contract, body
-		FROM raw_snapshots WHERE hub_id = ? ORDER BY received_started_at, snapshot_id`, hubID)
+		FROM raw_snapshots WHERE hub_id = ? ORDER BY received_completed_at DESC, snapshot_id DESC`, hubID)
 	if err != nil {
 		return nil, fmt.Errorf("list raw snapshots: %w", err)
 	}
@@ -346,7 +346,7 @@ func (l *Lifecycle) ListCostObservations(ctx context.Context, hubID string) ([]C
 	rows, err := database.QueryContext(ctx, `SELECT observation_id, snapshot_id, hub_id, device_id, raw_service_identifier,
 		usage_updated_at, cost_usd_text, sync_upload_interval_ms, analytics_interval_seconds, source_timezone, source_local_date,
 		normalization_generation, normalization_rule_version, normalization_logic_version, json_path, dedupe_state, dedupe_key
-		FROM usage_cost_observations WHERE hub_id = ? ORDER BY usage_updated_at, observation_id`, hubID)
+		FROM usage_cost_observations WHERE hub_id = ? ORDER BY usage_updated_at DESC, observation_id DESC`, hubID)
 	if err != nil {
 		return nil, fmt.Errorf("list cost observations: %w", err)
 	}
@@ -386,7 +386,7 @@ func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) ([]
 		used_percent, resets_at, sync_upload_interval_ms, limits_refresh_ms, analytics_interval_seconds,
 		source_timezone, source_local_date, normalization_generation, normalization_rule_version, normalization_logic_version,
 		json_path, dedupe_state, dedupe_key, value_fingerprint
-		FROM usage_limit_observations WHERE hub_id = ? ORDER BY provider_updated_at, observation_id`, hubID)
+		FROM usage_limit_observations WHERE hub_id = ? ORDER BY provider_updated_at DESC, observation_id DESC`, hubID)
 	if err != nil {
 		return nil, fmt.Errorf("list limit observations: %w", err)
 	}

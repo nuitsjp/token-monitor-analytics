@@ -24,6 +24,7 @@ const hub = (overrides: Partial<HubSnapshot> = {}): HubSnapshot => ({
   id: "hub-1",
   displayName: "既存 Hub",
   url: "https://hub.example.test",
+  enabled: true,
   collectionEnabled: true,
   collectionIntervalSeconds: 300,
   apiContract: "",
@@ -158,10 +159,8 @@ describe("HubsPage", () => {
 
   it("confirms before disabling a hub and shows the disabled state", async () => {
     const backend = createFakeBackend({ hubs: [hub({ id: "hub-disable" })] });
-    const setHubCollectionEnabled = vi.spyOn(
-      backend,
-      "setHubCollectionEnabled",
-    );
+    const stopCollection = vi.spyOn(backend, "stopCollection");
+    const setHubEnabled = vi.spyOn(backend, "setHubEnabled");
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     renderPage(backend);
@@ -172,12 +171,26 @@ describe("HubsPage", () => {
       "この Hub を無効にしますか？保存済みの履歴は残ります。",
     );
     await waitFor(() =>
-      expect(setHubCollectionEnabled).toHaveBeenCalledWith(
-        "hub-disable",
-        false,
-      ),
+      expect(stopCollection).toHaveBeenCalledWith("hub-disable"),
     );
-    expect(await screen.findByText(/状態: 無効/)).toBeVisible();
+    expect(setHubEnabled).toHaveBeenCalledWith("hub-disable", false);
+    expect(await screen.findByText(/Hub: 無効/)).toBeVisible();
+  });
+
+  it("allows manual collection while periodic collection is stopped", async () => {
+    const backend = createFakeBackend({
+      hubs: [hub({ collectionEnabled: false })],
+    });
+    const collectNow = vi.spyOn(backend, "collectNow");
+    const user = userEvent.setup();
+    renderPage(backend);
+
+    await user.click(await screen.findByRole("button", { name: "今すぐ取得" }));
+
+    expect(collectNow).toHaveBeenCalledWith("hub-1");
+    expect(
+      screen.getByRole("button", { name: "定期収集を開始" }),
+    ).toBeEnabled();
   });
 
   it("displays a backend error when saving fails", async () => {
