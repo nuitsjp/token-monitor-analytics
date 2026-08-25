@@ -1,5 +1,6 @@
 import { Events } from "@wailsio/runtime";
 import {
+  AccountService,
   AuditService,
   CatalogService,
   CollectionService,
@@ -8,6 +9,7 @@ import {
   WindowService,
 } from "../../bindings/token-monitor-analytics/internal/desktop/index.js";
 import type {
+  AccountSnapshot,
   AuditFilterInput,
   AuditPage,
   AuditRecord,
@@ -18,6 +20,9 @@ import type {
   CandidateSplitInput,
   CatalogSnapshot,
   CreateHubInput,
+  CreateLogicalAccountFromCandidateInput,
+  CreateLogicalAccountInput,
+  CreatePlanHistoryInput,
   CreateServiceInput,
   HubSnapshot,
   LimitObservationSnapshot,
@@ -30,14 +35,18 @@ import type {
   RawSnapshotSnapshot,
   ServiceIdentifierMappingInput,
   ServiceSnapshot,
+  SplitLogicalAccountInput,
   StandardPriceInput,
   UpdateHubInput,
+  UpdateLogicalAccountInput,
+  UpdatePlanHistoryInput,
   UpdateServiceInput,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type ThemePreference = "light" | "dark" | "system";
 
 export type {
+  AccountSnapshot,
   AuditFilterInput,
   AuditPage,
   AuditRecord,
@@ -48,6 +57,10 @@ export type {
   CandidateSplitInput,
   CatalogSnapshot,
   CreateServiceInput,
+  CreateLogicalAccountFromCandidateInput,
+  CreateLogicalAccountInput,
+  CreatePlanHistoryInput,
+  HubSnapshot,
   IdentificationCandidateSnapshot,
   LabelChangeCandidateSnapshot,
   LabelChangeDecisionInput,
@@ -60,8 +73,17 @@ export type {
   RawSnapshotSnapshot,
   ServiceIdentifierMappingInput,
   ServiceSnapshot,
+  SplitLogicalAccountInput,
   StandardPriceInput,
+  UpdateLogicalAccountInput,
+  UpdatePlanHistoryInput,
   UpdateServiceInput,
+} from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
+
+export type {
+  LogicalAccountSnapshot,
+  PlanHistorySnapshot,
+  PlanVersionSnapshot,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export interface SettingsSnapshot {
@@ -116,6 +138,41 @@ export interface FrontendAdapter {
   getLimitObservations(hubID: string): Promise<LimitObservationSnapshot[]>;
   getAudits(filter: AuditFilterInput): Promise<AuditPage>;
   getCatalog(): Promise<CatalogSnapshot>;
+  getAccounts(): Promise<AccountSnapshot>;
+  getHubAccountCandidates(
+    serviceID: string,
+    state: string,
+  ): Promise<NonNullable<AccountSnapshot["hubAccountCandidates"]>>;
+  getLogicalAccounts(
+    serviceID: string,
+    includeArchived: boolean,
+  ): Promise<NonNullable<AccountSnapshot["logicalAccounts"]>>;
+  getPlanHistories(
+    logicalAccountID: string,
+  ): Promise<NonNullable<AccountSnapshot["planHistories"]>>;
+  createLogicalAccount(
+    input: CreateLogicalAccountInput,
+  ): Promise<NonNullable<AccountSnapshot["logicalAccounts"]>[number]>;
+  updateLogicalAccount(input: UpdateLogicalAccountInput): Promise<void>;
+  archiveLogicalAccount(accountID: string): Promise<void>;
+  restoreLogicalAccount(accountID: string): Promise<void>;
+  createLogicalAccountFromCandidate(
+    input: CreateLogicalAccountFromCandidateInput,
+  ): Promise<NonNullable<AccountSnapshot["logicalAccounts"]>[number]>;
+  associateHubAccountCandidate(
+    candidateID: string,
+    logicalAccountID: string,
+  ): Promise<void>;
+  rejectHubAccountCandidate(candidateID: string): Promise<void>;
+  releaseHubAccountCandidate(candidateID: string): Promise<void>;
+  splitLogicalAccount(
+    input: SplitLogicalAccountInput,
+  ): Promise<NonNullable<AccountSnapshot["logicalAccounts"]>[number]>;
+  mergeLogicalAccounts(sourceID: string, targetID: string): Promise<void>;
+  createPlanHistory(
+    input: CreatePlanHistoryInput,
+  ): Promise<NonNullable<AccountSnapshot["planHistories"]>[number]>;
+  updatePlanHistory(input: UpdatePlanHistoryInput): Promise<void>;
   createService(input: CreateServiceInput): Promise<ServiceSnapshot>;
   updateService(input: UpdateServiceInput): Promise<ServiceSnapshot>;
   archiveService(serviceID: string): Promise<void>;
@@ -203,6 +260,7 @@ export interface FakeBackendOptions {
   limitObservations?: LimitObservationSnapshot[];
   audits?: AuditRecord[];
   catalog?: Partial<CatalogSnapshot>;
+  accounts?: Partial<AccountSnapshot>;
 }
 
 export interface FakeFrontendAdapter extends FrontendAdapter {
@@ -234,6 +292,31 @@ export function createFakeBackend(
     standardPrices: options.catalog?.standardPrices ?? [],
     identificationCandidates: options.catalog?.identificationCandidates ?? [],
     labelChangeCandidates: options.catalog?.labelChangeCandidates ?? [],
+  };
+  let accounts: AccountSnapshot = {
+    hubAccountCandidates: options.accounts?.hubAccountCandidates ?? [],
+    logicalAccounts: options.accounts?.logicalAccounts ?? [],
+    planHistories: options.accounts?.planHistories ?? [],
+  };
+  const accountNow = () => new Date().toISOString();
+  const accountWithUpdatedAt = <T extends { updatedAt: string }>(
+    value: T,
+  ): T => ({ ...value, updatedAt: accountNow() });
+  const createFakeLogicalAccount = (input: CreateLogicalAccountInput) => {
+    const now = accountNow();
+    const account = {
+      id: `fake-account-${(accounts.logicalAccounts ?? []).length + 1}`,
+      serviceId: input.serviceId,
+      displayName: input.displayName,
+      archivedAt: "",
+      createdAt: now,
+      updatedAt: now,
+    };
+    accounts = {
+      ...accounts,
+      logicalAccounts: [...(accounts.logicalAccounts ?? []), account],
+    };
+    return account;
   };
   const backend: FakeFrontendAdapter = {
     canOpenMain: options.canOpenMain ?? false,
@@ -380,6 +463,192 @@ export function createFakeBackend(
       };
     },
     getCatalog: async () => catalog,
+    getAccounts: async () => accounts,
+    getHubAccountCandidates: async (serviceID, state) =>
+      (accounts.hubAccountCandidates ?? []).filter(
+        (item) =>
+          (!serviceID || item.serviceId === serviceID) &&
+          (!state || item.state === state),
+      ),
+    getLogicalAccounts: async (serviceID, includeArchived) =>
+      (accounts.logicalAccounts ?? []).filter(
+        (item) =>
+          (!serviceID || item.serviceId === serviceID) &&
+          (includeArchived || !item.archivedAt),
+      ),
+    getPlanHistories: async (logicalAccountID) =>
+      (accounts.planHistories ?? []).filter(
+        (item) =>
+          !logicalAccountID || item.logicalAccountId === logicalAccountID,
+      ),
+    createLogicalAccount: async (input) => createFakeLogicalAccount(input),
+    updateLogicalAccount: async (input) => {
+      const current = (accounts.logicalAccounts ?? []).find(
+        (item) => item.id === input.id,
+      );
+      if (!current) throw new Error("logical account was not found");
+      const account = accountWithUpdatedAt({
+        ...current,
+        serviceId: input.serviceId,
+        displayName: input.displayName,
+      });
+      accounts = {
+        ...accounts,
+        logicalAccounts: (accounts.logicalAccounts ?? []).map((item) =>
+          item.id === account.id ? account : item,
+        ),
+      };
+    },
+    archiveLogicalAccount: async (accountID) => {
+      accounts = {
+        ...accounts,
+        logicalAccounts: (accounts.logicalAccounts ?? []).map((item) =>
+          item.id === accountID
+            ? accountWithUpdatedAt({ ...item, archivedAt: accountNow() })
+            : item,
+        ),
+      };
+    },
+    restoreLogicalAccount: async (accountID) => {
+      accounts = {
+        ...accounts,
+        logicalAccounts: (accounts.logicalAccounts ?? []).map((item) =>
+          item.id === accountID
+            ? accountWithUpdatedAt({ ...item, archivedAt: "" })
+            : item,
+        ),
+      };
+    },
+    createLogicalAccountFromCandidate: async (input) => {
+      const account = createFakeLogicalAccount(input);
+      accounts = {
+        ...accounts,
+        hubAccountCandidates: (accounts.hubAccountCandidates ?? []).map(
+          (item) =>
+            item.id === input.candidateId
+              ? accountWithUpdatedAt({
+                  ...item,
+                  state: "associated",
+                  logicalAccountId: account.id,
+                })
+              : item,
+        ),
+      };
+      return account;
+    },
+    associateHubAccountCandidate: async (candidateID, logicalAccountID) => {
+      accounts = {
+        ...accounts,
+        hubAccountCandidates: (accounts.hubAccountCandidates ?? []).map(
+          (item) =>
+            item.id === candidateID
+              ? accountWithUpdatedAt({
+                  ...item,
+                  state: "associated",
+                  logicalAccountId: logicalAccountID,
+                })
+              : item,
+        ),
+      };
+    },
+    rejectHubAccountCandidate: async (candidateID) => {
+      accounts = {
+        ...accounts,
+        hubAccountCandidates: (accounts.hubAccountCandidates ?? []).map(
+          (item) =>
+            item.id === candidateID
+              ? accountWithUpdatedAt({
+                  ...item,
+                  state: "rejected",
+                  logicalAccountId: "",
+                })
+              : item,
+        ),
+      };
+    },
+    releaseHubAccountCandidate: async (candidateID) => {
+      accounts = {
+        ...accounts,
+        hubAccountCandidates: (accounts.hubAccountCandidates ?? []).map(
+          (item) =>
+            item.id === candidateID
+              ? accountWithUpdatedAt({
+                  ...item,
+                  state: "unconfirmed",
+                  logicalAccountId: "",
+                })
+              : item,
+        ),
+      };
+    },
+    splitLogicalAccount: async (input) => {
+      const account = createFakeLogicalAccount({
+        serviceId: input.serviceId,
+        displayName: input.displayName,
+      });
+      accounts = {
+        ...accounts,
+        hubAccountCandidates: (accounts.hubAccountCandidates ?? []).map(
+          (item) =>
+            input.candidateIds?.includes(item.id)
+              ? accountWithUpdatedAt({
+                  ...item,
+                  state: "associated",
+                  logicalAccountId: account.id,
+                })
+              : item,
+        ),
+      };
+      return account;
+    },
+    mergeLogicalAccounts: async (sourceID, targetID) => {
+      accounts = {
+        ...accounts,
+        logicalAccounts: (accounts.logicalAccounts ?? []).map((item) =>
+          item.id === sourceID
+            ? accountWithUpdatedAt({ ...item, archivedAt: accountNow() })
+            : item,
+        ),
+        hubAccountCandidates: (accounts.hubAccountCandidates ?? []).map(
+          (item) =>
+            item.logicalAccountId === sourceID
+              ? accountWithUpdatedAt({
+                  ...item,
+                  logicalAccountId: targetID,
+                  state: "associated",
+                })
+              : item,
+        ),
+      };
+    },
+    createPlanHistory: async (input) => {
+      const now = accountNow();
+      const history = {
+        id: `fake-history-${(accounts.planHistories ?? []).length + 1}`,
+        ...input,
+        createdAt: now,
+        updatedAt: now,
+      };
+      accounts = {
+        ...accounts,
+        planHistories: [...(accounts.planHistories ?? []), history],
+      };
+      return history;
+    },
+    updatePlanHistory: async (input) => {
+      const current = (accounts.planHistories ?? []).find(
+        (item) => item.id === input.id,
+      );
+      if (!current) throw new Error("plan history was not found");
+      accounts = {
+        ...accounts,
+        planHistories: (accounts.planHistories ?? []).map((item) =>
+          item.id === input.id
+            ? { ...current, ...input, updatedAt: accountNow() }
+            : item,
+        ),
+      };
+    },
     createService: async (input) => {
       const service: ServiceSnapshot = {
         id: `fake-service-${catalog.services.length + 1}`,
@@ -759,6 +1028,48 @@ export function createProductionBackend(
       ),
     getAudits: (filter) => asPromise(AuditService.GetAudits(filter)),
     getCatalog: () => asPromise(CatalogService.GetCatalog()),
+    getAccounts: () => asPromise(AccountService.GetAccounts()),
+    getHubAccountCandidates: (serviceID, state) =>
+      asPromise(AccountService.GetHubAccountCandidates(serviceID, state)).then(
+        (value) => value ?? [],
+      ),
+    getLogicalAccounts: (serviceID, includeArchived) =>
+      asPromise(
+        AccountService.GetLogicalAccounts(serviceID, includeArchived),
+      ).then((value) => value ?? []),
+    getPlanHistories: (logicalAccountID) =>
+      asPromise(AccountService.GetPlanHistories(logicalAccountID)).then(
+        (value) => value ?? [],
+      ),
+    createLogicalAccount: (input) =>
+      asPromise(AccountService.CreateLogicalAccount(input)),
+    updateLogicalAccount: (input) =>
+      asPromise(AccountService.UpdateLogicalAccount(input)),
+    archiveLogicalAccount: (accountID) =>
+      asPromise(AccountService.ArchiveLogicalAccount(accountID)),
+    restoreLogicalAccount: (accountID) =>
+      asPromise(AccountService.RestoreLogicalAccount(accountID)),
+    createLogicalAccountFromCandidate: (input) =>
+      asPromise(AccountService.CreateLogicalAccountFromCandidate(input)),
+    associateHubAccountCandidate: (candidateID, logicalAccountID) =>
+      asPromise(
+        AccountService.AssociateHubAccountCandidate(
+          candidateID,
+          logicalAccountID,
+        ),
+      ),
+    rejectHubAccountCandidate: (candidateID) =>
+      asPromise(AccountService.RejectHubAccountCandidate(candidateID)),
+    releaseHubAccountCandidate: (candidateID) =>
+      asPromise(AccountService.ReleaseHubAccountCandidate(candidateID)),
+    splitLogicalAccount: (input) =>
+      asPromise(AccountService.SplitLogicalAccount(input)),
+    mergeLogicalAccounts: (sourceID, targetID) =>
+      asPromise(AccountService.MergeLogicalAccounts(sourceID, targetID)),
+    createPlanHistory: (input) =>
+      asPromise(AccountService.CreatePlanHistory(input)),
+    updatePlanHistory: (input) =>
+      asPromise(AccountService.UpdatePlanHistory(input)),
     createService: (input) => asPromise(CatalogService.CreateService(input)),
     updateService: (input) => asPromise(CatalogService.UpdateService(input)),
     archiveService: (serviceID) =>

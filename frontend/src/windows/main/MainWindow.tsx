@@ -28,6 +28,7 @@ import { SettingsPage } from "../../pages/settings/SettingsPage";
 import { HubsPage } from "../../pages/hubs/HubsPage";
 import { AuditPage } from "../../pages/audit/AuditPage";
 import { CatalogPage } from "../../pages/catalog/CatalogPage";
+import { AccountsPage } from "../../pages/accounts/AccountsPage";
 import { EvidencePage } from "../../pages/evidence/EvidencePage";
 import { useSettings } from "../../app/providers";
 
@@ -120,6 +121,16 @@ function MainRoutes({
         path="/catalog"
         element={<CatalogPage backend={backend} onDirtyChange={setDirty} />}
       />
+      <Route
+        path="/accounts"
+        element={
+          <AccountsPage
+            backend={backend}
+            onDirtyChange={setDirty}
+            displayTimeZone={displayTimeZone}
+          />
+        }
+      />
       <Route path="*" element={<Navigate to="/settings" replace />} />
     </Routes>
   );
@@ -192,6 +203,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <span aria-hidden="true">◈</span>
             <span>サービス・プラン</span>
+          </NavLink>
+          <NavLink
+            to="/accounts"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/accounts");
+              }
+            }}
+          >
+            <span aria-hidden="true">◎</span>
+            <span>アカウント・関連付け</span>
           </NavLink>
           <NavLink
             to="/audit"

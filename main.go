@@ -38,6 +38,10 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("start catalog service: %w", err)
 	}
+	accountService, err := desktop.NewAccountService(storage.lifecycle)
+	if err != nil {
+		return fmt.Errorf("start account service: %w", err)
+	}
 	collector, err := usecase.NewCollectionUsecase(
 		storage.lifecycle,
 		credentials,
@@ -77,6 +81,7 @@ func run() (runErr error) {
 			application.NewService(hubService),
 			application.NewService(auditService),
 			application.NewService(catalogService),
+			application.NewService(accountService),
 			application.NewService(collectionService),
 		},
 	})
