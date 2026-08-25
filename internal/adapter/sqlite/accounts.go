@@ -12,7 +12,6 @@ import (
 )
 
 type HubAccountCandidate = domain.HubAccountCandidate
-type HubAccount = domain.HubAccountCandidate
 type LogicalAccount = domain.LogicalAccount
 type PlanHistory = domain.PlanHistory
 
@@ -52,12 +51,6 @@ func (l *Lifecycle) CreateHubAccountCandidate(ctx context.Context, candidate Hub
 	return nil
 }
 
-// CreateHubAccount is the shorter vocabulary alias for
-// CreateHubAccountCandidate.
-func (l *Lifecycle) CreateHubAccount(ctx context.Context, candidate HubAccount) error {
-	return l.CreateHubAccountCandidate(ctx, candidate)
-}
-
 // UpsertHubAccountCandidate updates non-secret display evidence and observed
 // bounds for an existing Hub/service/accountKey. It does not auto-associate an
 // unconfirmed candidate. A new observation for an archived logical account is
@@ -82,10 +75,6 @@ func (l *Lifecycle) UpsertHubAccountCandidate(ctx context.Context, candidate Hub
 		return fmt.Errorf("commit Hub account candidate upsert: %w", err)
 	}
 	return nil
-}
-
-func (l *Lifecycle) UpsertHubAccount(ctx context.Context, candidate HubAccount) error {
-	return l.UpsertHubAccountCandidate(ctx, candidate)
 }
 
 func (l *Lifecycle) ListHubAccountCandidates(ctx context.Context, serviceID string, state domain.HubAccountCandidateState) ([]HubAccountCandidate, error) {
@@ -123,10 +112,6 @@ func (l *Lifecycle) ListHubAccountCandidates(ctx context.Context, serviceID stri
 		return nil, fmt.Errorf("read Hub account candidates: %w", err)
 	}
 	return result, nil
-}
-
-func (l *Lifecycle) ListHubAccounts(ctx context.Context, serviceID string, state domain.HubAccountCandidateState) ([]HubAccount, error) {
-	return l.ListHubAccountCandidates(ctx, serviceID, state)
 }
 
 func (l *Lifecycle) CreateLogicalAccount(ctx context.Context, account LogicalAccount) error {
@@ -380,10 +365,6 @@ func (l *Lifecycle) AssociateHubAccountCandidate(ctx context.Context, candidateI
 		return fmt.Errorf("commit Hub account association: %w", err)
 	}
 	return nil
-}
-
-func (l *Lifecycle) AssociateHubAccount(ctx context.Context, candidateID, logicalAccountID string, associatedAt time.Time) error {
-	return l.AssociateHubAccountCandidate(ctx, candidateID, logicalAccountID, associatedAt)
 }
 
 // SetHubAccountCandidateState is the explicit candidate decision operation.

@@ -63,10 +63,6 @@ func (u *AccountUsecase) RegisterHubAccountCandidate(ctx context.Context, candid
 	return candidate, nil
 }
 
-func (u *AccountUsecase) RegisterHubAccount(ctx context.Context, account domain.HubAccount) (domain.HubAccount, error) {
-	return u.RegisterHubAccountCandidate(ctx, account)
-}
-
 func (u *AccountUsecase) ObserveHubAccountCandidate(ctx context.Context, candidate domain.HubAccountCandidate) error {
 	if candidate.ID == "" {
 		candidate.ID = u.ids.New()
@@ -88,10 +84,6 @@ func (u *AccountUsecase) ObserveHubAccountCandidate(ctx context.Context, candida
 		return fmt.Errorf("observe Hub account candidate: %w", err)
 	}
 	return nil
-}
-
-func (u *AccountUsecase) ObserveHubAccount(ctx context.Context, account domain.HubAccount) error {
-	return u.ObserveHubAccountCandidate(ctx, account)
 }
 
 func (u *AccountUsecase) RegisterLogicalAccount(ctx context.Context, serviceID, displayName string) (domain.LogicalAccount, error) {
@@ -126,10 +118,6 @@ func (u *AccountUsecase) AssociateHubAccountCandidate(ctx context.Context, candi
 		return fmt.Errorf("associate Hub account candidate: %w", err)
 	}
 	return nil
-}
-
-func (u *AccountUsecase) AssociateHubAccount(ctx context.Context, candidateID, logicalAccountID string) error {
-	return u.AssociateHubAccountCandidate(ctx, candidateID, logicalAccountID)
 }
 
 func (u *AccountUsecase) RejectHubAccountCandidate(ctx context.Context, candidateID string) error {

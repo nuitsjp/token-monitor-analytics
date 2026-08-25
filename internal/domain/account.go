@@ -38,18 +38,6 @@ type HubAccountCandidate struct {
 	UpdatedAt        time.Time
 }
 
-// HubAccount is kept as a vocabulary alias for callers that use the shorter
-// observation-side name. It has the same candidate state and never becomes a
-// logical account implicitly.
-type HubAccount = HubAccountCandidate
-
-const (
-	HubAccountUnconfirmed            = HubAccountCandidateUnconfirmed
-	HubAccountAssociated             = HubAccountCandidateAssociated
-	HubAccountRejected               = HubAccountCandidateRejected
-	HubAccountArchivedReconfirmation = HubAccountCandidateArchivedReconfirmation
-)
-
 // LogicalAccount is the cross-Hub analysis identity for one service.
 type LogicalAccount struct {
 	ID          string

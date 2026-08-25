@@ -34,9 +34,6 @@ func IANAOptions() []string {
 	return options
 }
 
-// IANAZoneIDs is an explicit alias for callers that prefer the domain term.
-func IANAZoneIDs() []string { return IANAOptions() }
-
 // IsSupportedIANA reports whether id is one of the committed generated IDs.
 func IsSupportedIANA(id string) bool {
 	_, ok := generatedIANAZoneSet[id]
