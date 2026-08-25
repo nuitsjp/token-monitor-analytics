@@ -163,3 +163,18 @@ func TestCollectionServiceMapsObservationDTOsAndRedactsErrors(t *testing.T) {
 		t.Fatalf("scheduler error = %v", err)
 	}
 }
+
+func TestCollectionServiceRejectsInvalidPersistedRawJSONWithoutLeakingIt(t *testing.T) {
+	secret := "invalid-raw-secret-sentinel"
+	reader := &collectionServiceReaderStub{snapshotByID: sqliteadapter.RawSnapshot{
+		SnapshotID: "invalid", HubID: "hub", ResponseKind: "stats", Body: []byte(`{"secret":"` + secret),
+	}}
+	service, err := NewCollectionServiceWithDependencies(reader, &collectionServiceSchedulerStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.GetRawSnapshot(context.Background(), "invalid")
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("invalid raw JSON error = %v", err)
+	}
+}

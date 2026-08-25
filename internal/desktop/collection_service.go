@@ -137,10 +137,14 @@ func (s *CollectionService) GetRawSnapshot(ctx context.Context, snapshotID strin
 	if err != nil {
 		return RawSnapshotDetail{}, collectionReadError(err)
 	}
+	body, err := maskedRawBody(row.Body, row.ResponseKind)
+	if err != nil {
+		return RawSnapshotDetail{}, err
+	}
 	item := rawSnapshotSnapshot(row)
 	return RawSnapshotDetail{
 		RawSnapshotSnapshot: item,
-		Body:                maskedRawBody(row.Body, row.ResponseKind),
+		Body:                body,
 	}, nil
 }
 
@@ -426,25 +430,25 @@ const maskedValue = "[MASKED]"
 
 // maskedRawBody parses the persisted JSON and emits a compact display-only
 // representation. Values at contract-known paths are retained; unknown and
-// credential-like fields are always replaced. If a legacy/non-JSON blob is
-// encountered, no bytes from it are returned.
-func maskedRawBody(raw []byte, responseKind string) string {
+// credential-like fields are always replaced. Invalid persisted JSON is an
+// explicit read error and none of its bytes are returned.
+func maskedRawBody(raw []byte, responseKind string) (string, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return maskedValue
+		return "", errors.New("persisted raw snapshot is not valid JSON")
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return maskedValue
+		return "", errors.New("persisted raw snapshot has trailing JSON data")
 	}
 	redacted := redactRawValue(value, rawPath{kind: responseKind})
 	encoded, err := json.Marshal(redacted)
 	if err != nil {
-		return maskedValue
+		return "", errors.New("masked raw snapshot could not be encoded")
 	}
-	return string(encoded)
+	return string(encoded), nil
 }
 
 type rawPath struct {
