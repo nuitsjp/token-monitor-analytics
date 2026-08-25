@@ -12,11 +12,14 @@ import (
 const listEstimationPointsByInterval = `-- name: ListEstimationPointsByInterval :many
 SELECT estimation_point_id, service_id, limit_definition_id, plan_version_id,
        cycle_type, calculation_interval_id, calculation_interval_ids_json,
-       reference_at, shared_cost, utilization_json, limit_series_ids_json, cost_source_ids_json,
+       reference_at, shared_cost, utilization_json, limit_series_ids_json,
+       limit_series_logical_account_ids_json, limit_series_plan_version_ids_json,
+       limit_series_calculation_interval_ids_json, cost_source_ids_json,
        association_ids_json, completeness_ids_json, matching_rule_version,
        calculation_logic_version, created_at, updated_at
 FROM estimation_points
 WHERE calculation_interval_id = ?1
+   OR EXISTS (SELECT 1 FROM json_each(estimation_points.calculation_interval_ids_json) WHERE json_each.value = ?1)
 ORDER BY reference_at, estimation_point_id
 `
 
@@ -41,6 +44,9 @@ func (q *Queries) ListEstimationPointsByInterval(ctx context.Context, calculatio
 			&i.SharedCost,
 			&i.UtilizationJson,
 			&i.LimitSeriesIdsJson,
+			&i.LimitSeriesLogicalAccountIdsJson,
+			&i.LimitSeriesPlanVersionIdsJson,
+			&i.LimitSeriesCalculationIntervalIdsJson,
 			&i.CostSourceIdsJson,
 			&i.AssociationIdsJson,
 			&i.CompletenessIdsJson,

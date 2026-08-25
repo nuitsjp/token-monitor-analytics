@@ -88,24 +88,27 @@ type DisplaySetting struct {
 }
 
 type EstimationPoint struct {
-	EstimationPointID          string         `json:"estimation_point_id"`
-	ServiceID                  string         `json:"service_id"`
-	LimitDefinitionID          string         `json:"limit_definition_id"`
-	PlanVersionID              sql.NullString `json:"plan_version_id"`
-	CycleType                  string         `json:"cycle_type"`
-	CalculationIntervalID      string         `json:"calculation_interval_id"`
-	CalculationIntervalIdsJson string         `json:"calculation_interval_ids_json"`
-	ReferenceAt                string         `json:"reference_at"`
-	SharedCost                 float64        `json:"shared_cost"`
-	UtilizationJson            string         `json:"utilization_json"`
-	LimitSeriesIdsJson         string         `json:"limit_series_ids_json"`
-	CostSourceIdsJson          string         `json:"cost_source_ids_json"`
-	AssociationIdsJson         string         `json:"association_ids_json"`
-	CompletenessIdsJson        string         `json:"completeness_ids_json"`
-	MatchingRuleVersion        string         `json:"matching_rule_version"`
-	CalculationLogicVersion    string         `json:"calculation_logic_version"`
-	CreatedAt                  string         `json:"created_at"`
-	UpdatedAt                  string         `json:"updated_at"`
+	EstimationPointID                     string         `json:"estimation_point_id"`
+	ServiceID                             string         `json:"service_id"`
+	LimitDefinitionID                     string         `json:"limit_definition_id"`
+	PlanVersionID                         sql.NullString `json:"plan_version_id"`
+	CycleType                             string         `json:"cycle_type"`
+	CalculationIntervalID                 string         `json:"calculation_interval_id"`
+	CalculationIntervalIdsJson            string         `json:"calculation_interval_ids_json"`
+	ReferenceAt                           string         `json:"reference_at"`
+	SharedCost                            float64        `json:"shared_cost"`
+	UtilizationJson                       string         `json:"utilization_json"`
+	LimitSeriesIdsJson                    string         `json:"limit_series_ids_json"`
+	LimitSeriesLogicalAccountIdsJson      string         `json:"limit_series_logical_account_ids_json"`
+	LimitSeriesPlanVersionIdsJson         string         `json:"limit_series_plan_version_ids_json"`
+	LimitSeriesCalculationIntervalIdsJson string         `json:"limit_series_calculation_interval_ids_json"`
+	CostSourceIdsJson                     string         `json:"cost_source_ids_json"`
+	AssociationIdsJson                    string         `json:"association_ids_json"`
+	CompletenessIdsJson                   string         `json:"completeness_ids_json"`
+	MatchingRuleVersion                   string         `json:"matching_rule_version"`
+	CalculationLogicVersion               string         `json:"calculation_logic_version"`
+	CreatedAt                             string         `json:"created_at"`
+	UpdatedAt                             string         `json:"updated_at"`
 }
 
 type Hub struct {

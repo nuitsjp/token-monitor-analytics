@@ -29,6 +29,22 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err := lifecycle.CreateLimitDefinition(ctx, definition); err != nil {
 		t.Fatal(err)
 	}
+	if err := lifecycle.CreatePlan(ctx, Plan{ID: "matching-plan", ServiceID: service.ID, Name: "Base", IsBaseline: true, CreatedAt: start, UpdatedAt: start}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.CreatePlan(ctx, Plan{ID: "matching-plan-b", ServiceID: service.ID, Name: "Expanded", CreatedAt: start, UpdatedAt: start}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.CreatePlanVersion(ctx, PlanVersion{ID: "matching-plan", PlanID: "matching-plan", Name: "Base v1", ValidFrom: start, ValidTo: &end, OfficialSourceURL: "https://vendor.example/plans", CreatedAt: start}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.CreatePlanVersion(ctx, PlanVersion{ID: "matching-plan-b", PlanID: "matching-plan-b", Name: "Expanded v1", ValidFrom: start, ValidTo: &end, OfficialSourceURL: "https://vendor.example/plans", CreatedAt: start}); err != nil {
+		t.Fatal(err)
+	}
+	multiplier := 5.0
+	if err := lifecycle.CreatePlanLimitRule(ctx, PlanLimitRule{ID: "matching-rule-five", PlanVersionID: "matching-plan-b", LimitDefinitionID: definition.ID, Multiplier: &multiplier, OfficialSourceURL: "https://vendor.example/plans", CreatedAt: start}); err != nil {
+		t.Fatal(err)
+	}
 	limitSources := []UsageLimitSource{{ID: "matching-limit-source-a", HubID: hubID, DeviceID: "device-a", AccountKey: "account-a", RawServiceIdentifier: "limit.raw", WindowKey: "weekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", CreatedAt: start}, {ID: "matching-limit-source-b", HubID: hubID, DeviceID: "device-b", AccountKey: "account-b", RawServiceIdentifier: "limit.raw", WindowKey: "weekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", CreatedAt: start}}
 	for index, source := range limitSources {
 		if err := lifecycle.CreateUsageLimitSource(ctx, source); err != nil {
@@ -116,6 +132,32 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	}
 	if len(persisted) != 2 || persisted[1].SharedCost != points[1].SharedCost || len(persisted[1].Utilization) != 2 || len(persisted[1].MatchedObservations) != 3 {
 		t.Fatalf("persisted points = %#v", persisted)
+	}
+	bySecondInterval, err := lifecycle.ListEstimationPoints(ctx, "matching-interval-1ns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bySecondInterval) != 2 {
+		t.Fatalf("points by second interval = %#v", bySecondInterval)
+	}
+	for index := range points[1].LimitSeriesIDs {
+		if persisted[1].LimitSeriesIDs[index] != points[1].LimitSeriesIDs[index] || persisted[1].LimitSeriesLogicalAccountIDs[index] != points[1].LimitSeriesLogicalAccountIDs[index] || persisted[1].LimitSeriesPlanVersionIDs[index] != points[1].LimitSeriesPlanVersionIDs[index] || persisted[1].LimitSeriesCalculationIntervalIDs[index] != points[1].LimitSeriesCalculationIntervalIDs[index] {
+			t.Fatalf("persisted series order = %#v, want %#v", persisted[1], points[1])
+		}
+	}
+	input, err := lifecycle.ListEstimationInput(ctx, "matching-interval-0s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Points) != 2 || len(input.Intervals) != 2 {
+		t.Fatalf("estimation input = %#v", input)
+	}
+	result, err := domain.EstimateFromPoints(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != domain.EstimationProvisional || len(result.PlanLimitRuleIDs) != 1 || result.PlanLimitRuleIDs[0] != "matching-rule-five" {
+		t.Fatalf("mixed-plan estimation = %#v", result)
 	}
 	database, err := lifecycle.DB()
 	if err != nil {
@@ -224,6 +266,20 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	}
 	if len(points) != 0 {
 		t.Fatalf("mixed cost account points = %#v", points)
+	}
+	if _, err := database.Exec(`UPDATE calculation_intervals SET state = 'excluded', exclusion_reason = 'completeness_unconfirmed' WHERE calculation_interval_id = ?`, "matching-interval-1ns"); err != nil {
+		t.Fatal(err)
+	}
+	input, err = lifecycle.ListEstimationInput(ctx, "matching-interval-0s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = domain.EstimateFromPoints(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != domain.EstimationNotApplicable || len(result.Reasons) != 1 || result.Reasons[0] != string(domain.ExclusionCompletenessUnconfirmed) {
+		t.Fatalf("excluded interval estimation = %#v", result)
 	}
 }
 

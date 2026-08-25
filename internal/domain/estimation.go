@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	CalculationLogicVersion = "nnls-lawson-hanson-v1"
+	CalculationLogicVersion = "t032-adjacent-l2-rank-nnls-v1"
 	RankToleranceFactor     = 1e-10
 	NnlsTolerance           = 1e-12
 	NnlsIterationLimit      = 10_000
@@ -24,36 +24,58 @@ const (
 	EstimationProvisional    EstimationStatus = "provisional"
 	EstimationVerified       EstimationStatus = "verified"
 	EstimationModelMismatch  EstimationStatus = "model_mismatch"
+	EstimationNotApplicable  EstimationStatus = "not_applicable"
+	EstimationUncomputed     EstimationStatus = "uncomputed"
 )
 
 type EstimationPoint struct {
-	SharedCost              float64
-	Utilization             []float64
-	ID                      string
-	ServiceID               string
-	LimitDefinitionID       string
-	PlanVersionID           string
-	CycleType               string
-	CalculationIntervalID   string
-	CalculationIntervalIDs  []string
-	ReferenceAt             time.Time
-	LimitSeriesIDs          []string
-	CostSourceIDs           []string
-	AssociationIDs          []string
-	CompletenessIDs         []string
-	MatchedObservations     []MatchedObservation
-	MatchingRuleVersion     string
-	CalculationLogicVersion string
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+	SharedCost                        float64
+	Utilization                       []float64
+	ID                                string
+	ServiceID                         string
+	LimitDefinitionID                 string
+	PlanVersionID                     string
+	CycleType                         string
+	CalculationIntervalID             string
+	CalculationIntervalIDs            []string
+	ReferenceAt                       time.Time
+	LimitSeriesIDs                    []string
+	LimitSeriesLogicalAccountIDs      []string
+	LimitSeriesPlanVersionIDs         []string
+	LimitSeriesCalculationIntervalIDs []string
+	CostSourceIDs                     []string
+	AssociationIDs                    []string
+	CompletenessIDs                   []string
+	MatchedObservations               []MatchedObservation
+	MatchingRuleVersion               string
+	CalculationLogicVersion           string
+	CreatedAt                         time.Time
+	UpdatedAt                         time.Time
 }
 
 type EstimationResult struct {
-	Status             EstimationStatus
-	Limits             []float64
-	Rows               int
-	Rank               int
-	AbsoluteErrorRatio float64
+	Status                            EstimationStatus
+	Reasons                           []string
+	Limits                            []float64
+	Rows                              int
+	Rank                              int
+	AbsoluteErrorRatio                float64
+	CalculationLogicVersion           string
+	PointIDs                          []string
+	ObservationIDs                    []string
+	AssociationIDs                    []string
+	CompletenessIDs                   []string
+	NormalizationGenerations          []int64
+	NormalizationRuleVersions         []string
+	NormalizationLogicVersions        []string
+	LimitSeriesIDs                    []string
+	LimitSeriesLogicalAccountIDs      []string
+	LimitSeriesCalculationIntervalIDs []string
+	LimitSeriesPlanVersionIDs         []string
+	SeriesMultipliers                 []float64
+	PlanLimitRuleIDs                  []string
+	SeriesLimits                      []float64
+	MaxTimeDelta                      time.Duration
 }
 
 func AdjacentDifferences(points []EstimationPoint) (*mat.Dense, []float64, error) {
@@ -64,18 +86,35 @@ func AdjacentDifferences(points []EstimationPoint) (*mat.Dense, []float64, error
 	if columns == 0 {
 		return nil, nil, fmt.Errorf("at least one unknown is required")
 	}
-	data := make([]float64, (len(points)-1)*columns)
-	costs := make([]float64, len(points)-1)
+	dataRows := make([]float64, 0, (len(points)-1)*columns)
+	dataCosts := make([]float64, 0, len(points)-1)
 	for row := 1; row < len(points); row++ {
 		if len(points[row].Utilization) != columns {
 			return nil, nil, fmt.Errorf("point %d has %d utilization values, want %d", row, len(points[row].Utilization), columns)
 		}
-		costs[row-1] = points[row].SharedCost - points[row-1].SharedCost
+		cost := points[row].SharedCost - points[row-1].SharedCost
+		deltas := make([]float64, columns)
+		negative := cost < 0
+		allZero := cost == 0
 		for column := range columns {
-			data[(row-1)*columns+column] = points[row].Utilization[column] - points[row-1].Utilization[column]
+			deltas[column] = points[row].Utilization[column] - points[row-1].Utilization[column]
+			if deltas[column] < 0 {
+				negative = true
+			}
+			if deltas[column] != 0 {
+				allZero = false
+			}
 		}
+		if negative || allZero {
+			continue
+		}
+		dataCosts = append(dataCosts, cost)
+		dataRows = append(dataRows, deltas...)
 	}
-	return mat.NewDense(len(points)-1, columns, data), costs, nil
+	if len(dataCosts) == 0 {
+		return nil, nil, nil
+	}
+	return mat.NewDense(len(dataCosts), columns, dataRows), dataCosts, nil
 }
 
 func EstimateFromDifferences(coefficients *mat.Dense, costs []float64) (EstimationResult, error) {
@@ -83,8 +122,11 @@ func EstimateFromDifferences(coefficients *mat.Dense, costs []float64) (Estimati
 	if rows != len(costs) {
 		return EstimationResult{}, fmt.Errorf("coefficient rows %d do not match costs %d", rows, len(costs))
 	}
-	if rows == 0 || columns == 0 {
+	if columns == 0 {
 		return EstimationResult{}, fmt.Errorf("coefficient matrix must not be empty")
+	}
+	if rows == 0 {
+		return EstimationResult{Status: EstimationInsufficient, Reasons: []string{"no_valid_differences"}, Rows: 0, Rank: 0, CalculationLogicVersion: CalculationLogicVersion}, nil
 	}
 	if !finiteMatrix(coefficients) || !finiteSlice(costs) {
 		return EstimationResult{}, fmt.Errorf("estimation input must contain only finite numbers")
@@ -94,13 +136,19 @@ func EstimateFromDifferences(coefficients *mat.Dense, costs []float64) (Estimati
 	if err != nil {
 		return EstimationResult{}, err
 	}
-	result := EstimationResult{Rows: rows, Rank: rank}
+	result := EstimationResult{Rows: rows, Rank: rank, CalculationLogicVersion: CalculationLogicVersion}
 	if rows < columns {
 		result.Status = EstimationInsufficient
+		result.Reasons = []string{"insufficient_differences"}
 		return result, nil
 	}
 	if sum(costs) == 0 || rank < columns {
 		result.Status = EstimationUnidentifiable
+		if sum(costs) == 0 {
+			result.Reasons = []string{"zero_cost_signal"}
+		} else {
+			result.Reasons = []string{"rank_deficient"}
+		}
 		return result, nil
 	}
 
@@ -112,6 +160,7 @@ func EstimateFromDifferences(coefficients *mat.Dense, costs []float64) (Estimati
 	for _, value := range limits {
 		if !isFinite(value) || value <= NnlsTolerance {
 			result.Status = EstimationModelMismatch
+			result.Reasons = []string{"non_positive_solution"}
 			return result, nil
 		}
 	}
@@ -129,10 +178,13 @@ func EstimateFromDifferences(coefficients *mat.Dense, costs []float64) (Estimati
 	result.AbsoluteErrorRatio /= denominator
 	if rows == columns {
 		result.Status = EstimationProvisional
+		result.Reasons = []string{"exactly_identified"}
 	} else if result.AbsoluteErrorRatio <= 0.1 {
 		result.Status = EstimationVerified
+		result.Reasons = []string{"residual_within_ten_percent"}
 	} else {
 		result.Status = EstimationModelMismatch
+		result.Reasons = []string{"residual_over_ten_percent"}
 	}
 	return result, nil
 }

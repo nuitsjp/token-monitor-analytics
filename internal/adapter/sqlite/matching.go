@@ -162,6 +162,63 @@ func (l *Lifecycle) loadCalculationMatchingInputs(ctx context.Context, database 
 	return result, nil
 }
 
+func loadEstimationPlanVersionsByIDs(ctx context.Context, database *sql.DB, ids []string) ([]domain.EstimationPlanVersion, error) {
+	result := make([]domain.EstimationPlanVersion, 0, len(ids))
+	for _, id := range ids {
+		var plan domain.EstimationPlanVersion
+		var baseline int
+		if err := database.QueryRowContext(ctx, `
+			SELECT pv.plan_version_id, pv.plan_id, p.is_baseline
+			FROM plan_versions pv JOIN plans p ON p.plan_id = pv.plan_id
+			WHERE pv.plan_version_id = ?`, id).Scan(&plan.ID, &plan.PlanID, &baseline); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, fmt.Errorf("read estimation plan version: %w", err)
+		}
+		plan.IsBaseline = baseline != 0
+		rows, err := database.QueryContext(ctx, `
+			SELECT plan_limit_rule_id, plan_version_id, limit_definition_id, plan_limit,
+			       limit_multiplier, official_source_url, created_at
+			FROM plan_limit_rules WHERE plan_version_id = ? ORDER BY limit_definition_id, plan_limit_rule_id`, id)
+		if err != nil {
+			return nil, fmt.Errorf("list estimation plan rules: %w", err)
+		}
+		for rows.Next() {
+			var rule domain.PlanLimitRule
+			var limit, multiplier sql.NullFloat64
+			var created string
+			if err := rows.Scan(&rule.ID, &rule.PlanVersionID, &rule.LimitDefinitionID, &limit, &multiplier, &rule.OfficialSourceURL, &created); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan estimation plan rule: %w", err)
+			}
+			if limit.Valid {
+				value := limit.Float64
+				rule.Limit = &value
+			}
+			if multiplier.Valid {
+				value := multiplier.Float64
+				rule.Multiplier = &value
+			}
+			var parseErr error
+			rule.CreatedAt, parseErr = parseUTC(created)
+			if parseErr != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("parse estimation plan rule creation: %w", parseErr)
+			}
+			plan.LimitRules = append(plan.LimitRules, rule)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, fmt.Errorf("close estimation plan rules: %w", err)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("read estimation plan rules: %w", err)
+		}
+		result = append(result, plan)
+	}
+	return result, nil
+}
+
 type costLinkGroup struct {
 	sourceID           string
 	associationIDs     []string
@@ -590,6 +647,18 @@ func (l *Lifecycle) SaveEstimationPoints(ctx context.Context, points []domain.Es
 		if err != nil {
 			return fmt.Errorf("encode estimation point utilization: %w", err)
 		}
+		limitAccountIDs, err := json.Marshal(point.LimitSeriesLogicalAccountIDs)
+		if err != nil {
+			return fmt.Errorf("encode estimation point logical accounts: %w", err)
+		}
+		limitPlanIDs, err := json.Marshal(point.LimitSeriesPlanVersionIDs)
+		if err != nil {
+			return fmt.Errorf("encode estimation point plan versions: %w", err)
+		}
+		limitIntervalIDs, err := json.Marshal(point.LimitSeriesCalculationIntervalIDs)
+		if err != nil {
+			return fmt.Errorf("encode estimation point series intervals: %w", err)
+		}
 		var storedID string
 		err = tx.QueryRowContext(ctx, `SELECT estimation_point_id FROM estimation_points WHERE calculation_interval_id = ? AND reference_at = ? AND matching_rule_version = ? AND calculation_logic_version = ?`, point.CalculationIntervalID, utcText(point.ReferenceAt), point.MatchingRuleVersion, point.CalculationLogicVersion).Scan(&storedID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -601,19 +670,24 @@ func (l *Lifecycle) SaveEstimationPoints(ctx context.Context, points []domain.Es
 			INSERT INTO estimation_points
 				(estimation_point_id, service_id, limit_definition_id, plan_version_id, cycle_type,
 				 calculation_interval_id, calculation_interval_ids_json, reference_at, shared_cost,
-				 utilization_json, limit_series_ids_json, cost_source_ids_json, association_ids_json,
+				 utilization_json, limit_series_ids_json, limit_series_logical_account_ids_json,
+				 limit_series_plan_version_ids_json, limit_series_calculation_interval_ids_json,
+				 cost_source_ids_json, association_ids_json,
 				 completeness_ids_json, matching_rule_version, calculation_logic_version, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (calculation_interval_id, reference_at, matching_rule_version, calculation_logic_version)
 			DO UPDATE SET service_id = excluded.service_id, limit_definition_id = excluded.limit_definition_id,
 				plan_version_id = excluded.plan_version_id, cycle_type = excluded.cycle_type,
 				calculation_interval_ids_json = excluded.calculation_interval_ids_json, shared_cost = excluded.shared_cost,
 				utilization_json = excluded.utilization_json, limit_series_ids_json = excluded.limit_series_ids_json,
+				limit_series_logical_account_ids_json = excluded.limit_series_logical_account_ids_json,
+				limit_series_plan_version_ids_json = excluded.limit_series_plan_version_ids_json,
+				limit_series_calculation_interval_ids_json = excluded.limit_series_calculation_interval_ids_json,
 				cost_source_ids_json = excluded.cost_source_ids_json, association_ids_json = excluded.association_ids_json,
 				completeness_ids_json = excluded.completeness_ids_json, updated_at = excluded.updated_at`,
 			storedID, point.ServiceID, point.LimitDefinitionID, optionalIDString(point.PlanVersionID), point.CycleType,
 			point.CalculationIntervalID, string(intervalIDs), utcText(point.ReferenceAt), point.SharedCost, string(utilization),
-			string(limitIDs), string(costIDs), string(associationIDs), string(completenessIDs), point.MatchingRuleVersion,
+			string(limitIDs), string(limitAccountIDs), string(limitPlanIDs), string(limitIntervalIDs), string(costIDs), string(associationIDs), string(completenessIDs), point.MatchingRuleVersion,
 			point.CalculationLogicVersion, utcText(point.CreatedAt), utcText(point.UpdatedAt)); err != nil {
 			return fmt.Errorf("upsert estimation point: %w", err)
 		}
@@ -651,26 +725,31 @@ func (l *Lifecycle) ListEstimationPoints(ctx context.Context, calculationInterva
 		return nil, err
 	}
 	rows, err := database.QueryContext(ctx, `
-		SELECT estimation_point_id, service_id, limit_definition_id, plan_version_id, cycle_type,
-		       calculation_interval_id, calculation_interval_ids_json, reference_at, shared_cost,
-		       utilization_json, limit_series_ids_json, cost_source_ids_json, association_ids_json,
+	SELECT estimation_point_id, service_id, limit_definition_id, plan_version_id, cycle_type,
+	       calculation_interval_id, calculation_interval_ids_json, reference_at, shared_cost,
+	       utilization_json, limit_series_ids_json, limit_series_logical_account_ids_json,
+	       limit_series_plan_version_ids_json, limit_series_calculation_interval_ids_json,
+	       cost_source_ids_json, association_ids_json,
 		       completeness_ids_json, matching_rule_version, calculation_logic_version, created_at, updated_at
-		FROM estimation_points WHERE calculation_interval_id = ? ORDER BY reference_at, estimation_point_id`, calculationIntervalID)
+		FROM estimation_points
+		WHERE calculation_interval_id = ?
+		   OR EXISTS (SELECT 1 FROM json_each(estimation_points.calculation_interval_ids_json) WHERE json_each.value = ?)
+		ORDER BY reference_at, estimation_point_id`, calculationIntervalID, calculationIntervalID)
 	if err != nil {
 		return nil, fmt.Errorf("list estimation points: %w", err)
 	}
 	type pointRow struct {
-		point                                                             domain.EstimationPoint
-		plan                                                              sql.NullString
-		intervals, utilization, limits, costs, associations, completeness string
-		reference, created, updated                                       string
+		point                                                                                                        domain.EstimationPoint
+		plan                                                                                                         sql.NullString
+		intervals, utilization, limits, limitAccounts, limitPlans, limitIntervals, costs, associations, completeness string
+		reference, created, updated                                                                                  string
 	}
 	var pointRows []pointRow
 	for rows.Next() {
 		var item pointRow
 		if err := rows.Scan(&item.point.ID, &item.point.ServiceID, &item.point.LimitDefinitionID, &item.plan, &item.point.CycleType,
 			&item.point.CalculationIntervalID, &item.intervals, &item.reference, &item.point.SharedCost, &item.utilization,
-			&item.limits, &item.costs, &item.associations, &item.completeness, &item.point.MatchingRuleVersion,
+			&item.limits, &item.limitAccounts, &item.limitPlans, &item.limitIntervals, &item.costs, &item.associations, &item.completeness, &item.point.MatchingRuleVersion,
 			&item.point.CalculationLogicVersion, &item.created, &item.updated); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan estimation point: %w", err)
@@ -697,6 +776,15 @@ func (l *Lifecycle) ListEstimationPoints(ctx context.Context, calculationInterva
 		}
 		if err := json.Unmarshal([]byte(item.limits), &point.LimitSeriesIDs); err != nil {
 			return nil, fmt.Errorf("decode estimation point limits: %w", err)
+		}
+		if err := json.Unmarshal([]byte(item.limitAccounts), &point.LimitSeriesLogicalAccountIDs); err != nil {
+			return nil, fmt.Errorf("decode estimation point logical accounts: %w", err)
+		}
+		if err := json.Unmarshal([]byte(item.limitPlans), &point.LimitSeriesPlanVersionIDs); err != nil {
+			return nil, fmt.Errorf("decode estimation point plan versions: %w", err)
+		}
+		if err := json.Unmarshal([]byte(item.limitIntervals), &point.LimitSeriesCalculationIntervalIDs); err != nil {
+			return nil, fmt.Errorf("decode estimation point series intervals: %w", err)
 		}
 		if err := json.Unmarshal([]byte(item.costs), &point.CostSourceIDs); err != nil {
 			return nil, fmt.Errorf("decode estimation point costs: %w", err)
@@ -730,6 +818,51 @@ func (l *Lifecycle) ListEstimationPoints(ctx context.Context, calculationInterva
 		result = append(result, point)
 	}
 	return result, nil
+}
+
+// ListEstimationInput は保存済み観測点と正本の計算区間・プラン倍率を読む。
+func (l *Lifecycle) ListEstimationInput(ctx context.Context, calculationIntervalID string) (domain.EstimationInput, error) {
+	if strings.TrimSpace(calculationIntervalID) == "" {
+		return domain.EstimationInput{}, errors.New("calculation interval ID is required")
+	}
+	points, err := l.ListEstimationPoints(ctx, calculationIntervalID)
+	if err != nil {
+		return domain.EstimationInput{}, err
+	}
+	allIntervals, err := l.ListCalculationIntervals(ctx, "")
+	if err != nil {
+		return domain.EstimationInput{}, err
+	}
+	intervalByID := make(map[string]domain.CalculationInterval, len(allIntervals))
+	for _, candidate := range allIntervals {
+		intervalByID[candidate.ID] = candidate
+	}
+	intervalIDs := []string{calculationIntervalID}
+	ids := make([]string, 0)
+	for _, point := range points {
+		intervalIDs = append(intervalIDs, point.CalculationIntervalIDs...)
+		intervalIDs = append(intervalIDs, point.LimitSeriesCalculationIntervalIDs...)
+		ids = append(ids, point.LimitSeriesPlanVersionIDs...)
+	}
+	intervalIDs = uniqueMatchingStrings(intervalIDs)
+	intervals := make([]domain.CalculationInterval, 0, len(intervalIDs))
+	for _, id := range intervalIDs {
+		interval, ok := intervalByID[id]
+		if !ok {
+			return domain.EstimationInput{}, fmt.Errorf("calculation interval %q was not found", id)
+		}
+		intervals = append(intervals, interval)
+	}
+	ids = uniqueMatchingStrings(ids)
+	database, err := l.DB()
+	if err != nil {
+		return domain.EstimationInput{}, err
+	}
+	plans, err := loadEstimationPlanVersionsByIDs(ctx, database, ids)
+	if err != nil {
+		return domain.EstimationInput{}, err
+	}
+	return domain.EstimationInput{Points: points, Intervals: intervals, PlanVersions: plans}, nil
 }
 
 func (l *Lifecycle) listMatchedObservations(ctx context.Context, database *sql.DB, pointID string) ([]domain.MatchedObservation, error) {

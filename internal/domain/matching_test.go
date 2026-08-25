@@ -119,7 +119,7 @@ func TestT031MatchedToleranceStoresEffectiveMinimumAcrossSources(t *testing.T) {
 	if len(points) != 1 || points[0].SharedCost != 15 {
 		t.Fatalf("points = %#v", points)
 	}
-	if points[0].MatchedObservations[0].Tolerance != 2*time.Second || points[0].MatchedObservations[1].Tolerance != 10*time.Second || points[0].MatchedObservations[2].Tolerance != 2*time.Second {
+	if points[0].MatchedObservations[0].Tolerance != 2*time.Second || points[0].MatchedObservations[1].Tolerance != 2*time.Second || points[0].MatchedObservations[2].Tolerance != 10*time.Second {
 		t.Fatalf("effective tolerances = %#v", points[0].MatchedObservations)
 	}
 }

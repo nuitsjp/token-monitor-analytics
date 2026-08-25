@@ -188,7 +188,7 @@ func (p EstimationPoint) Validate() error {
 	if len(p.MatchedObservations) == 0 || len(p.LimitSeriesIDs) == 0 || len(p.CostSourceIDs) == 0 {
 		return errors.New("estimation point sources are required")
 	}
-	if math.IsNaN(p.SharedCost) || math.IsInf(p.SharedCost, 0) || p.SharedCost < 0 || len(p.Utilization) != len(p.LimitSeriesIDs) {
+	if math.IsNaN(p.SharedCost) || math.IsInf(p.SharedCost, 0) || p.SharedCost < 0 || len(p.Utilization) != len(p.LimitSeriesIDs) || len(p.LimitSeriesLogicalAccountIDs) != len(p.LimitSeriesIDs) || len(p.LimitSeriesPlanVersionIDs) != len(p.LimitSeriesIDs) || len(p.LimitSeriesCalculationIntervalIDs) != len(p.LimitSeriesIDs) {
 		return errors.New("estimation point numeric values are invalid")
 	}
 	for _, utilization := range p.Utilization {
@@ -267,6 +267,22 @@ func BuildEstimationPoints(input CalculationMatchingInput, newID func() string, 
 		if !valid || !matchedWithinEveryTolerance(selectedLimits, selectedCosts) {
 			continue
 		}
+		sort.Slice(selectedLimits, func(a, b int) bool {
+			left, right := selectedLimits[a].series, selectedLimits[b].series
+			if left.UsageLimitSourceID != right.UsageLimitSourceID {
+				return left.UsageLimitSourceID < right.UsageLimitSourceID
+			}
+			if left.LogicalAccountID != right.LogicalAccountID {
+				return left.LogicalAccountID < right.LogicalAccountID
+			}
+			if left.PlanVersionID != right.PlanVersionID {
+				return left.PlanVersionID < right.PlanVersionID
+			}
+			return left.CalculationIntervalID < right.CalculationIntervalID
+		})
+		sort.Slice(selectedCosts, func(a, b int) bool {
+			return selectedCosts[a].source.UsageCostSourceID < selectedCosts[b].source.UsageCostSourceID
+		})
 		sharedCost, utilization, ok := matchingValues(selectedLimits, selectedCosts)
 		if !ok {
 			continue
@@ -294,6 +310,9 @@ func BuildEstimationPoints(input CalculationMatchingInput, newID func() string, 
 		}
 		for _, selected := range selectedLimits {
 			point.LimitSeriesIDs = append(point.LimitSeriesIDs, selected.series.UsageLimitSourceID)
+			point.LimitSeriesLogicalAccountIDs = append(point.LimitSeriesLogicalAccountIDs, selected.series.LogicalAccountID)
+			point.LimitSeriesPlanVersionIDs = append(point.LimitSeriesPlanVersionIDs, selected.series.PlanVersionID)
+			point.LimitSeriesCalculationIntervalIDs = append(point.LimitSeriesCalculationIntervalIDs, selected.series.CalculationIntervalID)
 			point.AssociationIDs = append(point.AssociationIDs, selected.series.AssociationIDs...)
 			point.CompletenessIDs = append(point.CompletenessIDs, selected.series.CompletenessIDs...)
 			point.MatchedObservations = append(point.MatchedObservations, MatchedObservation{
