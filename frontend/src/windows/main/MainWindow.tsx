@@ -5,7 +5,11 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { Settings16Regular, Cloud16Regular } from "@fluentui/react-icons";
+import {
+  Settings16Regular,
+  Cloud16Regular,
+  History16Regular,
+} from "@fluentui/react-icons";
 import {
   MemoryRouter,
   Navigate,
@@ -22,6 +26,8 @@ import {
 import type { FrontendAdapter } from "../../lib/backend";
 import { SettingsPage } from "../../pages/settings/SettingsPage";
 import { HubsPage } from "../../pages/hubs/HubsPage";
+import { AuditPage } from "../../pages/audit/AuditPage";
+import { useSettings } from "../../app/providers";
 
 const useStyles = makeStyles({
   window: {
@@ -80,9 +86,11 @@ const useStyles = makeStyles({
 function MainRoutes({
   backend,
   setDirty,
+  displayTimeZone,
 }: {
   backend: FrontendAdapter;
   setDirty: (dirty: boolean) => void;
+  displayTimeZone: string;
 }) {
   return (
     <Routes>
@@ -94,6 +102,12 @@ function MainRoutes({
         path="/hubs"
         element={<HubsPage backend={backend} onDirtyChange={setDirty} />}
       />
+      <Route
+        path="/audit"
+        element={
+          <AuditPage backend={backend} displayTimeZone={displayTimeZone} />
+        }
+      />
       <Route path="*" element={<Navigate to="/settings" replace />} />
     </Routes>
   );
@@ -102,6 +116,7 @@ function MainRoutes({
 function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
   const styles = useStyles();
   const navigate = useNavigate();
+  const { settings } = useSettings();
   const [dirty, setDirty] = useState(false);
   const guard = useDirtyStateGuard(backend, dirty);
   const guardedOpen = useCallback(
@@ -137,6 +152,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
             <span>Hub・収集</span>
           </NavLink>
           <NavLink
+            to="/audit"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/audit");
+              }
+            }}
+          >
+            <History16Regular aria-hidden="true" />
+            <span>監査記録</span>
+          </NavLink>
+          <NavLink
             to="/settings"
             className={({ isActive }) =>
               `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
@@ -167,7 +197,11 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
               閉じる
             </Button>
           </div>
-          <MainRoutes backend={backend} setDirty={setDirty} />
+          <MainRoutes
+            backend={backend}
+            setDirty={setDirty}
+            displayTimeZone={settings.displayTimeZone}
+          />
         </main>
       </div>
     </>

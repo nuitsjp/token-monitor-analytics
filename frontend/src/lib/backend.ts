@@ -1,16 +1,26 @@
 import { Events } from "@wailsio/runtime";
 import {
+  AuditService,
   HubService,
   SettingsService,
   WindowService,
 } from "../../bindings/token-monitor-analytics/internal/desktop/index.js";
 import type {
+  AuditFilterInput,
+  AuditPage,
+  AuditRecord,
   CreateHubInput,
   HubSnapshot,
   UpdateHubInput,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type ThemePreference = "light" | "dark" | "system";
+
+export type {
+  AuditFilterInput,
+  AuditPage,
+  AuditRecord,
+} from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export interface SettingsSnapshot {
   theme: ThemePreference;
@@ -53,6 +63,7 @@ export interface FrontendAdapter {
   saveCredential(hubID: string, secret: string): Promise<HubSnapshot>;
   deleteCredential(hubID: string): Promise<HubSnapshot>;
   checkHubConnection(hubID: string): Promise<HubSnapshot>;
+  getAudits(filter: AuditFilterInput): Promise<AuditPage>;
   on(event: FrontendEventName, callback: (data: unknown) => void): () => void;
 }
 
@@ -104,6 +115,7 @@ export interface FakeBackendOptions {
   onConfirmCloseMain?: () => void;
   onConfirmQuit?: () => void;
   hubs?: HubSnapshot[];
+  audits?: AuditRecord[];
 }
 
 export interface FakeFrontendAdapter extends FrontendAdapter {
@@ -120,6 +132,7 @@ export function createFakeBackend(
   );
   const listeners = new Map<FrontendEventName, Set<(data: unknown) => void>>();
   let hubs = [...(options.hubs ?? [])];
+  const audits = [...(options.audits ?? [])];
   const backend: FakeFrontendAdapter = {
     canOpenMain: options.canOpenMain ?? false,
     initialSettings: settings,
@@ -189,6 +202,30 @@ export function createFakeBackend(
         hub.id === hubID ? { ...hub, connectionState: "connected" } : hub,
       );
       return hubs.find((hub) => hub.id === hubID)!;
+    },
+    getAudits: async (filter) => {
+      const filtered = audits.filter(
+        (audit) =>
+          (!filter.action || audit.action === filter.action) &&
+          (!filter.entityType || audit.entityType === filter.entityType) &&
+          (!filter.from || audit.occurredAt >= filter.from) &&
+          (!filter.to || audit.occurredAt < filter.to),
+      );
+      const limit = filter.limit > 0 ? filter.limit : 50;
+      const offset = filter.cursor
+        ? Number.parseInt(atob(filter.cursor), 10)
+        : 0;
+      const items = Number.isFinite(offset)
+        ? filtered.slice(offset, offset + limit + 1)
+        : filtered.slice(0, limit + 1);
+      const hasMore = items.length > limit;
+      return {
+        items: hasMore ? items.slice(0, limit) : items,
+        hasMore,
+        nextCursor: hasMore
+          ? btoa(String((Number.isFinite(offset) ? offset : 0) + limit))
+          : "",
+      };
     },
     on: (event, callback) => {
       const callbacks = listeners.get(event) ?? new Set();
@@ -286,6 +323,7 @@ export function createProductionBackend(
     deleteCredential: (hubID) => asPromise(HubService.DeleteCredential(hubID)),
     checkHubConnection: (hubID) =>
       asPromise(HubService.CheckHubConnection(hubID)),
+    getAudits: (filter) => asPromise(AuditService.GetAudits(filter)),
     on: (event, callback) =>
       Events.On(event, (wailsEvent) => callback(wailsEvent.data)),
   };

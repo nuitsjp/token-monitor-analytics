@@ -62,6 +62,7 @@ describe("compact window", () => {
       screen.getByRole("navigation", { name: "メインメニュー" }),
     ).toBeVisible();
     expect(screen.getAllByRole("link", { name: /表示設定/ })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: /監査記録/ })).toHaveLength(1);
     expect(screen.queryByText(/M0[01]|T01/)).not.toBeInTheDocument();
   });
 
