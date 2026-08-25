@@ -19,6 +19,7 @@ import type {
   UpdateHubInput,
 } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import type { FrontendAdapter } from "../../lib/backend";
+import { presentStatus } from "../../lib/status";
 
 const useStyles = makeStyles({
   page: { display: "grid", gap: tokens.spacingVerticalL, maxWidth: "64rem" },
@@ -58,22 +59,6 @@ type FormValues = {
   collectionEnabled: boolean;
   secret: string;
 };
-const stateLabel: Record<string, string> = {
-  registered: "登録済み",
-  unregistered: "未登録",
-  post_restore_pending: "復元後再登録待ち",
-};
-const connectionLabel: Record<string, string> = {
-  not_checked: "未実行",
-  connected: "正常",
-  unreachable: "到達不能",
-  timeout: "タイムアウト",
-  tls_error: "TLS エラー",
-  authentication_failed: "認証失敗",
-  unsupported_contract: "未対応 API 契約",
-  invalid_json: "不正 JSON",
-};
-
 export function HubsPage({
   backend,
   onDirtyChange,
@@ -311,8 +296,8 @@ export function HubsPage({
               <div>{hub.url}</div>
               <div>
                 状態: {hub.collectionEnabled ? "有効" : "無効"} / 資格情報:{" "}
-                {stateLabel[hub.credentialState] ?? hub.credentialState} / 接続:{" "}
-                {connectionLabel[hub.connectionState] ?? hub.connectionState}
+                {presentStatus(hub.credentialState).label} / 接続:{" "}
+                {presentStatus(hub.connectionState).label}
               </div>
               {hub.connectionFailureNote && (
                 <div className={styles.meta}>{hub.connectionFailureNote}</div>
