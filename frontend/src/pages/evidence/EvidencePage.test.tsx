@@ -97,7 +97,24 @@ it("shows acquisition, masked raw evidence, and source observations", async () =
   await user.click(screen.getByRole("tab", { name: "原 JSON" }));
   expect(screen.getByText(/未知フィールドと秘密値/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "マスク済み詳細" }));
-  expect(await screen.findByText(/\[MASKED\]/)).toBeVisible();
+  expect(await screen.findByText(/\[MASKED\]/)).toBeInTheDocument();
+  expect(screen.getByLabelText("JSON ツリー")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /原 JSON 全体.*コピー/ }),
+  ).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("原 JSON 内を検索"), "accessToken");
+  const pathButtons = screen.getAllByRole("button", {
+    name: "JSON パスをコピー",
+  });
+  await user.click(pathButtons[pathButtons.length - 1]);
+  expect(
+    await screen.findByText(/\$\.devices\[0\]\.accessToken/),
+  ).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "折り返しテキスト" }));
+  expect(screen.getByLabelText("折り返し原 JSON")).toBeVisible();
+  expect(screen.getByText("accessToken")).toBeVisible();
 
   await user.click(screen.getByRole("tab", { name: "元観測" }));
   expect(await screen.findByText(/利用 25% \/ 残り 75%/)).toBeVisible();

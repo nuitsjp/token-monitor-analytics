@@ -55,6 +55,29 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     borderRadius: tokens.borderRadiusMedium,
   },
+  rawToolbar: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "end",
+    gap: tokens.spacingHorizontalS,
+    marginBlock: tokens.spacingVerticalS,
+  },
+  rawLine: {
+    display: "grid",
+    gridTemplateColumns: "3rem minmax(0, 1fr)",
+    gap: tokens.spacingHorizontalS,
+  },
+  lineNumber: {
+    color: tokens.colorNeutralForeground3,
+    textAlign: "right",
+    userSelect: "none",
+  },
+  tree: {
+    display: "grid",
+    gap: tokens.spacingVerticalXS,
+    paddingInlineStart: tokens.spacingHorizontalM,
+    overflowWrap: "anywhere",
+  },
 });
 
 type EvidenceTab = "attempts" | "raw" | "observations";
@@ -77,6 +100,9 @@ export function EvidencePage({
   const [costs, setCosts] = useState<CostObservationSnapshot[]>([]);
   const [limits, setLimits] = useState<LimitObservationSnapshot[]>([]);
   const [rawDetail, setRawDetail] = useState<RawSnapshotDetail | null>(null);
+  const [rawMode, setRawMode] = useState<"tree" | "text">("tree");
+  const [rawQuery, setRawQuery] = useState("");
+  const [copiedPath, setCopiedPath] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -271,7 +297,45 @@ export function EvidencePage({
           {rawDetail && (
             <section aria-label="マスク済み原 JSON 詳細">
               <Subtitle1 as="h2">マスク済み原 JSON</Subtitle1>
-              <pre className={styles.raw}>{prettyJSON(rawDetail.body)}</pre>
+              <div className={styles.rawToolbar}>
+                <Button
+                  appearance={rawMode === "tree" ? "primary" : "secondary"}
+                  aria-pressed={rawMode === "tree"}
+                  onClick={() => setRawMode("tree")}
+                >
+                  ツリー
+                </Button>
+                <Button
+                  appearance={rawMode === "text" ? "primary" : "secondary"}
+                  aria-pressed={rawMode === "text"}
+                  onClick={() => setRawMode("text")}
+                >
+                  折り返しテキスト
+                </Button>
+                <Field label="原 JSON 内を検索">
+                  <Input
+                    value={rawQuery}
+                    onChange={(_, data) => setRawQuery(data.value)}
+                  />
+                </Field>
+              </div>
+              <div aria-live="polite" className={styles.meta}>
+                {copiedPath && `JSON パスをコピーしました: ${copiedPath}`}
+              </div>
+              {rawMode === "tree" ? (
+                <JSONTree
+                  body={rawDetail.body}
+                  query={rawQuery}
+                  onCopyPath={(path) => {
+                    void navigator.clipboard
+                      .writeText(path)
+                      .then(() => setCopiedPath(path))
+                      .catch((cause: unknown) => setError(errorMessage(cause)));
+                  }}
+                />
+              ) : (
+                <RawText body={rawDetail.body} query={rawQuery} />
+              )}
             </section>
           )}
         </>
@@ -283,6 +347,163 @@ export function EvidencePage({
         />
       )}
     </div>
+  );
+}
+
+function JSONTree({
+  body,
+  query,
+  onCopyPath,
+}: {
+  body: string;
+  query: string;
+  onCopyPath: (path: string) => void;
+}) {
+  const parsed = parseJSON(body);
+  if (!parsed.ok) return <RawText body={body} query={query} />;
+  return (
+    <div aria-label="JSON ツリー">
+      <JSONNode
+        label="$"
+        path="$"
+        value={parsed.value}
+        query={query}
+        onCopyPath={onCopyPath}
+      />
+    </div>
+  );
+}
+
+function JSONNode({
+  label,
+  path,
+  value,
+  query,
+  onCopyPath,
+}: {
+  label: string;
+  path: string;
+  value: unknown;
+  query: string;
+  onCopyPath: (path: string) => void;
+}) {
+  const styles = useStyles();
+  const children = jsonChildren(value, path);
+  const matches = jsonNodeMatches(label, value, query);
+  if (query.trim() && !matches && !jsonValueContains(value, query)) return null;
+
+  if (children.length === 0) {
+    return (
+      <div className={styles.tree}>
+        <span>
+          {highlightText(label, query)}:{" "}
+          {highlightText(JSON.stringify(value), query)}{" "}
+          <Button size="small" onClick={() => onCopyPath(path)}>
+            JSON パスをコピー
+          </Button>
+        </span>
+      </div>
+    );
+  }
+  return (
+    <details open={query.trim() ? true : undefined} className={styles.tree}>
+      <summary>
+        {highlightText(label, query)}{" "}
+        {Array.isArray(value) ? `[${children.length}]` : "{}"}
+      </summary>
+      <Button size="small" onClick={() => onCopyPath(path)}>
+        JSON パスをコピー
+      </Button>
+      {children.map((child) => (
+        <JSONNode
+          key={child.path}
+          label={child.label}
+          path={child.path}
+          value={child.value}
+          query={query}
+          onCopyPath={onCopyPath}
+        />
+      ))}
+    </details>
+  );
+}
+
+function RawText({ body, query }: { body: string; query: string }) {
+  const styles = useStyles();
+  const lines = prettyJSON(body).split("\n");
+  return (
+    <pre className={styles.raw} aria-label="折り返し原 JSON">
+      {lines.map((line, index) => (
+        <span className={styles.rawLine} key={`${index}-${line}`}>
+          <span className={styles.lineNumber} aria-hidden="true">
+            {index + 1}
+          </span>
+          <span>{highlightText(line, query)}</span>
+        </span>
+      ))}
+    </pre>
+  );
+}
+
+type JSONChild = { label: string; path: string; value: unknown };
+
+function parseJSON(body: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(body) as unknown };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function jsonChildren(value: unknown, path: string): JSONChild[] {
+  if (Array.isArray(value)) {
+    return value.map((item, index) => ({
+      label: String(index),
+      path: `${path}[${index}]`,
+      value: item,
+    }));
+  }
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value).map(([key, item]) => ({
+    label: key,
+    path: /^[A-Za-z_$][\w$]*$/.test(key)
+      ? `${path}.${key}`
+      : `${path}[${JSON.stringify(key)}]`,
+    value: item,
+  }));
+}
+
+function jsonNodeMatches(
+  label: string,
+  value: unknown,
+  query: string,
+): boolean {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  return `${label} ${typeof value === "object" ? "" : JSON.stringify(value)}`
+    .toLocaleLowerCase()
+    .includes(normalized);
+}
+
+function jsonValueContains(value: unknown, query: string): boolean {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  return JSON.stringify(value).toLocaleLowerCase().includes(normalized);
+}
+
+function highlightText(line: string, query: string) {
+  const normalized = query.trim();
+  if (!normalized) return line;
+  const index = line
+    .toLocaleLowerCase()
+    .indexOf(normalized.toLocaleLowerCase());
+  if (index < 0) return line;
+  return (
+    <>
+      {line.slice(0, index)}
+      <mark>{line.slice(index, index + normalized.length)}</mark>
+      {line.slice(index + normalized.length)}
+    </>
   );
 }
 
