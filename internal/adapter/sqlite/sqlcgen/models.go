@@ -67,12 +67,101 @@ type HubConnectionStatus struct {
 	FailureDetail sql.NullString `json:"failure_detail"`
 }
 
+type IdentificationCandidate struct {
+	CandidateID               string         `json:"candidate_id"`
+	RawLimitServiceIdentifier string         `json:"raw_limit_service_identifier"`
+	RawReportedPlanName       string         `json:"raw_reported_plan_name"`
+	State                     string         `json:"state"`
+	ServiceID                 sql.NullString `json:"service_id"`
+	PlanID                    sql.NullString `json:"plan_id"`
+	FirstObservedAt           sql.NullString `json:"first_observed_at"`
+	LastObservedAt            sql.NullString `json:"last_observed_at"`
+	CreatedAt                 string         `json:"created_at"`
+	UpdatedAt                 string         `json:"updated_at"`
+}
+
+type IdentificationCandidateObservation struct {
+	ObservationID     string `json:"observation_id"`
+	CandidateID       string `json:"candidate_id"`
+	HubID             string `json:"hub_id"`
+	HubAccountDisplay string `json:"hub_account_display"`
+	ObservedAt        string `json:"observed_at"`
+}
+
 type Judgment struct {
 	EntityType string         `json:"entity_type"`
 	EntityID   string         `json:"entity_id"`
 	State      string         `json:"state"`
 	Reason     sql.NullString `json:"reason"`
 	UpdatedAt  string         `json:"updated_at"`
+}
+
+type LimitDefinition struct {
+	LimitDefinitionID   string         `json:"limit_definition_id"`
+	ServiceID           string         `json:"service_id"`
+	CycleType           string         `json:"cycle_type"`
+	Meaning             string         `json:"meaning"`
+	Unit                string         `json:"unit"`
+	BillingConfirmation string         `json:"billing_confirmation"`
+	ArchivedAt          sql.NullString `json:"archived_at"`
+	CreatedAt           string         `json:"created_at"`
+	UpdatedAt           string         `json:"updated_at"`
+}
+
+type LimitLabelChangeCandidate struct {
+	CandidateID               string         `json:"candidate_id"`
+	HubID                     string         `json:"hub_id"`
+	DeviceRecordKey           string         `json:"device_record_key"`
+	HubAccountKey             string         `json:"hub_account_key"`
+	RawLimitServiceIdentifier string         `json:"raw_limit_service_identifier"`
+	NormalizedKind            string         `json:"normalized_kind"`
+	NormalizedMetric          string         `json:"normalized_metric"`
+	OldLabel                  string         `json:"old_label"`
+	NewLabel                  string         `json:"new_label"`
+	State                     string         `json:"state"`
+	LimitDefinitionID         sql.NullString `json:"limit_definition_id"`
+	FirstObservedAt           sql.NullString `json:"first_observed_at"`
+	LastObservedAt            sql.NullString `json:"last_observed_at"`
+	CreatedAt                 string         `json:"created_at"`
+	UpdatedAt                 string         `json:"updated_at"`
+}
+
+type LimitLabelChangeWindow struct {
+	WindowID    string `json:"window_id"`
+	CandidateID string `json:"candidate_id"`
+	WindowKey   string `json:"window_key"`
+	Label       string `json:"label"`
+	ObservedAt  string `json:"observed_at"`
+}
+
+type Plan struct {
+	PlanID     string         `json:"plan_id"`
+	ServiceID  string         `json:"service_id"`
+	Name       string         `json:"name"`
+	IsBaseline int64          `json:"is_baseline"`
+	ArchivedAt sql.NullString `json:"archived_at"`
+	CreatedAt  string         `json:"created_at"`
+	UpdatedAt  string         `json:"updated_at"`
+}
+
+type PlanLimitRule struct {
+	PlanLimitRuleID   string          `json:"plan_limit_rule_id"`
+	PlanVersionID     string          `json:"plan_version_id"`
+	LimitDefinitionID string          `json:"limit_definition_id"`
+	PlanLimit         sql.NullFloat64 `json:"plan_limit"`
+	LimitMultiplier   sql.NullFloat64 `json:"limit_multiplier"`
+	OfficialSourceUrl string          `json:"official_source_url"`
+	CreatedAt         string          `json:"created_at"`
+}
+
+type PlanVersion struct {
+	PlanVersionID     string         `json:"plan_version_id"`
+	PlanID            string         `json:"plan_id"`
+	Name              string         `json:"name"`
+	ValidFrom         string         `json:"valid_from"`
+	ValidTo           sql.NullString `json:"valid_to"`
+	OfficialSourceUrl string         `json:"official_source_url"`
+	CreatedAt         string         `json:"created_at"`
 }
 
 type RecalculationRequest struct {
@@ -88,4 +177,34 @@ type RecalculationRequest struct {
 type SchemaMetadatum struct {
 	Singleton     int64 `json:"singleton"`
 	SchemaVersion int64 `json:"schema_version"`
+}
+
+type Service struct {
+	ServiceID   string         `json:"service_id"`
+	Provider    string         `json:"provider"`
+	Name        string         `json:"name"`
+	OfficialKey string         `json:"official_key"`
+	ArchivedAt  sql.NullString `json:"archived_at"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
+}
+
+type ServiceIdentifierMapping struct {
+	MappingID      string         `json:"mapping_id"`
+	IdentifierKind string         `json:"identifier_kind"`
+	RawIdentifier  string         `json:"raw_identifier"`
+	ServiceID      string         `json:"service_id"`
+	ValidFrom      string         `json:"valid_from"`
+	ValidTo        sql.NullString `json:"valid_to"`
+	CreatedAt      string         `json:"created_at"`
+}
+
+type StandardPrice struct {
+	StandardPriceID   string         `json:"standard_price_id"`
+	PlanVersionID     string         `json:"plan_version_id"`
+	UsdMonthlyPerSeat float64        `json:"usd_monthly_per_seat"`
+	SourceUrl         string         `json:"source_url"`
+	ValidFrom         string         `json:"valid_from"`
+	ValidTo           sql.NullString `json:"valid_to"`
+	CreatedAt         string         `json:"created_at"`
 }
