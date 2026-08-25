@@ -197,7 +197,7 @@ export function OverviewPage({
         </header>
         <MessageBar intent="warning">
           <MessageBarBody>
-            <StatusBadge status={snapshot.maintenance.status} />{" "}
+            <Body1 as="strong">{snapshot.maintenance.status.label}</Body1>{" "}
             {snapshot.maintenance.status.description}
             <div className={styles.errorActions}>
               <Button onClick={() => navigate("/data")}>

@@ -168,11 +168,7 @@ describe("OverviewPage", () => {
         },
       },
     });
-    expect(
-      await screen.findByLabelText(
-        "復元中。バックアップを復元しています。完了後に値を再表示します。",
-      ),
-    ).toBeVisible();
+    expect(await screen.findByText("復元中")).toBeVisible();
     expect(screen.queryByText("推定状態")).not.toBeInTheDocument();
     expect(
       screen.queryByText("利用増加を最近確認した利用枠"),
