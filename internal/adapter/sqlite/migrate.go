@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"sync"
 
 	"github.com/pressly/goose/v3"
 )
@@ -12,8 +13,11 @@ const CurrentSchemaVersion int64 = 13
 
 //go:embed migrations/*.sql
 var migrations embed.FS
+var migrationMu sync.Mutex
 
 func migrate(database *sql.DB) error {
+	migrationMu.Lock()
+	defer migrationMu.Unlock()
 	goose.SetBaseFS(migrations)
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set migration dialect: %w", err)
