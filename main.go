@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"token-monitor-analytics/internal/desktop"
 )
 
 func main() {
@@ -24,15 +25,23 @@ func run() (runErr error) {
 		runErr = errors.Join(runErr, storage.Close())
 	}()
 
+	windowService, windowController := desktop.NewWindowService()
+	settingsService := desktop.NewSettingsService(storage.lifecycle)
 	app := application.New(application.Options{
 		Name:        "Token Monitor Analytics",
 		Description: "Local-first analytics for Token Monitor hubs",
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
+		Services: []application.Service{
+			application.NewService(windowService),
+			application.NewService(settingsService),
+		},
 	})
+	windowController.Attach(app)
+	desktop.RegisterThemeSync(app, settingsService)
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	compact := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:                "compact",
 		Title:               "Token Monitor Analytics",
 		Width:               360,
@@ -45,6 +54,7 @@ func run() (runErr error) {
 		BackgroundColour:    application.NewRGB(250, 250, 250),
 		URL:                 "/?window=compact",
 	})
+	windowController.SetCompact(compact)
 
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("run Wails application: %w", err)

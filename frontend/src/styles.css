@@ -21,6 +21,49 @@ body {
   min-height: 100vh;
 }
 
+body,
+button,
+input,
+select,
+textarea {
+  font-family:
+    "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+}
+
+@media (max-width: 720px) {
+  [data-window="main"] {
+    grid-template-columns: 1fr;
+  }
+
+  [data-window="main"] > nav {
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+  }
+
+  [data-window="main"] > nav > div {
+    margin-bottom: 0;
+  }
+}
+
+@media (min-width: 721px) {
+  [data-window="main"] > nav {
+    min-width: 0;
+  }
+}
+
+@media (forced-colors: active) {
+  [data-window="main"] a {
+    color: LinkText;
+  }
+
+  [data-window="main"] a[aria-current="page"] {
+    color: HighlightText;
+    background: Highlight;
+    box-shadow: inset 4px 0 HighlightText;
+  }
+}
+
 button,
 input,
 select,

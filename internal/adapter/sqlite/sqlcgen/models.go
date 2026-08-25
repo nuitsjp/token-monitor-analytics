@@ -8,6 +8,18 @@ import (
 	"database/sql"
 )
 
+type ConfigurationAudit struct {
+	Sequence   int64          `json:"sequence"`
+	AuditID    string         `json:"audit_id"`
+	OccurredAt string         `json:"occurred_at"`
+	Actor      string         `json:"actor"`
+	Action     string         `json:"action"`
+	EntityType string         `json:"entity_type"`
+	EntityID   string         `json:"entity_id"`
+	BeforeJson sql.NullString `json:"before_json"`
+	AfterJson  sql.NullString `json:"after_json"`
+}
+
 type DisplaySetting struct {
 	Singleton            int64          `json:"singleton"`
 	Theme                string         `json:"theme"`
@@ -26,6 +38,42 @@ type DisplaySetting struct {
 	MainWindowHeight     sql.NullInt64  `json:"main_window_height"`
 	MainWindowDpi        sql.NullInt64  `json:"main_window_dpi"`
 	MainWindowMonitor    sql.NullString `json:"main_window_monitor"`
+}
+
+type Hub struct {
+	HubID                     string         `json:"hub_id"`
+	DisplayName               string         `json:"display_name"`
+	Url                       string         `json:"url"`
+	CollectionEnabled         int64          `json:"collection_enabled"`
+	CollectionIntervalSeconds int64          `json:"collection_interval_seconds"`
+	ApiContract               sql.NullString `json:"api_contract"`
+	CreatedAt                 string         `json:"created_at"`
+	UpdatedAt                 string         `json:"updated_at"`
+}
+
+type HubConnectionStatus struct {
+	HubID         string         `json:"hub_id"`
+	State         string         `json:"state"`
+	CheckedAt     sql.NullString `json:"checked_at"`
+	FailureDetail sql.NullString `json:"failure_detail"`
+}
+
+type Judgment struct {
+	EntityType string         `json:"entity_type"`
+	EntityID   string         `json:"entity_id"`
+	State      string         `json:"state"`
+	Reason     sql.NullString `json:"reason"`
+	UpdatedAt  string         `json:"updated_at"`
+}
+
+type RecalculationRequest struct {
+	RequestID     string         `json:"request_id"`
+	AuditID       string         `json:"audit_id"`
+	RequestedAt   string         `json:"requested_at"`
+	IntervalStart string         `json:"interval_start"`
+	IntervalEnd   string         `json:"interval_end"`
+	State         string         `json:"state"`
+	LastError     sql.NullString `json:"last_error"`
 }
 
 type SchemaMetadatum struct {
