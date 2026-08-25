@@ -52,7 +52,7 @@ type blockingCollectionClient struct {
 	calls   atomic.Int32
 }
 
-func (c *blockingCollectionClient) Collect(context.Context, string) (hubapi.Result, error) {
+func (c *blockingCollectionClient) FetchStats(context.Context, string) (hubapi.Result, error) {
 	c.calls.Add(1)
 	select {
 	case <-c.entered:

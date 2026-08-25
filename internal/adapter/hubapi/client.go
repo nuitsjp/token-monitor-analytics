@@ -49,11 +49,6 @@ func NewClient(rawURL string, allowlist Allowlist) (*Client, error) {
 	return &Client{baseURL: baseURL, allowlist: allowlist, http: client}, nil
 }
 
-// New is a concise alias for NewClient.
-func New(rawURL string, allowlist Allowlist) (*Client, error) {
-	return NewClient(rawURL, allowlist)
-}
-
 func (c *Client) Health(ctx context.Context) (Health, error) {
 	if c == nil || c.baseURL == nil {
 		return Health{}, classify("health", ClassificationUnreachable, "client is not initialized")
@@ -121,11 +116,6 @@ func (c *Client) FetchStats(ctx context.Context, secret string) (Result, error) 
 	}
 	stats.HTTPStatus = response.StatusCode
 	return Result{Health: health, Stats: stats, Contract: contract}, nil
-}
-
-// Collect is an alias for FetchStats used by collection callers.
-func (c *Client) Collect(ctx context.Context, secret string) (Result, error) {
-	return c.FetchStats(ctx, secret)
 }
 
 func (c *Client) endpoint(path string) string {

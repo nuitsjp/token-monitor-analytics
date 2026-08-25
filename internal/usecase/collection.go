@@ -27,7 +27,7 @@ type CredentialReader interface {
 }
 
 type CollectionClient interface {
-	Collect(context.Context, string) (hubapi.Result, error)
+	FetchStats(context.Context, string) (hubapi.Result, error)
 }
 
 type CollectionClientFactory func(rawURL string, allowlist hubapi.Allowlist) (CollectionClient, error)
@@ -185,7 +185,7 @@ func (u *CollectionUsecase) fetch(ctx context.Context, row sqliteadapter.HubRow)
 	if !found {
 		return hubapi.Result{}, &hubapi.Error{Classification: hubapi.ClassificationAuth, Operation: "stats", Reason: "credential is not registered"}
 	}
-	result, err := client.Collect(ctx, secret)
+	result, err := client.FetchStats(ctx, secret)
 	secret = ""
 	return result, err
 }
