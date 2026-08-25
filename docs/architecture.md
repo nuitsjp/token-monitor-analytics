@@ -6,7 +6,7 @@
 | 基準日 | 2026-08-25 |
 | 対象 | Windows デスクトップ版 |
 | 規範文書 | [要件定義](./requirements.md) |
-| UI 設計 | [画面設計](./screen-design.md)。要件定義と矛盾する場合は要件定義を優先する |
+| UI 設計 | [画面設計](./screen-design.md)、[デザインシステム](./design-system.md)。いずれも要件定義と矛盾する場合は要件定義を優先する |
 | 実装計画 | [PLAN.md](../PLAN.md) |
 
 ## 1. 結論
@@ -34,7 +34,7 @@
 - 外部境界は Hub API、Windows Credential Manager、利用者が選択するファイルシステムだけとする。
 - **poc/** から本実装への import は禁止する。
 - PoC の DB、JSON バックアップ、画面、単一点推定との後方互換性は設けない。
-- 実装上の正本は [要件定義](./requirements.md) とする。本書が要件と矛盾した場合は要件を優先する。
+- 実装上の唯一の規範文書は [要件定義](./requirements.md) とする。画面設計、デザインシステム、本書、PLAN、README は要件を実装・検証へ接続する従属文書であり、矛盾した場合は要件を優先する。
 - 本書は製品フェーズ、リリース範囲、実装順を定義しない。それらは利用者との合意後に [PLAN.md](../PLAN.md) へ記録する。
 
 ### 2.2 設計原則
@@ -98,6 +98,7 @@ flowchart LR
 | DB 接続、WAL、マイグレーション | sqlite adapter | 単一の Lifecycle が全接続を所有する |
 | ウィンドウ生成、単一 M00、前面表示 | desktop | Wails のウィンドウ API を一箇所に集約する |
 | 画面入力、ナビゲーション、表示整形 | React | ドメイン判断は行わない |
+| 表示 DTO、状態コード、鮮度状態、残り（%） | Go desktop/usecase | DTO と共通マッパーを UI の正本とし、React は再計算・独自判定を行わない |
 | 秘密 | Windows Credential Manager | DB、監査、ログ、バックアップへ保存しない |
 
 ### 3.3 収集から推定までの流れ
@@ -244,6 +245,9 @@ Service は薄い変換層とし、SQL や業務判断を置かない。DB entit
 - UTC 日時は RFC 3339 Nano の文字列とする。
 - API から取得した十進数の字句は json.Decoder.UseNumber で読み、TEXT のまま保存する。
 - 推定途中と導出結果は丸め前の binary64 を SQLite REAL として保存する。表示用の丸め値は DTO で別に作る。
+- 利用枠の表示 DTO は、Go が未丸めで計算した `remainingPercent` を明示的に返す。React は `usedPercent` から再計算せず、このフィールドを通常表示・詳細表示・出力の書式へ渡す。
+- 表示 DTO は鮮度状態、状態理由、観測時刻を返す。React は経過時間の閾値や鮮度状態を判定しない。
+- 状態コードから日本語ラベル、Fluent の intent、アイコン、説明、次操作を生成する一元マッパーを Go の共有ポートとして実装し、画面ごとの翻訳表を持たない。
 - NaN と Infinity は DTO へ出さない。該当する場合は推定状態とエラーコードで表す。
 - エラーは安定した code、利用者向け message、機微情報を除いた details とする。
 - 資格情報を入力 DTO から再表示せず、出力 DTO、イベント、エラー、ログへ含めない。
@@ -280,7 +284,8 @@ Service は薄い変換層とし、SQL や業務判断を置かない。DB entit
 - Go 側のデータは TanStack Query で取得し、query key を画面ごとの集約 ID に揃える。
 - Wails イベントには eventVersion と影響 ID を含め、frontend は該当 query だけを invalidate する。
 - React Context はテーマ、表示タイムゾーン、fake/backend adapter など、画面全体に本当に必要な値だけに使う。
-- ウィンドウ間で frontend state を同期しない。共有状態の正本は Go と SQLite とする。
+- M11 のテーマ設定は Go と SQLite を正本とし、`light`、`dark`、`system` を保存する。`system` の OS テーマ変更は desktop 層が購読して Go の設定イベントを発行し、T01 と M00 が同じイベントを受けて FluentProvider と独自トークンを更新する。
+- ウィンドウ間で frontend state を同期しない。共有状態とテーマ変更イベントの正本は Go と SQLite とする。ウィンドウごとのテーマ設定は持たない。
 - 表のページング、絞込み、並び順は Go へ渡す。仮想スクロールは計測で必要性を確認した場合だけ導入する。
 
 ### 6.3 UI 品質
@@ -288,6 +293,8 @@ Service は薄い変換層とし、SQL や業務判断を置かない。DB entit
 - Fluent UI の標準部品、フォーカス表示、キーボード操作、ハイコントラストを優先する。
 - フォームは React Hook Form で変更状態とフィールドエラーを管理する。
 - 状態は色だけで示さず、ラベルとアイコンを併用する。
+- 独自 SVG・CSS は `forced-colors`、`currentColor`、システム色を使い、ハイコントラストでハードコードした色だけに依存しない。200% 拡大では固定寸法で情報や操作を切り取らずリフローし、グラフは同じ情報を表とテキストでも提供する。
+- プライバシーモードのマスク処理は表示文字、Tooltip、`title`、`aria-label`、アクセシブル説明、クリップボード、タスクバーのサムネイルで同じマスク済み DTO を使う。未加工の値を React の別経路へ渡さない。
 - 200% 拡大、Windows の表示倍率、複数モニター、画面外位置からの復帰を実機受入れで確認する。
 - 推定値、状態、根拠は表と詳細パネルで追跡できるようにする。グラフは Go が返す導出値だけを可視化し、独自計算を行わない。
 
@@ -520,6 +527,7 @@ token-monitor-analytics/
 ├─ docs/
 │  ├─ requirements.md
 │  ├─ screen-design.md
+│  ├─ design-system.md
 │  ├─ architecture.md
 │  └─ backup-restore.md             # 復旧と演習の運用手順
 └─ poc/                             # 参照専用。本実装から依存しない

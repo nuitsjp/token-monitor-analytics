@@ -4,40 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>デザインシステム — Token Monitor Analytics</title>
-<!-- 部品ギャラリー。規則の定義は docs/design-system.md を正とする -->
+<!-- 部品ギャラリー。規範仕様は docs/requirements.md、共通 UI 規則は docs/design-system.md を参照する -->
+<link rel="stylesheet" href="tokens.css">
 <style>
-:root{
-  --bg1:#ffffff; --bg2:#fafafa; --bg3:#f5f5f5; --bg4:#f0f0f0; --bg6:#e6e6e6;
-  --hover:#f5f5f5; --selected:#ebebeb;
-  --fg1:#242424; --fg2:#424242; --fg3:#616161;
-  --stroke1:#d1d1d1; --stroke2:#e0e0e0;
-  --brand:#0f6cbd; --brand-hover:#115ea3; --link:#115ea3; --brand-tint:#ebf3fc;
-  --ok:#107c10; --ok-bg:#f1faf1; --ok-border:#9fd89f; --ok-fg:#0e700e;
-  --err:#d13438; --err-bg:#fdf6f6; --err-border:#eeacb2; --err-fg:#bc2f32;
-  --amber:#eaa300; --amber-fg:#9d5d00;
-  --warn-bg:#fff9f5; --warn-border:#fdcfb4; --warn-fg:#bc4b09;
-  --est-bg:#f7f2fa; --est-border:#cdb2e0; --est-fg:#5c2e91;
-  --shared-bg:#fefbf4; --shared-border:#f2dcaa; --shared-fg:#7a5c00;
-  --rS:2px; --rM:4px; --rXL:8px; --pill:10000px;
-  --series:#0f6cbd; --grid:#ebebeb; --hatch-bg:#ffffff;
-  --shadow2:0 0 2px rgba(0,0,0,.12),0 1px 2px rgba(0,0,0,.14);
-  --shadow4:0 0 2px rgba(0,0,0,.12),0 2px 4px rgba(0,0,0,.14);
-}
-/* ==== ダークテーマ（Fluent UI v9 webDarkTheme 基底） ==== */
-:root[data-theme="dark"]{
-  --bg1:#292929; --bg2:#1f1f1f; --bg3:#141414; --bg4:#0a0a0a; --bg6:#333333;
-  --hover:#383838; --selected:#3d3d3d;
-  --fg1:#ffffff; --fg2:#d6d6d6; --fg3:#adadad;
-  --stroke1:#666666; --stroke2:#525252;
-  --brand:#115ea3; --brand-hover:#0f6cbd; --link:#479ef5; --brand-tint:#082338;
-  --series:#479ef5; --grid:#3d3d3d; --hatch-bg:#292929;
-  --ok:#54b054; --ok-bg:#052505; --ok-border:#0e4a0e; --ok-fg:#54b054;
-  --err:#dc5e62; --err-bg:#3f1011; --err-border:#813639; --err-fg:#e37d80;
-  --amber:#eaa300; --amber-fg:#eaa300;
-  --warn-bg:#411200; --warn-border:#7f3c20; --warn-fg:#faa06b;
-  --est-bg:#2b1c3f; --est-border:#6a4a96; --est-fg:#c9aef0;
-  --shared-bg:#322a10; --shared-border:#6f5c1e; --shared-fg:#ddba55;
-}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg3);color:var(--fg1);
   font-family:"Segoe UI Variable Text","Segoe UI","Yu Gothic UI","Meiryo",sans-serif;font-size:14px;line-height:1.43}
@@ -87,7 +56,7 @@ section.sys>.desc{font-size:12px;color:var(--fg3);margin:0 0 14px}
 .b-est{background:var(--est-bg);color:var(--est-fg);border-color:var(--est-border)}
 .b-shared{background:var(--shared-bg);color:var(--shared-fg);border-color:var(--shared-border)}
 .mbadge{min-width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;border-radius:var(--pill);padding:0 5px}
-.mb-err{background:var(--err);color:#fff}
+.mb-err{background:var(--err-counter);color:#fff}
 .mb-warn{background:var(--bg1);color:var(--warn-fg);border:1px solid var(--warn-fg)}
 button{font:inherit;font-weight:600;border:1px solid var(--stroke1);background:var(--bg1);
   border-radius:var(--rM);height:32px;padding:0 12px;cursor:pointer;color:var(--fg1)}
@@ -99,7 +68,7 @@ button:hover{background:var(--hover)}
 .icon-btn:hover{background:var(--hover);color:var(--fg1)}
 .count{display:inline-flex;align-items:center;gap:4px;font-weight:600;cursor:pointer;border:none;background:none;padding:2px 6px;border-radius:var(--rM);font-size:13px}
 .count:hover{background:var(--hover)}
-.c-err{color:var(--err-fg)} .c-warn{color:var(--amber-fg)} .c-ok{color:var(--ok-fg)}
+.c-err{color:var(--err-fg)} .c-warn{color:var(--warn-fg)} .c-ok{color:var(--ok-fg)}
 .qbar{height:4px;border-radius:var(--pill);background:var(--bg6);overflow:hidden;margin:6px 0 5px;width:260px}
 .qbar>i{display:block;height:100%;border-radius:var(--pill)}
 .pct{font-size:14px;font-weight:700}
@@ -108,8 +77,9 @@ button:hover{background:var(--hover)}
 .legend{display:flex;gap:16px;font-size:12px;color:var(--fg3);flex-wrap:wrap}
 .lg{display:inline-flex;align-items:center;gap:5px}
 .swc{width:12px;height:9px;border-radius:var(--rS);display:inline-block;border:1px solid rgba(0,0,0,.12)}
-.card-demo{position:relative;background:var(--bg1);border:1px solid transparent;border-radius:var(--rM);box-shadow:var(--shadow4);padding:14px 16px;width:280px;cursor:pointer}
+.card-demo{position:relative;display:block;background:var(--bg1);border:1px solid transparent;border-radius:var(--rM);box-shadow:var(--shadow4);padding:14px 16px;width:280px;cursor:pointer;color:inherit;text-decoration:none}
 .card-demo:hover{border-color:var(--stroke1)}
+.card-demo:hover{text-decoration:none}
 .card-demo .ch{display:flex;align-items:center;gap:8px;color:var(--fg3);margin-bottom:8px}
 .card-demo .ch h4{margin:0;font-size:12px;font-weight:600}
 .card-demo .ch .chev{margin-left:auto}
@@ -122,15 +92,23 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
 .tbl tr:last-child td{border-bottom:none}
 .tbl td.r,.tbl th.r{text-align:right}
 .tbl tr.link:hover td{background:var(--hover);cursor:pointer}
+.tbl tr.link:focus-visible td{background:var(--hover);box-shadow:inset 0 0 0 2px var(--link)}
 .sel{display:inline-flex;align-items:center;height:32px;border:1px solid var(--stroke1);border-radius:var(--rM);background:var(--bg1);padding:0 10px;font-size:14px;cursor:pointer}
 .sel:hover{background:var(--hover)}
 .chip{display:inline-flex;gap:5px;align-items:center;height:24px;background:var(--brand-tint);color:var(--link);border-radius:var(--rM);padding:0 8px;font-size:12px;font-weight:600}
-.chip .x{cursor:pointer}
+.chip .x{cursor:pointer;border:0;background:transparent;color:inherit;height:auto;padding:0;font-weight:700}
 .fbtn{position:relative}
 .fbtn .n{position:absolute;top:-4px;right:-4px;min-width:14px;height:14px;border-radius:var(--pill);background:var(--brand);color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px}
 .alert{display:flex;gap:8px;align-items:center;min-height:34px;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:var(--rM);padding:5px 12px;font-size:12.5px;color:var(--fg2);max-width:640px}
 .alert .ic{color:var(--warn-fg)}
 .fmt th{width:220px}
+@media (max-width:700px), (max-width:1100px) and (min-resolution:192dpi) {
+  .page{padding:12px}
+  .sw-grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
+  .type-row{flex-wrap:wrap;gap:8px}
+  .type-row .meta{width:100%}
+  .comp{max-width:100%}
+}
 </style>
 </head>
 <body>
@@ -152,9 +130,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
   <div class="page-h">
     <h1>デザインシステム</h1>
     <nav><a href="screens.html">画面サンプル</a></nav>
-    <button class="btn-s" id="themeBtn" style="margin-left:auto">ダークテーマ</button>
+    <button class="btn-s" id="themeBtn" style="margin-left:auto" aria-label="テーマ: システム。次はライト">テーマ: システム（次: ライト）</button>
   </div>
-  <p class="page-note">部品ギャラリー。規則の定義は <code>docs/design-system.md</code> を正とする。基底は Fluent UI React v9 <code>webLightTheme</code> / <code>webDarkTheme</code>。</p>
+  <p class="page-note">部品ギャラリー。規範仕様は <code>docs/requirements.md</code>、共通 UI 規則は <code>docs/design-system.md</code> を参照する。基底は Fluent UI React v9 <code>webLightTheme</code> / <code>webDarkTheme</code>。</p>
 
   <section class="sys">
     <h2>カラートークン</h2>
@@ -177,7 +155,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
       <div class="swatch"><div class="c"><i style="background:#d13438"></i><i style="background:#dc5e62"></i></div><div class="t"><b>エラー・僅少</b><span>L #d13438 · D #dc5e62</span></div></div>
       <div class="swatch"><div class="c"><i style="background:#bc4b09"></i><i style="background:#faa06b"></i></div><div class="t"><b>警告・データ品質</b><span>L #bc4b09 · D #faa06b</span></div></div>
       <div class="swatch"><div class="c"><i style="background:#5c2e91"></i><i style="background:#c9aef0"></i></div><div class="t"><b>推定</b><span>L #5c2e91 · D #c9aef0</span></div></div>
-      <div class="swatch"><div class="c"><i style="background:repeating-linear-gradient(45deg,#eaa300 0 4px,#fff 4px 8px)"></i><i style="background:repeating-linear-gradient(45deg,#eaa300 0 4px,#292929 4px 8px)"></i></div><div class="t"><b>共有（斜線パターン）</b><span>#eaa300 45°・地は面色に追従</span></div></div>
+      <div class="swatch"><div class="c"><i style="background:var(--shared-pattern)"></i><i style="background:var(--shared-pattern)"></i></div><div class="t"><b>共有（斜線パターン）</b><span>共有セマンティック色 45°・地は面色に追従</span></div></div>
     </div>
   </section>
 
@@ -229,9 +207,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
       <span class="mbadge mb-warn">1</span>
     </div>
     <div class="row"><span class="lbl">カウントボタン</span>
-      <button class="count c-err" title="要確認 3件"><svg class="ic"><use href="#i-err"/></svg>3</button>
-      <button class="count c-warn" title="データ警告 1件"><svg class="ic"><use href="#i-warn"/></svg>1</button>
-      <button class="count" title="定期収集が有効な Hub 3/4"><svg class="ic ic-s"><use href="#i-sync"/></svg><span class="num sm">3/4</span></button>
+      <button class="count c-err" aria-label="要確認 3件"><svg class="ic"><use href="#i-err"/></svg>3</button>
+      <button class="count c-warn" aria-label="データ警告 1件"><svg class="ic"><use href="#i-warn"/></svg>1</button>
+      <button class="count" aria-label="定期収集が有効な Hub 3/4"><svg class="ic ic-s"><use href="#i-sync"/></svg><span class="num sm">3/4</span></button>
     </div>
   </section>
 
@@ -242,9 +220,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
       <button class="btn-p">主要操作</button>
       <button>標準</button>
       <button class="btn-s">小（カード内）</button>
-      <button class="icon-btn" title="再読み込み"><svg class="ic"><use href="#i-sync"/></svg></button>
-      <button class="icon-btn" title="CSV / JSON へ出力"><svg class="ic"><use href="#i-dl"/></svg></button>
-      <button class="icon-btn fbtn" title="詳細フィルター（適用中 1件）"><svg class="ic"><use href="#i-filter"/></svg><span class="n">1</span></button>
+      <button class="icon-btn" aria-label="再読み込み"><svg class="ic"><use href="#i-sync"/></svg></button>
+      <button class="icon-btn" aria-label="CSV / JSON へ出力"><svg class="ic"><use href="#i-dl"/></svg></button>
+      <button class="icon-btn fbtn" aria-label="詳細フィルター（適用中 1件）"><svg class="ic"><use href="#i-filter"/></svg><span class="n">1</span></button>
     </div>
   </section>
 
@@ -269,12 +247,12 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
     <div class="row"><span class="lbl">構成バー</span>
       <div>
         <div class="comp">
-          <i style="width:98.8%;background:var(--series)" title="単一アカウント帰属 18,021,167"></i>
-          <i style="width:1.2%;background:repeating-linear-gradient(45deg,var(--marigold,#eaa300) 0 3px,var(--hatch-bg) 3px 6px)" title="共有 213,400"></i>
+          <i style="width:98.8%;background:var(--series)"></i>
+          <i style="width:1.2%;background:var(--shared-pattern)"></i>
         </div>
         <div class="legend" style="margin-top:6px">
           <span class="lg"><span class="swc" style="background:var(--series)"></span>単一アカウント帰属</span>
-          <span class="lg"><span class="swc" style="background:repeating-linear-gradient(45deg,var(--marigold,#eaa300) 0 3px,var(--hatch-bg) 3px 6px)"></span>共有</span>
+          <span class="lg"><span class="swc" style="background:var(--shared-pattern)"></span>共有</span>
         </div>
       </div>
     </div>
@@ -284,17 +262,17 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
     <h2>カード・KPI</h2>
     <p class="desc">白・radius 4px・shadow4。遷移可能なカードは右上シェブロン + ホバーで枠線。見出しは Caption1 600 で値より弱く。</p>
     <div class="row">
-      <div class="card-demo" title="利用実績を開く">
-        <div class="ch"><h4>トークン使用量</h4><span class="badge b-warn" title="対象期間に取得失敗 1件">取得失敗あり</span><span class="chev"><svg class="ic"><use href="#i-chev-r"/></svg></span></div>
+      <a class="card-demo" href="#usage" aria-label="利用実績を開く">
+        <div class="ch"><h4>トークン使用量</h4><span class="badge b-warn">取得失敗あり</span><span class="chev"><svg class="ic"><use href="#i-chev-r"/></svg></span></div>
         <div class="kpi-lb">今日</div>
         <div class="kpi-v num">1,234,567</div>
-        <div class="kpi-sub num" title="4.936801 USD — API 単価による換算値。実際の請求額ではありません">4.94 USD *</div>
-      </div>
-      <div class="card-demo" title="データ管理を開く">
+        <div class="kpi-sub num">4.94 USD *</div>
+      </a>
+      <a class="card-demo" href="#data" aria-label="データ管理を開く">
         <div class="ch"><h4>データ</h4><span class="chev"><svg class="ic"><use href="#i-chev-r"/></svg></span></div>
         <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0"><span class="mut">データベース</span><span class="num">128.4 MB</span></div>
         <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0"><span class="mut">バックアップ</span><span class="c-ok num"><svg class="ic ic-s" style="vertical-align:-2px"><use href="#i-ok"/></svg> 8/24 21:00</span></div>
-      </div>
+      </a>
     </div>
   </section>
 
@@ -304,9 +282,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
     <table class="tbl">
       <thead><tr><th>Hub</th><th></th><th class="r">トークン数</th><th class="r">最終成功</th></tr></thead>
       <tbody>
-        <tr class="link"><td>Hub-A</td><td><span class="c-ok" title="有効・正常"><svg class="ic ic-s"><use href="#i-ok"/></svg></span></td><td class="r num">10,204,100</td><td class="r num">9:03</td></tr>
-        <tr class="link"><td>Hub-B</td><td><span class="c-err" title="認証失敗"><svg class="ic ic-s"><use href="#i-err"/></svg></span></td><td class="r num">5,118,200</td><td class="r num" style="color:var(--warn-fg)" title="8/17 3:00（8日前）">8/17</td></tr>
-        <tr class="link"><td>Hub-D</td><td><span class="mut" title="無効（対象期間の過去観測を含む）">—</span></td><td class="r num">0</td><td class="r num">—</td></tr>
+        <tr class="link" tabindex="0" role="link" aria-label="Hub-A の観測と根拠を開く" data-href="#hub-a"><td>Hub-A</td><td><span class="c-ok" aria-label="有効・正常"><svg class="ic ic-s"><use href="#i-ok"/></svg></span></td><td class="r num">10,204,100</td><td class="r num">9:03</td></tr>
+        <tr class="link" tabindex="0" role="link" aria-label="Hub-B の観測と根拠を開く" data-href="#hub-b"><td>Hub-B</td><td><span class="c-err" aria-label="認証失敗"><svg class="ic ic-s"><use href="#i-err"/></svg></span></td><td class="r num">5,118,200</td><td class="r num" style="color:var(--warn-fg)">8/17</td></tr>
+        <tr class="link" tabindex="0" role="link" aria-label="Hub-D の観測と根拠を開く" data-href="#hub-d"><td>Hub-D</td><td><span class="mut" aria-label="無効（対象期間の過去観測を含む）">—</span></td><td class="r num">0</td><td class="r num">—</td></tr>
       </tbody>
     </table>
   </section>
@@ -315,10 +293,10 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
     <h2>フィルター・メッセージ</h2>
     <p class="desc">選択 32px。詳細フィルターはアイコン + 適用数。適用中条件はブランド淡色チップ。警告は MessageBar で対象への遷移リンクを添える。</p>
     <div class="row">
-      <span class="sel num">8/1 〜 8/25（当月）▾</span>
-      <span class="sel">日 ▾</span>
-      <button class="icon-btn fbtn" title="詳細フィルター（適用中 1件）"><svg class="ic"><use href="#i-filter"/></svg><span class="n">1</span></button>
-      <span class="chip">サービス: Codex <span class="x" title="解除">×</span></span>
+      <button type="button" class="sel num" aria-label="期間 8月1日から8月25日（当月）">8/1 〜 8/25（当月）▾</button>
+      <button type="button" class="sel" aria-label="粒度 日">日 ▾</button>
+      <button class="icon-btn fbtn" aria-label="詳細フィルター（適用中 1件）"><svg class="ic"><use href="#i-filter"/></svg><span class="n">1</span></button>
+      <span class="chip">サービス: Codex <button type="button" class="x" aria-label="サービス Codex のフィルターを解除">×</button></span>
     </div>
     <div class="row">
       <div class="alert">
@@ -339,7 +317,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
         <tr><td>日時（当年）</td><td class="num" style="color:var(--warn-fg)">8/17</td><td class="num">2026/8/17 3:00（8日前）</td></tr>
         <tr><td>リセット予定</td><td class="num">8/27 14:00 リセット</td><td class="num">—</td></tr>
         <tr><td>トークン数</td><td class="num">18,234,567</td><td class="num">同じ</td></tr>
-        <tr><td>USD</td><td class="num">72.94 USD *</td><td class="num">72.938402 USD・請求額ではない旨</td></tr>
+        <tr><td>USD</td><td class="num">72.94 USD *</td><td class="num">72.94 USD・請求額ではない旨</td></tr>
         <tr><td>残量（ゲージ併記）</td><td class="num" style="color:var(--amber-fg);font-weight:700">38.2%</td><td class="num">残り 38.20%・増加/観測時刻</td></tr>
         <tr><td>成立しない指標</td><td>—</td><td>理由と詳細画面への導線</td></tr>
       </tbody>
@@ -349,17 +327,32 @@ table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;max-width:560px}
 <script>
 (function(){
   var btn=document.getElementById('themeBtn');if(!btn)return;
-  function apply(t){
-    if(t==='dark'){document.documentElement.setAttribute('data-theme','dark');}
-    else{document.documentElement.removeAttribute('data-theme');}
-    try{localStorage.setItem('tma-theme',t);}catch(e){}
-    btn.textContent=t==='dark'?'ライトテーマ':'ダークテーマ';
+  var modes=['system','light','dark'];
+  var labels={system:'システム',light:'ライト',dark:'ダーク'};
+  var mode='system';
+  function apply(t,save){
+    mode=modes.indexOf(t)>=0?t:'system';
+    if(mode==='system'){document.documentElement.removeAttribute('data-theme');}
+    else{document.documentElement.setAttribute('data-theme',mode);}
+    if(save){try{localStorage.setItem('tma-theme',mode);}catch(e){}}
+    var next=modes[(modes.indexOf(mode)+1)%modes.length];
+    btn.textContent='テーマ: '+labels[mode]+'（次: '+labels[next]+'）';
+    btn.setAttribute('aria-label','テーマ: '+labels[mode]+'。次は'+labels[next]);
   }
-  btn.addEventListener('click',function(){
-    apply(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');
+  btn.addEventListener('click',function(){apply(modes[(modes.indexOf(mode)+1)%modes.length],true);});
+  var saved='system';try{saved=localStorage.getItem('tma-theme')||'system';}catch(e){}
+  apply(saved,false);
+  var media=window.matchMedia('(prefers-color-scheme: dark)');
+  if(media.addEventListener){media.addEventListener('change',function(){if(mode==='system')apply('system',false);});}
+  else if(media.addListener){media.addListener(function(){if(mode==='system')apply('system',false);});}
+})();
+(function(){
+  document.querySelectorAll('tr.link[tabindex="0"]').forEach(function(row){
+    row.addEventListener('click',function(){if(row.dataset.href)window.location.hash=row.dataset.href.slice(1);});
+    row.addEventListener('keydown',function(e){
+      if(e.key==='Enter'||e.key===' '){e.preventDefault();row.click();}
+    });
   });
-  var saved='light';try{saved=localStorage.getItem('tma-theme')||'light';}catch(e){}
-  apply(saved);
 })();
 </script>
 </body>
