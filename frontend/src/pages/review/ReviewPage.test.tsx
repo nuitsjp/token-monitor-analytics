@@ -54,6 +54,71 @@ function renderPage(backend: ReturnType<typeof createFakeBackend>) {
 }
 
 describe("ReviewPage", () => {
+  it("P1-UI-02 exposes each review work category and archived reconfirmation", async () => {
+    const workItems = [
+      review({
+        id: "review-identification",
+        kind: "identification_candidate",
+        target: "サービス候補",
+      }),
+      review({
+        id: "review-account",
+        kind: "hub_account_candidate",
+        target: "Hubアカウント候補",
+      }),
+      review({
+        id: "review-cost",
+        kind: "usage_cost_unassociated",
+        target: "未関連付け利用額",
+      }),
+      review({
+        id: "review-limit",
+        kind: "usage_limit_unassociated",
+        target: "未関連付け利用枠",
+      }),
+      review({
+        id: "review-label",
+        kind: "label_change",
+        target: "利用枠名称変更",
+      }),
+      review({
+        id: "review-plan",
+        kind: "plan_history_inconsistency",
+        target: "プラン履歴不整合",
+      }),
+      review({
+        id: "review-completeness",
+        kind: "completeness",
+        target: "活動主体の完全性",
+      }),
+      review({
+        id: "review-archived",
+        kind: "hub_account_candidate",
+        state: "archived_reconfirmation",
+        target: "アーカイブ後の新規観測",
+      }),
+    ];
+    const user = userEvent.setup();
+    renderPage(createFakeBackend({ reviewItems: workItems }));
+
+    expect(
+      await screen.findByRole("button", { name: "サービス候補" }),
+    ).toBeVisible();
+    expect(screen.getByRole("list", { name: "要確認作業一覧" })).toBeVisible();
+    expect(screen.getAllByRole("listitem")).toHaveLength(workItems.length);
+    expect(
+      screen.getByRole("option", { name: "アーカイブ後再確認" }),
+    ).toBeInTheDocument();
+
+    for (const item of workItems) {
+      await user.click(screen.getByRole("button", { name: item.target }));
+      expect(
+        screen.getAllByText(kindLabelForTest(item.kind)).length,
+      ).toBeGreaterThan(0);
+    }
+    expect(screen.getAllByText("アーカイブ後再確認").length).toBeGreaterThan(0);
+  });
+
   it("shows separate read-only work and warning tabs with non-secret detail", async () => {
     const backend = createFakeBackend({
       reviewItems: [
@@ -148,3 +213,16 @@ describe("ReviewPage", () => {
     expect(result.violations).toEqual([]);
   });
 });
+
+function kindLabelForTest(kind: string): string {
+  const labels: Record<string, string> = {
+    identification_candidate: "サービス・プラン同定候補",
+    hub_account_candidate: "Hubアカウント候補",
+    usage_cost_unassociated: "未関連付け利用額",
+    usage_limit_unassociated: "未関連付け利用枠",
+    label_change: "利用枠名称変更候補",
+    plan_history_inconsistency: "プラン履歴不整合",
+    completeness: "活動主体の完全性",
+  };
+  return labels[kind] ?? kind;
+}

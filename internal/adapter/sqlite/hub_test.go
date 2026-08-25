@@ -50,6 +50,11 @@ func TestHubIdentitySurvivesDuplicateURLUpdateAndDisable(t *testing.T) {
 		}
 		got = append(got, item)
 	}
+	t.Run("P1-HUB-01 Hub identity is immutable across URL changes and disable", func(t *testing.T) {
+		if len(got) != 2 || got[0].id != firstID || got[0].url != "https://new.example.test" || got[0].enabled || got[1].id != secondID {
+			t.Fatalf("unexpected Hubs: %#v", got)
+		}
+	})
 	t.Run("DM-ID-01 Hub identity is immutable across URL changes", func(t *testing.T) {
 		if len(got) != 2 || got[0].id != firstID || got[0].url != "https://new.example.test" || got[0].enabled || got[1].id != secondID {
 			t.Fatalf("unexpected Hubs: %#v", got)

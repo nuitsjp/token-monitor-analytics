@@ -23,18 +23,20 @@ func TestValidateHubURL(t *testing.T) {
 		{name: "relative", raw: "/hub", ok: false},
 		{name: "unsupported scheme", raw: "ftp://hub.example.test", ok: false},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := ValidateHubURL(test.raw)
-			if test.ok && err != nil {
-				t.Fatal(err)
-			}
-			if !test.ok && err == nil {
-				t.Fatalf("ValidateHubURL(%q) succeeded with %q", test.raw, got)
-			}
-			if got != test.want {
-				t.Fatalf("got %q, want %q", got, test.want)
-			}
-		})
-	}
+	t.Run("URL policy accepts loopback HTTP and requires remote HTTPS", func(t *testing.T) {
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				got, err := ValidateHubURL(test.raw)
+				if test.ok && err != nil {
+					t.Fatal(err)
+				}
+				if !test.ok && err == nil {
+					t.Fatalf("ValidateHubURL(%q) succeeded with %q", test.raw, got)
+				}
+				if got != test.want {
+					t.Fatalf("got %q, want %q", got, test.want)
+				}
+			})
+		}
+	})
 }

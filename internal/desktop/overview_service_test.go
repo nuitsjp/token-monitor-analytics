@@ -194,6 +194,26 @@ func TestOverviewStatusMapperRejectsUnknownState(t *testing.T) {
 	}
 }
 
+func TestOverviewStatusMapperIsTheCompleteSharedContract(t *testing.T) {
+	t.Run("QL-UI-03 one mapper supplies label intent icon description and next action", func(t *testing.T) {
+		for code, definition := range statusPresentations {
+			got, err := statusPresentation(code)
+			if err != nil {
+				t.Fatalf("status %q was rejected: %v", code, err)
+			}
+			if got.Code != code || got.Label != definition.label || got.Intent != definition.intent || got.Icon != definition.icon || got.Description != definition.description || got.NextAction != definition.nextAction || got.NextRoute != definition.nextRoute {
+				t.Fatalf("status %q mapping = %#v, definition = %#v", code, got, definition)
+			}
+			if got.Label == "" || got.Intent == "" || got.Icon == "" || got.Description == "" {
+				t.Fatalf("status %q has incomplete display contract: %#v", code, got)
+			}
+		}
+		if _, err := statusPresentation("future_state"); err == nil {
+			t.Fatal("unknown status was accepted by the shared mapper")
+		}
+	})
+}
+
 func TestOverviewRemainingAndFreshnessBoundariesStayInGoDTO(t *testing.T) {
 	t.Run("QL-UI-02 keeps freshness thresholds reasons and observation times in the Go DTO", func(t *testing.T) {
 		now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)

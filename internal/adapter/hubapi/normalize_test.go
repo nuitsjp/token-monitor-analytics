@@ -1,6 +1,7 @@
 package hubapi
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,33 @@ func TestNormalizeStatsUsesContractPathsAndMetadata(t *testing.T) {
 	})
 }
 
+func TestQLTime03PreservesSourceTimezoneAndDoesNotUseDisplayTimezone(t *testing.T) {
+	validRaw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	unknownRaw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Unknown/Display-Replacement","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	valid, err := NormalizeStats([]byte(validRaw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := NormalizeStats([]byte(unknownRaw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("QL-TIME-03 source zone/date are retained and unknown zone stays unknown", func(t *testing.T) {
+		if len(valid.Costs) != 1 || valid.Costs[0].SourceTimezone != "Asia/Tokyo" || valid.Costs[0].SourceLocalDate != "2026-08-25" {
+			t.Fatalf("valid cost source metadata = %+v", valid.Costs)
+		}
+		if len(valid.Limits) != 1 || valid.Limits[0].SourceTimezone != "Asia/Tokyo" || valid.Limits[0].SourceLocalDate != "2026-08-25" {
+			t.Fatalf("valid limit source metadata = %+v", valid.Limits)
+		}
+		if len(unknown.Costs) != 1 || unknown.Costs[0].SourceTimezone != "" || unknown.Costs[0].SourceLocalDate != "" {
+			t.Fatalf("unknown cost source metadata was replaced: %+v", unknown.Costs)
+		}
+		if len(unknown.Limits) != 1 || unknown.Limits[0].SourceTimezone != "" || unknown.Limits[0].SourceLocalDate != "" {
+			t.Fatalf("unknown limit source metadata was replaced: %+v", unknown.Limits)
+		}
+	})
+}
+
 func TestNormalizeStatsMissingSyncMetadataCannotMatch(t *testing.T) {
 	raw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periods":{"allTime":{"clientCosts":{"codex":1}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
 	result, err := NormalizeStats([]byte(raw))
@@ -159,6 +187,24 @@ func TestNormalizeStatsCostFingerprintUsesNumericValue(t *testing.T) {
 	t.Run("API-NORM-01 canonicalizes numeric value fingerprint only", func(t *testing.T) {
 		if one.Costs[0].DedupeKey != onePointZero.Costs[0].DedupeKey || one.Costs[0].ValueFingerprint != onePointZero.Costs[0].ValueFingerprint {
 			t.Fatalf("numeric equivalents differ: %+v %+v", one.Costs[0], onePointZero.Costs[0])
+		}
+	})
+}
+
+func TestNormalizeStatsUnknownFieldsDoNotChangeExtraction(t *testing.T) {
+	baseRaw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.5}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	withUnknownFields := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.5}},"futurePeriod":{"newMetric":99}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z","futureField":{"nested":true}}],"futureProviderField":"ignored"}],"futureLimitField":true},"futureDeviceField":[1,2,3]}],"futureRootField":{"retained":true}}`
+	base, err := NormalizeStats([]byte(baseRaw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withUnknown, err := NormalizeStats([]byte(withUnknownFields))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("QL-REP-03 unknown fields preserve the existing extraction meaning", func(t *testing.T) {
+		if !reflect.DeepEqual(base.Costs, withUnknown.Costs) || !reflect.DeepEqual(base.Limits, withUnknown.Limits) {
+			t.Fatalf("unknown fields changed normalized output: base=%+v extended=%+v", base, withUnknown)
 		}
 	})
 }

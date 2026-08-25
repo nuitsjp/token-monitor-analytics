@@ -14,9 +14,9 @@ func TestReadOverviewDataReturnsOnlyRecentIncreaseWithinCurrentEstimableInterval
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	execOverviewSQL(t, database, `INSERT INTO hubs (hub_id, display_name, url, enabled, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES ('hub-overview', 'Hub overview', 'http://localhost:17321', 1, 1, 300, ?, ?)`, utcText(now), utcText(now))
+	execOverviewSQL(t, database, `INSERT INTO hubs (hub_id, display_name, url, enabled, collection_enabled, collection_interval_seconds, api_contract, created_at, updated_at) VALUES ('hub-overview', 'Hub overview', 'http://localhost:17321', 1, 1, 300, 'schema=1;runtime=overview;core=core;runtime_build=runtime', ?, ?)`, utcText(now), utcText(now))
 	execOverviewSQL(t, database, `INSERT INTO hub_connection_statuses (hub_id, state, checked_at) VALUES ('hub-overview', 'connected', ?)`, utcText(now))
-	execOverviewSQL(t, database, `INSERT INTO collection_attempts (attempt_id, hub_id, trigger, state, started_at, completed_at, analytics_interval_seconds) VALUES ('attempt-overview', 'hub-overview', 'scheduled', 'succeeded', ?, ?, 300)`, utcText(now.Add(-time.Minute)), utcText(now))
+	execOverviewSQL(t, database, `INSERT INTO collection_attempts (attempt_id, hub_id, trigger, state, started_at, completed_at, analytics_interval_seconds, stats_http_status, api_contract) VALUES ('attempt-overview', 'hub-overview', 'scheduled', 'succeeded', ?, ?, 300, 200, 'schema=1;runtime=overview;core=core;runtime_build=runtime')`, utcText(now.Add(-time.Minute)), utcText(now))
 	execOverviewSQL(t, database, `INSERT INTO collection_attempts (attempt_id, hub_id, trigger, state, started_at, analytics_interval_seconds) VALUES ('attempt-running', 'hub-overview', 'manual', 'started', ?, 300)`, utcText(now.Add(time.Minute)))
 	execOverviewSQL(t, database, `INSERT INTO raw_snapshots (snapshot_id, attempt_id, hub_id, response_kind, received_started_at, received_completed_at, http_status, body) VALUES ('snapshot-overview', 'attempt-overview', 'hub-overview', 'stats', ?, ?, 200, ?)`, utcText(now.Add(-time.Minute)), utcText(now), []byte(`{}`))
 	execOverviewSQL(t, database, `INSERT INTO services (service_id, provider, name, official_key, created_at, updated_at) VALUES ('service-overview', 'Provider', 'Service overview', 'overview.service', ?, ?)`, utcText(now), utcText(now))
@@ -45,6 +45,28 @@ func TestReadOverviewDataReturnsOnlyRecentIncreaseWithinCurrentEstimableInterval
 	if len(result.Hubs) != 1 || result.Hubs[0].DisplayName != "Hub overview" || !result.Hubs[0].CollectionRunning || result.Hubs[0].LastCollectionState != "succeeded" || result.Hubs[0].LastSuccessAt == nil {
 		t.Fatalf("overview Hubs = %#v", result.Hubs)
 	}
+	rows, err := lifecycle.ListHubRows(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("P1-HUB-02 Hub read models retain settings contract connection and last result", func(t *testing.T) {
+		if len(rows) != 1 {
+			t.Fatalf("Hub rows = %d, want 1", len(rows))
+		}
+		row := rows[0]
+		if row.Hub.ID != "hub-overview" || row.Hub.DisplayName != "Hub overview" || row.Hub.URL != "http://localhost:17321" || row.Hub.CollectionIntervalSeconds != 300 || !row.Hub.CollectionEnabled {
+			t.Fatalf("Hub settings = %+v", row.Hub)
+		}
+		if row.Hub.APIContract == nil || *row.Hub.APIContract != "schema=1;runtime=overview;core=core;runtime_build=runtime" {
+			t.Fatalf("API contract = %v", row.Hub.APIContract)
+		}
+		if row.ConnectionState != "connected" || row.ConnectionCheckedAt == nil {
+			t.Fatalf("connection state = %q checkedAt=%v", row.ConnectionState, row.ConnectionCheckedAt)
+		}
+		if result.Hubs[0].LastCollectionState != "succeeded" || result.Hubs[0].LastSuccessAt == nil {
+			t.Fatalf("last collection = %+v", result.Hubs[0])
+		}
+	})
 	t.Run("P1-DATA-02 capacity count size and completion range", func(t *testing.T) {
 		if result.RawSnapshotCount != 1 || result.DatabaseSizeBytes <= 0 {
 			t.Fatalf("overview capacity = count %d, size %d", result.RawSnapshotCount, result.DatabaseSizeBytes)

@@ -26,6 +26,41 @@ func TestDisplayTimeZoneRequiresExplicitConfirmation(t *testing.T) {
 	}
 }
 
+func TestQLTime01DisplayZoneKeepsStoredInstantsAndPeriodBoundaries(t *testing.T) {
+	t.Run("QL-TIME-01 selected IANA zone changes presentation only", func(t *testing.T) {
+		selected := NewDisplayTimeZone("Asia/Tokyo").Confirm()
+		if saved, ok := selected.SavedIANA(); !ok || saved != "Asia/Tokyo" {
+			t.Fatalf("selected display timezone = %q, %v", saved, ok)
+		}
+		saved, _ := selected.SavedIANA()
+		loc, err := stdtime.LoadLocation(saved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		storedObservation := stdtime.Date(2026, stdtime.August, 25, 15, 0, 0, 0, stdtime.UTC)
+		displayedObservation, err := ConvertInstant(storedObservation, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !displayedObservation.Equal(storedObservation) || displayedObservation.Format("2006-01-02 15:04") != "2026-08-26 00:00" {
+			t.Fatalf("displayed observation = %s, want same instant at Tokyo midnight", displayedObservation)
+		}
+		periodStart := stdtime.Date(2026, stdtime.August, 1, 0, 0, 0, 0, stdtime.UTC)
+		periodEnd := stdtime.Date(2026, stdtime.September, 1, 0, 0, 0, 0, stdtime.UTC)
+		displayedStart, err := ConvertInstant(periodStart, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		displayedEnd, err := ConvertInstant(periodEnd, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !displayedStart.Equal(periodStart) || !displayedEnd.Equal(periodEnd) || displayedEnd.Sub(displayedStart) != periodEnd.Sub(periodStart) {
+			t.Fatalf("period boundaries changed: start=%s end=%s", displayedStart, displayedEnd)
+		}
+	})
+}
+
 func TestConvertInstantDoesNotChangeUTCInstant(t *testing.T) {
 	loc, err := stdtime.LoadLocation("America/New_York")
 	if err != nil {

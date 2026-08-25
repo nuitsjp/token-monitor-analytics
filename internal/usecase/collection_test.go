@@ -129,6 +129,21 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 			t.Fatalf("health body changed: %q", item.Body)
 		}
 	}
+	t.Run("P1-COL-04 successful collection records Hub UTC HTTP contract and raw snapshot lineage", func(t *testing.T) {
+		attempt := attempts[0]
+		if attempt.HubID != hubID || attempt.Trigger != "manual" || attempt.StartedAt.Location() != time.UTC || attempt.CompletedAt == nil || attempt.CompletedAt.Location() != time.UTC {
+			t.Fatalf("attempt metadata = %+v", attempt)
+		}
+		if attempt.HealthHTTPStatus == nil || *attempt.HealthHTTPStatus != http.StatusOK || attempt.StatsHTTPStatus == nil || *attempt.StatsHTTPStatus != http.StatusOK {
+			t.Fatalf("attempt HTTP statuses = health=%v stats=%v", attempt.HealthHTTPStatus, attempt.StatsHTTPStatus)
+		}
+		if attempt.APIContract == "" || attempt.HealthSnapshotID == "" || attempt.StatsSnapshotID != snapshot.SnapshotID {
+			t.Fatalf("attempt contract/snapshots = %q/%q/%q", attempt.APIContract, attempt.HealthSnapshotID, attempt.StatsSnapshotID)
+		}
+		if snapshot.AttemptID != attempt.AttemptID || snapshot.HubID != hubID || snapshot.ResponseKind != "stats" || snapshot.HTTPStatus != http.StatusOK || snapshot.APIContract != attempt.APIContract || snapshot.ReceivedStartedAt.Location() != time.UTC || snapshot.ReceivedCompletedAt.Location() != time.UTC || string(snapshot.Body) != wantStats {
+			t.Fatalf("stats snapshot metadata = %+v", snapshot)
+		}
+	})
 	costs, err := database.ListCostObservations(ctx, hubID)
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +164,21 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 	if limitCount != 1 {
 		t.Fatalf("limit count = %d", limitCount)
 	}
+	limits, err := database.ListLimitObservations(ctx, hubID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("normalized observations retain raw snapshot and JSON paths", func(t *testing.T) {
+		if len(costs) != 1 || costs[0].SnapshotID != snapshot.SnapshotID || costs[0].JSONPath != `$.devices[0].periods.allTime.clientCosts["codex"]` {
+			t.Fatalf("cost lineage = %+v", costs)
+		}
+		if len(limits) != 1 || limits[0].SnapshotID != snapshot.SnapshotID || limits[0].JSONPath == "" {
+			t.Fatalf("limit lineage = %+v", limits)
+		}
+		if len(snapshots) != 2 || string(snapshot.Body) != wantStats {
+			t.Fatalf("raw snapshots were not retained: count=%d body=%q", len(snapshots), snapshot.Body)
+		}
+	})
 }
 
 func TestCollectionKeepsRawWhenNormalizationFails(t *testing.T) {
@@ -177,6 +207,58 @@ func TestCollectionKeepsRawWhenNormalizationFails(t *testing.T) {
 	if len(costs) != 0 {
 		t.Fatalf("normalized costs = %d, want 0", len(costs))
 	}
+}
+
+func TestCollectionLineageAndRawRetentionAcrossNormalizationOutcome(t *testing.T) {
+	t.Run("P1-COL-05 observations trace to raw JSON and normalization failure preserves it", func(t *testing.T) {
+		success := newCollectionFixture(t, true, `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
+		if err := success.usecase.CollectNow(success.ctx, success.hubID); err != nil {
+			t.Fatal(err)
+		}
+		successAttempts, err := success.database.ListCollectionAttempts(success.ctx, success.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		successSnapshots, err := success.database.ListRawSnapshots(success.ctx, success.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		costs, err := success.database.ListCostObservations(success.ctx, success.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		limits, err := success.database.ListLimitObservations(success.ctx, success.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(successAttempts) != 1 || successAttempts[0].State != "succeeded" || len(successSnapshots) != 2 || len(costs) != 1 || len(limits) != 1 {
+			t.Fatalf("successful collection lineage = attempts=%+v snapshots=%d costs=%d limits=%d", successAttempts, len(successSnapshots), len(costs), len(limits))
+		}
+		statsSnapshotID := successAttempts[0].StatsSnapshotID
+		if statsSnapshotID == "" || costs[0].SnapshotID != statsSnapshotID || costs[0].JSONPath == "" || limits[0].SnapshotID != statsSnapshotID || limits[0].JSONPath == "" {
+			t.Fatalf("observation lineage = cost=%+v limit=%+v attempt=%+v", costs[0], limits[0], successAttempts[0])
+		}
+
+		failure := newCollectionFixture(t, true, `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":[]}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
+		if err := failure.usecase.CollectNow(failure.ctx, failure.hubID); err != nil {
+			t.Fatal(err)
+		}
+		failureAttempts, err := failure.database.ListCollectionAttempts(failure.ctx, failure.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		failureSnapshots, err := failure.database.ListRawSnapshots(failure.ctx, failure.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		failureCosts, err := failure.database.ListCostObservations(failure.ctx, failure.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(failureAttempts) != 1 || failureAttempts[0].FailureCode != "normalization_failed" || len(failureSnapshots) != 2 || len(failureCosts) != 0 {
+			t.Fatalf("failed normalization retention = attempts=%+v snapshots=%d costs=%d", failureAttempts, len(failureSnapshots), len(failureCosts))
+		}
+	})
 }
 
 func TestInvalidStatsRecordsFailureWithoutStatsRaw(t *testing.T) {
@@ -223,34 +305,49 @@ func TestDisabledHubSkipsWithoutCredentialOrHTTP(t *testing.T) {
 
 func TestStoppedPeriodicCollectionAllowsManualButSkipsScheduled(t *testing.T) {
 	fixture := newCollectionFixture(t, false, `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
-	if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); err != nil {
-		t.Fatal(err)
-	}
-	if fixture.statsCalls.Load() != 1 {
-		t.Fatalf("manual stats calls = %d, want 1", fixture.statsCalls.Load())
-	}
-	if err := fixture.usecase.CollectScheduled(fixture.ctx, fixture.hubID); err != nil {
-		t.Fatal(err)
-	}
-	if fixture.statsCalls.Load() != 1 {
-		t.Fatalf("scheduled collection ran while stopped: calls=%d", fixture.statsCalls.Load())
-	}
-	attempts, err := fixture.database.ListCollectionAttempts(fixture.ctx, fixture.hubID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var succeeded, stopped int
-	for _, attempt := range attempts {
-		if attempt.State == "succeeded" {
-			succeeded++
+	t.Run("P1-COL-01 positive interval supports manual run and stopped schedule", func(t *testing.T) {
+		row, err := fixture.database.GetHubRow(fixture.ctx, fixture.hubID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if attempt.FailureCode == "collection_disabled" {
-			stopped++
+		if row.Hub.CollectionIntervalSeconds <= 0 || row.Hub.CollectionEnabled {
+			t.Fatalf("initial collection settings = %+v", row.Hub)
 		}
-	}
-	if len(attempts) != 2 || succeeded != 1 || stopped != 1 {
-		t.Fatalf("attempts = %+v", attempts)
-	}
+		if err := fixture.usecase.StartCollection(fixture.ctx, fixture.hubID); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.usecase.StopCollection(fixture.ctx, fixture.hubID); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.statsCalls.Load() != 1 {
+			t.Fatalf("manual stats calls = %d, want 1", fixture.statsCalls.Load())
+		}
+		if err := fixture.usecase.CollectScheduled(fixture.ctx, fixture.hubID); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.statsCalls.Load() != 1 {
+			t.Fatalf("scheduled collection ran while stopped: calls=%d", fixture.statsCalls.Load())
+		}
+		attempts, err := fixture.database.ListCollectionAttempts(fixture.ctx, fixture.hubID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var succeeded, stopped int
+		for _, attempt := range attempts {
+			if attempt.State == "succeeded" {
+				succeeded++
+			}
+			if attempt.FailureCode == "collection_disabled" {
+				stopped++
+			}
+		}
+		if len(attempts) != 2 || succeeded != 1 || stopped != 1 {
+			t.Fatalf("attempts = %+v", attempts)
+		}
+	})
 }
 
 func TestConcurrentCollectionSkipsSecondRequest(t *testing.T) {

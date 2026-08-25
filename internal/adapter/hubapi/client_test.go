@@ -33,6 +33,48 @@ func TestTLSErrorIsClassified(t *testing.T) {
 	}
 }
 
+func TestP1HubURLPolicyAndTLSValidation(t *testing.T) {
+	t.Run("P1-HUB-03 URL policy and certificate validation are enforced", func(t *testing.T) {
+		cases := []struct {
+			name string
+			raw  string
+			want bool
+		}{
+			{name: "remote HTTPS", raw: "https://hub.example.test:17321/base", want: true},
+			{name: "localhost HTTP", raw: "http://localhost:17321", want: true},
+			{name: "IPv4 loopback HTTP", raw: "http://127.0.0.1:17321", want: true},
+			{name: "IPv6 loopback HTTP", raw: "http://[::1]:17321", want: true},
+			{name: "remote HTTP", raw: "http://192.168.0.16:17321", want: false},
+			{name: "userinfo", raw: "https://user:password@hub.example.test", want: false},
+			{name: "query", raw: "https://hub.example.test?secret=x", want: false},
+			{name: "fragment", raw: "https://hub.example.test/#part", want: false},
+			{name: "relative", raw: "/hub", want: false},
+			{name: "unsupported scheme", raw: "ftp://hub.example.test", want: false},
+		}
+		for _, test := range cases {
+			t.Run(test.name, func(t *testing.T) {
+				_, err := validateURL(test.raw)
+				if (err == nil) != test.want {
+					t.Fatalf("validateURL(%q) error=%v, want accepted=%v", test.raw, err, test.want)
+				}
+			})
+		}
+
+		server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			_, _ = writer.Write([]byte(testHealth()))
+		}))
+		defer server.Close()
+		client, err := NewClient(server.URL, testAllowlist())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.Health(context.Background())
+		if ClassificationOf(err) != ClassificationTLS {
+			t.Fatalf("untrusted certificate classification = %q, want tls", ClassificationOf(err))
+		}
+	})
+}
+
 func TestExpiredContextIsClassifiedAsTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(testHealth()))

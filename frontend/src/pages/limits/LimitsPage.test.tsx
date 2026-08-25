@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { expect, it, vi } from "vitest";
-import type { LimitSeriesSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import type {
+  LimitSeriesDetailSnapshot,
+  LimitSeriesSnapshot,
+} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { createFakeBackend } from "../../lib/backend";
 import { LimitsPage } from "./LimitsPage";
 
@@ -157,7 +160,10 @@ function series(): LimitSeriesSnapshot {
   };
 }
 
-function backend() {
+function backend(
+  limitSeries: LimitSeriesSnapshot[] = [series()],
+  limitSeriesDetails: Record<string, LimitSeriesDetailSnapshot> = {},
+) {
   return createFakeBackend({
     catalog: {
       services: [
@@ -196,13 +202,18 @@ function backend() {
         },
       ],
     },
-    limitSeries: [series()],
+    limitSeries,
+    limitSeriesDetails,
   });
 }
 
-function renderLimits(initialEntry: string, displayTimeZone: string) {
+function renderLimits(
+  initialEntry: string,
+  displayTimeZone: string,
+  backendInstance = backend(),
+) {
   const page = (
-    <LimitsPage backend={backend()} displayTimeZone={displayTimeZone} />
+    <LimitsPage backend={backendInstance} displayTimeZone={displayTimeZone} />
   );
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
@@ -228,6 +239,84 @@ it("shows M03 Go-owned state/remaining/estimate and all evidence rows", async ()
     "href",
     "/evidence?observationId=observation-1",
   );
+});
+
+it("P1-UI-04 shows current state, API-converted estimate, quality, and an uncomputed reason", async () => {
+  const complete = series();
+  const uncomputed: LimitSeriesSnapshot = {
+    ...series(),
+    id: "series-uncomputed",
+    logicalAccountId: "account-uncomputed",
+    logicalAccountName: "Uncomputed account",
+    state: {
+      code: "insufficient_observations",
+      label: "観測不足",
+      intent: "warning",
+      icon: "warning",
+      description: "観測が不足しています。",
+      nextAction: "未算出理由を確認",
+      nextRoute: "/limits",
+    },
+    stateReasonCode: "insufficient_observations",
+    stateReason: "観測が不足しているため未算出です。",
+    result: null,
+    planLimit: null,
+    planLimitLabel: "",
+    estimatedLimit: null,
+    estimatedLimitLabel: "",
+  };
+  const user = userEvent.setup();
+  renderLimits("/limits", "UTC", backend([complete, uncomputed]));
+
+  expect((await screen.findAllByText("観測不足")).length).toBeGreaterThan(0);
+  expect(screen.getByText("観測が不足しているため未算出です。")).toBeVisible();
+  expect(screen.getByText("123.00")).toBeVisible();
+
+  const details = screen.getAllByRole("link", { name: "詳細" });
+  await user.click(details[0]);
+  expect(await screen.findByText("暫定推定")).toBeVisible();
+  expect(screen.getByText("123.00")).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "品質" }));
+  expect(screen.getByText("計算論理版: logic")).toBeVisible();
+  expect(screen.getByText("差分行数: 1")).toBeVisible();
+});
+
+it("P1-UI-06 distinguishes the current interval from the latest valid historical interval", async () => {
+  const current = series();
+  const currentInterval = current.currentInterval!;
+  const historical = {
+    ...currentInterval,
+    id: "interval-history",
+    validFrom: "2026-08-12T00:00:00Z",
+    validTo: "2026-08-19T00:00:00Z",
+    stateLabel: "過去の算出可能区間",
+    role: "historical",
+    roleLabel: "非カレント",
+  };
+  current.latestValidReference = {
+    resultId: "result-history",
+    status: current.state,
+    validFrom: historical.validFrom,
+    validTo: historical.validTo,
+    age: "14日",
+    observedAt: "2026-08-18T00:00:00Z",
+  };
+  const details: Record<string, LimitSeriesDetailSnapshot> = {
+    "association-1": {
+      series: current,
+      current: currentInterval,
+      history: [historical, currentInterval],
+    },
+  };
+  const user = userEvent.setup();
+  renderLimits("/limits", "UTC", backend([current], details));
+
+  expect(await screen.findByText(/過去の最新有効区間を参照/)).toBeVisible();
+  expect(screen.getByText(/経過 14日/)).toBeVisible();
+  await user.click(screen.getByRole("link", { name: "詳細" }));
+  await user.click(screen.getByRole("tab", { name: "履歴" }));
+  expect(screen.getByText(/非カレント/)).toBeVisible();
+  expect(screen.getByText("カレント")).toBeVisible();
 });
 
 it("has no automatically detectable accessibility violations", async () => {

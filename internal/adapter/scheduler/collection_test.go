@@ -71,42 +71,53 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 	if err := scheduler.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(4 * time.Second)
-	for statsCalls.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if statsCalls.Load() == 0 {
-		t.Fatal("restored scheduler did not collect")
-	}
-	if err := scheduler.Stop(ctx, hubID); err != nil {
-		t.Fatal(err)
-	}
-	stoppedCalls := statsCalls.Load()
-	time.Sleep(1200 * time.Millisecond)
-	if statsCalls.Load() != stoppedCalls {
-		t.Fatalf("stats calls after stop = %d, want %d", statsCalls.Load(), stoppedCalls)
-	}
-	if err := scheduler.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := database.SetHubCollectionEnabled(ctx, hubID, true, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	restarted, err := New(collector, database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := restarted.Restore(ctx); err != nil {
-		t.Fatal(err)
-	}
-	defer restarted.Close()
-	deadline = time.Now().Add(4 * time.Second)
-	for statsCalls.Load() <= stoppedCalls && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if statsCalls.Load() <= stoppedCalls {
-		t.Fatal("scheduler did not restore after restart")
-	}
+	t.Run("P1-COL-06 restart restores state and waits for the next interval", func(t *testing.T) {
+		// Restore must not replay an elapsed interval immediately.
+		time.Sleep(200 * time.Millisecond)
+		if statsCalls.Load() != 0 {
+			t.Fatalf("stats calls before the first interval = %d, want 0", statsCalls.Load())
+		}
+		deadline := time.Now().Add(4 * time.Second)
+		for statsCalls.Load() == 0 && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if statsCalls.Load() == 0 {
+			t.Fatal("restored scheduler did not collect")
+		}
+		if err := scheduler.Stop(ctx, hubID); err != nil {
+			t.Fatal(err)
+		}
+		stoppedCalls := statsCalls.Load()
+		time.Sleep(1200 * time.Millisecond)
+		if statsCalls.Load() != stoppedCalls {
+			t.Fatalf("stats calls after stop = %d, want %d", statsCalls.Load(), stoppedCalls)
+		}
+		if err := scheduler.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.SetHubCollectionEnabled(ctx, hubID, true, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		restarted, err := New(collector, database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := restarted.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		defer restarted.Close()
+		time.Sleep(200 * time.Millisecond)
+		if statsCalls.Load() != stoppedCalls {
+			t.Fatalf("stats calls immediately after restart = %d, want %d", statsCalls.Load(), stoppedCalls)
+		}
+		deadline = time.Now().Add(4 * time.Second)
+		for statsCalls.Load() <= stoppedCalls && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if statsCalls.Load() <= stoppedCalls {
+			t.Fatal("scheduler did not restore after restart")
+		}
+	})
 }
 
 func TestSchedulerDoesNotRestoreTimerAcrossGlobalRestoreCredentialBoundary(t *testing.T) {
