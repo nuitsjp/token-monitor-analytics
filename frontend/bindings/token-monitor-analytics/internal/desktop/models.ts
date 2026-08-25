@@ -329,6 +329,121 @@ export interface LogicalAccountSnapshot {
     "updatedAt": string;
 }
 
+export interface OverviewCapacitySnapshot {
+    "databaseSizeBytes": number;
+    "rawSnapshotCount": number;
+    "oldestSnapshotAt": string;
+    "latestSnapshotAt": string;
+}
+
+export interface OverviewChecklistItemSnapshot {
+    "step": number;
+    "title": string;
+    "status": StatusPresentationSnapshot;
+    "route": string;
+    "actionable": boolean;
+}
+
+export interface OverviewEstimationSummarySnapshot {
+    "states": OverviewStatusCountSnapshot[] | null;
+}
+
+export interface OverviewFreshnessSnapshot {
+    "status": StatusPresentationSnapshot;
+    "reason": string;
+    "observationAt": string;
+    "ageLabel": string;
+}
+
+export interface OverviewHubSnapshot {
+    "id": string;
+    "displayName": string;
+    "enabled": boolean;
+    "collectionEnabled": boolean;
+    "connection": StatusPresentationSnapshot;
+    "currentCollection": StatusPresentationSnapshot;
+    "lastCollection": StatusPresentationSnapshot;
+    "lastCollectionAt": string;
+    "lastSuccessAt": string;
+    "lastFailureAt": string;
+    "lastSkippedAt": string;
+}
+
+export interface OverviewHubSummarySnapshot {
+    "totalCount": number;
+    "enabledCount": number;
+    "scheduledCount": number;
+    "runningCount": number;
+    "abnormalCount": number;
+    "credentialReadyCount": number;
+    "lastSuccessAt": string;
+    "connectionStates": OverviewStatusCountSnapshot[] | null;
+    "currentCollectionStates": OverviewStatusCountSnapshot[] | null;
+    "lastCollectionStates": OverviewStatusCountSnapshot[] | null;
+    "items": OverviewHubSnapshot[] | null;
+}
+
+export interface OverviewKindCountSnapshot {
+    "code": string;
+    "label": string;
+    "count": number;
+}
+
+export interface OverviewRecentLimitSnapshot {
+    "logicalAccountId": string;
+    "limitDefinitionId": string;
+    "serviceName": string;
+    "accountName": string;
+    "limitName": string;
+    "cycleType": string;
+    "remainingPercent": number | null;
+    "remainingLabel": string;
+    "remainingDetailLabel": string;
+    "remaining": StatusPresentationSnapshot;
+    "resetAt": string;
+    "reset": StatusPresentationSnapshot;
+    "lastIncrease": OverviewTimeSnapshot;
+    "freshness": OverviewFreshnessSnapshot;
+    "privacyMasked": boolean;
+    "accessibleLabel": string;
+    "tooltip": string;
+}
+
+export interface OverviewRecoveryNoticeSnapshot {
+    "status": StatusPresentationSnapshot;
+    "artifactSha256": string;
+}
+
+export interface OverviewReviewSummarySnapshot {
+    "actionItems": OverviewStatusCountSnapshot;
+    "warnings": OverviewStatusCountSnapshot;
+    "recalculationFailures": OverviewStatusCountSnapshot;
+    "actionKinds": OverviewKindCountSnapshot[] | null;
+    "warningKinds": OverviewKindCountSnapshot[] | null;
+}
+
+export interface OverviewSnapshot {
+    "generatedAt": string;
+    "timezoneConfirmed": boolean;
+    "recoveryNotice": OverviewRecoveryNoticeSnapshot | null;
+    "checklist": OverviewChecklistItemSnapshot[] | null;
+    "hubs": OverviewHubSummarySnapshot;
+    "review": OverviewReviewSummarySnapshot;
+    "estimation": OverviewEstimationSummarySnapshot;
+    "capacity": OverviewCapacitySnapshot;
+    "recentLimits": OverviewRecentLimitSnapshot[] | null;
+}
+
+export interface OverviewStatusCountSnapshot {
+    "status": StatusPresentationSnapshot;
+    "count": number;
+}
+
+export interface OverviewTimeSnapshot {
+    "occurredAt": string;
+    "ageLabel": string;
+}
+
 export interface PlanHistorySnapshot {
     "id": string;
     "logicalAccountId": string;
@@ -538,6 +653,20 @@ export interface StandardPriceSnapshot {
     "validFrom": string;
     "validTo": string;
     "createdAt": string;
+}
+
+/**
+ * StatusPresentationSnapshot is the single display contract for status text,
+ * Fluent intent, icon, explanation and next action used by M01 and T01.
+ */
+export interface StatusPresentationSnapshot {
+    "code": string;
+    "label": string;
+    "intent": string;
+    "icon": string;
+    "description": string;
+    "nextAction": string;
+    "nextRoute": string;
 }
 
 export interface UpdateHubInput {

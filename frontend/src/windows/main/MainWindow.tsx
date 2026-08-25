@@ -8,6 +8,7 @@ import {
 import {
   Settings16Regular,
   Cloud16Regular,
+  Home16Regular,
   History16Regular,
   Warning16Regular,
 } from "@fluentui/react-icons";
@@ -19,7 +20,7 @@ import {
   Routes,
   useNavigate,
 } from "react-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   DirtyStateDialog,
   useDirtyStateGuard,
@@ -32,6 +33,7 @@ import { CatalogPage } from "../../pages/catalog/CatalogPage";
 import { AccountsPage } from "../../pages/accounts/AccountsPage";
 import { EvidencePage } from "../../pages/evidence/EvidencePage";
 import { ReviewPage } from "../../pages/review/ReviewPage";
+import { OverviewPage } from "../../pages/overview/OverviewPage";
 import { useSettings } from "../../app/providers";
 
 const useStyles = makeStyles({
@@ -43,6 +45,9 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     fontFamily:
       '"Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif',
+    "@media (max-width: 55rem)": {
+      gridTemplateColumns: "minmax(0, 1fr)",
+    },
   },
   navigation: {
     display: "flex",
@@ -51,11 +56,20 @@ const useStyles = makeStyles({
     minWidth: 0,
     padding: tokens.spacingVerticalL,
     backgroundColor: tokens.colorNeutralBackground3,
+    "@media (max-width: 55rem)": {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      padding: tokens.spacingVerticalM,
+    },
   },
   brand: {
     display: "grid",
     gap: tokens.spacingVerticalXS,
     marginBottom: tokens.spacingVerticalL,
+    "@media (max-width: 55rem)": {
+      width: "100%",
+      marginBottom: 0,
+    },
   },
   navLink: {
     display: "flex",
@@ -77,6 +91,9 @@ const useStyles = makeStyles({
     minWidth: 0,
     padding: tokens.spacingVerticalXXL,
     overflow: "auto",
+    "@media (max-width: 55rem)": {
+      padding: tokens.spacingVerticalL,
+    },
   },
   compactHeading: {
     display: "flex",
@@ -99,6 +116,12 @@ function MainRoutes({
 }) {
   return (
     <Routes>
+      <Route
+        path="/overview"
+        element={
+          <OverviewPage backend={backend} displayTimeZone={displayTimeZone} />
+        }
+      />
       <Route
         path="/settings"
         element={<SettingsPage onDirtyChange={setDirty} />}
@@ -139,7 +162,7 @@ function MainRoutes({
           />
         }
       />
-      <Route path="*" element={<Navigate to="/settings" replace />} />
+      <Route path="*" element={<Navigate to="/overview" replace />} />
     </Routes>
   );
 }
@@ -158,6 +181,13 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
     (path: string) => void guard.request("navigate", () => navigate(path)),
     [guard, navigate],
   );
+  useEffect(
+    () =>
+      backend.on("navigation:open", (data) => {
+        if (typeof data === "string") guardedNavigate(data);
+      }),
+    [backend, guardedNavigate],
+  );
   return (
     <>
       <DirtyStateDialog guard={guard} />
@@ -167,6 +197,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
             <Caption1>Token Monitor Analytics</Caption1>
             <Body1>ローカル観測</Body1>
           </div>
+          <NavLink
+            to="/overview"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/overview");
+              }
+            }}
+          >
+            <Home16Regular aria-hidden="true" />
+            <span>概要</span>
+          </NavLink>
           <NavLink
             to="/hubs"
             className={({ isActive }) =>
@@ -300,8 +345,11 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
 }
 
 export function MainWindow({ backend }: { backend: FrontendAdapter }) {
+  const requestedRoute = new URLSearchParams(window.location.search).get(
+    "route",
+  );
   return (
-    <MemoryRouter initialEntries={["/settings"]}>
+    <MemoryRouter initialEntries={[requestedRoute || "/overview"]}>
       <MainWindowContents backend={backend} />
     </MemoryRouter>
   );

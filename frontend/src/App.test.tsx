@@ -7,11 +7,9 @@ import { createFakeBackend, emitFakeBackendEvent } from "./lib/backend";
 import { identifyWindow } from "./lib/window";
 
 describe("compact window", () => {
-  it("shows the first-run state without exposing an internal screen ID", () => {
+  it("shows the first-run state without exposing an internal screen ID", async () => {
     render(<App backend={createFakeBackend({ canOpenMain: true })} />);
-    expect(
-      screen.getByRole("heading", { name: "Hub を登録してください" }),
-    ).toBeVisible();
+    expect(await screen.findByText("Hub が登録されていません")).toBeVisible();
     expect(screen.queryByText(/T01|M00|Phase/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "メイン画面を開く" }),
@@ -51,19 +49,29 @@ describe("compact window", () => {
     expect(confirmations).toBe(1);
   });
 
-  it("uses a MemoryRouter and exposes only the implemented settings page", async () => {
+  it("uses a MemoryRouter and opens M01 as the default main route", async () => {
     const backend = createFakeBackend({ canOpenMain: true });
     render(<App backend={backend} location="http://localhost/?window=main" />);
 
-    expect(
-      await screen.findByRole("heading", { name: "表示設定" }),
-    ).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "概要" })).toBeVisible();
     expect(
       screen.getByRole("navigation", { name: "メインメニュー" }),
     ).toBeVisible();
     expect(screen.getAllByRole("link", { name: /表示設定/ })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: /概要/ })).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: /監査記録/ })).toHaveLength(1);
     expect(screen.queryByText(/M0[01]|T01/)).not.toBeInTheDocument();
+  });
+
+  it("opens a fixed main route requested by T01", async () => {
+    const backend = createFakeBackend({ canOpenMain: true });
+    render(<App backend={backend} windowKind="main" />);
+    expect(await screen.findByRole("heading", { name: "概要" })).toBeVisible();
+
+    emitFakeBackendEvent(backend, "navigation:open", "/settings");
+    expect(
+      await screen.findByRole("heading", { name: "表示設定" }),
+    ).toBeVisible();
   });
 
   it("saves the M11 theme choice through the typed adapter", async () => {
@@ -74,6 +82,7 @@ describe("compact window", () => {
     const user = userEvent.setup();
     render(<App backend={backend} windowKind="main" />);
 
+    await user.click(await screen.findByRole("link", { name: "表示設定" }));
     await user.click(await screen.findByRole("radio", { name: "ダーク" }));
     await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(async () =>
@@ -93,6 +102,7 @@ describe("compact window", () => {
     const user = userEvent.setup();
     render(<App backend={backend} windowKind="main" />);
 
+    await user.click(await screen.findByRole("link", { name: "表示設定" }));
     await user.click(await screen.findByRole("radio", { name: "ダーク" }));
     emitFakeBackendEvent(backend, "window:main-close-requested");
     expect(

@@ -83,3 +83,16 @@ func TestPlaceWindowWithoutOverlapKeepsPreferredPositionWhenClear(t *testing.T) 
 		t.Fatalf("clear preferred bounds = %#v, want %#v", got, preferred)
 	}
 }
+
+func TestMainWindowRouteAllowlistRejectsArbitraryURLs(t *testing.T) {
+	for _, route := range []string{"/overview", "/hubs", "/review", "/settings"} {
+		if !validMainRoute(route) {
+			t.Fatalf("fixed main route %q was rejected", route)
+		}
+	}
+	for _, route := range []string{"", "https://example.test", "/unknown", "/hubs?secret=value"} {
+		if validMainRoute(route) {
+			t.Fatalf("arbitrary main route %q was accepted", route)
+		}
+	}
+}

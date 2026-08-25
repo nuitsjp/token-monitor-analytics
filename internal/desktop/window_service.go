@@ -2,8 +2,10 @@ package desktop
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -62,7 +64,17 @@ func (s *WindowController) SetCompact(window *application.WebviewWindow) {
 }
 
 func (s *WindowService) OpenMain(ctx context.Context) {
-	s.controller.OpenMain(ctx)
+	s.controller.OpenMainRoute(ctx, "/overview")
+}
+
+// OpenMainRoute opens the one main window at a fixed Phase 1 route. Arbitrary
+// URLs are not accepted at the desktop boundary.
+func (s *WindowService) OpenMainRoute(ctx context.Context, route string) error {
+	if !validMainRoute(route) {
+		return fmt.Errorf("unsupported main route %q", route)
+	}
+	s.controller.OpenMainRoute(ctx, route)
+	return nil
 }
 
 // SetCompactExpanded changes the T01 width while retaining its saved placement.
@@ -71,7 +83,7 @@ func (s *WindowService) SetCompactExpanded(_ context.Context, expanded bool) {
 	s.controller.SetCompactExpanded(expanded)
 }
 
-func (s *WindowController) OpenMain(context.Context) {
+func (s *WindowController) OpenMainRoute(_ context.Context, route string) {
 	s.mu.Lock()
 	if s.main != nil {
 		window := s.main
@@ -82,6 +94,7 @@ func (s *WindowController) OpenMain(context.Context) {
 		s.placeMainWithoutCompactOverlap(window)
 		window.Show()
 		window.Focus()
+		window.EmitEvent("navigation:open", route)
 		return
 	}
 	defer s.mu.Unlock()
@@ -94,7 +107,7 @@ func (s *WindowController) OpenMain(context.Context) {
 		MinWidth:         1024,
 		MinHeight:        640,
 		BackgroundColour: application.NewRGB(250, 250, 250),
-		URL:              "/?window=main",
+		URL:              "/?window=main&route=" + url.QueryEscape(route),
 	})
 	s.main = window
 	s.registerPlacement(window, "main", 1280, 800, 1024, 640)
@@ -110,6 +123,15 @@ func (s *WindowController) OpenMain(context.Context) {
 		s.main = nil
 	})
 	window.Show()
+}
+
+func validMainRoute(route string) bool {
+	switch route {
+	case "/overview", "/hubs", "/review", "/catalog", "/accounts", "/evidence", "/audit", "/settings":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *WindowService) SetMainDirty(_ context.Context, dirty bool) {

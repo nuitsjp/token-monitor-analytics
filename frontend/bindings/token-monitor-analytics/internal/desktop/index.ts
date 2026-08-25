@@ -6,6 +6,7 @@ import * as AuditService from "./auditservice.js";
 import * as CatalogService from "./catalogservice.js";
 import * as CollectionService from "./collectionservice.js";
 import * as HubService from "./hubservice.js";
+import * as OverviewService from "./overviewservice.js";
 import * as ReviewService from "./reviewservice.js";
 import * as SettingsService from "./settingsservice.js";
 import * as WindowService from "./windowservice.js";
@@ -15,6 +16,7 @@ export {
     CatalogService,
     CollectionService,
     HubService,
+    OverviewService,
     ReviewService,
     SettingsService,
     WindowService
@@ -52,6 +54,19 @@ export type {
     LimitObservationSnapshot,
     LinkingSnapshot,
     LogicalAccountSnapshot,
+    OverviewCapacitySnapshot,
+    OverviewChecklistItemSnapshot,
+    OverviewEstimationSummarySnapshot,
+    OverviewFreshnessSnapshot,
+    OverviewHubSnapshot,
+    OverviewHubSummarySnapshot,
+    OverviewKindCountSnapshot,
+    OverviewRecentLimitSnapshot,
+    OverviewRecoveryNoticeSnapshot,
+    OverviewReviewSummarySnapshot,
+    OverviewSnapshot,
+    OverviewStatusCountSnapshot,
+    OverviewTimeSnapshot,
     PlanHistorySnapshot,
     PlanInput,
     PlanLimitRuleInput,
@@ -73,6 +88,7 @@ export type {
     SplitLogicalAccountInput,
     StandardPriceInput,
     StandardPriceSnapshot,
+    StatusPresentationSnapshot,
     UpdateHubInput,
     UpdateLogicalAccountInput,
     UpdatePlanHistoryInput,

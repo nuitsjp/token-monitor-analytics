@@ -5,6 +5,7 @@ import {
   CatalogService,
   CollectionService,
   HubService,
+  OverviewService,
   ReviewService,
   SettingsService,
   WindowService,
@@ -27,6 +28,7 @@ import type {
   CreateServiceInput,
   HubSnapshot,
   LimitObservationSnapshot,
+  OverviewSnapshot,
   LabelChangeDecisionInput,
   LimitDefinitionInput,
   PlanInput,
@@ -80,6 +82,7 @@ export type {
   LabelChangeDecisionInput,
   LimitDefinitionInput,
   LimitObservationSnapshot,
+  OverviewSnapshot,
   PlanInput,
   PlanLimitRuleInput,
   PlanVersionInput,
@@ -130,10 +133,10 @@ export interface SettingsServiceAdapter {
 export type FrontendEventName =
   | "app:quit-requested"
   | "window:main-close-requested"
+  | "navigation:open"
   | "settings:theme-changed";
 
 export interface FrontendAdapter {
-  /** The Go side may replace this with a real overview query later. */
   readonly canOpenMain: boolean;
   readonly initialSettings: SettingsSnapshot;
   getSettings(): Promise<SettingsSnapshot>;
@@ -141,10 +144,12 @@ export interface FrontendAdapter {
     settings: Pick<SettingsSnapshot, "theme" | "displayTimeZone">,
   ): Promise<SettingsSnapshot>;
   OpenMain(): Promise<void>;
+  OpenMainRoute(route: string): Promise<void>;
   SetCompactExpanded(expanded: boolean): Promise<void>;
   SetMainDirty(dirty: boolean): Promise<void>;
   ConfirmCloseMain(): Promise<void>;
   ConfirmQuit(): Promise<void>;
+  getOverview(privacyMode: boolean): Promise<OverviewSnapshot>;
   getHubs(): Promise<HubSnapshot[]>;
   createHub(input: CreateHubInput): Promise<HubSnapshot>;
   updateHub(input: UpdateHubInput): Promise<HubSnapshot>;
@@ -305,10 +310,15 @@ export interface FakeBackendOptions {
   canOpenMain?: boolean;
   settings?: Partial<SettingsSnapshot>;
   onOpenMain?: () => void;
+  onOpenMainRoute?: (route: string) => void;
   onSetCompactExpanded?: (expanded: boolean) => void;
   onSetMainDirty?: (dirty: boolean) => void;
   onConfirmCloseMain?: () => void;
   onConfirmQuit?: () => void;
+  overview?: OverviewSnapshot;
+  onGetOverview?: (
+    privacyMode: boolean,
+  ) => Promise<OverviewSnapshot> | OverviewSnapshot;
   hubs?: HubSnapshot[];
   collectionAttempts?: CollectionAttemptSnapshot[];
   rawSnapshots?: RawSnapshotDetail[];
@@ -324,6 +334,72 @@ export interface FakeBackendOptions {
 export interface FakeFrontendAdapter extends FrontendAdapter {
   emit(event: FrontendEventName, data?: unknown): void;
 }
+
+const fakeStatus = (
+  code: string,
+  label: string,
+  intent = "subtle",
+): OverviewSnapshot["review"]["actionItems"]["status"] => ({
+  code,
+  label,
+  intent,
+  icon: "info",
+  description: label,
+  nextAction: "",
+  nextRoute: "",
+});
+
+export const emptyOverviewSnapshot: OverviewSnapshot = {
+  generatedAt: "2026-08-26T00:00:00Z",
+  timezoneConfirmed: false,
+  recoveryNotice: null,
+  checklist: [
+    {
+      step: 1,
+      title: "表示タイムゾーンを確認",
+      status: fakeStatus("not_started", "未着手"),
+      route: "/settings",
+      actionable: true,
+    },
+  ],
+  hubs: {
+    totalCount: 0,
+    enabledCount: 0,
+    scheduledCount: 0,
+    runningCount: 0,
+    abnormalCount: 0,
+    credentialReadyCount: 0,
+    lastSuccessAt: "",
+    connectionStates: [],
+    currentCollectionStates: [],
+    lastCollectionStates: [],
+    items: [],
+  },
+  review: {
+    actionItems: {
+      status: fakeStatus("review_action_required", "要確認", "warning"),
+      count: 0,
+    },
+    warnings: {
+      status: fakeStatus("review_warning", "データ警告", "warning"),
+      count: 0,
+    },
+    recalculationFailures: {
+      status: fakeStatus("recalculation_failed", "処理失敗", "danger"),
+      count: 0,
+    },
+    actionKinds: [],
+    warningKinds: [],
+  },
+  estimation: { states: [] },
+  capacity: {
+    databaseSizeBytes: 0,
+    rawSnapshotCount: 0,
+    oldestSnapshotAt: "",
+    latestSnapshotAt: "",
+  },
+  recentLimits: [],
+};
 
 /** A deterministic adapter for component tests and browser development. */
 export function createFakeBackend(
@@ -412,11 +488,16 @@ export function createFakeBackend(
       return settings;
     },
     OpenMain: async () => options.onOpenMain?.(),
+    OpenMainRoute: async (route) => options.onOpenMainRoute?.(route),
     SetCompactExpanded: async (expanded) =>
       options.onSetCompactExpanded?.(expanded),
     SetMainDirty: async (dirty) => options.onSetMainDirty?.(dirty),
     ConfirmCloseMain: async () => options.onConfirmCloseMain?.(),
     ConfirmQuit: async () => options.onConfirmQuit?.(),
+    getOverview: async (privacyMode) =>
+      options.onGetOverview?.(privacyMode) ??
+      options.overview ??
+      emptyOverviewSnapshot,
     getHubs: async () => hubs,
     createHub: async (input) => {
       const hub: HubSnapshot = {
@@ -1247,11 +1328,14 @@ export function createProductionBackend(
         asSettings(value, initial),
       ),
     OpenMain: () => asPromise(WindowService.OpenMain()),
+    OpenMainRoute: (route) => asPromise(WindowService.OpenMainRoute(route)),
     SetCompactExpanded: (expanded) =>
       asPromise(WindowService.SetCompactExpanded(expanded)),
     SetMainDirty: (dirty) => asPromise(WindowService.SetMainDirty(dirty)),
     ConfirmCloseMain: () => asPromise(WindowService.ConfirmCloseMain()),
     ConfirmQuit: () => asPromise(WindowService.ConfirmQuit()),
+    getOverview: (privacyMode) =>
+      asPromise(OverviewService.GetOverview(privacyMode)),
     getHubs: () => asPromise(HubService.GetHubs()).then((value) => value ?? []),
     createHub: (input) => asPromise(HubService.CreateHub(input)),
     updateHub: (input) => asPromise(HubService.UpdateHub(input)),

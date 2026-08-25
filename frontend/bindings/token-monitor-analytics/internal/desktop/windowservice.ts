@@ -18,6 +18,14 @@ export function OpenMain(): $CancellablePromise<void> {
 }
 
 /**
+ * OpenMainRoute opens the one main window at a fixed Phase 1 route. Arbitrary
+ * URLs are not accepted at the desktop boundary.
+ */
+export function OpenMainRoute(route: string): $CancellablePromise<void> {
+    return $Call.ByID(486717086, route);
+}
+
+/**
  * SetCompactExpanded changes the T01 width while retaining its saved placement.
  * The saved width is also the persisted expanded state.
  */
