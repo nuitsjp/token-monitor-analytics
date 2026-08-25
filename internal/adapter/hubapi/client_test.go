@@ -67,7 +67,7 @@ func TestFetchStatsKeepsUnknownFieldsAndJSONNumbers(t *testing.T) {
 			_, _ = writer.Write([]byte(testHealth()))
 		case "/api/stats":
 			statsCalls.Add(1)
-			_, _ = writer.Write([]byte(`{"usageUpdatedAt":"2026-08-25T11:36:00Z","periods":{},"unknownFutureField":{"retained":true},"number":12345678901234567890}`))
+			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z"}],"periods":{},"unknownFutureField":{"retained":true},"number":12345678901234567890}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -119,6 +119,44 @@ func TestUnsupportedBuildDoesNotCallStats(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret-not-in-errors") {
 		t.Fatal("secret leaked into error")
+	}
+}
+
+func TestTopLevelUsageUpdatedAtDoesNotReplaceDeviceMarker(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/api/health" {
+			_, _ = writer.Write([]byte(testHealth()))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"usageUpdatedAt":"2026-08-25T11:36:00Z","devices":[{"deviceId":"device-1"}]}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, testAllowlist())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FetchStats(context.Background(), "secret")
+	if ClassificationOf(err) != ClassificationUnsupported {
+		t.Fatalf("classification = %q, want unsupported", ClassificationOf(err))
+	}
+}
+
+func TestEmptyDevicesIsUnsupportedWithoutDeviceUsageMarker(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/api/health" {
+			_, _ = writer.Write([]byte(testHealth()))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"usageUpdatedAt":"2026-08-25T11:36:00Z","devices":[]}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, testAllowlist())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FetchStats(context.Background(), "secret")
+	if ClassificationOf(err) != ClassificationUnsupported {
+		t.Fatalf("classification = %q, want unsupported", ClassificationOf(err))
 	}
 }
 

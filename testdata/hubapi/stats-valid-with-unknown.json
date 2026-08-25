@@ -1,8 +1,10 @@
 {
   "updatedAt": "2026-08-25T11:37:08.113Z",
-  "usageUpdatedAt": "2026-08-25T11:36:00.000Z",
   "periods": {},
-  "devices": [],
+  "devices": [{
+    "deviceId": "device-1",
+    "usageUpdatedAt": "2026-08-25T11:36:00.000Z"
+  }],
   "limits": {
     "updatedAt": "2026-08-25T11:36:30.000Z",
     "providers": []

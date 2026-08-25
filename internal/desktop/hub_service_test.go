@@ -180,7 +180,7 @@ func TestRestorePendingNeedsNewCredentialAndSuccessfulConnection(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
 			return
 		}
-		_, _ = writer.Write([]byte(`{"usageUpdatedAt":"2026-08-25T12:00:00Z"}`))
+		_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T12:00:00Z"}]}`))
 	}))
 	defer server.Close()
 	ctx := context.Background()

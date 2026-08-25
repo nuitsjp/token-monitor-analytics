@@ -78,6 +78,7 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 	if err != nil {
 		return Health{}, classify("health", ClassificationInvalidJSON, "response JSON is invalid")
 	}
+	health.HTTPStatus = response.StatusCode
 	return health, nil
 }
 
@@ -118,6 +119,7 @@ func (c *Client) FetchStats(ctx context.Context, secret string) (Result, error) 
 	if err := requireUsageUpdatedAt(stats.Value); err != nil {
 		return Result{Health: health, Contract: contract}, classify("stats", ClassificationUnsupported, "stats does not satisfy the usageUpdatedAt contract")
 	}
+	stats.HTTPStatus = response.StatusCode
 	return Result{Health: health, Stats: stats, Contract: contract}, nil
 }
 
@@ -227,18 +229,12 @@ func requireUsageUpdatedAt(value any) error {
 	if !ok {
 		return errors.New("stats is not an object")
 	}
-	// Current fixtures place this contract marker at the top level; deployed
-	// Hub payloads may also place it per device.  No updatedAt/receivedAt value
-	// is accepted as a substitute.
-	if marker, exists := object["usageUpdatedAt"]; exists {
-		return validateUsageUpdatedAt(marker)
-	}
 	devices, exists := object["devices"]
 	if !exists {
-		return errors.New("usageUpdatedAt is missing")
+		return errors.New("devices is missing")
 	}
-	rows, ok := devices.([]any)
-	if !ok || len(rows) == 0 {
+	rows, valid := devices.([]any)
+	if !valid || len(rows) == 0 {
 		return errors.New("usageUpdatedAt is missing")
 	}
 	for _, row := range rows {

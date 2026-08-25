@@ -130,13 +130,15 @@ func (a Allowlist) match(build BuildIdentity) (Contract, bool) {
 }
 
 type Health struct {
-	Build BuildIdentity
-	Raw   []byte
+	Build      BuildIdentity
+	Raw        []byte
+	HTTPStatus int
 }
 
 type Stats struct {
-	Raw   []byte
-	Value any
+	Raw        []byte
+	Value      any
+	HTTPStatus int
 }
 
 func parseHealth(raw []byte) (Health, error) {
