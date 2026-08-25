@@ -4,6 +4,7 @@ import {
   AuditService,
   CatalogService,
   CollectionService,
+  EstimationService,
   HubService,
   OverviewService,
   ReviewService,
@@ -57,6 +58,9 @@ import type {
   UsageCostSourceCompletenessSnapshot,
   UsageLimitAssociationInput,
   UsageLimitAssociationSnapshot,
+  LimitSeriesFilterInput,
+  LimitSeriesSnapshot,
+  LimitSeriesDetailSnapshot,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -108,6 +112,10 @@ export type {
   UsageCostSourceCompletenessSnapshot,
   UsageLimitAssociationInput,
   UsageLimitAssociationSnapshot,
+  LimitSeriesFilterInput,
+  LimitSeriesSnapshot,
+  LimitSeriesDetailSnapshot,
+  EstimationEvidenceSnapshot,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type {
@@ -150,6 +158,8 @@ export interface FrontendAdapter {
   ConfirmCloseMain(): Promise<void>;
   ConfirmQuit(): Promise<void>;
   getOverview(privacyMode: boolean): Promise<OverviewSnapshot>;
+  getLimitSeries(input: LimitSeriesFilterInput): Promise<LimitSeriesSnapshot[]>;
+  getLimitSeriesDetail(seriesID: string): Promise<LimitSeriesDetailSnapshot>;
   getHubs(): Promise<HubSnapshot[]>;
   createHub(input: CreateHubInput): Promise<HubSnapshot>;
   updateHub(input: UpdateHubInput): Promise<HubSnapshot>;
@@ -316,6 +326,8 @@ export interface FakeBackendOptions {
   onConfirmCloseMain?: () => void;
   onConfirmQuit?: () => void;
   overview?: OverviewSnapshot;
+  limitSeries?: LimitSeriesSnapshot[];
+  limitSeriesDetails?: Record<string, LimitSeriesDetailSnapshot>;
   onGetOverview?: (
     privacyMode: boolean,
   ) => Promise<OverviewSnapshot> | OverviewSnapshot;
@@ -409,6 +421,8 @@ export function createFakeBackend(
     { ...defaultSettings, ...options.settings },
     defaultSettings,
   );
+  const limitSeries = [...(options.limitSeries ?? [])];
+  const limitSeriesDetails = { ...(options.limitSeriesDetails ?? {}) };
   const listeners = new Map<FrontendEventName, Set<(data: unknown) => void>>();
   let hubs = [...(options.hubs ?? [])];
   const collectionAttempts = [...(options.collectionAttempts ?? [])];
@@ -498,6 +512,23 @@ export function createFakeBackend(
       options.onGetOverview?.(privacyMode) ??
       options.overview ??
       emptyOverviewSnapshot,
+    getLimitSeries: async (input) =>
+      limitSeries.filter(
+        (item) =>
+          (!input.serviceId || item.serviceId === input.serviceId) &&
+          (!input.status || item.state.code === input.status) &&
+          (!input.planVersionId ||
+            item.planVersionId === input.planVersionId) &&
+          (!input.limitDefinitionId ||
+            item.limitDefinitionId === input.limitDefinitionId),
+      ),
+    getLimitSeriesDetail: async (seriesID) => {
+      const value = limitSeriesDetails[seriesID];
+      if (value) return value;
+      const series = limitSeries.find((item) => item.id === seriesID);
+      if (!series) throw new Error("limit series was not found");
+      return { series, current: series.currentInterval, history: [] };
+    },
     getHubs: async () => hubs,
     createHub: async (input) => {
       const hub: HubSnapshot = {
@@ -1336,6 +1367,12 @@ export function createProductionBackend(
     ConfirmQuit: () => asPromise(WindowService.ConfirmQuit()),
     getOverview: (privacyMode) =>
       asPromise(OverviewService.GetOverview(privacyMode)),
+    getLimitSeries: (input) =>
+      asPromise(EstimationService.GetLimitSeries(input)).then(
+        (value) => value ?? [],
+      ),
+    getLimitSeriesDetail: (seriesID) =>
+      asPromise(EstimationService.GetLimitSeriesDetail(seriesID)),
     getHubs: () => asPromise(HubService.GetHubs()).then((value) => value ?? []),
     createHub: (input) => asPromise(HubService.CreateHub(input)),
     updateHub: (input) => asPromise(HubService.UpdateHub(input)),

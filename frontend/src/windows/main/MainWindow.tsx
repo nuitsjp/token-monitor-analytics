@@ -34,6 +34,7 @@ import { AccountsPage } from "../../pages/accounts/AccountsPage";
 import { EvidencePage } from "../../pages/evidence/EvidencePage";
 import { ReviewPage } from "../../pages/review/ReviewPage";
 import { OverviewPage } from "../../pages/overview/OverviewPage";
+import { LimitsPage } from "../../pages/limits/LimitsPage";
 import { useSettings } from "../../app/providers";
 
 const useStyles = makeStyles({
@@ -120,6 +121,18 @@ function MainRoutes({
         path="/overview"
         element={
           <OverviewPage backend={backend} displayTimeZone={displayTimeZone} />
+        }
+      />
+      <Route
+        path="/limits"
+        element={
+          <LimitsPage backend={backend} displayTimeZone={displayTimeZone} />
+        }
+      />
+      <Route
+        path="/limits/:seriesID"
+        element={
+          <LimitsPage backend={backend} displayTimeZone={displayTimeZone} />
         }
       />
       <Route
@@ -211,6 +224,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <Home16Regular aria-hidden="true" />
             <span>概要</span>
+          </NavLink>
+          <NavLink
+            to="/limits"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/limits");
+              }
+            }}
+          >
+            <span aria-hidden="true">◌</span>
+            <span>利用上限・価値</span>
           </NavLink>
           <NavLink
             to="/hubs"

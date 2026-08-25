@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { expect, it } from "vitest";
+import { MemoryRouter } from "react-router";
 import { createFakeBackend } from "../../lib/backend";
 import { EvidencePage } from "./EvidencePage";
 
@@ -91,7 +92,11 @@ const backend = () =>
 
 it("shows acquisition, masked raw evidence, and source observations", async () => {
   const user = userEvent.setup();
-  render(<EvidencePage backend={backend()} displayTimeZone="Asia/Tokyo" />);
+  render(
+    <MemoryRouter>
+      <EvidencePage backend={backend()} displayTimeZone="Asia/Tokyo" />
+    </MemoryRouter>,
+  );
 
   expect(await screen.findByText("manual / succeeded")).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "原 JSON" }));
@@ -120,8 +125,38 @@ it("shows acquisition, masked raw evidence, and source observations", async () =
   expect(await screen.findByText(/利用 25% \/ 残り 75%/)).toBeVisible();
 });
 
+it("selects and highlights an observation from an M08 query", async () => {
+  render(
+    <MemoryRouter initialEntries={["/evidence?observationId=limit-1"]}>
+      <EvidencePage backend={backend()} displayTimeZone="UTC" />
+    </MemoryRouter>,
+  );
+  expect(await screen.findByTestId("target-observation")).toBeVisible();
+  expect(screen.getByRole("tab", { name: "元観測" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it("selects and highlights a raw snapshot from an M08 query", async () => {
+  render(
+    <MemoryRouter initialEntries={["/evidence?snapshotId=stats-1"]}>
+      <EvidencePage backend={backend()} displayTimeZone="UTC" />
+    </MemoryRouter>,
+  );
+  expect(await screen.findByTestId("target-snapshot")).toBeVisible();
+  expect(screen.getByRole("tab", { name: "原 JSON" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 it("has no automatically detectable accessibility violations", async () => {
-  render(<EvidencePage backend={backend()} displayTimeZone="UTC" />);
+  render(
+    <MemoryRouter>
+      <EvidencePage backend={backend()} displayTimeZone="UTC" />
+    </MemoryRouter>,
+  );
   await screen.findByText("manual / succeeded");
   const result = await axe.run(document.body, {
     rules: { "color-contrast": { enabled: false } },

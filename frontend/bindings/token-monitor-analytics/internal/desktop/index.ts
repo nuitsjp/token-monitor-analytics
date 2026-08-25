@@ -5,6 +5,7 @@ import * as AccountService from "./accountservice.js";
 import * as AuditService from "./auditservice.js";
 import * as CatalogService from "./catalogservice.js";
 import * as CollectionService from "./collectionservice.js";
+import * as EstimationService from "./estimationservice.js";
 import * as HubService from "./hubservice.js";
 import * as OverviewService from "./overviewservice.js";
 import * as ReviewService from "./reviewservice.js";
@@ -15,6 +16,7 @@ export {
     AuditService,
     CatalogService,
     CollectionService,
+    EstimationService,
     HubService,
     OverviewService,
     ReviewService,
@@ -27,6 +29,8 @@ export type {
     AuditFilterInput,
     AuditPage,
     AuditRecord,
+    CalculationBoundarySnapshot,
+    CalculationIntervalSnapshot,
     CandidateCorrectionInput,
     CandidateDecisionInput,
     CandidateObservationSnapshot,
@@ -39,6 +43,10 @@ export type {
     CreateLogicalAccountInput,
     CreatePlanHistoryInput,
     CreateServiceInput,
+    EstimationDifferenceRowSnapshot,
+    EstimationEvidenceSnapshot,
+    EstimationReferenceSnapshot,
+    EstimationResultSnapshot,
     HubAccountCandidateSnapshot,
     HubSnapshot,
     HubSwitchInput,
@@ -52,6 +60,9 @@ export type {
     LimitDefinitionInput,
     LimitDefinitionSnapshot,
     LimitObservationSnapshot,
+    LimitSeriesDetailSnapshot,
+    LimitSeriesFilterInput,
+    LimitSeriesSnapshot,
     LinkingSnapshot,
     LogicalAccountSnapshot,
     OverviewCapacitySnapshot,

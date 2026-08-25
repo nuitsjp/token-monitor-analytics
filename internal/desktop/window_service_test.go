@@ -85,12 +85,12 @@ func TestPlaceWindowWithoutOverlapKeepsPreferredPositionWhenClear(t *testing.T) 
 }
 
 func TestMainWindowRouteAllowlistRejectsArbitraryURLs(t *testing.T) {
-	for _, route := range []string{"/overview", "/hubs", "/review", "/settings"} {
+	for _, route := range []string{"/overview", "/hubs", "/review", "/settings", "/limits", "/limits/series-1"} {
 		if !validMainRoute(route) {
 			t.Fatalf("fixed main route %q was rejected", route)
 		}
 	}
-	for _, route := range []string{"", "https://example.test", "/unknown", "/hubs?secret=value"} {
+	for _, route := range []string{"", "https://example.test", "/unknown", "/hubs?secret=value", "/limits/series-1?secret=value", "/limits/series/extra"} {
 		if validMainRoute(route) {
 			t.Fatalf("arbitrary main route %q was accepted", route)
 		}

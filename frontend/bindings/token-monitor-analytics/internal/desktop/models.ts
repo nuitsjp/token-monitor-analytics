@@ -34,6 +34,35 @@ export interface AuditRecord {
     "afterJson": string;
 }
 
+export interface CalculationBoundarySnapshot {
+    "id": string;
+    "kindCode": string;
+    "kind": string;
+    "at": string;
+    "reason": string;
+    "relatedId": string;
+}
+
+export interface CalculationIntervalSnapshot {
+    "id": string;
+    "serviceId": string;
+    "logicalAccountId": string;
+    "usageLimitSourceId": string;
+    "limitDefinitionId": string;
+    "planVersionId": string;
+    "cycleType": string;
+    "validFrom": string;
+    "validTo": string;
+    "state": string;
+    "stateLabel": string;
+    "exclusionReasonCode": string;
+    "exclusionReason": string;
+    "boundaryIds": string[] | null;
+    "boundaries": CalculationBoundarySnapshot[] | null;
+    "role": string;
+    "roleLabel": string;
+}
+
 export interface CandidateCorrectionInput {
     "candidateId": string;
     "rawLimitServiceIdentifier": string;
@@ -142,6 +171,72 @@ export interface CreateServiceInput {
     "provider": string;
     "name": string;
     "officialKey": string;
+}
+
+export interface EstimationDifferenceRowSnapshot {
+    "id": string;
+    "startPointId": string;
+    "endPointId": string;
+    "startAt": string;
+    "endAt": string;
+    "coefficients": number[] | null;
+    "cost": number;
+    "accepted": boolean;
+    "exclusionReasonCode": string;
+    "exclusionReason": string;
+}
+
+export interface EstimationEvidenceSnapshot {
+    "id": string;
+    "kind": string;
+    "pointId": string;
+    "sourceId": string;
+    "observationId": string;
+    "snapshotId": string;
+    "associationId": string;
+    "completenessId": string;
+    "planHistoryId": string;
+    "logicalAccountId": string;
+    "planVersionId": string;
+    "observedAt": string;
+    "timeDelta": string;
+    "normalizationGeneration": number;
+    "normalizationRuleVersion": string;
+    "normalizationLogicVersion": string;
+    "detailsJson": string;
+    "m08Route": string;
+}
+
+export interface EstimationReferenceSnapshot {
+    "resultId": string;
+    "status": StatusPresentationSnapshot;
+    "validFrom": string;
+    "validTo": string;
+    "age": string;
+    "observedAt": string;
+}
+
+export interface EstimationResultSnapshot {
+    "id": string;
+    "resultSetKey": string;
+    "status": StatusPresentationSnapshot;
+    "statusReasonCode": string;
+    "statusReason": string;
+    "limits": number[] | null;
+    "observationPointCount": number;
+    "differenceRowCount": number;
+    "rank": number;
+    "absoluteErrorRatio": number;
+    "absoluteErrorRatioLabel": string;
+    "maxTimeDelta": string;
+    "calculationLogicVersion": string;
+    "matchingRuleVersion": string;
+    "inputFingerprint": string;
+    "calculationIntervalIds": string[] | null;
+    "validFrom": string;
+    "validTo": string;
+    "differenceRows": EstimationDifferenceRowSnapshot[] | null;
+    "evidence": EstimationEvidenceSnapshot[] | null;
 }
 
 export interface HubAccountCandidateSnapshot {
@@ -309,6 +404,60 @@ export interface LimitObservationSnapshot {
     "dedupeKey": string;
     "valueFingerprint": string;
     "windowKeyConflict": boolean;
+}
+
+export interface LimitSeriesDetailSnapshot {
+    "series": LimitSeriesSnapshot;
+    "current": CalculationIntervalSnapshot | null;
+    "history": CalculationIntervalSnapshot[] | null;
+}
+
+export interface LimitSeriesFilterInput {
+    "serviceId": string;
+    "status": string;
+    "planVersionId": string;
+    "limitDefinitionId": string;
+    "sortBy": string;
+    "descending": boolean;
+}
+
+export interface LimitSeriesSnapshot {
+    "id": string;
+    "serviceId": string;
+    "serviceName": string;
+    "logicalAccountId": string;
+    "logicalAccountName": string;
+    "limitDefinitionId": string;
+    "limitDefinitionName": string;
+    "cycleType": string;
+    "usageLimitSourceId": string;
+    "associationId": string;
+    "normalizedKind": string;
+    "normalizedMetric": string;
+    "planHistoryId": string;
+    "planVersionId": string;
+    "planVersionName": string;
+    "planLimitRuleId": string;
+    "planLimit": number | null;
+    "planLimitLabel": string;
+    "multiplier": number | null;
+    "usedPercent": number | null;
+    "usedPercentLabel": string;
+    "usedPercentDetailLabel": string;
+    "remainingPercent": number | null;
+    "remainingLabel": string;
+    "remainingDetailLabel": string;
+    "resetAt": string;
+    "latestObservationAt": string;
+    "seriesState": string;
+    "state": StatusPresentationSnapshot;
+    "stateReasonCode": string;
+    "stateReason": string;
+    "currentInterval": CalculationIntervalSnapshot | null;
+    "result": EstimationResultSnapshot | null;
+    "latestValidReference": EstimationReferenceSnapshot | null;
+    "estimatedLimit": number | null;
+    "estimatedLimitLabel": string;
 }
 
 export interface LinkingSnapshot {

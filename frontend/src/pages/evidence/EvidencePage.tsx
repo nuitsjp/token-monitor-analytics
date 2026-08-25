@@ -14,6 +14,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import type {
   CollectionAttemptSnapshot,
   CostObservationSnapshot,
@@ -39,6 +40,14 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: tokens.borderRadiusMedium,
     boxShadow: tokens.shadow4,
+  },
+  targetRow: {
+    outline: `2px solid ${tokens.colorBrandStroke1}`,
+    backgroundColor: tokens.colorBrandBackground2,
+    "@media (forced-colors: active)": {
+      outlineColor: "CanvasText",
+      backgroundColor: "Canvas",
+    },
   },
   meta: {
     color: tokens.colorNeutralForeground3,
@@ -90,6 +99,9 @@ export function EvidencePage({
   displayTimeZone: string;
 }) {
   const styles = useStyles();
+  const [searchParams] = useSearchParams();
+  const targetObservationID = searchParams.get("observationId") ?? "";
+  const targetSnapshotID = searchParams.get("snapshotId") ?? "";
   const [hubs, setHubs] = useState<HubSnapshot[]>([]);
   const [hubID, setHubID] = useState("");
   const [tab, setTab] = useState<EvidenceTab>("attempts");
@@ -105,6 +117,12 @@ export function EvidencePage({
   const [copiedPath, setCopiedPath] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const activeTab = targetObservationID
+    ? "observations"
+    : targetSnapshotID
+      ? "raw"
+      : tab;
+  const activeQuery = targetObservationID || targetSnapshotID || query;
 
   useEffect(() => {
     void backend
@@ -153,46 +171,52 @@ export function EvidencePage({
           (!state || item.state === state) &&
           includesQuery(
             [item.trigger, item.state, item.failureCode, item.apiContract],
-            query,
+            activeQuery,
           ),
       ),
-    [attempts, query, state],
+    [attempts, activeQuery, state],
   );
   const filteredRaw = useMemo(
     () =>
       rawSnapshots.filter((item) =>
         includesQuery(
           [item.responseKind, item.apiContract, item.snapshotId],
-          query,
+          activeQuery,
         ),
       ),
-    [query, rawSnapshots],
+    [activeQuery, rawSnapshots],
   );
   const filteredCosts = useMemo(
     () =>
       costs.filter((item) =>
         includesQuery(
-          [item.deviceId, item.rawServiceIdentifier, item.jsonPath],
-          query,
+          [
+            item.observationId,
+            item.deviceId,
+            item.rawServiceIdentifier,
+            item.jsonPath,
+          ],
+          activeQuery,
         ),
       ),
-    [costs, query],
+    [costs, activeQuery],
   );
   const filteredLimits = useMemo(
     () =>
       limits.filter((item) =>
         includesQuery(
           [
+            item.observationId,
             item.deviceId,
             item.rawServiceIdentifier,
             item.accountKey,
             item.normalizedLabel,
             item.jsonPath,
           ],
-          query,
+          activeQuery,
         ),
       ),
-    [limits, query],
+    [limits, activeQuery],
   );
 
   return (
@@ -219,9 +243,12 @@ export function EvidencePage({
           </Select>
         </Field>
         <Field label="検索">
-          <Input value={query} onChange={(_, data) => setQuery(data.value)} />
+          <Input
+            value={activeQuery}
+            onChange={(_, data) => setQuery(data.value)}
+          />
         </Field>
-        {tab === "attempts" && (
+        {activeTab === "attempts" && (
           <Field label="取得状態">
             <Select
               value={state}
@@ -236,7 +263,7 @@ export function EvidencePage({
         )}
       </div>
       <TabList
-        selectedValue={tab}
+        selectedValue={activeTab}
         onTabSelect={(_, data) => setTab(data.value as EvidenceTab)}
       >
         <Tab value="attempts">取得</Tab>
@@ -252,12 +279,12 @@ export function EvidencePage({
       )}
       {loading ? (
         <Spinner label="観測証跡を読み込み中" />
-      ) : tab === "attempts" ? (
+      ) : activeTab === "attempts" ? (
         <AttemptList
           items={filteredAttempts}
           displayTimeZone={displayTimeZone}
         />
-      ) : tab === "raw" ? (
+      ) : activeTab === "raw" ? (
         <>
           <MessageBar intent="warning">
             <MessageBarBody>
@@ -270,7 +297,15 @@ export function EvidencePage({
               <Body1>原 JSON スナップショットはありません。</Body1>
             ) : (
               filteredRaw.map((item) => (
-                <article className={styles.row} key={item.snapshotId}>
+                <article
+                  className={`${styles.row} ${item.snapshotId === targetSnapshotID ? styles.targetRow : ""}`}
+                  key={item.snapshotId}
+                  data-testid={
+                    item.snapshotId === targetSnapshotID
+                      ? "target-snapshot"
+                      : undefined
+                  }
+                >
                   <div>
                     {item.responseKind} / HTTP {item.httpStatus}
                   </div>
@@ -344,6 +379,7 @@ export function EvidencePage({
           costs={filteredCosts}
           limits={filteredLimits}
           displayTimeZone={displayTimeZone}
+          targetObservationID={targetObservationID}
         />
       )}
     </div>
@@ -549,10 +585,12 @@ function ObservationList({
   costs,
   limits,
   displayTimeZone,
+  targetObservationID,
 }: {
   costs: CostObservationSnapshot[];
   limits: LimitObservationSnapshot[];
   displayTimeZone: string;
+  targetObservationID: string;
 }) {
   const styles = useStyles();
   if (costs.length === 0 && limits.length === 0)
@@ -560,7 +598,15 @@ function ObservationList({
   return (
     <div className={styles.list} aria-label="元観測一覧">
       {costs.map((item) => (
-        <article className={styles.row} key={item.observationId}>
+        <article
+          className={`${styles.row} ${item.observationId === targetObservationID ? styles.targetRow : ""}`}
+          key={item.observationId}
+          data-testid={
+            item.observationId === targetObservationID
+              ? "target-observation"
+              : undefined
+          }
+        >
           <div>
             利用額 / {item.rawServiceIdentifier} / USD {item.costUsdText}
           </div>
@@ -574,7 +620,15 @@ function ObservationList({
         </article>
       ))}
       {limits.map((item) => (
-        <article className={styles.row} key={item.observationId}>
+        <article
+          className={`${styles.row} ${item.observationId === targetObservationID ? styles.targetRow : ""}`}
+          key={item.observationId}
+          data-testid={
+            item.observationId === targetObservationID
+              ? "target-observation"
+              : undefined
+          }
+        >
           <div>
             利用枠 / {item.rawServiceIdentifier} /{" "}
             {item.normalizedLabel || item.windowKey}

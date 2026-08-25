@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -127,11 +128,14 @@ func (s *WindowController) OpenMainRoute(_ context.Context, route string) {
 
 func validMainRoute(route string) bool {
 	switch route {
-	case "/overview", "/hubs", "/review", "/catalog", "/accounts", "/evidence", "/audit", "/settings":
+	case "/overview", "/hubs", "/review", "/catalog", "/accounts", "/evidence", "/audit", "/settings", "/limits":
 		return true
-	default:
+	}
+	if !strings.HasPrefix(route, "/limits/") {
 		return false
 	}
+	seriesID := strings.TrimPrefix(route, "/limits/")
+	return seriesID != "" && !strings.ContainsAny(seriesID, "/?#")
 }
 
 func (s *WindowService) SetMainDirty(_ context.Context, dirty bool) {
