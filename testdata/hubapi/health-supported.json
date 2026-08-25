@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "role": "hub",
+  "runtime": "node-hub",
+  "version": 1,
+  "hubBuild": {
+    "schemaVersion": 1,
+    "runtime": "node-hub",
+    "coreRevision": 11,
+    "coreBuildId": "sha256:798c308d20d7f9a22aad74f6feeb5f168210fd465c6aee590b517c40e801c292",
+    "runtimeRevision": 1,
+    "runtimeBuildId": "sha256:dbdaa0b2aa2e8d627b939d6ab76a9029aa2807839fdbe4e7918edcab592fe749"
+  }
+}

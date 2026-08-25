@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "nuits.jp",
+			"FileDescription": "Local-first analytics for Token Monitor hubs",
+			"LegalCopyright": "© 2026, nuits.jp",
+			"ProductName": "Token Monitor Analytics",
+			"Comments": "Windows local-first desktop application"
+		}
+	}
+}

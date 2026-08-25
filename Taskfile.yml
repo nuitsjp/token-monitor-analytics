@@ -1,0 +1,109 @@
+version: '3'
+
+vars:
+  APP_NAME: token-monitor-analytics
+  BIN_DIR: bin
+  PACKAGE_MANAGER: npm
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+
+tasks:
+  bootstrap:
+    summary: Verifies fixed tools and installs locked frontend dependencies
+    cmds:
+      - powershell -NoProfile -File scripts/verify-tools.ps1
+      - npm --prefix frontend ci
+
+  generate:
+    summary: Generates sqlc code and Wails bindings
+    cmds:
+      - sqlc generate
+      - wails3 generate bindings -clean=true -ts -i
+
+  generate:check:
+    summary: Regenerates committed code and rejects differences
+    cmds:
+      - task: generate
+      - git diff --exit-code -- internal/adapter/sqlite/sqlcgen frontend/bindings
+
+  fmt:
+    summary: Formats Go and frontend sources
+    cmds:
+      - powershell -NoProfile -File scripts/format-go.ps1
+      - npm --prefix frontend run format
+
+  fmt:check:
+    summary: Checks source formatting without changing files
+    cmds:
+      - powershell -NoProfile -File scripts/check-go-format.ps1
+      - npm --prefix frontend run format:check
+
+  lint:
+    summary: Runs Go and frontend static analysis
+    cmds:
+      - go vet . ./internal/...
+      - staticcheck . ./internal/...
+      - npm --prefix frontend run lint
+
+  test:go:
+    summary: Runs domain and use case tests
+    cmds:
+      - go test . ./internal/domain ./internal/usecase
+
+  test:integration:
+    summary: Runs file SQLite and adapter integration tests
+    cmds:
+      - go test ./internal/adapter/...
+
+  test:frontend:
+    summary: Runs frontend component and accessibility tests
+    cmds:
+      - npm --prefix frontend test
+
+  test:e2e:
+    summary: Runs browser E2E tests with the fake backend
+    cmds:
+      - npm --prefix frontend run test:e2e
+
+  test:restore:
+    summary: Runs restore round-trip and crash tests in temporary directories
+    cmds:
+      - go test ./tests/acceptance -run Restore
+
+  test:
+    summary: Runs all automated test layers
+    cmds:
+      - task: test:go
+      - task: test:integration
+      - task: test:frontend
+      - task: test:e2e
+      - task: test:restore
+
+  build:
+    summary: Builds the Windows desktop application
+    cmds:
+      - task: windows:build
+
+  package:
+    summary: Creates the Windows NSIS installer
+    cmds:
+      - task: windows:package
+        vars:
+          INSTALL_SCOPE: user
+
+  dev:
+    summary: Runs Wails development mode
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  verify:
+    summary: Runs generation, formatting, lint, tests, and Windows build
+    cmds:
+      - task: generate:check
+      - task: fmt:check
+      - task: lint
+      - task: test
+      - task: build
