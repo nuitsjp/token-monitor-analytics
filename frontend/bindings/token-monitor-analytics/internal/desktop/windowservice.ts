@@ -17,6 +17,14 @@ export function OpenMain(): $CancellablePromise<void> {
     return $Call.ByID(1960628325);
 }
 
+/**
+ * SetCompactExpanded changes the T01 width while retaining its saved placement.
+ * The saved width is also the persisted expanded state.
+ */
+export function SetCompactExpanded(expanded: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3180832488, expanded);
+}
+
 export function SetMainDirty(dirty: boolean): $CancellablePromise<void> {
     return $Call.ByID(2933188419, dirty);
 }

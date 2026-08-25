@@ -141,6 +141,7 @@ export interface FrontendAdapter {
     settings: Pick<SettingsSnapshot, "theme" | "displayTimeZone">,
   ): Promise<SettingsSnapshot>;
   OpenMain(): Promise<void>;
+  SetCompactExpanded(expanded: boolean): Promise<void>;
   SetMainDirty(dirty: boolean): Promise<void>;
   ConfirmCloseMain(): Promise<void>;
   ConfirmQuit(): Promise<void>;
@@ -304,6 +305,7 @@ export interface FakeBackendOptions {
   canOpenMain?: boolean;
   settings?: Partial<SettingsSnapshot>;
   onOpenMain?: () => void;
+  onSetCompactExpanded?: (expanded: boolean) => void;
   onSetMainDirty?: (dirty: boolean) => void;
   onConfirmCloseMain?: () => void;
   onConfirmQuit?: () => void;
@@ -410,6 +412,8 @@ export function createFakeBackend(
       return settings;
     },
     OpenMain: async () => options.onOpenMain?.(),
+    SetCompactExpanded: async (expanded) =>
+      options.onSetCompactExpanded?.(expanded),
     SetMainDirty: async (dirty) => options.onSetMainDirty?.(dirty),
     ConfirmCloseMain: async () => options.onConfirmCloseMain?.(),
     ConfirmQuit: async () => options.onConfirmQuit?.(),
@@ -1243,6 +1247,8 @@ export function createProductionBackend(
         asSettings(value, initial),
       ),
     OpenMain: () => asPromise(WindowService.OpenMain()),
+    SetCompactExpanded: (expanded) =>
+      asPromise(WindowService.SetCompactExpanded(expanded)),
     SetMainDirty: (dirty) => asPromise(WindowService.SetMainDirty(dirty)),
     ConfirmCloseMain: () => asPromise(WindowService.ConfirmCloseMain()),
     ConfirmQuit: () => asPromise(WindowService.ConfirmQuit()),

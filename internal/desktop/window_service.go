@@ -18,12 +18,23 @@ type WindowService struct {
 type WindowController struct {
 	app *application.App
 
-	mu        sync.Mutex
-	compact   *application.WebviewWindow
-	main      *application.WebviewWindow
-	mainDirty bool
-	storage   *sqliteadapter.Lifecycle
+	mu              sync.Mutex
+	compact         *application.WebviewWindow
+	compactExpanded bool
+	main            *application.WebviewWindow
+	mainDirty       bool
+	storage         *sqliteadapter.Lifecycle
 }
+
+const (
+	compactCollapsedWidth = 360
+	compactExpandedWidth  = 420
+	compactDefaultHeight  = 180
+	compactMinWidth       = 320
+	compactMinHeight      = 160
+	compactSnapDistance   = 16
+	mainCompactGap        = 16
+)
 
 func NewWindowService(storage *sqliteadapter.Lifecycle) (*WindowService, *WindowController) {
 	controller := &WindowController{storage: storage}
@@ -38,7 +49,10 @@ func (s *WindowController) SetCompact(window *application.WebviewWindow) {
 	s.mu.Lock()
 	s.compact = window
 	s.mu.Unlock()
-	s.registerPlacement(window, "compact", 360, 180, 320, 160)
+	window.SetAlwaysOnTop(true)
+	window.SetMinimiseButtonState(application.ButtonDisabled)
+	window.SetMaximiseButtonState(application.ButtonDisabled)
+	s.registerPlacement(window, "compact", compactCollapsedWidth, compactDefaultHeight, compactMinWidth, compactMinHeight)
 
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		s.savePlacement(window, "compact")
@@ -51,17 +65,26 @@ func (s *WindowService) OpenMain(ctx context.Context) {
 	s.controller.OpenMain(ctx)
 }
 
+// SetCompactExpanded changes the T01 width while retaining its saved placement.
+// The saved width is also the persisted expanded state.
+func (s *WindowService) SetCompactExpanded(_ context.Context, expanded bool) {
+	s.controller.SetCompactExpanded(expanded)
+}
+
 func (s *WindowController) OpenMain(context.Context) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.main != nil {
-		if s.main.IsMinimised() {
-			s.main.Restore()
+		window := s.main
+		s.mu.Unlock()
+		if window.IsMinimised() {
+			window.Restore()
 		}
-		s.main.Show()
-		s.main.Focus()
+		s.placeMainWithoutCompactOverlap(window)
+		window.Show()
+		window.Focus()
 		return
 	}
+	defer s.mu.Unlock()
 
 	window := s.app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main",
@@ -118,6 +141,17 @@ func (s *WindowService) ConfirmQuit(context.Context) {
 	s.controller.app.Quit()
 }
 
+func (s *WindowController) SetCompactExpanded(expanded bool) {
+	s.mu.Lock()
+	compact := s.compact
+	s.compactExpanded = expanded
+	s.mu.Unlock()
+	if compact == nil {
+		return
+	}
+	s.normalizePlacement(compact, "compact")
+}
+
 func (s *WindowController) registerPlacement(window *application.WebviewWindow, kind string, defaultWidth, defaultHeight, minWidth, minHeight int) {
 	window.OnWindowEvent(events.Common.WindowRuntimeReady, func(*application.WindowEvent) {
 		s.restorePlacement(window, kind, defaultWidth, defaultHeight, minWidth, minHeight)
@@ -128,7 +162,7 @@ func (s *WindowController) registerPlacement(window *application.WebviewWindow, 
 		events.Common.WindowDPIChanged,
 	} {
 		window.OnWindowEvent(eventType, func(*application.WindowEvent) {
-			s.savePlacement(window, kind)
+			s.normalizePlacement(window, kind)
 		})
 	}
 }
@@ -169,8 +203,65 @@ func (s *WindowController) restorePlacement(window *application.WebviewWindow, k
 			bounds = current
 		}
 	}
-	window.SetMinSize(min(minWidth, screen.WorkArea.Width), min(minHeight, screen.WorkArea.Height))
-	window.SetBounds(fitWindowBounds(bounds, screen.WorkArea))
+	if kind == "compact" {
+		s.mu.Lock()
+		s.compactExpanded = found && placement.Width >= compactExpandedWidth
+		expanded := s.compactExpanded
+		s.mu.Unlock()
+		bounds = compactWindowBounds(bounds, screen.WorkArea, expanded)
+		setCompactWindowConstraints(window, screen.WorkArea, expanded)
+	} else {
+		window.SetMinSize(min(minWidth, screen.WorkArea.Width), min(minHeight, screen.WorkArea.Height))
+		bounds = fitWindowBounds(bounds, screen.WorkArea)
+	}
+	window.SetBounds(bounds)
+	if kind == "main" {
+		s.placeMainWithoutCompactOverlap(window)
+	}
+}
+
+func (s *WindowController) normalizePlacement(window *application.WebviewWindow, kind string) {
+	if window == nil {
+		return
+	}
+	screen, err := window.GetScreen()
+	if err != nil || screen == nil {
+		return
+	}
+	if kind == "compact" {
+		s.mu.Lock()
+		expanded := s.compactExpanded
+		s.mu.Unlock()
+		setCompactWindowConstraints(window, screen.WorkArea, expanded)
+		current := window.Bounds()
+		bounds := compactWindowBounds(current, screen.WorkArea, expanded)
+		if bounds != current {
+			window.SetBounds(bounds)
+		}
+	} else if kind == "main" {
+		s.placeMainWithoutCompactOverlap(window)
+	}
+	s.savePlacement(window, kind)
+}
+
+func (s *WindowController) placeMainWithoutCompactOverlap(window *application.WebviewWindow) {
+	if window == nil {
+		return
+	}
+	screen, err := window.GetScreen()
+	if err != nil || screen == nil {
+		return
+	}
+	bounds := fitWindowBounds(window.Bounds(), screen.WorkArea)
+	s.mu.Lock()
+	compact := s.compact
+	s.mu.Unlock()
+	if compact != nil {
+		bounds = placeWindowWithoutOverlap(bounds, compact.Bounds(), screen.WorkArea, mainCompactGap)
+	}
+	if bounds != window.Bounds() {
+		window.SetBounds(bounds)
+	}
 }
 
 func (s *WindowController) savePlacement(window *application.WebviewWindow, kind string) {
@@ -200,4 +291,99 @@ func fitWindowBounds(bounds, workArea application.Rect) application.Rect {
 	bounds.X = min(max(bounds.X, workArea.X), workArea.X+workArea.Width-bounds.Width)
 	bounds.Y = min(max(bounds.Y, workArea.Y), workArea.Y+workArea.Height-bounds.Height)
 	return bounds
+}
+
+func compactWindowBounds(bounds, workArea application.Rect, expanded bool) application.Rect {
+	width := compactCollapsedWidth
+	if expanded {
+		width = compactExpandedWidth
+	}
+	bounds.Width = width
+	if !expanded || bounds.Height <= 0 {
+		bounds.Height = compactDefaultHeight
+	}
+	heightLimit := compactHeightLimit(workArea)
+	bounds.Height = min(max(bounds.Height, min(compactMinHeight, heightLimit)), heightLimit)
+	return snapWindowBounds(fitWindowBounds(bounds, workArea), workArea, compactSnapDistance)
+}
+
+func compactHeightLimit(workArea application.Rect) int {
+	if workArea.Height <= 0 {
+		return compactDefaultHeight
+	}
+	return max(1, workArea.Height/2)
+}
+
+func setCompactWindowConstraints(window *application.WebviewWindow, workArea application.Rect, expanded bool) {
+	minWidth, minHeight, maxWidth, maxHeight := compactConstraintBounds(workArea, expanded)
+	window.SetMinSize(minWidth, minHeight)
+	window.SetMaxSize(maxWidth, maxHeight)
+}
+
+func compactConstraintBounds(workArea application.Rect, expanded bool) (minWidth, minHeight, maxWidth, maxHeight int) {
+	width := compactCollapsedWidth
+	if expanded {
+		width = compactExpandedWidth
+	}
+	effectiveWidth := min(width, max(workArea.Width, 1))
+	effectiveHeight := min(compactHeightLimit(workArea), max(workArea.Height, 1))
+	return min(compactMinWidth, effectiveWidth), min(compactMinHeight, effectiveHeight), effectiveWidth, effectiveHeight
+}
+
+func snapWindowBounds(bounds, workArea application.Rect, distance int) application.Rect {
+	bounds = fitWindowBounds(bounds, workArea)
+	if workArea.Width <= 0 || workArea.Height <= 0 || distance < 0 {
+		return bounds
+	}
+	right := workArea.X + workArea.Width - bounds.Width
+	bottom := workArea.Y + workArea.Height - bounds.Height
+	if abs(bounds.X-workArea.X) <= distance {
+		bounds.X = workArea.X
+	} else if abs(bounds.X-right) <= distance {
+		bounds.X = right
+	}
+	if abs(bounds.Y-workArea.Y) <= distance {
+		bounds.Y = workArea.Y
+	} else if abs(bounds.Y-bottom) <= distance {
+		bounds.Y = bottom
+	}
+	return bounds
+}
+
+func placeWindowWithoutOverlap(preferred, obstacle, workArea application.Rect, gap int) application.Rect {
+	preferred = fitWindowBounds(preferred, workArea)
+	if !rectsOverlap(preferred, obstacle) {
+		return preferred
+	}
+	candidates := []application.Rect{
+		{X: obstacle.X + obstacle.Width + gap, Y: preferred.Y, Width: preferred.Width, Height: preferred.Height},
+		{X: obstacle.X - preferred.Width - gap, Y: preferred.Y, Width: preferred.Width, Height: preferred.Height},
+		{X: preferred.X, Y: obstacle.Y + obstacle.Height + gap, Width: preferred.Width, Height: preferred.Height},
+		{X: preferred.X, Y: obstacle.Y - preferred.Height - gap, Width: preferred.Width, Height: preferred.Height},
+	}
+	for _, candidate := range candidates {
+		if fitsWindowBounds(candidate, workArea) && !rectsOverlap(candidate, obstacle) {
+			return candidate
+		}
+	}
+	return preferred
+}
+
+func fitsWindowBounds(bounds, workArea application.Rect) bool {
+	return bounds.X >= workArea.X && bounds.Y >= workArea.Y &&
+		bounds.X+bounds.Width <= workArea.X+workArea.Width &&
+		bounds.Y+bounds.Height <= workArea.Y+workArea.Height
+}
+
+func rectsOverlap(left, right application.Rect) bool {
+	return left.Width > 0 && left.Height > 0 && right.Width > 0 && right.Height > 0 &&
+		left.X < right.X+right.Width && left.X+left.Width > right.X &&
+		left.Y < right.Y+right.Height && left.Y+left.Height > right.Y
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
