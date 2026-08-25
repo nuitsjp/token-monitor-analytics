@@ -55,6 +55,7 @@ Phase 1 と Phase 2 には別々の完了ゲートがあります。試作機能
 ## 文書
 
 - [要件定義](docs/requirements.md): 唯一の規範仕様です。API 契約、計算規則、バックアップ形式、Phase 1/2 の受入条件を定義します。
+- [画面構成](docs/screen-design.md): 常駐するコンパクトトップと、左側メニューを持つメイン画面の表示内容、操作、遷移を定義します。
 - [プロジェクト用語](CONTEXT.md): 実装詳細を含まない共有用語集です。
 - [Token Monitor API](https://github.com/Javis603/token-monitor/blob/5ecc60535168f919d8ce5d6d1aaa14c87d11f52b/docs/API.md): 現行フィールド構造の参照元です。目標要件で追加を要求する利用額専用観測時刻は、この固定リビジョンにはまだありません。
 
