@@ -26,7 +26,7 @@ func run() (runErr error) {
 		runErr = errors.Join(runErr, storage.Close())
 	}()
 
-	windowService, windowController := desktop.NewWindowService()
+	windowService, windowController := desktop.NewWindowService(storage.lifecycle)
 	settingsService := desktop.NewSettingsService(storage.lifecycle)
 	hubService := desktop.NewHubService(storage.lifecycle, credentialadapter.Manager{})
 	app := application.New(application.Options{
