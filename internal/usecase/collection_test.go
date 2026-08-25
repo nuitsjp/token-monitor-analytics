@@ -203,6 +203,9 @@ func TestInvalidStatsRecordsFailureWithoutStatsRaw(t *testing.T) {
 func TestDisabledHubSkipsWithoutCredentialOrHTTP(t *testing.T) {
 	credentials := &countingCollectionCredentials{found: true}
 	fixture := newCollectionFixture(t, false, `{"devices":[]}`, nil, credentials, nil)
+	if err := fixture.database.SetHubEnabled(fixture.ctx, fixture.hubID, false, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
 	if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +216,39 @@ func TestDisabledHubSkipsWithoutCredentialOrHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(attempts) != 1 || attempts[0].State != "skipped" || attempts[0].FailureCode != "collection_disabled" {
+	if len(attempts) != 1 || attempts[0].State != "skipped" || attempts[0].FailureCode != "hub_disabled" {
+		t.Fatalf("attempts = %+v", attempts)
+	}
+}
+
+func TestStoppedPeriodicCollectionAllowsManualButSkipsScheduled(t *testing.T) {
+	fixture := newCollectionFixture(t, false, `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
+	if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.statsCalls.Load() != 1 {
+		t.Fatalf("manual stats calls = %d, want 1", fixture.statsCalls.Load())
+	}
+	if err := fixture.usecase.CollectScheduled(fixture.ctx, fixture.hubID); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.statsCalls.Load() != 1 {
+		t.Fatalf("scheduled collection ran while stopped: calls=%d", fixture.statsCalls.Load())
+	}
+	attempts, err := fixture.database.ListCollectionAttempts(fixture.ctx, fixture.hubID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var succeeded, stopped int
+	for _, attempt := range attempts {
+		if attempt.State == "succeeded" {
+			succeeded++
+		}
+		if attempt.FailureCode == "collection_disabled" {
+			stopped++
+		}
+	}
+	if len(attempts) != 2 || succeeded != 1 || stopped != 1 {
 		t.Fatalf("attempts = %+v", attempts)
 	}
 }

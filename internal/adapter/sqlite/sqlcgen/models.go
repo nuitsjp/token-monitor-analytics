@@ -67,6 +67,7 @@ type Hub struct {
 	ApiContract               sql.NullString `json:"api_contract"`
 	CreatedAt                 string         `json:"created_at"`
 	UpdatedAt                 string         `json:"updated_at"`
+	Enabled                   int64          `json:"enabled"`
 }
 
 type HubAccountCandidate struct {

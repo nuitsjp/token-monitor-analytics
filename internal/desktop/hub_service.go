@@ -37,6 +37,7 @@ type HubSnapshot struct {
 	ID                        string `json:"id"`
 	DisplayName               string `json:"displayName"`
 	URL                       string `json:"url"`
+	Enabled                   bool   `json:"enabled"`
 	CollectionEnabled         bool   `json:"collectionEnabled"`
 	CollectionIntervalSeconds int64  `json:"collectionIntervalSeconds"`
 	APIContract               string `json:"apiContract"`
@@ -128,6 +129,13 @@ func (s *HubService) SetHubCollectionEnabled(ctx context.Context, hubID string, 
 	return s.GetHub(ctx, hubID)
 }
 
+func (s *HubService) SetHubEnabled(ctx context.Context, hubID string, enabled bool) (HubSnapshot, error) {
+	if err := s.lifecycle.SetHubEnabled(ctx, hubID, enabled, s.now()); err != nil {
+		return HubSnapshot{}, err
+	}
+	return s.GetHub(ctx, hubID)
+}
+
 func (s *HubService) SaveCredential(ctx context.Context, hubID, secret string) (HubSnapshot, error) {
 	if secret == "" {
 		return HubSnapshot{}, errors.New("credential secret is empty")
@@ -162,7 +170,7 @@ func (s *HubService) CheckHubConnection(ctx context.Context, hubID string) (HubS
 	if err != nil {
 		return HubSnapshot{}, err
 	}
-	if !row.Hub.CollectionEnabled {
+	if !row.Hub.Enabled {
 		return HubSnapshot{}, errors.New("disabled hub cannot be checked")
 	}
 	events, err := s.lifecycle.ListCredentialAuditEvents(ctx, hubID)
@@ -291,6 +299,7 @@ func (s *HubService) snapshot(ctx context.Context, row sqliteadapter.HubRow) (Hu
 	}
 	result := HubSnapshot{
 		ID: row.Hub.ID, DisplayName: row.Hub.DisplayName, URL: row.Hub.URL,
+		Enabled:                   row.Hub.Enabled,
 		CollectionEnabled:         row.Hub.CollectionEnabled,
 		CollectionIntervalSeconds: row.Hub.CollectionIntervalSeconds,
 		CredentialState:           string(domain.DeriveCredentialState(toDomainEvents(events))),

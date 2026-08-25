@@ -382,7 +382,7 @@ func collectionOperationError(errorValue error) error {
 }
 
 var safeCollectionFailureCodes = map[string]struct{}{
-	"": {}, "collection_disabled": {}, "duplicate_in_flight": {}, "storage": {}, "normalization_failed": {},
+	"": {}, "hub_disabled": {}, "collection_disabled": {}, "duplicate_in_flight": {}, "storage": {}, "normalization_failed": {},
 	"auth": {}, "tls": {}, "timeout": {}, "unreachable": {}, "unsupported": {}, "invalid_json": {},
 	"body_too_large": {}, "http": {}, "collection": {},
 }

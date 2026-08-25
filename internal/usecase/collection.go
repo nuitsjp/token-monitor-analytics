@@ -51,6 +51,13 @@ func NewCollectionUsecase(store CollectionStore, credentials CredentialReader, f
 }
 
 func (u *CollectionUsecase) StartCollection(ctx context.Context, hubID string) error {
+	row, err := u.store.GetHubRow(ctx, hubID)
+	if err != nil {
+		return err
+	}
+	if !row.Hub.Enabled {
+		return errors.New("disabled Hub cannot start collection")
+	}
 	return u.store.SetHubCollectionEnabled(ctx, hubID, true, u.clock.Now().UTC())
 }
 
@@ -75,7 +82,15 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 		return err
 	}
 	started := u.clock.Now().UTC()
-	if !row.Hub.CollectionEnabled {
+	if !row.Hub.Enabled {
+		completed := u.clock.Now().UTC()
+		attempt := sqliteadapter.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "skipped", StartedAt: started, CompletedAt: &completed, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds, FailureCode: "hub_disabled"}
+		if err := u.recordSkipped(ctx, attempt); err != nil {
+			return fmt.Errorf("record disabled Hub collection: %w", err)
+		}
+		return nil
+	}
+	if trigger == "scheduled" && !row.Hub.CollectionEnabled {
 		completed := u.clock.Now().UTC()
 		attempt := sqliteadapter.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "skipped", StartedAt: started, CompletedAt: &completed, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds, FailureCode: "collection_disabled"}
 		if err := u.recordSkipped(ctx, attempt); err != nil {

@@ -50,7 +50,7 @@ func (s *Scheduler) Restore(ctx context.Context) error {
 		return err
 	}
 	for _, row := range rows {
-		if row.Hub.CollectionEnabled {
+		if row.Hub.Enabled && row.Hub.CollectionEnabled {
 			if err := s.startJob(row.Hub.ID, row.Hub.CollectionIntervalSeconds); err != nil {
 				_ = s.Close()
 				return err

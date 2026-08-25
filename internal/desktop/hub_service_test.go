@@ -89,11 +89,11 @@ func TestHubIdentityIsIndependentFromURLAndSurvivesEditAndDisable(t *testing.T) 
 	if updated.ID != first.ID {
 		t.Fatalf("updated Hub ID = %q, want %q", updated.ID, first.ID)
 	}
-	disabled, err := service.SetHubCollectionEnabled(ctx, first.ID, false)
+	disabled, err := service.SetHubEnabled(ctx, first.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disabled.CollectionEnabled {
+	if disabled.Enabled || disabled.CollectionEnabled {
 		t.Fatal("Hub remained enabled")
 	}
 	if hubs, err := service.GetHubs(ctx); err != nil || len(hubs) != 2 {

@@ -28,7 +28,7 @@ func (l *Lifecycle) ListHubRows(ctx context.Context) ([]HubRow, error) {
 		return nil, err
 	}
 	rows, err := database.QueryContext(ctx, `
-		SELECT h.hub_id, h.display_name, h.url, h.collection_enabled,
+		SELECT h.hub_id, h.display_name, h.url, h.enabled, h.collection_enabled,
 		       h.collection_interval_seconds, h.api_contract, h.created_at, h.updated_at,
 		       s.state, s.checked_at, s.failure_detail
 		FROM hubs h
@@ -42,16 +42,17 @@ func (l *Lifecycle) ListHubRows(ctx context.Context) ([]HubRow, error) {
 	for rows.Next() {
 		var (
 			hub                           Hub
-			enabled                       int
+			enabled, collectionEnabled    int
 			apiContract, created, updated sql.NullString
 			state, checked, failure       sql.NullString
 		)
-		if err := rows.Scan(&hub.ID, &hub.DisplayName, &hub.URL, &enabled,
+		if err := rows.Scan(&hub.ID, &hub.DisplayName, &hub.URL, &enabled, &collectionEnabled,
 			&hub.CollectionIntervalSeconds, &apiContract, &created, &updated,
 			&state, &checked, &failure); err != nil {
 			return nil, fmt.Errorf("scan Hub: %w", err)
 		}
-		hub.CollectionEnabled = enabled != 0
+		hub.Enabled = enabled != 0
+		hub.CollectionEnabled = collectionEnabled != 0
 		if apiContract.Valid {
 			hub.APIContract = &apiContract.String
 		}

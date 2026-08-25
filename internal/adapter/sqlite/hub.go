@@ -14,6 +14,7 @@ type Hub struct {
 	ID                        string
 	DisplayName               string
 	URL                       string
+	Enabled                   bool
 	CollectionEnabled         bool
 	CollectionIntervalSeconds int64
 	APIContract               *string
@@ -89,6 +90,26 @@ func (l *Lifecycle) SetHubCollectionEnabled(ctx context.Context, hubID string, e
 	result, err := database.ExecContext(ctx, `UPDATE hubs SET collection_enabled = ?, updated_at = ? WHERE hub_id = ?`, enabled, utcText(updatedAt), hubID)
 	if err != nil {
 		return fmt.Errorf("change Hub collection state: %w", err)
+	}
+	return requireOneHub(result)
+}
+
+func (l *Lifecycle) SetHubEnabled(ctx context.Context, hubID string, enabled bool, updatedAt time.Time) error {
+	if _, err := uuid.Parse(hubID); err != nil {
+		return errors.New("hub ID is not a UUID")
+	}
+	database, err := l.DB()
+	if err != nil {
+		return err
+	}
+	result, err := database.ExecContext(ctx, `
+		UPDATE hubs
+		SET enabled = ?,
+		    collection_enabled = CASE WHEN ? THEN collection_enabled ELSE 0 END,
+		    updated_at = ?
+		WHERE hub_id = ?`, enabled, enabled, utcText(updatedAt), hubID)
+	if err != nil {
+		return fmt.Errorf("change Hub enabled state: %w", err)
 	}
 	return requireOneHub(result)
 }
