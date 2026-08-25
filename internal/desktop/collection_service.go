@@ -12,6 +12,7 @@ import (
 
 	"token-monitor-analytics/internal/adapter/hubapi"
 	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
+	"token-monitor-analytics/internal/domain"
 )
 
 // CollectionReader is the read-only part of the SQLite lifecycle required by
@@ -462,7 +463,7 @@ func redactRawValue(value any, path rawPath) any {
 		result := make(map[string]any, len(typed))
 		for key, child := range typed {
 			childPath := rawPath{kind: path.kind, parts: append(append([]string(nil), path.parts...), key)}
-			if secretField(key) || !knownRawField(childPath) {
+			if domain.IsRawSecretField(key) || !domain.IsKnownRawField(childPath.kind, childPath.parts) {
 				result[key] = maskedValue
 				continue
 			}
@@ -478,58 +479,4 @@ func redactRawValue(value any, path rawPath) any {
 	default:
 		return value
 	}
-}
-
-func secretField(key string) bool {
-	key = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", ""), "_", ""))
-	for _, marker := range []string{"credential", "password", "secret", "token", "cookie", "authorization", "authheader", "apikey", "accesskey", "privatekey"} {
-		if strings.Contains(key, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func knownRawField(path rawPath) bool {
-	p := path.parts
-	if len(p) == 1 {
-		return p[0] == "hubBuild" || p[0] == "devices"
-	}
-	if path.kind == "health" {
-		return len(p) == 2 && p[0] == "hubBuild" && map[string]bool{
-			"schemaVersion": true, "runtime": true, "coreBuildId": true, "runtimeBuildId": true,
-			"coreRevision": true, "runtimeRevision": true,
-		}[p[1]]
-	}
-	if path.kind != "stats" {
-		return false
-	}
-	// Array indexes are represented as path parts in this viewer. Every
-	// element of a contract-defined array has the same schema.
-	withoutIndexes := make([]string, 0, len(p))
-	for _, part := range p {
-		if strings.HasPrefix(part, "[") {
-			continue
-		}
-		withoutIndexes = append(withoutIndexes, part)
-	}
-	joined := strings.Join(withoutIndexes, ".")
-	switch joined {
-	case "devices", "devices.deviceId", "devices.usageUpdatedAt", "devices.syncUploadIntervalMs",
-		"devices.periodWindows", "devices.periodWindows.timeZone", "devices.periodWindows.today",
-		"devices.periodWindows.today.key", "devices.periods", "devices.periods.allTime",
-		"devices.periods.allTime.clientCosts", "devices.limits", "devices.limits.refreshMs",
-		"devices.limits.providers", "devices.limits.providers.provider", "devices.limits.providers.accountKey",
-		"devices.limits.providers.updatedAt", "devices.limits.providers.planLabel", "devices.limits.providers.windows",
-		"devices.limits.providers.windows.kind", "devices.limits.providers.windows.metric",
-		"devices.limits.providers.windows.label", "devices.limits.providers.windows.usedPercent",
-		"devices.limits.providers.windows.resetsAt":
-		return true
-	}
-	// Dynamic object keys under clientCosts are the service identifiers and are
-	// part of the contract; their numeric values are retained.
-	if len(withoutIndexes) == 5 && withoutIndexes[0] == "devices" && withoutIndexes[1] == "periods" && withoutIndexes[2] == "allTime" && withoutIndexes[3] == "clientCosts" {
-		return true
-	}
-	return false
 }

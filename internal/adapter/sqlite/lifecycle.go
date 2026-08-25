@@ -12,8 +12,9 @@ import (
 )
 
 type Lifecycle struct {
-	mu       sync.Mutex
-	database *sql.DB
+	mu           sync.Mutex
+	database     *sql.DB
+	databasePath string
 }
 
 func (l *Lifecycle) Open(ctx context.Context, path string) error {
@@ -45,6 +46,7 @@ func (l *Lifecycle) Open(ctx context.Context, path string) error {
 		return err
 	}
 	l.database = database
+	l.databasePath = absolutePath
 	return nil
 }
 
@@ -65,6 +67,7 @@ func (l *Lifecycle) Close() error {
 	}
 	err := l.database.Close()
 	l.database = nil
+	l.databasePath = ""
 	if err != nil {
 		return fmt.Errorf("close database: %w", err)
 	}
