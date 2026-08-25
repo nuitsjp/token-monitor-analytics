@@ -73,6 +73,16 @@ tasks:
     cmds:
       - go test ./tests/acceptance -run Restore
 
+  requirements:check:
+    summary: Checks that every agreed normative requirement has an owning task
+    cmds:
+      - powershell -NoProfile -File scripts/check-requirements.ps1
+
+  screens:check:
+    summary: Checks screen acceptance keys, owners, and referenced headings
+    cmds:
+      - powershell -NoProfile -File scripts/check-screens.ps1
+
   test:
     summary: Runs all automated test layers
     cmds:
@@ -102,6 +112,8 @@ tasks:
   verify:
     summary: Runs generation, formatting, lint, tests, and Windows build
     cmds:
+      - task: requirements:check
+      - task: screens:check
       - task: generate:check
       - task: fmt:check
       - task: lint

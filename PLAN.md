@@ -219,7 +219,7 @@ flowchart TD
 
 | 主担当タスク | 規範要件 |
 | --- | --- |
-| T-002 | QL-TIME-01 から QL-TIME-02、QL-UI-05 から QL-UI-06 |
+| T-002 | QL-TIME-01 から QL-TIME-02、QL-TIME-04、QL-UI-05 から QL-UI-06 |
 | T-010 | DM-ID-01、P1-HUB-01 から P1-HUB-05、QL-SEC-01 |
 | T-011 | API-01 から API-03、API-06、P1-HUB-06、P1-COL-03、P1-COL-07 から P1-COL-08 |
 | T-012 | API-04 から API-05、API-COST-01 から API-COST-07、API-LIMIT-01 から API-LIMIT-07、API-NORM-01 から API-NORM-04、DM-OBS-01 から DM-OBS-03、DM-OBS-05、P1-COL-01 から P1-COL-02、P1-COL-04 から P1-COL-06、P1-UI-01、QL-TIME-03、QL-REP-03 |
@@ -236,7 +236,7 @@ flowchart TD
 | T-042 | P1-BACKUP-01 から P1-BACKUP-07、P1-UI-07、QL-SEC-02 |
 | T-043 | P1-RESTORE-01 から P1-RESTORE-03、P1-RESTORE-07、P1-UI-07 |
 | T-044 | P1-RESTORE-04 から P1-RESTORE-06、P1-RESTORE-09 から P1-RESTORE-10、P1-UI-07、QL-SEC-03 |
-| T-050 | P1-RESTORE-08、QL-SEC-01 から QL-SEC-03、QL-UI-06 から QL-UI-07 |
+| T-050 | P1-RESTORE-08、QL-SEC-01 から QL-SEC-03、QL-TIME-04、QL-UI-06 から QL-UI-07 |
 | T-051 | QL-REP-01 |
 
 画面設計には規範要件 ID がないため、`screen-design.md` で Phase 1 と明記された記述を次の画面受入キーへ束ねる。共通の見た目、数値書式、状態、マスク、アクセシビリティは `design-system.md` の規則も同じキーで受入れ対象にする。これは参照元の表記を維持するためであり、本計画の製品フェーズを定義するものではない。各キーは、参照先見出しに含まれる該当の表示、操作、状態、遷移をすべて意味する。`wails3 task screens:check` は 13 キーの割当てと参照先見出しの存在を検査し、`wails3 task acceptance` は各キーとデザインシステム規則を含む試験名または手動証跡を検査する。T-050 は全キーの最終横断ゲートとする。
