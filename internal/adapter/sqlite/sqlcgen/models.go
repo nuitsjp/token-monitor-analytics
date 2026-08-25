@@ -8,6 +8,24 @@ import (
 	"database/sql"
 )
 
+type CollectionAttempt struct {
+	AttemptID                string         `json:"attempt_id"`
+	HubID                    string         `json:"hub_id"`
+	Trigger                  string         `json:"trigger"`
+	State                    string         `json:"state"`
+	StartedAt                string         `json:"started_at"`
+	CompletedAt              sql.NullString `json:"completed_at"`
+	AnalyticsIntervalSeconds int64          `json:"analytics_interval_seconds"`
+	HealthHttpStatus         sql.NullInt64  `json:"health_http_status"`
+	StatsHttpStatus          sql.NullInt64  `json:"stats_http_status"`
+	ApiContract              sql.NullString `json:"api_contract"`
+	HealthSnapshotID         sql.NullString `json:"health_snapshot_id"`
+	StatsSnapshotID          sql.NullString `json:"stats_snapshot_id"`
+	FailureCode              sql.NullString `json:"failure_code"`
+	FailureDetail            sql.NullString `json:"failure_detail"`
+	NormalizationErrorPath   sql.NullString `json:"normalization_error_path"`
+}
+
 type ConfigurationAudit struct {
 	Sequence   int64          `json:"sequence"`
 	AuditID    string         `json:"audit_id"`
@@ -49,6 +67,23 @@ type Hub struct {
 	ApiContract               sql.NullString `json:"api_contract"`
 	CreatedAt                 string         `json:"created_at"`
 	UpdatedAt                 string         `json:"updated_at"`
+}
+
+type HubAccountCandidate struct {
+	HubAccountCandidateID string         `json:"hub_account_candidate_id"`
+	HubID                 string         `json:"hub_id"`
+	ServiceID             string         `json:"service_id"`
+	AccountKey            string         `json:"account_key"`
+	DisplayName           string         `json:"display_name"`
+	Email                 string         `json:"email"`
+	WorkspaceName         string         `json:"workspace_name"`
+	DeviceName            string         `json:"device_name"`
+	State                 string         `json:"state"`
+	LogicalAccountID      sql.NullString `json:"logical_account_id"`
+	FirstObservedAt       sql.NullString `json:"first_observed_at"`
+	LastObservedAt        sql.NullString `json:"last_observed_at"`
+	CreatedAt             string         `json:"created_at"`
+	UpdatedAt             string         `json:"updated_at"`
 }
 
 type HubConnectionAttempt struct {
@@ -134,6 +169,15 @@ type LimitLabelChangeWindow struct {
 	ObservedAt  string `json:"observed_at"`
 }
 
+type LogicalAccount struct {
+	LogicalAccountID string         `json:"logical_account_id"`
+	ServiceID        string         `json:"service_id"`
+	DisplayName      string         `json:"display_name"`
+	ArchivedAt       sql.NullString `json:"archived_at"`
+	CreatedAt        string         `json:"created_at"`
+	UpdatedAt        string         `json:"updated_at"`
+}
+
 type Plan struct {
 	PlanID     string         `json:"plan_id"`
 	ServiceID  string         `json:"service_id"`
@@ -142,6 +186,16 @@ type Plan struct {
 	ArchivedAt sql.NullString `json:"archived_at"`
 	CreatedAt  string         `json:"created_at"`
 	UpdatedAt  string         `json:"updated_at"`
+}
+
+type PlanHistory struct {
+	PlanHistoryID    string         `json:"plan_history_id"`
+	LogicalAccountID string         `json:"logical_account_id"`
+	PlanVersionID    string         `json:"plan_version_id"`
+	ValidFrom        string         `json:"valid_from"`
+	ValidTo          sql.NullString `json:"valid_to"`
+	CreatedAt        string         `json:"created_at"`
+	UpdatedAt        string         `json:"updated_at"`
 }
 
 type PlanLimitRule struct {
@@ -162,6 +216,18 @@ type PlanVersion struct {
 	ValidTo           sql.NullString `json:"valid_to"`
 	OfficialSourceUrl string         `json:"official_source_url"`
 	CreatedAt         string         `json:"created_at"`
+}
+
+type RawSnapshot struct {
+	SnapshotID          string         `json:"snapshot_id"`
+	AttemptID           string         `json:"attempt_id"`
+	HubID               string         `json:"hub_id"`
+	ResponseKind        string         `json:"response_kind"`
+	ReceivedStartedAt   string         `json:"received_started_at"`
+	ReceivedCompletedAt string         `json:"received_completed_at"`
+	HttpStatus          int64          `json:"http_status"`
+	ApiContract         sql.NullString `json:"api_contract"`
+	Body                []byte         `json:"body"`
 }
 
 type RecalculationRequest struct {
@@ -207,4 +273,54 @@ type StandardPrice struct {
 	ValidFrom         string         `json:"valid_from"`
 	ValidTo           sql.NullString `json:"valid_to"`
 	CreatedAt         string         `json:"created_at"`
+}
+
+type UsageCostObservation struct {
+	ObservationID             string         `json:"observation_id"`
+	SnapshotID                string         `json:"snapshot_id"`
+	HubID                     string         `json:"hub_id"`
+	DeviceID                  string         `json:"device_id"`
+	RawServiceIdentifier      string         `json:"raw_service_identifier"`
+	UsageUpdatedAt            string         `json:"usage_updated_at"`
+	CostUsdText               string         `json:"cost_usd_text"`
+	SyncUploadIntervalMs      sql.NullInt64  `json:"sync_upload_interval_ms"`
+	AnalyticsIntervalSeconds  int64          `json:"analytics_interval_seconds"`
+	SourceTimezone            sql.NullString `json:"source_timezone"`
+	SourceLocalDate           sql.NullString `json:"source_local_date"`
+	NormalizationGeneration   int64          `json:"normalization_generation"`
+	NormalizationRuleVersion  string         `json:"normalization_rule_version"`
+	NormalizationLogicVersion string         `json:"normalization_logic_version"`
+	JsonPath                  string         `json:"json_path"`
+	DedupeState               string         `json:"dedupe_state"`
+	DedupeKey                 string         `json:"dedupe_key"`
+	ValueFingerprint          string         `json:"value_fingerprint"`
+}
+
+type UsageLimitObservation struct {
+	ObservationID             string          `json:"observation_id"`
+	SnapshotID                string          `json:"snapshot_id"`
+	HubID                     string          `json:"hub_id"`
+	DeviceID                  string          `json:"device_id"`
+	RawServiceIdentifier      string          `json:"raw_service_identifier"`
+	AccountKey                string          `json:"account_key"`
+	ProviderUpdatedAt         string          `json:"provider_updated_at"`
+	WindowKey                 string          `json:"window_key"`
+	NormalizedKind            string          `json:"normalized_kind"`
+	NormalizedMetric          string          `json:"normalized_metric"`
+	NormalizedLabel           string          `json:"normalized_label"`
+	PlanLabel                 string          `json:"plan_label"`
+	UsedPercent               sql.NullFloat64 `json:"used_percent"`
+	ResetsAt                  sql.NullString  `json:"resets_at"`
+	SyncUploadIntervalMs      sql.NullInt64   `json:"sync_upload_interval_ms"`
+	LimitsRefreshMs           sql.NullInt64   `json:"limits_refresh_ms"`
+	AnalyticsIntervalSeconds  int64           `json:"analytics_interval_seconds"`
+	SourceTimezone            sql.NullString  `json:"source_timezone"`
+	SourceLocalDate           sql.NullString  `json:"source_local_date"`
+	NormalizationGeneration   int64           `json:"normalization_generation"`
+	NormalizationRuleVersion  string          `json:"normalization_rule_version"`
+	NormalizationLogicVersion string          `json:"normalization_logic_version"`
+	JsonPath                  string          `json:"json_path"`
+	DedupeState               string          `json:"dedupe_state"`
+	DedupeKey                 string          `json:"dedupe_key"`
+	ValueFingerprint          string          `json:"value_fingerprint"`
 }
