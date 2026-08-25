@@ -1,6 +1,7 @@
 import { Events } from "@wailsio/runtime";
 import {
   AuditService,
+  CatalogService,
   HubService,
   SettingsService,
   WindowService,
@@ -9,9 +10,23 @@ import type {
   AuditFilterInput,
   AuditPage,
   AuditRecord,
+  CandidateCorrectionInput,
+  CandidateDecisionInput,
+  CandidateSplitInput,
+  CatalogSnapshot,
   CreateHubInput,
+  CreateServiceInput,
   HubSnapshot,
+  LabelChangeDecisionInput,
+  LimitDefinitionInput,
+  PlanInput,
+  PlanLimitRuleInput,
+  PlanVersionInput,
+  ServiceIdentifierMappingInput,
+  ServiceSnapshot,
+  StandardPriceInput,
   UpdateHubInput,
+  UpdateServiceInput,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -20,6 +35,22 @@ export type {
   AuditFilterInput,
   AuditPage,
   AuditRecord,
+  CandidateCorrectionInput,
+  CandidateDecisionInput,
+  CandidateSplitInput,
+  CatalogSnapshot,
+  CreateServiceInput,
+  IdentificationCandidateSnapshot,
+  LabelChangeCandidateSnapshot,
+  LabelChangeDecisionInput,
+  LimitDefinitionInput,
+  PlanInput,
+  PlanLimitRuleInput,
+  PlanVersionInput,
+  ServiceIdentifierMappingInput,
+  ServiceSnapshot,
+  StandardPriceInput,
+  UpdateServiceInput,
 } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export interface SettingsSnapshot {
@@ -64,6 +95,37 @@ export interface FrontendAdapter {
   deleteCredential(hubID: string): Promise<HubSnapshot>;
   checkHubConnection(hubID: string): Promise<HubSnapshot>;
   getAudits(filter: AuditFilterInput): Promise<AuditPage>;
+  getCatalog(): Promise<CatalogSnapshot>;
+  createService(input: CreateServiceInput): Promise<ServiceSnapshot>;
+  updateService(input: UpdateServiceInput): Promise<ServiceSnapshot>;
+  archiveService(serviceID: string): Promise<void>;
+  restoreService(serviceID: string): Promise<void>;
+  createServiceIdentifierMapping(
+    input: ServiceIdentifierMappingInput,
+  ): Promise<void>;
+  updateServiceIdentifierMapping(
+    input: ServiceIdentifierMappingInput,
+  ): Promise<void>;
+  createLimitDefinition(input: LimitDefinitionInput): Promise<void>;
+  updateLimitDefinition(input: LimitDefinitionInput): Promise<void>;
+  setBillingConfirmation(
+    definitionID: string,
+    confirmation: string,
+  ): Promise<void>;
+  createPlan(input: PlanInput): Promise<void>;
+  updatePlan(input: PlanInput): Promise<void>;
+  setBaselinePlan(serviceID: string, planID: string): Promise<void>;
+  createPlanVersion(input: PlanVersionInput): Promise<void>;
+  createPlanLimitRule(input: PlanLimitRuleInput): Promise<void>;
+  createStandardPrice(input: StandardPriceInput): Promise<void>;
+  confirmIdentificationCandidate(input: CandidateDecisionInput): Promise<void>;
+  rejectIdentificationCandidate(candidateID: string): Promise<void>;
+  releaseIdentificationCandidate(candidateID: string): Promise<void>;
+  correctIdentificationCandidate(
+    input: CandidateCorrectionInput,
+  ): Promise<void>;
+  splitIdentificationCandidate(input: CandidateSplitInput): Promise<void>;
+  decideLabelChangeCandidate(input: LabelChangeDecisionInput): Promise<void>;
   on(event: FrontendEventName, callback: (data: unknown) => void): () => void;
 }
 
@@ -116,6 +178,7 @@ export interface FakeBackendOptions {
   onConfirmQuit?: () => void;
   hubs?: HubSnapshot[];
   audits?: AuditRecord[];
+  catalog?: Partial<CatalogSnapshot>;
 }
 
 export interface FakeFrontendAdapter extends FrontendAdapter {
@@ -133,6 +196,17 @@ export function createFakeBackend(
   const listeners = new Map<FrontendEventName, Set<(data: unknown) => void>>();
   let hubs = [...(options.hubs ?? [])];
   const audits = [...(options.audits ?? [])];
+  let catalog = {
+    services: options.catalog?.services ?? [],
+    serviceIdentifierMappings: options.catalog?.serviceIdentifierMappings ?? [],
+    limitDefinitions: options.catalog?.limitDefinitions ?? [],
+    plans: options.catalog?.plans ?? [],
+    planVersions: options.catalog?.planVersions ?? [],
+    planLimitRules: options.catalog?.planLimitRules ?? [],
+    standardPrices: options.catalog?.standardPrices ?? [],
+    identificationCandidates: options.catalog?.identificationCandidates ?? [],
+    labelChangeCandidates: options.catalog?.labelChangeCandidates ?? [],
+  };
   const backend: FakeFrontendAdapter = {
     canOpenMain: options.canOpenMain ?? false,
     initialSettings: settings,
@@ -225,6 +299,263 @@ export function createFakeBackend(
         nextCursor: hasMore
           ? btoa(String((Number.isFinite(offset) ? offset : 0) + limit))
           : "",
+      };
+    },
+    getCatalog: async () => catalog,
+    createService: async (input) => {
+      const service: ServiceSnapshot = {
+        id: `fake-service-${catalog.services.length + 1}`,
+        provider: input.provider,
+        name: input.name,
+        officialKey: input.officialKey,
+        archivedAt: "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      catalog = { ...catalog, services: [...catalog.services, service] };
+      return service;
+    },
+    updateService: async (input) => {
+      const current = catalog.services.find((item) => item.id === input.id);
+      if (!current) throw new Error("service was not found");
+      const service = {
+        ...current,
+        provider: input.provider,
+        name: input.name,
+        officialKey: input.officialKey,
+        archivedAt: input.archived ? new Date().toISOString() : "",
+        updatedAt: new Date().toISOString(),
+      };
+      catalog = {
+        ...catalog,
+        services: catalog.services.map((item) =>
+          item.id === service.id ? service : item,
+        ),
+      };
+      return service;
+    },
+    archiveService: async (serviceID) => {
+      catalog = {
+        ...catalog,
+        services: catalog.services.map((item) =>
+          item.id === serviceID
+            ? { ...item, archivedAt: new Date().toISOString() }
+            : item,
+        ),
+      };
+    },
+    restoreService: async (serviceID) => {
+      catalog = {
+        ...catalog,
+        services: catalog.services.map((item) =>
+          item.id === serviceID ? { ...item, archivedAt: "" } : item,
+        ),
+      };
+    },
+    createServiceIdentifierMapping: async (input) => {
+      catalog = {
+        ...catalog,
+        serviceIdentifierMappings: [
+          ...catalog.serviceIdentifierMappings,
+          {
+            ...input,
+            id:
+              input.id ||
+              `fake-mapping-${catalog.serviceIdentifierMappings.length + 1}`,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+    },
+    updateServiceIdentifierMapping: async (input) => {
+      catalog = {
+        ...catalog,
+        serviceIdentifierMappings: catalog.serviceIdentifierMappings.map(
+          (item) => (item.id === input.id ? { ...item, ...input } : item),
+        ),
+      };
+    },
+    createLimitDefinition: async (input) => {
+      catalog = {
+        ...catalog,
+        limitDefinitions: [
+          ...catalog.limitDefinitions,
+          {
+            ...input,
+            id: input.id || `fake-limit-${catalog.limitDefinitions.length + 1}`,
+            archivedAt: "",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    },
+    updateLimitDefinition: async (input) => {
+      catalog = {
+        ...catalog,
+        limitDefinitions: catalog.limitDefinitions.map((item) =>
+          item.id === input.id
+            ? { ...item, ...input, updatedAt: new Date().toISOString() }
+            : item,
+        ),
+      };
+    },
+    setBillingConfirmation: async (definitionID, confirmation) => {
+      catalog = {
+        ...catalog,
+        limitDefinitions: catalog.limitDefinitions.map((item) =>
+          item.id === definitionID
+            ? {
+                ...item,
+                billingConfirmation: confirmation,
+                updatedAt: new Date().toISOString(),
+              }
+            : item,
+        ),
+      };
+    },
+    createPlan: async (input) => {
+      catalog = {
+        ...catalog,
+        plans: [
+          ...catalog.plans,
+          {
+            ...input,
+            id: input.id || `fake-plan-${catalog.plans.length + 1}`,
+            archivedAt: "",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    },
+    updatePlan: async (input) => {
+      catalog = {
+        ...catalog,
+        plans: catalog.plans.map((item) =>
+          item.id === input.id
+            ? { ...item, ...input, updatedAt: new Date().toISOString() }
+            : item,
+        ),
+      };
+    },
+    setBaselinePlan: async (serviceID, planID) => {
+      catalog = {
+        ...catalog,
+        plans: catalog.plans.map((item) =>
+          item.serviceId === serviceID
+            ? { ...item, isBaseline: item.id === planID }
+            : item,
+        ),
+      };
+    },
+    createPlanVersion: async (input) => {
+      catalog = {
+        ...catalog,
+        planVersions: [
+          ...catalog.planVersions,
+          {
+            ...input,
+            id: input.id || `fake-version-${catalog.planVersions.length + 1}`,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+    },
+    createPlanLimitRule: async (input) => {
+      catalog = {
+        ...catalog,
+        planLimitRules: [
+          ...catalog.planLimitRules,
+          {
+            ...input,
+            id: input.id || `fake-rule-${catalog.planLimitRules.length + 1}`,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+    },
+    createStandardPrice: async (input) => {
+      catalog = {
+        ...catalog,
+        standardPrices: [
+          ...catalog.standardPrices,
+          {
+            ...input,
+            id: input.id || `fake-price-${catalog.standardPrices.length + 1}`,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+    },
+    confirmIdentificationCandidate: async (input) => {
+      catalog = {
+        ...catalog,
+        identificationCandidates: catalog.identificationCandidates.map(
+          (item) =>
+            item.id === input.candidateId
+              ? {
+                  ...item,
+                  state: "confirmed",
+                  serviceId: input.serviceId,
+                  planId: input.planId,
+                }
+              : item,
+        ),
+      };
+    },
+    rejectIdentificationCandidate: async (candidateID) => {
+      catalog = {
+        ...catalog,
+        identificationCandidates: catalog.identificationCandidates.map(
+          (item) =>
+            item.id === candidateID
+              ? { ...item, state: "rejected", serviceId: "", planId: "" }
+              : item,
+        ),
+      };
+    },
+    releaseIdentificationCandidate: async (candidateID) => {
+      catalog = {
+        ...catalog,
+        identificationCandidates: catalog.identificationCandidates.map(
+          (item) =>
+            item.id === candidateID
+              ? { ...item, state: "unconfirmed", serviceId: "", planId: "" }
+              : item,
+        ),
+      };
+    },
+    correctIdentificationCandidate: async (input) => {
+      catalog = {
+        ...catalog,
+        identificationCandidates: catalog.identificationCandidates.map(
+          (item) =>
+            item.id === input.candidateId
+              ? {
+                  ...item,
+                  ...input,
+                  state: "unconfirmed",
+                  serviceId: "",
+                  planId: "",
+                }
+              : item,
+        ),
+      };
+    },
+    splitIdentificationCandidate: async () => undefined,
+    decideLabelChangeCandidate: async (input) => {
+      catalog = {
+        ...catalog,
+        labelChangeCandidates: catalog.labelChangeCandidates.map((item) =>
+          item.id === input.candidateId
+            ? {
+                ...item,
+                state: input.state,
+                limitDefinitionId: input.limitDefinitionId,
+              }
+            : item,
+        ),
       };
     },
     on: (event, callback) => {
@@ -324,6 +655,47 @@ export function createProductionBackend(
     checkHubConnection: (hubID) =>
       asPromise(HubService.CheckHubConnection(hubID)),
     getAudits: (filter) => asPromise(AuditService.GetAudits(filter)),
+    getCatalog: () => asPromise(CatalogService.GetCatalog()),
+    createService: (input) => asPromise(CatalogService.CreateService(input)),
+    updateService: (input) => asPromise(CatalogService.UpdateService(input)),
+    archiveService: (serviceID) =>
+      asPromise(CatalogService.ArchiveService(serviceID)),
+    restoreService: (serviceID) =>
+      asPromise(CatalogService.RestoreService(serviceID)),
+    createServiceIdentifierMapping: (input) =>
+      asPromise(CatalogService.CreateServiceIdentifierMapping(input)),
+    updateServiceIdentifierMapping: (input) =>
+      asPromise(CatalogService.UpdateServiceIdentifierMapping(input)),
+    createLimitDefinition: (input) =>
+      asPromise(CatalogService.CreateLimitDefinition(input)),
+    updateLimitDefinition: (input) =>
+      asPromise(CatalogService.UpdateLimitDefinition(input)),
+    setBillingConfirmation: (definitionID, confirmation) =>
+      asPromise(
+        CatalogService.SetBillingConfirmation(definitionID, confirmation),
+      ),
+    createPlan: (input) => asPromise(CatalogService.CreatePlan(input)),
+    updatePlan: (input) => asPromise(CatalogService.UpdatePlan(input)),
+    setBaselinePlan: (serviceID, planID) =>
+      asPromise(CatalogService.SetBaselinePlan(serviceID, planID)),
+    createPlanVersion: (input) =>
+      asPromise(CatalogService.CreatePlanVersion(input)),
+    createPlanLimitRule: (input) =>
+      asPromise(CatalogService.CreatePlanLimitRule(input)),
+    createStandardPrice: (input) =>
+      asPromise(CatalogService.CreateStandardPrice(input)),
+    confirmIdentificationCandidate: (input) =>
+      asPromise(CatalogService.ConfirmIdentificationCandidate(input)),
+    rejectIdentificationCandidate: (candidateID) =>
+      asPromise(CatalogService.RejectIdentificationCandidate(candidateID)),
+    releaseIdentificationCandidate: (candidateID) =>
+      asPromise(CatalogService.ReleaseIdentificationCandidate(candidateID)),
+    correctIdentificationCandidate: (input) =>
+      asPromise(CatalogService.CorrectIdentificationCandidate(input)),
+    splitIdentificationCandidate: (input) =>
+      asPromise(CatalogService.SplitIdentificationCandidate(input)),
+    decideLabelChangeCandidate: (input) =>
+      asPromise(CatalogService.DecideLabelChangeCandidate(input)),
     on: (event, callback) =>
       Events.On(event, (wailsEvent) => callback(wailsEvent.data)),
   };

@@ -210,7 +210,8 @@ func (l *Lifecycle) UpdateServiceIdentifierMapping(ctx context.Context, mapping 
 	}
 	defer func() { _ = tx.Rollback() }()
 	var before ServiceIdentifierMapping
-	var kind, from, to, created string
+	var kind, from, created string
+	var to sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT mapping_id, identifier_kind, raw_identifier, service_id, valid_from, valid_to, created_at FROM service_identifier_mappings WHERE mapping_id = ?`, mapping.ID).
 		Scan(&before.ID, &kind, &before.RawIdentifier, &before.ServiceID, &from, &to, &created); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -223,8 +224,8 @@ func (l *Lifecycle) UpdateServiceIdentifierMapping(ctx context.Context, mapping 
 	if err != nil {
 		return fmt.Errorf("parse mapping start: %w", err)
 	}
-	if to != "" {
-		value, parseErr := parseUTC(to)
+	if to.Valid {
+		value, parseErr := parseUTC(to.String)
 		if parseErr != nil {
 			return fmt.Errorf("parse mapping end: %w", parseErr)
 		}

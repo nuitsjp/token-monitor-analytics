@@ -28,12 +28,57 @@ export interface AuditRecord {
     "afterJson": string;
 }
 
+export interface CandidateCorrectionInput {
+    "candidateId": string;
+    "rawLimitServiceIdentifier": string;
+    "rawReportedPlanName": string;
+}
+
+export interface CandidateDecisionInput {
+    "candidateId": string;
+    "serviceId": string;
+    "planId": string;
+}
+
+export interface CandidateObservationSnapshot {
+    "id": string;
+    "candidateId": string;
+    "hubId": string;
+    "hubAccountDisplay": string;
+    "observedAt": string;
+}
+
+export interface CandidateSplitInput {
+    "sourceCandidateId": string;
+    "rawLimitServiceIdentifier": string;
+    "rawReportedPlanName": string;
+    "observationIds": string[] | null;
+}
+
+export interface CatalogSnapshot {
+    "services": ServiceSnapshot[] | null;
+    "serviceIdentifierMappings": ServiceIdentifierMappingSnapshot[] | null;
+    "limitDefinitions": LimitDefinitionSnapshot[] | null;
+    "plans": PlanSnapshot[] | null;
+    "planVersions": PlanVersionSnapshot[] | null;
+    "planLimitRules": PlanLimitRuleSnapshot[] | null;
+    "standardPrices": StandardPriceSnapshot[] | null;
+    "identificationCandidates": IdentificationCandidateSnapshot[] | null;
+    "labelChangeCandidates": LabelChangeCandidateSnapshot[] | null;
+}
+
 export interface CreateHubInput {
     "displayName": string;
     "url": string;
     "collectionIntervalSeconds": number;
     "collectionEnabled": boolean;
     "secret": string;
+}
+
+export interface CreateServiceInput {
+    "provider": string;
+    "name": string;
+    "officialKey": string;
 }
 
 export interface HubSnapshot {
@@ -50,9 +95,161 @@ export interface HubSnapshot {
     "connectionFailureNote": string;
 }
 
+export interface IdentificationCandidateSnapshot {
+    "id": string;
+    "rawLimitServiceIdentifier": string;
+    "rawReportedPlanName": string;
+    "state": string;
+    "serviceId": string;
+    "planId": string;
+    "firstObservedAt": string;
+    "lastObservedAt": string;
+    "createdAt": string;
+    "updatedAt": string;
+    "observations": CandidateObservationSnapshot[] | null;
+}
+
+export interface LabelChangeCandidateSnapshot {
+    "id": string;
+    "hubId": string;
+    "deviceRecordKey": string;
+    "hubAccountKey": string;
+    "rawLimitServiceIdentifier": string;
+    "normalizedKind": string;
+    "normalizedMetric": string;
+    "oldLabel": string;
+    "newLabel": string;
+    "state": string;
+    "limitDefinitionId": string;
+    "firstObservedAt": string;
+    "lastObservedAt": string;
+    "createdAt": string;
+    "updatedAt": string;
+    "windows": LabelChangeWindowSnapshot[] | null;
+}
+
+export interface LabelChangeDecisionInput {
+    "candidateId": string;
+    "state": string;
+    "limitDefinitionId": string;
+}
+
+export interface LabelChangeWindowSnapshot {
+    "id": string;
+    "candidateId": string;
+    "windowKey": string;
+    "label": string;
+    "observedAt": string;
+}
+
+export interface LimitDefinitionInput {
+    "id": string;
+    "serviceId": string;
+    "cycleType": string;
+    "meaning": string;
+    "unit": string;
+    "billingConfirmation": string;
+}
+
+export interface LimitDefinitionSnapshot {
+    "id": string;
+    "serviceId": string;
+    "cycleType": string;
+    "meaning": string;
+    "unit": string;
+    "billingConfirmation": string;
+    "archivedAt": string;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+export interface PlanInput {
+    "id": string;
+    "serviceId": string;
+    "name": string;
+    "isBaseline": boolean;
+}
+
+export interface PlanLimitRuleInput {
+    "id": string;
+    "planVersionId": string;
+    "limitDefinitionId": string;
+    "limit": number | null;
+    "multiplier": number | null;
+    "officialSourceUrl": string;
+}
+
+export interface PlanLimitRuleSnapshot {
+    "id": string;
+    "planVersionId": string;
+    "limitDefinitionId": string;
+    "limit": number | null;
+    "multiplier": number | null;
+    "officialSourceUrl": string;
+    "createdAt": string;
+}
+
+export interface PlanSnapshot {
+    "id": string;
+    "serviceId": string;
+    "name": string;
+    "isBaseline": boolean;
+    "archivedAt": string;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+export interface PlanVersionInput {
+    "id": string;
+    "planId": string;
+    "name": string;
+    "validFrom": string;
+    "validTo": string;
+    "officialSourceUrl": string;
+}
+
+export interface PlanVersionSnapshot {
+    "id": string;
+    "planId": string;
+    "name": string;
+    "validFrom": string;
+    "validTo": string;
+    "officialSourceUrl": string;
+    "createdAt": string;
+}
+
 export interface SaveSettingsInput {
     "theme": string;
     "displayTimeZone": string;
+}
+
+export interface ServiceIdentifierMappingInput {
+    "id": string;
+    "kind": string;
+    "rawIdentifier": string;
+    "serviceId": string;
+    "validFrom": string;
+    "validTo": string;
+}
+
+export interface ServiceIdentifierMappingSnapshot {
+    "id": string;
+    "kind": string;
+    "rawIdentifier": string;
+    "serviceId": string;
+    "validFrom": string;
+    "validTo": string;
+    "createdAt": string;
+}
+
+export interface ServiceSnapshot {
+    "id": string;
+    "provider": string;
+    "name": string;
+    "officialKey": string;
+    "archivedAt": string;
+    "createdAt": string;
+    "updatedAt": string;
 }
 
 export interface SettingsSnapshot {
@@ -62,9 +259,36 @@ export interface SettingsSnapshot {
     "systemDark": boolean;
 }
 
+export interface StandardPriceInput {
+    "id": string;
+    "planVersionId": string;
+    "usdMonthlyPerSeat": number;
+    "sourceUrl": string;
+    "validFrom": string;
+    "validTo": string;
+}
+
+export interface StandardPriceSnapshot {
+    "id": string;
+    "planVersionId": string;
+    "usdMonthlyPerSeat": number;
+    "sourceUrl": string;
+    "validFrom": string;
+    "validTo": string;
+    "createdAt": string;
+}
+
 export interface UpdateHubInput {
     "id": string;
     "displayName": string;
     "url": string;
     "collectionIntervalSeconds": number;
+}
+
+export interface UpdateServiceInput {
+    "id": string;
+    "provider": string;
+    "name": string;
+    "officialKey": string;
+    "archived": boolean;
 }

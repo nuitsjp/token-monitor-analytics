@@ -30,6 +30,10 @@ func run() (runErr error) {
 	settingsService := desktop.NewSettingsService(storage.lifecycle)
 	hubService := desktop.NewHubService(storage.lifecycle, credentialadapter.Manager{})
 	auditService := desktop.NewAuditService(storage.lifecycle)
+	catalogService, err := desktop.NewCatalogService(storage.lifecycle)
+	if err != nil {
+		return fmt.Errorf("start catalog service: %w", err)
+	}
 	app := application.New(application.Options{
 		Name:        "Token Monitor Analytics",
 		Description: "Local-first analytics for Token Monitor hubs",
@@ -41,6 +45,7 @@ func run() (runErr error) {
 			application.NewService(settingsService),
 			application.NewService(hubService),
 			application.NewService(auditService),
+			application.NewService(catalogService),
 		},
 	})
 	windowController.Attach(app)

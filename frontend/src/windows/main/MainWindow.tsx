@@ -27,6 +27,7 @@ import type { FrontendAdapter } from "../../lib/backend";
 import { SettingsPage } from "../../pages/settings/SettingsPage";
 import { HubsPage } from "../../pages/hubs/HubsPage";
 import { AuditPage } from "../../pages/audit/AuditPage";
+import { CatalogPage } from "../../pages/catalog/CatalogPage";
 import { useSettings } from "../../app/providers";
 
 const useStyles = makeStyles({
@@ -108,6 +109,10 @@ function MainRoutes({
           <AuditPage backend={backend} displayTimeZone={displayTimeZone} />
         }
       />
+      <Route
+        path="/catalog"
+        element={<CatalogPage backend={backend} onDirtyChange={setDirty} />}
+      />
       <Route path="*" element={<Navigate to="/settings" replace />} />
     </Routes>
   );
@@ -150,6 +155,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <Cloud16Regular aria-hidden="true" />
             <span>Hub・収集</span>
+          </NavLink>
+          <NavLink
+            to="/catalog"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/catalog");
+              }
+            }}
+          >
+            <span aria-hidden="true">◈</span>
+            <span>サービス・プラン</span>
           </NavLink>
           <NavLink
             to="/audit"

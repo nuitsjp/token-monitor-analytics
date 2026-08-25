@@ -84,7 +84,8 @@ func (l *Lifecycle) ListServiceIdentifierMappings(ctx context.Context, kind doma
 	for rows.Next() {
 		var mapping ServiceIdentifierMapping
 		var kindText string
-		var from, to, created string
+		var from, created string
+		var to sql.NullString
 		if err := rows.Scan(&mapping.ID, &kindText, &mapping.RawIdentifier, &mapping.ServiceID, &from, &to, &created); err != nil {
 			return nil, fmt.Errorf("scan service identifier mapping: %w", err)
 		}
@@ -93,8 +94,8 @@ func (l *Lifecycle) ListServiceIdentifierMappings(ctx context.Context, kind doma
 		if err != nil {
 			return nil, fmt.Errorf("parse mapping start: %w", err)
 		}
-		if to != "" {
-			value, err := parseUTC(to)
+		if to.Valid {
+			value, err := parseUTC(to.String)
 			if err != nil {
 				return nil, fmt.Errorf("parse mapping end: %w", err)
 			}
@@ -233,7 +234,8 @@ func (l *Lifecycle) ListPlanVersions(ctx context.Context, planID string) ([]Plan
 	var result []PlanVersion
 	for rows.Next() {
 		var version PlanVersion
-		var from, to, created string
+		var from, created string
+		var to sql.NullString
 		if err := rows.Scan(&version.ID, &version.PlanID, &version.Name, &from, &to, &version.OfficialSourceURL, &created); err != nil {
 			return nil, fmt.Errorf("scan plan version: %w", err)
 		}
@@ -241,8 +243,8 @@ func (l *Lifecycle) ListPlanVersions(ctx context.Context, planID string) ([]Plan
 		if err != nil {
 			return nil, fmt.Errorf("parse plan version start: %w", err)
 		}
-		if to != "" {
-			value, err := parseUTC(to)
+		if to.Valid {
+			value, err := parseUTC(to.String)
 			if err != nil {
 				return nil, fmt.Errorf("parse plan version end: %w", err)
 			}
@@ -325,7 +327,8 @@ func (l *Lifecycle) ListStandardPrices(ctx context.Context, planVersionID string
 	var result []StandardPrice
 	for rows.Next() {
 		var price StandardPrice
-		var from, to, created string
+		var from, created string
+		var to sql.NullString
 		if err := rows.Scan(&price.ID, &price.PlanVersionID, &price.USDMonthlyPerSeat, &price.SourceURL, &from, &to, &created); err != nil {
 			return nil, fmt.Errorf("scan standard price: %w", err)
 		}
@@ -333,8 +336,8 @@ func (l *Lifecycle) ListStandardPrices(ctx context.Context, planVersionID string
 		if err != nil {
 			return nil, fmt.Errorf("parse standard price start: %w", err)
 		}
-		if to != "" {
-			value, err := parseUTC(to)
+		if to.Valid {
+			value, err := parseUTC(to.String)
 			if err != nil {
 				return nil, fmt.Errorf("parse standard price end: %w", err)
 			}
