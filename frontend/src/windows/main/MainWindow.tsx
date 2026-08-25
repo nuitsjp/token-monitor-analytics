@@ -5,8 +5,15 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { Settings16Regular } from "@fluentui/react-icons";
-import { MemoryRouter, Navigate, NavLink, Route, Routes } from "react-router";
+import { Settings16Regular, Cloud16Regular } from "@fluentui/react-icons";
+import {
+  MemoryRouter,
+  Navigate,
+  NavLink,
+  Route,
+  Routes,
+  useNavigate,
+} from "react-router";
 import { useCallback, useState } from "react";
 import {
   DirtyStateDialog,
@@ -14,6 +21,7 @@ import {
 } from "../../components/DirtyStateGuard";
 import type { FrontendAdapter } from "../../lib/backend";
 import { SettingsPage } from "../../pages/settings/SettingsPage";
+import { HubsPage } from "../../pages/hubs/HubsPage";
 
 const useStyles = makeStyles({
   window: {
@@ -69,12 +77,22 @@ const useStyles = makeStyles({
   },
 });
 
-function MainRoutes({ setDirty }: { setDirty: (dirty: boolean) => void }) {
+function MainRoutes({
+  backend,
+  setDirty,
+}: {
+  backend: FrontendAdapter;
+  setDirty: (dirty: boolean) => void;
+}) {
   return (
     <Routes>
       <Route
         path="/settings"
         element={<SettingsPage onDirtyChange={setDirty} />}
+      />
+      <Route
+        path="/hubs"
+        element={<HubsPage backend={backend} onDirtyChange={setDirty} />}
       />
       <Route path="*" element={<Navigate to="/settings" replace />} />
     </Routes>
@@ -83,11 +101,16 @@ function MainRoutes({ setDirty }: { setDirty: (dirty: boolean) => void }) {
 
 function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
   const styles = useStyles();
+  const navigate = useNavigate();
   const [dirty, setDirty] = useState(false);
   const guard = useDirtyStateGuard(backend, dirty);
   const guardedOpen = useCallback(
     (action: () => void | Promise<void>) => void guard.request("main", action),
     [guard],
+  );
+  const guardedNavigate = useCallback(
+    (path: string) => void guard.request("navigate", () => navigate(path)),
+    [guard, navigate],
   );
   return (
     <>
@@ -99,6 +122,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
             <Body1>ローカル観測</Body1>
           </div>
           <NavLink
+            to="/hubs"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/hubs");
+              }
+            }}
+          >
+            <Cloud16Regular aria-hidden="true" />
+            <span>Hub・収集</span>
+          </NavLink>
+          <NavLink
             to="/settings"
             className={({ isActive }) =>
               `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
@@ -106,7 +144,7 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
             onClick={(event) => {
               if (dirty) {
                 event.preventDefault();
-                guardedOpen(() => undefined);
+                guardedNavigate("/settings");
               }
             }}
           >
@@ -129,7 +167,7 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
               閉じる
             </Button>
           </div>
-          <MainRoutes setDirty={setDirty} />
+          <MainRoutes backend={backend} setDirty={setDirty} />
         </main>
       </div>
     </>

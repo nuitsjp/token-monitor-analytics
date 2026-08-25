@@ -1,4 +1,5 @@
 bindings
 dist
 node_modules
+test-results
 package-lock.json

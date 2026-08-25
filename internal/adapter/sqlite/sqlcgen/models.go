@@ -51,6 +51,15 @@ type Hub struct {
 	UpdatedAt                 string         `json:"updated_at"`
 }
 
+type HubConnectionAttempt struct {
+	AttemptID     string         `json:"attempt_id"`
+	HubID         string         `json:"hub_id"`
+	CheckedAt     string         `json:"checked_at"`
+	State         string         `json:"state"`
+	ApiContract   sql.NullString `json:"api_contract"`
+	FailureDetail sql.NullString `json:"failure_detail"`
+}
+
 type HubConnectionStatus struct {
 	HubID         string         `json:"hub_id"`
 	State         string         `json:"state"`

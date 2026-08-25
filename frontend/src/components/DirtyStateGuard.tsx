@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FrontendAdapter } from "../lib/backend";
 
-type CloseReason = "main" | "quit";
+type CloseReason = "main" | "quit" | "navigate";
 
 export interface DirtyStateGuardApi {
   request: (
@@ -45,7 +45,7 @@ export function useDirtyStateGuard(
     async (reason: CloseReason, action?: () => void | Promise<void>) => {
       if (!dirtyRef.current) {
         if (reason === "main") await backend.ConfirmCloseMain();
-        else await backend.ConfirmQuit();
+        else if (reason === "quit") await backend.ConfirmQuit();
         await action?.();
         return true;
       }
@@ -74,7 +74,7 @@ export function useDirtyStateGuard(
     setPending(null);
     if (requestToConfirm.reason === "main") {
       await backend.ConfirmCloseMain();
-    } else {
+    } else if (requestToConfirm.reason === "quit") {
       await backend.ConfirmQuit();
     }
     await requestToConfirm.action?.();
@@ -109,7 +109,9 @@ export function DirtyStateDialog({ guard }: { guard: DirtyStateGuardApi }) {
   const title =
     guard.pending?.reason === "quit"
       ? "アプリを終了しますか？"
-      : "メイン画面を閉じますか？";
+      : guard.pending?.reason === "navigate"
+        ? "別の画面へ移動しますか？"
+        : "メイン画面を閉じますか？";
   return (
     <>
       <Dialog

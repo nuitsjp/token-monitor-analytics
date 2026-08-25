@@ -1,8 +1,14 @@
 import { Events } from "@wailsio/runtime";
 import {
+  HubService,
   SettingsService,
   WindowService,
 } from "../../bindings/token-monitor-analytics/internal/desktop/index.js";
+import type {
+  CreateHubInput,
+  HubSnapshot,
+  UpdateHubInput,
+} from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
 export type ThemePreference = "light" | "dark" | "system";
 
@@ -37,6 +43,16 @@ export interface FrontendAdapter {
   SetMainDirty(dirty: boolean): Promise<void>;
   ConfirmCloseMain(): Promise<void>;
   ConfirmQuit(): Promise<void>;
+  getHubs(): Promise<HubSnapshot[]>;
+  createHub(input: CreateHubInput): Promise<HubSnapshot>;
+  updateHub(input: UpdateHubInput): Promise<HubSnapshot>;
+  setHubCollectionEnabled(
+    hubID: string,
+    enabled: boolean,
+  ): Promise<HubSnapshot>;
+  saveCredential(hubID: string, secret: string): Promise<HubSnapshot>;
+  deleteCredential(hubID: string): Promise<HubSnapshot>;
+  checkHubConnection(hubID: string): Promise<HubSnapshot>;
   on(event: FrontendEventName, callback: (data: unknown) => void): () => void;
 }
 
@@ -87,6 +103,7 @@ export interface FakeBackendOptions {
   onSetMainDirty?: (dirty: boolean) => void;
   onConfirmCloseMain?: () => void;
   onConfirmQuit?: () => void;
+  hubs?: HubSnapshot[];
 }
 
 export interface FakeFrontendAdapter extends FrontendAdapter {
@@ -102,6 +119,7 @@ export function createFakeBackend(
     defaultSettings,
   );
   const listeners = new Map<FrontendEventName, Set<(data: unknown) => void>>();
+  let hubs = [...(options.hubs ?? [])];
   const backend: FakeFrontendAdapter = {
     canOpenMain: options.canOpenMain ?? false,
     initialSettings: settings,
@@ -114,6 +132,64 @@ export function createFakeBackend(
     SetMainDirty: async (dirty) => options.onSetMainDirty?.(dirty),
     ConfirmCloseMain: async () => options.onConfirmCloseMain?.(),
     ConfirmQuit: async () => options.onConfirmQuit?.(),
+    getHubs: async () => hubs,
+    createHub: async (input) => {
+      const hub: HubSnapshot = {
+        id: `fake-${hubs.length + 1}`,
+        displayName: input.displayName,
+        url: input.url,
+        collectionEnabled: input.collectionEnabled,
+        collectionIntervalSeconds: input.collectionIntervalSeconds,
+        apiContract: "",
+        credentialState: input.secret ? "registered" : "unregistered",
+        credentialReady: Boolean(input.secret),
+        connectionState: "not_checked",
+        connectionCheckedAt: "",
+        connectionFailureNote: "",
+      };
+      hubs = [...hubs, hub];
+      return hub;
+    },
+    updateHub: async (input) => {
+      const current = hubs.find((hub) => hub.id === input.id);
+      if (!current) throw new Error("hub was not found");
+      const hub = {
+        ...current,
+        displayName: input.displayName,
+        url: input.url,
+        collectionIntervalSeconds: input.collectionIntervalSeconds,
+      };
+      hubs = hubs.map((item) => (item.id === hub.id ? hub : item));
+      return hub;
+    },
+    setHubCollectionEnabled: async (hubID, enabled) => {
+      hubs = hubs.map((hub) =>
+        hub.id === hubID ? { ...hub, collectionEnabled: enabled } : hub,
+      );
+      return hubs.find((hub) => hub.id === hubID)!;
+    },
+    saveCredential: async (hubID) => {
+      hubs = hubs.map((hub) =>
+        hub.id === hubID
+          ? { ...hub, credentialState: "registered", credentialReady: true }
+          : hub,
+      );
+      return hubs.find((hub) => hub.id === hubID)!;
+    },
+    deleteCredential: async (hubID) => {
+      hubs = hubs.map((hub) =>
+        hub.id === hubID
+          ? { ...hub, credentialState: "unregistered", credentialReady: false }
+          : hub,
+      );
+      return hubs.find((hub) => hub.id === hubID)!;
+    },
+    checkHubConnection: async (hubID) => {
+      hubs = hubs.map((hub) =>
+        hub.id === hubID ? { ...hub, connectionState: "connected" } : hub,
+      );
+      return hubs.find((hub) => hub.id === hubID)!;
+    },
     on: (event, callback) => {
       const callbacks = listeners.get(event) ?? new Set();
       callbacks.add(callback);
@@ -200,6 +276,16 @@ export function createProductionBackend(
     SetMainDirty: (dirty) => asPromise(WindowService.SetMainDirty(dirty)),
     ConfirmCloseMain: () => asPromise(WindowService.ConfirmCloseMain()),
     ConfirmQuit: () => asPromise(WindowService.ConfirmQuit()),
+    getHubs: () => asPromise(HubService.GetHubs()).then((value) => value ?? []),
+    createHub: (input) => asPromise(HubService.CreateHub(input)),
+    updateHub: (input) => asPromise(HubService.UpdateHub(input)),
+    setHubCollectionEnabled: (hubID, enabled) =>
+      asPromise(HubService.SetHubCollectionEnabled(hubID, enabled)),
+    saveCredential: (hubID, secret) =>
+      asPromise(HubService.SaveCredential(hubID, secret)),
+    deleteCredential: (hubID) => asPromise(HubService.DeleteCredential(hubID)),
+    checkHubConnection: (hubID) =>
+      asPromise(HubService.CheckHubConnection(hubID)),
     on: (event, callback) =>
       Events.On(event, (wailsEvent) => callback(wailsEvent.data)),
   };

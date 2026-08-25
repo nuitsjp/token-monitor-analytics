@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	credentialadapter "token-monitor-analytics/internal/adapter/credential"
 	"token-monitor-analytics/internal/desktop"
 )
 
@@ -27,6 +28,7 @@ func run() (runErr error) {
 
 	windowService, windowController := desktop.NewWindowService()
 	settingsService := desktop.NewSettingsService(storage.lifecycle)
+	hubService := desktop.NewHubService(storage.lifecycle, credentialadapter.Manager{})
 	app := application.New(application.Options{
 		Name:        "Token Monitor Analytics",
 		Description: "Local-first analytics for Token Monitor hubs",
@@ -36,6 +38,7 @@ func run() (runErr error) {
 		Services: []application.Service{
 			application.NewService(windowService),
 			application.NewService(settingsService),
+			application.NewService(hubService),
 		},
 	})
 	windowController.Attach(app)
