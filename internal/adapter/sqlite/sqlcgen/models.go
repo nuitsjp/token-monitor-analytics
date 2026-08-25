@@ -111,6 +111,78 @@ type EstimationPoint struct {
 	UpdatedAt                             string         `json:"updated_at"`
 }
 
+type EstimationResult struct {
+	EstimationResultID         string  `json:"estimation_result_id"`
+	ResultSetKey               string  `json:"result_set_key"`
+	ServiceID                  string  `json:"service_id"`
+	LimitDefinitionID          string  `json:"limit_definition_id"`
+	CycleType                  string  `json:"cycle_type"`
+	CalculationIntervalIdsJson string  `json:"calculation_interval_ids_json"`
+	ValidFrom                  string  `json:"valid_from"`
+	ValidTo                    string  `json:"valid_to"`
+	Status                     string  `json:"status"`
+	ReasonsJson                string  `json:"reasons_json"`
+	LimitsJson                 string  `json:"limits_json"`
+	ObservationPointCount      int64   `json:"observation_point_count"`
+	DifferenceRowCount         int64   `json:"difference_row_count"`
+	Rank                       int64   `json:"rank"`
+	AbsoluteErrorRatio         float64 `json:"absolute_error_ratio"`
+	MaxTimeDeltaNs             int64   `json:"max_time_delta_ns"`
+	CalculationLogicVersion    string  `json:"calculation_logic_version"`
+	MatchingRuleVersion        string  `json:"matching_rule_version"`
+	InputFingerprint           string  `json:"input_fingerprint"`
+	CreatedAt                  string  `json:"created_at"`
+	UpdatedAt                  string  `json:"updated_at"`
+}
+
+type EstimationResultDifferenceRow struct {
+	EstimationResultDifferenceRowID string  `json:"estimation_result_difference_row_id"`
+	EstimationResultID              string  `json:"estimation_result_id"`
+	RowIndex                        int64   `json:"row_index"`
+	StartPointID                    string  `json:"start_point_id"`
+	EndPointID                      string  `json:"end_point_id"`
+	StartAt                         string  `json:"start_at"`
+	EndAt                           string  `json:"end_at"`
+	CoefficientsJson                string  `json:"coefficients_json"`
+	Cost                            float64 `json:"cost"`
+	Accepted                        int64   `json:"accepted"`
+	ExclusionReason                 string  `json:"exclusion_reason"`
+}
+
+type EstimationResultEvidence struct {
+	EstimationResultEvidenceID string         `json:"estimation_result_evidence_id"`
+	EstimationResultID         string         `json:"estimation_result_id"`
+	EvidenceKind               string         `json:"evidence_kind"`
+	PointID                    string         `json:"point_id"`
+	SourceID                   string         `json:"source_id"`
+	ObservationID              string         `json:"observation_id"`
+	SnapshotID                 string         `json:"snapshot_id"`
+	AssociationID              string         `json:"association_id"`
+	CompletenessID             string         `json:"completeness_id"`
+	PlanHistoryID              string         `json:"plan_history_id"`
+	LogicalAccountID           string         `json:"logical_account_id"`
+	PlanVersionID              string         `json:"plan_version_id"`
+	ObservedAt                 sql.NullString `json:"observed_at"`
+	TimeDeltaNs                int64          `json:"time_delta_ns"`
+	NormalizationGeneration    int64          `json:"normalization_generation"`
+	NormalizationRuleVersion   string         `json:"normalization_rule_version"`
+	NormalizationLogicVersion  string         `json:"normalization_logic_version"`
+	DetailsJson                string         `json:"details_json"`
+}
+
+type EstimationResultSeries struct {
+	EstimationResultSeriesID string          `json:"estimation_result_series_id"`
+	EstimationResultID       string          `json:"estimation_result_id"`
+	UsageLimitSourceID       string          `json:"usage_limit_source_id"`
+	LogicalAccountID         string          `json:"logical_account_id"`
+	PlanVersionID            string          `json:"plan_version_id"`
+	CalculationIntervalID    string          `json:"calculation_interval_id"`
+	Multiplier               sql.NullFloat64 `json:"multiplier"`
+	EstimatedLimit           sql.NullFloat64 `json:"estimated_limit"`
+	PlanLimitRuleID          string          `json:"plan_limit_rule_id"`
+	PlanLimitRuleIdsJson     string          `json:"plan_limit_rule_ids_json"`
+}
+
 type Hub struct {
 	HubID                     string         `json:"hub_id"`
 	DisplayName               string         `json:"display_name"`
@@ -321,6 +393,9 @@ type RecalculationRequest struct {
 	IntervalEnd   string         `json:"interval_end"`
 	State         string         `json:"state"`
 	LastError     sql.NullString `json:"last_error"`
+	ScopeJson     string         `json:"scope_json"`
+	ClaimedBy     sql.NullString `json:"claimed_by"`
+	ClaimedAt     sql.NullString `json:"claimed_at"`
 }
 
 type SchemaMetadatum struct {

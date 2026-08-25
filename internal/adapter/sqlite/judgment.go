@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"token-monitor-analytics/internal/domain"
 )
 
 type FailureInjector interface {
@@ -96,12 +98,17 @@ func (l *Lifecycle) SaveJudgment(ctx context.Context, change JudgmentChange, inj
 		return err
 	}
 
+	scopeJSON, err := domain.EncodeRecalculationScope(domain.RecalculationScope{})
+	if err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO recalculation_requests
-			(request_id, audit_id, requested_at, interval_start, interval_end, state)
-		VALUES (?, ?, ?, ?, ?, 'pending')`,
+			(request_id, audit_id, requested_at, interval_start, interval_end, scope_json, state)
+		VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
 		change.RequestID, change.AuditID, utcText(change.OccurredAt),
 		utcText(change.IntervalStart), utcText(change.IntervalEnd),
+		scopeJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("append recalculation request: %w", err)

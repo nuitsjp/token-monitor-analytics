@@ -36,6 +36,7 @@ type EstimationInput struct {
 
 func EstimateFromPoints(input EstimationInput) (EstimationResult, error) {
 	result := estimationTrace(input.Points)
+	result.DifferenceRows = BuildAdjacentDifferenceRows(input.Points)
 	if len(input.Intervals) > 0 {
 		for _, interval := range input.Intervals {
 			if interval.State == CalculationExcluded {
@@ -96,6 +97,7 @@ func EstimateFromPoints(input EstimationInput) (EstimationResult, error) {
 	}
 	traced := estimationTrace(input.Points)
 	result.PointIDs = traced.PointIDs
+	result.DifferenceRows = BuildAdjacentDifferenceRows(points)
 	result.ObservationIDs = traced.ObservationIDs
 	result.AssociationIDs = traced.AssociationIDs
 	result.CompletenessIDs = traced.CompletenessIDs
@@ -108,6 +110,28 @@ func EstimateFromPoints(input EstimationInput) (EstimationResult, error) {
 	result.LimitSeriesPlanVersionIDs = append([]string(nil), points[0].LimitSeriesPlanVersionIDs...)
 	result.SeriesMultipliers = append([]float64(nil), multipliers...)
 	result.PlanLimitRuleIDs = uniqueStrings(ruleIDs)
+	result.SeriesPlanLimitRuleIDs = make([][]string, len(points[0].LimitSeriesPlanVersionIDs))
+	seriesPlanIDs := make(map[string]struct{}, len(points[0].LimitSeriesPlanVersionIDs))
+	for _, planVersionID := range points[0].LimitSeriesPlanVersionIDs {
+		seriesPlanIDs[planVersionID] = struct{}{}
+	}
+	for _, plan := range input.PlanVersions {
+		if _, ok := seriesPlanIDs[plan.ID]; !ok {
+			continue
+		}
+		for _, rule := range plan.LimitRules {
+			if rule.LimitDefinitionID != points[0].LimitDefinitionID {
+				continue
+			}
+			result.PlanLimitRules = append(result.PlanLimitRules, rule)
+			for index, planVersionID := range points[0].LimitSeriesPlanVersionIDs {
+				if planVersionID == rule.PlanVersionID {
+					result.SeriesPlanLimitRuleIDs[index] = append(result.SeriesPlanLimitRuleIDs[index], rule.ID)
+				}
+			}
+		}
+	}
+	sort.Slice(result.PlanLimitRules, func(i, j int) bool { return result.PlanLimitRules[i].ID < result.PlanLimitRules[j].ID })
 	if len(result.Limits) == 1 {
 		result.SeriesLimits = make([]float64, len(multipliers))
 		for index, multiplier := range multipliers {

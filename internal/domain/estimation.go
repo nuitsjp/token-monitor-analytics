@@ -74,8 +74,14 @@ type EstimationResult struct {
 	LimitSeriesPlanVersionIDs         []string
 	SeriesMultipliers                 []float64
 	PlanLimitRuleIDs                  []string
+	PlanLimitRules                    []PlanLimitRule
+	SeriesPlanLimitRuleIDs            [][]string
 	SeriesLimits                      []float64
 	MaxTimeDelta                      time.Duration
+	// DifferenceRows contains every adjacent row, including rows rejected by
+	// the calculation rules. It is kept here so the persisted result can
+	// explain why a candidate row was not used.
+	DifferenceRows []EstimationDifferenceRow
 }
 
 func AdjacentDifferences(points []EstimationPoint) (*mat.Dense, []float64, error) {
@@ -98,6 +104,9 @@ func AdjacentDifferences(points []EstimationPoint) (*mat.Dense, []float64, error
 		allZero := cost == 0
 		for column := range columns {
 			deltas[column] = points[row].Utilization[column] - points[row-1].Utilization[column]
+			if !isFinite(cost) || !isFinite(deltas[column]) {
+				negative = true
+			}
 			if deltas[column] < 0 {
 				negative = true
 			}

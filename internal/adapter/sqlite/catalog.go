@@ -1116,8 +1116,16 @@ func appendCatalogAuditAndRequest(ctx context.Context, tx *sql.Tx, mutation Cata
 		mutation.AuditID, utcText(mutation.OccurredAt), mutation.Actor, mutation.Action, mutation.EntityType, mutation.EntityID, beforeJSON, afterJSON); err != nil {
 		return fmt.Errorf("append catalog audit: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO recalculation_requests (request_id, audit_id, requested_at, interval_start, interval_end, state) VALUES (?, ?, ?, ?, ?, 'pending')`,
-		mutation.RequestID, mutation.AuditID, utcText(mutation.OccurredAt), catalogPeriodText(mutation.IntervalStart), catalogPeriodText(mutation.IntervalEnd)); err != nil {
+	scope, err := scopeForMutation(ctx, tx, mutation, before, after)
+	if err != nil {
+		return err
+	}
+	scopeJSON, err := domain.EncodeRecalculationScope(scope)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO recalculation_requests (request_id, audit_id, requested_at, interval_start, interval_end, scope_json, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+		mutation.RequestID, mutation.AuditID, utcText(mutation.OccurredAt), catalogPeriodText(mutation.IntervalStart), catalogPeriodText(mutation.IntervalEnd), scopeJSON); err != nil {
 		return fmt.Errorf("append catalog recalculation request: %w", err)
 	}
 	return nil
