@@ -2,22 +2,32 @@ import {
   Body1,
   Button,
   Caption1,
-  Card,
-  CardHeader,
   MessageBar,
   MessageBarBody,
-  ProgressBar,
   Skeleton,
   SkeletonItem,
-  Subtitle1,
   makeStyles,
+  mergeClasses,
   tokens,
 } from "@fluentui/react-components";
-import { ChevronRight16Regular } from "@fluentui/react-icons";
+import {
+  ArrowSync16Regular,
+  CheckmarkCircle16Regular,
+  ErrorCircle16Regular,
+  Warning16Regular,
+} from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { OverviewSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { StatusBadge } from "../../components/StatusBadge";
+import {
+  CountStat,
+  Gauge,
+  KeyValue,
+  NavigationCard,
+  gaugeTextClass,
+  useDesignStyles,
+} from "../../components/design";
 import type {
   DataManagementStateSnapshot,
   FrontendAdapter,
@@ -25,117 +35,41 @@ import type {
 import {
   formatOverviewBytes,
   formatOverviewInstant,
-  progressColor,
 } from "../../lib/overviewDisplay";
 
 const useStyles = makeStyles({
-  page: {
-    display: "grid",
-    gap: tokens.spacingVerticalL,
-    maxWidth: "100rem",
-    minWidth: 0,
-  },
-  intro: {
+  setup: {
     display: "flex",
     alignItems: "center",
-    gap: tokens.spacingHorizontalM,
-  },
-  updated: { marginLeft: "auto", color: tokens.colorNeutralForeground3 },
-  title: {
-    margin: 0,
-    fontSize: tokens.fontSizeBase500,
-    lineHeight: tokens.lineHeightBase500,
-    fontWeight: tokens.fontWeightSemibold,
-  },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: tokens.spacingHorizontalL,
-    alignItems: "start",
-  },
-  card: {
-    minWidth: 0,
-    display: "grid",
-    gap: tokens.spacingVerticalS,
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
-  },
-  cardHeader: { alignItems: "start" },
-  statusList: {
-    display: "flex",
-    flexWrap: "wrap",
     gap: tokens.spacingHorizontalS,
-    alignItems: "center",
+    flexWrap: "wrap",
+    padding: `10px ${tokens.spacingHorizontalL}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: tokens.shadow4,
   },
-  statusGroups: {
-    display: "grid",
-    gap: tokens.spacingVerticalS,
-  },
-  statusGroup: {
+  setupAction: { marginInlineStart: "auto" },
+  setupCompleted: {
     display: "grid",
     gap: tokens.spacingVerticalXXS,
+    color: tokens.colorNeutralForeground3,
   },
-  kpis: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(7rem, 1fr))",
-    gap: tokens.spacingHorizontalM,
-  },
-  kpi: { display: "grid", gap: tokens.spacingVerticalXXS, minWidth: 0 },
-  number: {
-    fontSize: tokens.fontSizeBase500,
-    lineHeight: tokens.lineHeightBase500,
-    fontWeight: tokens.fontWeightSemibold,
-    fontVariantNumeric: "tabular-nums",
-    overflowWrap: "anywhere",
-  },
-  checklist: { display: "grid", gap: tokens.spacingVerticalS },
-  checklistItem: {
+  setupCompletedItem: {
     display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalM,
-    padding: tokens.spacingVerticalS,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  checklistTitle: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalS,
-  },
-  recent: { display: "grid", gap: tokens.spacingVerticalS },
-  recentItem: {
-    display: "grid",
-    gap: tokens.spacingVerticalS,
-    padding: `${tokens.spacingVerticalXS} 0`,
-    border: 0,
-    borderRadius: tokens.borderRadiusMedium,
-    minWidth: 0,
-    "@media (forced-colors: active)": { border: "1px solid CanvasText" },
-  },
-  compactLimitHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: tokens.spacingHorizontalS,
-  },
-  recentHeader: {
-    display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
     flexWrap: "wrap",
   },
-  time: { fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" },
-  stale: {
-    color: tokens.colorPaletteDarkOrangeForeground1,
-    "@media (forced-colors: active)": {
-      color: "CanvasText",
-      textDecorationLine: "underline",
-    },
-  },
-  completed: { display: "grid", gap: tokens.spacingVerticalS },
   loading: { display: "grid", gap: tokens.spacingVerticalM },
   errorActions: { marginTop: tokens.spacingVerticalS },
+  statusValue: {
+    display: "inline-flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXS,
+    justifyContent: "flex-end",
+  },
+  limitList: { display: "grid", gap: tokens.spacingVerticalS },
 });
 
 export function OverviewPage({
@@ -145,6 +79,7 @@ export function OverviewPage({
   backend: FrontendAdapter;
   displayTimeZone: string;
 }) {
+  const design = useDesignStyles();
   const styles = useStyles();
   const navigate = useNavigate();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -257,10 +192,9 @@ export function OverviewPage({
 
   if (snapshot.maintenance) {
     return (
-      <div className={styles.page}>
-        <header className={styles.intro}>
-          <Caption1>利用状況</Caption1>
-          <h1 className={styles.title} tabIndex={-1} ref={heading}>
+      <div className={design.page}>
+        <header className={design.pageHeader}>
+          <h1 className={design.pageTitle} tabIndex={-1} ref={heading}>
             概要
           </h1>
         </header>
@@ -282,17 +216,23 @@ export function OverviewPage({
   const checklist = snapshot.checklist ?? [];
   const pending = checklist.filter((item) => item.status.code !== "complete");
   const completed = checklist.filter((item) => item.status.code === "complete");
+  const nextStep = pending.find((item) => item.actionable) ?? pending[0];
   const estimations = snapshot.estimation.states ?? [];
   const recentLimits = snapshot.recentLimits ?? [];
+  const reviewKinds = [
+    ...(snapshot.review.actionKinds ?? []),
+    ...(snapshot.review.warningKinds ?? []),
+  ];
   const backup = dataManagement?.backup;
   const restoreTrial = dataManagement?.restore.trial;
+  const abnormalHubs = snapshot.hubs.abnormalCount;
   return (
-    <div className={styles.page}>
-      <header className={styles.intro}>
-        <h1 className={styles.title} tabIndex={-1} ref={heading}>
+    <div className={design.page}>
+      <header className={design.pageHeader}>
+        <h1 className={design.pageTitle} tabIndex={-1} ref={heading}>
           概要
         </h1>
-        <Caption1 className={styles.updated}>
+        <Caption1 className={design.pageMeta} title={snapshot.generatedAt}>
           {formatOverviewInstant(snapshot.generatedAt, displayTimeZone)} 更新
         </Caption1>
       </header>
@@ -337,198 +277,213 @@ export function OverviewPage({
         </MessageBar>
       ) : null}
 
-      {pending.length > 0 ? (
-        <section aria-labelledby="overview-checklist-heading">
-          <Subtitle1 as="h2" id="overview-checklist-heading">
-            初回チェックリスト
-          </Subtitle1>
-          <div className={styles.checklist}>
-            {pending.map((item) => (
-              <div className={styles.checklistItem} key={item.step}>
-                <div className={styles.checklistTitle}>
-                  <Body1>
-                    {item.step}. {item.title}
-                  </Body1>
-                  <StatusBadge status={item.status} />
-                </div>
-                {item.actionable ? (
-                  <Button
-                    icon={<ChevronRight16Regular />}
-                    iconPosition="after"
-                    onClick={() => navigate(item.route)}
-                  >
-                    次の設定へ
-                  </Button>
-                ) : null}
-              </div>
-            ))}
+      {pending.length > 0 && nextStep ? (
+        <section aria-labelledby="overview-setup-heading">
+          <div className={styles.setup}>
+            <span
+              className={
+                nextStep.status.intent === "warning"
+                  ? design.warning
+                  : design.muted
+              }
+              aria-hidden="true"
+            >
+              <Warning16Regular />
+            </span>
+            <Body1 as="strong" id="overview-setup-heading">
+              初回設定 あと {pending.length} 件
+            </Body1>
+            <Caption1 className={design.muted}>{nextStep.title}</Caption1>
+            <StatusBadge status={nextStep.status} />
+            {nextStep.actionable ? (
+              <Button
+                size="small"
+                className={styles.setupAction}
+                onClick={() => navigate(nextStep.route)}
+              >
+                確認する
+              </Button>
+            ) : null}
           </div>
           {completed.length > 0 ? (
-            <details className={styles.completed}>
+            <details>
               <summary>完了済み {completed.length} 件</summary>
-              {completed.map((item) => (
-                <div className={styles.checklistItem} key={item.step}>
-                  <Body1>
-                    {item.step}. {item.title}
-                  </Body1>
-                  <StatusBadge status={item.status} />
-                </div>
-              ))}
+              <div className={styles.setupCompleted}>
+                {completed.map((item) => (
+                  <div className={styles.setupCompletedItem} key={item.step}>
+                    <Caption1>
+                      {item.step}. {item.title}
+                    </Caption1>
+                    <StatusBadge status={item.status} />
+                  </div>
+                ))}
+              </div>
             </details>
           ) : null}
         </section>
       ) : null}
 
-      <div className={styles.grid}>
-        <Card className={styles.card}>
-          <CardHeader
-            className={styles.cardHeader}
-            header={<Subtitle1 as="h2">Hub・収集</Subtitle1>}
+      <div className={design.grid}>
+        <NavigationCard
+          title="Hub・収集"
+          to="/hubs"
+          ariaLabel="Hub・収集を開く"
+        >
+          <div className={design.counts}>
+            <CountStat
+              icon={<ArrowSync16Regular />}
+              value={`${snapshot.hubs.scheduledCount}/${snapshot.hubs.enabledCount}`}
+              label={`定期収集が有効な Hub ${snapshot.hubs.scheduledCount} / ${snapshot.hubs.enabledCount}`}
+            />
+            <CountStat
+              icon={<ArrowSync16Regular />}
+              value={snapshot.hubs.runningCount}
+              label={`実行中 ${snapshot.hubs.runningCount} 件`}
+              tone={snapshot.hubs.runningCount > 0 ? "success" : "muted"}
+            />
+            <CountStat
+              icon={<ErrorCircle16Regular />}
+              value={abnormalHubs}
+              label={`異常 Hub ${abnormalHubs} 件`}
+              tone={abnormalHubs > 0 ? "danger" : "muted"}
+            />
+          </div>
+          <StatusCounts
+            label="接続状態"
+            items={snapshot.hubs.connectionStates ?? []}
+            className={styles.statusValue}
           />
-          <div className={styles.kpis}>
-            <KPI
-              label="定期収集"
-              value={`${snapshot.hubs.scheduledCount} / ${snapshot.hubs.enabledCount}`}
-              styles={styles}
-            />
-            <KPI
-              label="実行中"
-              value={`${snapshot.hubs.runningCount} 件`}
-              styles={styles}
-            />
-            <KPI
-              label="異常 Hub"
-              value={`${snapshot.hubs.abnormalCount} 件`}
-              styles={styles}
-            />
-          </div>
-          <div className={styles.statusGroups}>
-            <StatusGroup
-              label="接続状態"
-              items={snapshot.hubs.connectionStates ?? []}
-              styles={styles}
-            />
-            <StatusGroup
-              label="現在の実行状態"
-              items={snapshot.hubs.currentCollectionStates ?? []}
-              styles={styles}
-            />
-            <StatusGroup
-              label="最終取得結果"
-              items={snapshot.hubs.lastCollectionStates ?? []}
-              styles={styles}
-            />
-          </div>
-          <Caption1 title={snapshot.hubs.lastSuccessAt}>
-            最終成功:{" "}
-            {formatOverviewInstant(
-              snapshot.hubs.lastSuccessAt,
-              displayTimeZone,
-            )}
-          </Caption1>
-          <Button appearance="subtle" onClick={() => navigate("/hubs")}>
-            Hub・収集を開く
-          </Button>
-        </Card>
+          <StatusCounts
+            label="現在の実行状態"
+            items={snapshot.hubs.currentCollectionStates ?? []}
+            className={styles.statusValue}
+          />
+          <StatusCounts
+            label="最終取得結果"
+            items={snapshot.hubs.lastCollectionStates ?? []}
+            className={styles.statusValue}
+          />
+          <KeyValue label="最終成功" title={snapshot.hubs.lastSuccessAt}>
+            {formatOverviewInstant(snapshot.hubs.lastSuccessAt, displayTimeZone)}
+          </KeyValue>
+        </NavigationCard>
 
         {recentLimits.length > 0 ? (
-          <Card className={styles.card}>
-            <CardHeader header={<Subtitle1 as="h2">利用枠</Subtitle1>} />
-            {recentLimits.slice(0, 2).map((item) => (
-              <article
-                className={styles.recentItem}
-                key={`${item.logicalAccountId}:${item.limitDefinitionId}`}
-                aria-label={item.accessibleLabel}
-              >
-                <div className={styles.compactLimitHeader}>
-                  <Body1>
-                    <strong>{item.serviceName}</strong>{" "}
-                    <Caption1>{item.accountName}</Caption1>
-                  </Body1>
-                  <Body1 title={item.tooltip}>
-                    <strong>{item.remainingLabel}</strong>
-                  </Body1>
+          <NavigationCard
+            title="利用枠"
+            to="/limits"
+            ariaLabel="利用枠を開く"
+          >
+            <div className={styles.limitList}>
+              {recentLimits.slice(0, 2).map((item) => (
+                <div
+                  className={design.gaugeRow}
+                  key={`${item.logicalAccountId}:${item.limitDefinitionId}`}
+                >
+                  <div className={design.gaugeHeader}>
+                    <Body1 className={design.gaugeName}>
+                      {item.serviceName}{" "}
+                      <span className={design.gaugeContext}>
+                        {item.accountName}
+                      </span>
+                    </Body1>
+                    <Body1
+                      className={mergeClasses(
+                        design.gaugePercent,
+                        gaugeTextClass(design, item.remaining),
+                      )}
+                      title={item.tooltip}
+                    >
+                      {item.remainingLabel}
+                    </Body1>
+                  </div>
+                  {item.remainingPercent === null ? null : (
+                    <Gauge
+                      percent={item.remainingPercent}
+                      status={item.remaining}
+                      label={item.accessibleLabel}
+                    />
+                  )}
                 </div>
-                {item.remainingPercent === null ? null : (
-                  <ProgressBar
-                    value={item.remainingPercent}
-                    max={100}
-                    color={progressColor(item.remaining)}
-                    thickness="medium"
-                    aria-label={item.accessibleLabel}
-                  />
-                )}
-              </article>
-            ))}
-            <Button appearance="subtle" onClick={() => navigate("/limits")}>
-              利用上限・価値を開く
-            </Button>
-          </Card>
+              ))}
+            </div>
+          </NavigationCard>
         ) : null}
 
-        <Card className={styles.card}>
-          <CardHeader header={<Subtitle1 as="h2">要確認</Subtitle1>} />
-          <div className={styles.kpis}>
-            <StatusKPI item={snapshot.review.actionItems} styles={styles} />
-            <StatusKPI item={snapshot.review.warnings} styles={styles} />
-            <StatusKPI
-              item={snapshot.review.recalculationFailures}
-              styles={styles}
+        <NavigationCard title="要確認" to="/review" ariaLabel="要確認を開く">
+          <div className={design.counts}>
+            <CountStat
+              icon={<ErrorCircle16Regular />}
+              value={snapshot.review.actionItems.count}
+              label={`要確認 ${snapshot.review.actionItems.count} 件`}
+              tone={snapshot.review.actionItems.count > 0 ? "danger" : "muted"}
+            />
+            <CountStat
+              icon={<Warning16Regular />}
+              value={snapshot.review.warnings.count}
+              label={`データ警告 ${snapshot.review.warnings.count} 件`}
+              tone={snapshot.review.warnings.count > 0 ? "warning" : "muted"}
             />
           </div>
-          {[
-            ...(snapshot.review.actionKinds ?? []),
-            ...(snapshot.review.warningKinds ?? []),
-          ].map((item) => (
-            <Body1 key={`${item.code}:${item.label}`}>
-              {item.label}: {item.count} 件
-            </Body1>
+          <KeyValue label="再計算失敗">
+            {snapshot.review.recalculationFailures.count} 件
+          </KeyValue>
+          {reviewKinds.map((item) => (
+            <KeyValue key={`${item.code}:${item.label}`} label={item.label}>
+              {item.count} 件
+            </KeyValue>
           ))}
-          <Button appearance="subtle" onClick={() => navigate("/review")}>
-            要確認を開く
-          </Button>
-        </Card>
+        </NavigationCard>
 
-        <Card className={styles.card}>
-          <CardHeader header={<Subtitle1 as="h2">推定状態</Subtitle1>} />
-          <div className={styles.statusList}>
+        <NavigationCard
+          title="推定状態"
+          to="/limits"
+          ariaLabel="利用上限・価値を開く"
+        >
+          <div className={design.badgeRow}>
             {estimations.length > 0 ? (
               estimations.map((item) => (
-                <span key={item.status.code}>
-                  <StatusBadge status={item.status} /> {item.count}件
+                <span key={item.status.code} className={design.badgeRow}>
+                  <StatusBadge status={item.status} />
+                  <Caption1 className={design.numeric}>{item.count}</Caption1>
                 </span>
               ))
             ) : (
-              <Body1>推定対象 0件</Body1>
+              <Caption1 className={design.muted}>推定対象 0件</Caption1>
             )}
           </div>
-          <Body1>
-            非カレントの最新有効計算区間を参照中:{" "}
+          <KeyValue
+            label="旧区間を表示中"
+            title="非カレントの最新有効計算区間を参照している利用枠系列"
+          >
             {latestValidReferenceCount === null
               ? "取得不能"
-              : `${latestValidReferenceCount}件`}
-          </Body1>
-          <Button appearance="subtle" onClick={() => navigate("/limits")}>
-            利用上限・価値を開く
-          </Button>
-        </Card>
+              : `${latestValidReferenceCount} 件`}
+          </KeyValue>
+        </NavigationCard>
 
-        <Card className={styles.card}>
-          <CardHeader header={<Subtitle1 as="h2">保存データ</Subtitle1>} />
-          <div className={styles.kpis}>
-            <KPI
-              label="データベース"
-              value={formatOverviewBytes(snapshot.capacity.databaseSizeBytes)}
-              styles={styles}
-            />
-            <KPI
-              label="原 JSON"
-              value={`${snapshot.capacity.rawSnapshotCount} 件`}
-              styles={styles}
-            />
+        <NavigationCard
+          title="保存データ"
+          to="/data"
+          ariaLabel="データ管理を開く"
+        >
+          <div className={design.metricRow}>
+            <div className={design.metricCell}>
+              <Caption1 className={design.metricLabel}>データベース</Caption1>
+              <span className={design.metric}>
+                {formatOverviewBytes(snapshot.capacity.databaseSizeBytes)}
+              </span>
+            </div>
+            <div className={design.metricCell}>
+              <Caption1 className={design.metricLabel}>原 JSON</Caption1>
+              <span className={design.metric}>
+                {snapshot.capacity.rawSnapshotCount}
+              </span>
+            </div>
           </div>
           {snapshot.capacity.rawSnapshotCount > 0 ? (
             <Caption1
+              className={mergeClasses(design.muted, design.numeric)}
               title={`${snapshot.capacity.oldestSnapshotAt} – ${snapshot.capacity.latestSnapshotAt}`}
             >
               {formatOverviewInstant(
@@ -542,33 +497,24 @@ export function OverviewPage({
               )}
             </Caption1>
           ) : null}
-          {backup ? (
-            <div>
-              <Caption1>最新バックアップ</Caption1>
-              <Body1>
-                {operationStatusLabel(backup.status)}
-                {backup.artifact?.createdAt
-                  ? ` · ${formatOverviewInstant(backup.artifact.createdAt, displayTimeZone)}`
-                  : ""}
-              </Body1>
-            </div>
-          ) : null}
-          {restoreTrial ? (
-            <div>
-              <Caption1>復元試行</Caption1>
-              <Body1>
-                {operationStatusLabel(restoreTrial.status)}
-                {restoreTrial.testedAt
-                  ? ` · ${formatOverviewInstant(restoreTrial.testedAt, displayTimeZone)}`
-                  : ""}
-              </Body1>
-            </div>
-          ) : null}
-          <Caption1>バックアップには資格情報を含みません。</Caption1>
-          <Button appearance="subtle" onClick={() => navigate("/data")}>
-            データ管理を開く
-          </Button>
-        </Card>
+          <KeyValue label="バックアップ">
+            <OperationResult
+              status={backup?.status ?? "not_run"}
+              at={backup?.artifact?.createdAt ?? ""}
+              displayTimeZone={displayTimeZone}
+            />
+          </KeyValue>
+          <KeyValue label="復元試験">
+            <OperationResult
+              status={restoreTrial?.status ?? "not_run"}
+              at={restoreTrial?.testedAt ?? ""}
+              displayTimeZone={displayTimeZone}
+            />
+          </KeyValue>
+          <Caption1 className={design.muted}>
+            バックアップには資格情報を含みません。
+          </Caption1>
+        </NavigationCard>
       </div>
     </div>
   );
@@ -598,57 +544,66 @@ function operationStatusLabel(status: string): string {
   }
 }
 
-function KPI({
-  label,
-  value,
-  styles,
+function OperationResult({
+  status,
+  at,
+  displayTimeZone,
 }: {
-  label: string;
-  value: string;
-  styles: ReturnType<typeof useStyles>;
+  status: string;
+  at: string;
+  displayTimeZone: string;
 }) {
+  const design = useDesignStyles();
+  const label = operationStatusLabel(status);
+  const succeeded =
+    status === "success" || status === "succeeded" || status === "passed";
+  const failed = status === "failed";
   return (
-    <div className={styles.kpi}>
-      <Caption1>{label}</Caption1>
-      <span className={styles.number}>{value}</span>
-    </div>
+    <>
+      <span
+        className={
+          succeeded ? design.success : failed ? design.danger : design.muted
+        }
+        aria-hidden="true"
+      >
+        {succeeded ? (
+          <CheckmarkCircle16Regular />
+        ) : failed ? (
+          <ErrorCircle16Regular />
+        ) : null}
+      </span>
+      <span>
+        {label}
+        {at ? ` · ${formatOverviewInstant(at, displayTimeZone)}` : ""}
+      </span>
+    </>
   );
 }
 
-function StatusKPI({
-  item,
-  styles,
-}: {
-  item: OverviewSnapshot["review"]["actionItems"];
-  styles: ReturnType<typeof useStyles>;
-}) {
-  return (
-    <div className={styles.kpi}>
-      <StatusBadge status={item.status} />
-      <span className={styles.number}>{item.count} 件</span>
-    </div>
-  );
-}
-
-function StatusGroup({
+function StatusCounts({
   label,
   items,
-  styles,
+  className,
 }: {
   label: string;
   items: NonNullable<OverviewSnapshot["hubs"]["connectionStates"]>;
-  styles: ReturnType<typeof useStyles>;
+  className: string;
 }) {
+  const design = useDesignStyles();
   return (
-    <div className={styles.statusGroup}>
-      <Caption1>{label}</Caption1>
-      <div className={styles.statusList}>
-        {items.map((item) => (
-          <span key={item.status.code}>
-            <StatusBadge status={item.status} /> {item.count}件
-          </span>
-        ))}
-      </div>
-    </div>
+    <KeyValue label={label}>
+      <span className={className}>
+        {items.length === 0 ? (
+          <span className={design.muted}>—</span>
+        ) : (
+          items.map((item) => (
+            <span key={item.status.code} className={design.badgeRow}>
+              <StatusBadge status={item.status} />
+              <span className={design.numeric}>{item.count}</span>
+            </span>
+          ))
+        )}
+      </span>
+    </KeyValue>
   );
 }

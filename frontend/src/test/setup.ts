@@ -1,8 +1,15 @@
 import "@testing-library/jest-dom/vitest";
-import { afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { createKeyborg } from "keyborg";
+import { afterEach, vi } from "vitest";
 
 afterEach(cleanup);
+
+// Fluent UI initialises keyborg lazily (for example when a Tooltip portal
+// mounts) and keyborg replaces `HTMLElement.prototype.focus`. user-event
+// redefines the same property as a getter, so a lazy initialisation after
+// `userEvent.setup()` throws. Initialising it up-front keeps both usable.
+createKeyborg(window);
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,

@@ -166,7 +166,6 @@ function dataManagementSummary(): DataManagementStateSnapshot {
 
 describe("OverviewPage", () => {
   it("shows recovery, checklist, Hub, review and available estimation data only", async () => {
-    const user = userEvent.setup();
     renderPage(populatedOverview(), dataManagementSummary());
 
     expect(await screen.findByText("復元を回復")).toBeVisible();
@@ -175,21 +174,18 @@ describe("OverviewPage", () => {
     expect(screen.getByText("最終取得結果")).toBeVisible();
     expect(screen.getByText("推定状態")).toBeVisible();
     expect(screen.getByText("検証済み推定")).toBeVisible();
-    expect(
-      screen.getByText("非カレントの最新有効計算区間を参照中: 0件"),
-    ).toBeVisible();
-    expect(screen.getByText("サービス・プラン同定候補: 2 件")).toBeVisible();
-    expect(screen.getByText("最新バックアップ")).toBeVisible();
+    expect(screen.getByText("旧区間を表示中")).toBeVisible();
+    expect(screen.getByText("サービス・プラン同定候補")).toBeVisible();
+    expect(screen.getByText("バックアップ")).toBeVisible();
     expect(screen.getByText("成功 · 8/26 9:08")).toBeVisible();
-    expect(screen.getByText("復元試行")).toBeVisible();
+    expect(screen.getByText("復元試験")).toBeVisible();
     expect(screen.getByText("合格 · 8/26 9:09")).toBeVisible();
     expect(
-      screen.getAllByRole("button", { name: "利用上限・価値を開く" }),
+      screen.getAllByRole("link", { name: "利用上限・価値を開く" }),
     ).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "データ管理を開く" }),
-    ).toBeVisible();
-    const next = screen.getByRole("button", { name: "次の設定へ" });
+    expect(screen.getByRole("link", { name: "データ管理を開く" })).toBeVisible();
+    const user = userEvent.setup();
+    const next = screen.getByRole("button", { name: "確認する" });
     next.focus();
     expect(next).toHaveFocus();
     await user.keyboard("{Enter}");
@@ -200,7 +196,7 @@ describe("OverviewPage", () => {
     expect(await screen.findByRole("heading", { name: "概要" })).toBeVisible();
     expect(screen.getByText("推定状態")).toBeVisible();
     expect(screen.getByText("推定対象 0件")).toBeVisible();
-    expect(screen.getByText("最新バックアップ")).toBeVisible();
+    expect(screen.getByText("バックアップ")).toBeVisible();
     expect(screen.getAllByText("未実施")).toHaveLength(2);
     expect(
       screen.getByText("バックアップには資格情報を含みません。"),
@@ -244,7 +240,6 @@ describe("OverviewPage", () => {
         return emptyOverviewSnapshot;
       },
     });
-    const user = userEvent.setup();
     render(
       <MemoryRouter>
         <main>
@@ -257,6 +252,7 @@ describe("OverviewPage", () => {
       await screen.findByText("概要を読み込めませんでした。"),
     ).toBeVisible();
     reject = false;
+    const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "再試行" }));
     expect(await screen.findByRole("heading", { name: "概要" })).toBeVisible();
   });
@@ -273,7 +269,7 @@ describe("OverviewPage", () => {
   it("moves focus to the M01 heading when T01 opens the current route", async () => {
     const backend = renderPage(populatedOverview());
     const heading = await screen.findByRole("heading", { name: "概要" });
-    const review = screen.getByRole("button", { name: "要確認を開く" });
+    const review = screen.getByRole("link", { name: "要確認を開く" });
     review.focus();
     expect(review).toHaveFocus();
 
