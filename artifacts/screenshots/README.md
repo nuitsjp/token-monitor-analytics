@@ -3,6 +3,27 @@
 このページの全 38 枚は、実 Hub ではなく組み込みのモック Hub が返すサンプルデータで生成しています。
 再生成コマンドは `mise run mock:screenshots` です。
 
+## T01 コンパクトウィンドウ デザイン案（静的 HTML）
+
+上段に日次／月次の利用トークンと利用金額、下段に利用枠を縦方向へ 4 件以上並べた 3 案です。
+元ファイルは `docs/design-samples/t01-compact-options.html`（未実装のたたき台）。
+
+### 3 案の比較
+
+![T01 デザイン案 3 案の比較](./T01-options-overview.png)
+
+### 案A　KPI 2×2 タイル
+
+![案A KPI 2×2 タイル](./T01-option-A-kpi-tiles.png)
+
+### 案B　KPI 横 2 行＋高密度リスト
+
+![案B KPI 横 2 行＋高密度リスト](./T01-option-B-dense-list.png)
+
+### 案C　今日を主役にしたスタック
+
+![案C 今日を主役にしたスタック](./T01-option-C-hero-today.png)
+
 ## T01 コンパクトウィンドウ
 
 ### 通常
