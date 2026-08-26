@@ -450,21 +450,21 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                         </div>
                         <HubTimeLine
                           label="OK"
-                          japaneseLabel="最終成功"
+                          accessibleLabel="最終成功"
                           value={hub.lastSuccessAt}
                           design={design}
                           displayTimeZone={settings.displayTimeZone}
                         />
                         <HubTimeLine
                           label="NG"
-                          japaneseLabel="最終失敗"
+                          accessibleLabel="最終失敗"
                           value={hub.lastFailureAt}
                           design={design}
                           displayTimeZone={settings.displayTimeZone}
                         />
                         <HubTimeLine
                           label="SKIP"
-                          japaneseLabel="最終スキップ"
+                          accessibleLabel="最終スキップ"
                           value={hub.lastSkippedAt}
                           design={design}
                           displayTimeZone={settings.displayTimeZone}
@@ -700,13 +700,13 @@ function LimitResetLine({
 /** Hub timestamps as `LABEL  M/D  H:MM`, aligned across rows. */
 function HubTimeLine({
   label,
-  japaneseLabel,
+  accessibleLabel,
   value,
   design,
   displayTimeZone,
 }: {
   label: string;
-  japaneseLabel: string;
+  accessibleLabel: string;
   value: string;
   design: DesignStyles;
   displayTimeZone: string;
@@ -717,7 +717,7 @@ function HubTimeLine({
     <div
       className={design.resetRow}
       title={value}
-      aria-label={`${japaneseLabel} ${instant.date} ${instant.time}`}
+      aria-label={`${accessibleLabel} ${instant.date} ${instant.time}`}
     >
       <span className={design.metaLabel}>{label}</span>
       <span className={design.resetValue}>{instant.date}</span>
