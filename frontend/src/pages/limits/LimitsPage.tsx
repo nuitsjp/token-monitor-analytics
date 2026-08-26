@@ -43,6 +43,12 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground3,
     borderRadius: tokens.borderRadiusMedium,
   },
+  groupTitle: { display: "grid", gap: tokens.spacingVerticalXXS },
+  groupSummary: {
+    display: "grid",
+    gap: tokens.spacingVerticalXXS,
+    textAlign: "end",
+  },
   row: {
     display: "grid",
     gridTemplateColumns: "minmax(14rem, 2fr) repeat(4, minmax(8rem, 1fr)) auto",
@@ -56,7 +62,12 @@ const useStyles = makeStyles({
     containIntrinsicSize: "0 88px",
     "@media (max-width: 70rem)": { gridTemplateColumns: "1fr 1fr" },
   },
-  cell: { minWidth: 0, overflowWrap: "anywhere" },
+  cell: {
+    minWidth: 0,
+    display: "grid",
+    gap: tokens.spacingVerticalXXS,
+    overflowWrap: "anywhere",
+  },
   muted: { color: tokens.colorNeutralForeground3 },
   status: { fontWeight: tokens.fontWeightSemibold },
   detail: { display: "grid", gap: tokens.spacingVerticalL },
@@ -205,7 +216,7 @@ function GroupHeader({
   const styles = useStyles();
   return (
     <div className={styles.groupHeading}>
-      <div>
+      <div className={styles.groupTitle}>
         <Subtitle1>
           {item.planVersionName || "プラン版未設定"} ×{" "}
           {item.limitDefinitionName}
@@ -216,7 +227,7 @@ function GroupHeader({
             : "カレント計算区間なし"}
         </Caption1>
       </div>
-      <div>
+      <div className={styles.groupSummary}>
         <Caption1>プラン利用上限（API換算）</Caption1>
         <Body1>{item.estimatedLimitLabel || item.planLimitLabel || "—"}</Body1>
       </div>

@@ -146,7 +146,7 @@ func run() (runErr error) {
 		Name:                "compact",
 		Title:               "Token Monitor Analytics",
 		Width:               360,
-		Height:              180,
+		Height:              220,
 		MinWidth:            320,
 		MinHeight:           160,
 		AlwaysOnTop:         true,

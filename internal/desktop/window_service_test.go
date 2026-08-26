@@ -30,7 +30,7 @@ func TestFitWindowBoundsKeepsWindowInsideWorkArea(t *testing.T) {
 func TestCompactWindowBoundsUsesCollapsedAndExpandedWidths(t *testing.T) {
 	workArea := application.Rect{X: 0, Y: 0, Width: 1920, Height: 1040}
 
-	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 900, Height: 500}, workArea, false); got != (application.Rect{X: 100, Y: 100, Width: 360, Height: 180}) {
+	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 900, Height: 500}, workArea, false); got != (application.Rect{X: 100, Y: 100, Width: 360, Height: 220}) {
 		t.Fatalf("collapsed bounds = %#v", got)
 	}
 	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 360, Height: 500}, workArea, true); got != (application.Rect{X: 100, Y: 100, Width: 420, Height: 500}) {

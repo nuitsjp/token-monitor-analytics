@@ -42,6 +42,11 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: tokens.spacingHorizontalS,
   },
+  statusList: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+  },
   form: {
     display: "grid",
     gap: tokens.spacingVerticalM,
@@ -328,11 +333,15 @@ export function HubsPage({
               <Subtitle1 as="h2">{hub.displayName}</Subtitle1>
               <div className={styles.meta}>識別子: {hub.id}</div>
               <div>{hub.url}</div>
-              <div>
-                Hub: {hub.enabled ? "有効" : "無効"} / 定期収集:{" "}
-                {hub.collectionEnabled ? "実行中" : "停止"} / 資格情報:{" "}
-                {presentStatus(hub.credentialState).label} / 接続:{" "}
-                {presentStatus(hub.connectionState).label}
+              <div className={styles.statusList}>
+                <span>Hub: {hub.enabled ? "有効" : "無効"}</span>
+                <span>
+                  定期収集: {hub.collectionEnabled ? "実行中" : "停止"}
+                </span>
+                <span>
+                  資格情報: {presentStatus(hub.credentialState).label}
+                </span>
+                <span>接続: {presentStatus(hub.connectionState).label}</span>
               </div>
               {hub.connectionFailureNote && (
                 <div className={styles.meta}>{hub.connectionFailureNote}</div>

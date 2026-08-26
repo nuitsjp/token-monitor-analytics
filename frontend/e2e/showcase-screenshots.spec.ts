@@ -28,7 +28,7 @@ async function captureMain(
 test("captures populated showcase screens at their intended window sizes", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 360, height: 540 });
+  await page.setViewportSize({ width: 360, height: 220 });
   await page.goto("/?showcase=1");
   await expect(page.getByText("74.5%").first()).toBeVisible();
   await page.screenshot({ path: output("T01-compact.png") });

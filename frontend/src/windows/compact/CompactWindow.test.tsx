@@ -271,7 +271,9 @@ describe("CompactWindow", () => {
     });
     const user = userEvent.setup();
     renderCompact(backend);
-    await user.click(await screen.findByRole("button", { name: "詳細" }));
+    await user.click(
+      await screen.findByRole("button", { name: "メイン画面を開く" }),
+    );
     await user.click(screen.getByRole("button", { name: /異常 Hub/ }));
     expect(routes).toEqual(["/overview", "/hubs"]);
   });
@@ -293,7 +295,7 @@ describe("CompactWindow", () => {
     };
     renderCompact(createFakeBackend({ canOpenMain: true, overview: snapshot }));
     expect(await screen.findByText("復元中")).toBeVisible();
-    expect(screen.getByText(/異常 Hub/)).not.toBeVisible();
+    expect(screen.queryByText(/異常 Hub/)).not.toBeInTheDocument();
     for (const item of screen.queryAllByText(/残量/)) {
       expect(item).not.toBeVisible();
     }

@@ -1,10 +1,4 @@
-import {
-  Body1,
-  Button,
-  Caption1,
-  makeStyles,
-  tokens,
-} from "@fluentui/react-components";
+import { Caption1, makeStyles, tokens } from "@fluentui/react-components";
 import {
   Settings16Regular,
   Cloud16Regular,
@@ -42,7 +36,7 @@ const useStyles = makeStyles({
   window: {
     minHeight: "100vh",
     display: "grid",
-    gridTemplateColumns: "minmax(12rem, 14rem) minmax(0, 1fr)",
+    gridTemplateColumns: "224px minmax(0, 1fr)",
     backgroundColor: tokens.colorNeutralBackground2,
     color: tokens.colorNeutralForeground1,
     fontFamily:
@@ -54,9 +48,9 @@ const useStyles = makeStyles({
   navigation: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    gap: 0,
     minWidth: 0,
-    padding: tokens.spacingVerticalL,
+    padding: `${tokens.spacingVerticalS} 0`,
     backgroundColor: tokens.colorNeutralBackground3,
     "@media (max-width: 55rem)": {
       flexDirection: "row",
@@ -65,19 +59,38 @@ const useStyles = makeStyles({
     },
   },
   brand: {
-    display: "grid",
-    gap: tokens.spacingVerticalXS,
-    marginBottom: tokens.spacingVerticalL,
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalL}`,
+    fontWeight: tokens.fontWeightSemibold,
     "@media (max-width: 55rem)": {
       width: "100%",
       marginBottom: 0,
     },
+  },
+  brandLogo: {
+    width: "22px",
+    height: "22px",
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorBrandBackground,
+    flexShrink: 0,
+  },
+  navCategory: {
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalXS}`,
+    color: tokens.colorNeutralForeground3,
+  },
+  navBottom: {
+    marginTop: "auto",
+    paddingTop: tokens.spacingVerticalS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   navLink: {
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
     minHeight: "38px",
+    margin: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalXXS}`,
     padding: `0 ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusMedium,
     color: tokens.colorNeutralForeground1,
@@ -91,19 +104,11 @@ const useStyles = makeStyles({
   },
   content: {
     minWidth: 0,
-    padding: tokens.spacingVerticalXXL,
+    padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalXXL}`,
     overflow: "auto",
     "@media (max-width: 55rem)": {
       padding: tokens.spacingVerticalL,
     },
-  },
-  compactHeading: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: tokens.spacingHorizontalM,
-    marginBottom: tokens.spacingVerticalL,
-    flexWrap: "wrap",
   },
 });
 
@@ -188,10 +193,6 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
   const { settings } = useSettings();
   const [dirty, setDirty] = useState(false);
   const guard = useDirtyStateGuard(backend, dirty);
-  const guardedOpen = useCallback(
-    (action: () => void | Promise<void>) => void guard.request("main", action),
-    [guard],
-  );
   const guardedNavigate = useCallback(
     (path: string) => void guard.request("navigate", () => navigate(path)),
     [guard, navigate],
@@ -209,9 +210,10 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
       <div className={styles.window} data-window="main">
         <nav className={styles.navigation} aria-label="メインメニュー">
           <div className={styles.brand}>
-            <Caption1>Token Monitor Analytics</Caption1>
-            <Body1>ローカル観測</Body1>
+            <span className={styles.brandLogo} aria-hidden="true" />
+            <span>Token Monitor</span>
           </div>
+          <Caption1 className={styles.navCategory}>利用状況</Caption1>
           <NavLink
             to="/overview"
             className={({ isActive }) =>
@@ -242,6 +244,53 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
             <span aria-hidden="true">◌</span>
             <span>利用上限・価値</span>
           </NavLink>
+          <Caption1 className={styles.navCategory}>確認・設定</Caption1>
+          <NavLink
+            to="/review"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/review");
+              }
+            }}
+          >
+            <Warning16Regular aria-hidden="true" />
+            <span>要確認</span>
+          </NavLink>
+          <NavLink
+            to="/accounts"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/accounts");
+              }
+            }}
+          >
+            <span aria-hidden="true">◎</span>
+            <span>アカウント・関連付け</span>
+          </NavLink>
+          <NavLink
+            to="/catalog"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/catalog");
+              }
+            }}
+          >
+            <span aria-hidden="true">◈</span>
+            <span>サービス・プラン</span>
+          </NavLink>
+          <Caption1 className={styles.navCategory}>収集・データ</Caption1>
           <NavLink
             to="/hubs"
             className={({ isActive }) =>
@@ -273,36 +322,6 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
             <span>観測と根拠</span>
           </NavLink>
           <NavLink
-            to="/catalog"
-            className={({ isActive }) =>
-              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
-            }
-            onClick={(event) => {
-              if (dirty) {
-                event.preventDefault();
-                guardedNavigate("/catalog");
-              }
-            }}
-          >
-            <span aria-hidden="true">◈</span>
-            <span>サービス・プラン</span>
-          </NavLink>
-          <NavLink
-            to="/accounts"
-            className={({ isActive }) =>
-              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
-            }
-            onClick={(event) => {
-              if (dirty) {
-                event.preventDefault();
-                guardedNavigate("/accounts");
-              }
-            }}
-          >
-            <span aria-hidden="true">◎</span>
-            <span>アカウント・関連付け</span>
-          </NavLink>
-          <NavLink
             to="/audit"
             className={({ isActive }) =>
               `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
@@ -316,21 +335,6 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <History16Regular aria-hidden="true" />
             <span>監査記録</span>
-          </NavLink>
-          <NavLink
-            to="/review"
-            className={({ isActive }) =>
-              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
-            }
-            onClick={(event) => {
-              if (dirty) {
-                event.preventDefault();
-                guardedNavigate("/review");
-              }
-            }}
-          >
-            <Warning16Regular aria-hidden="true" />
-            <span>要確認</span>
           </NavLink>
           <NavLink
             to="/data"
@@ -347,37 +351,25 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
             <span aria-hidden="true">▣</span>
             <span>データ管理</span>
           </NavLink>
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
-            }
-            onClick={(event) => {
-              if (dirty) {
-                event.preventDefault();
-                guardedNavigate("/settings");
+          <div className={styles.navBottom}>
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
               }
-            }}
-          >
-            <Settings16Regular aria-hidden="true" />
-            <span>表示設定</span>
-          </NavLink>
+              onClick={(event) => {
+                if (dirty) {
+                  event.preventDefault();
+                  guardedNavigate("/settings");
+                }
+              }}
+            >
+              <Settings16Regular aria-hidden="true" />
+              <span>表示設定</span>
+            </NavLink>
+          </div>
         </nav>
         <main className={styles.content} aria-label="メイン画面">
-          <div className={styles.compactHeading}>
-            <div>
-              <Caption1>ローカル観測</Caption1>
-              <Body1>
-                設定を保存すると、すべてのウィンドウへ反映されます。
-              </Body1>
-            </div>
-            <Button
-              appearance="subtle"
-              onClick={() => guardedOpen(() => undefined)}
-            >
-              閉じる
-            </Button>
-          </div>
           <MainRoutes
             backend={backend}
             setDirty={setDirty}

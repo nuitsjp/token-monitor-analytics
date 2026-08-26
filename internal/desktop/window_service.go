@@ -37,7 +37,7 @@ type WindowController struct {
 const (
 	compactCollapsedWidth = 360
 	compactExpandedWidth  = 420
-	compactDefaultHeight  = 180
+	compactDefaultHeight  = 220
 	compactMinWidth       = 320
 	compactMinHeight      = 160
 	compactSnapDistance   = 16

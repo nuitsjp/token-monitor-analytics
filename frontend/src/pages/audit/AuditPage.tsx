@@ -47,7 +47,7 @@ const useStyles = makeStyles({
   },
   table: {
     width: "100%",
-    minWidth: "72rem",
+    tableLayout: "fixed",
     borderCollapse: "collapse",
     fontSize: tokens.fontSizeBase200,
   },
@@ -57,12 +57,13 @@ const useStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
     borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
     padding: tokens.spacingVerticalM,
-    whiteSpace: "nowrap",
+    overflowWrap: "anywhere",
   },
   cell: {
     verticalAlign: "top",
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     padding: tokens.spacingVerticalM,
+    overflowWrap: "anywhere",
   },
   meta: {
     color: tokens.colorNeutralForeground3,

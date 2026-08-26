@@ -28,28 +28,33 @@ import {
 const useStyles = makeStyles({
   page: {
     display: "grid",
-    gap: tokens.spacingVerticalXL,
+    gap: tokens.spacingVerticalL,
     maxWidth: "100rem",
     minWidth: 0,
   },
-  intro: { display: "grid", gap: tokens.spacingVerticalXS },
+  intro: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalM,
+  },
+  updated: { marginLeft: "auto", color: tokens.colorNeutralForeground3 },
   title: {
     margin: 0,
-    fontSize: tokens.fontSizeHero800,
-    lineHeight: tokens.lineHeightHero800,
+    fontSize: tokens.fontSizeBase500,
+    lineHeight: tokens.lineHeightBase500,
     fontWeight: tokens.fontWeightSemibold,
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 18rem), 1fr))",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: tokens.spacingHorizontalL,
     alignItems: "start",
   },
   card: {
     minWidth: 0,
     display: "grid",
-    gap: tokens.spacingVerticalM,
-    padding: tokens.spacingVerticalL,
+    gap: tokens.spacingVerticalS,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
   },
   cardHeader: { alignItems: "start" },
   statusList: {
@@ -91,11 +96,16 @@ const useStyles = makeStyles({
   recentItem: {
     display: "grid",
     gap: tokens.spacingVerticalS,
-    padding: tokens.spacingVerticalM,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    padding: `${tokens.spacingVerticalXS} 0`,
+    border: 0,
     borderRadius: tokens.borderRadiusMedium,
     minWidth: 0,
     "@media (forced-colors: active)": { border: "1px solid CanvasText" },
+  },
+  compactLimitHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: tokens.spacingHorizontalS,
   },
   recentHeader: {
     display: "flex",
@@ -218,11 +228,12 @@ export function OverviewPage({
   return (
     <div className={styles.page}>
       <header className={styles.intro}>
-        <Caption1>利用状況</Caption1>
         <h1 className={styles.title} tabIndex={-1} ref={heading}>
           概要
         </h1>
-        <Body1>収集、要確認、推定の現在状態を確認できます。</Body1>
+        <Caption1 className={styles.updated}>
+          {formatOverviewInstant(snapshot.generatedAt, displayTimeZone)} 更新
+        </Caption1>
       </header>
 
       {snapshot.recoveryNotice ? (
@@ -342,6 +353,41 @@ export function OverviewPage({
           </Button>
         </Card>
 
+        {recentLimits.length > 0 ? (
+          <Card className={styles.card}>
+            <CardHeader header={<Subtitle1 as="h2">利用枠</Subtitle1>} />
+            {recentLimits.slice(0, 2).map((item) => (
+              <article
+                className={styles.recentItem}
+                key={`${item.logicalAccountId}:${item.limitDefinitionId}`}
+                aria-label={item.accessibleLabel}
+              >
+                <div className={styles.compactLimitHeader}>
+                  <Body1>
+                    <strong>{item.serviceName}</strong>{" "}
+                    <Caption1>{item.accountName}</Caption1>
+                  </Body1>
+                  <Body1 title={item.tooltip}>
+                    <strong>{item.remainingLabel}</strong>
+                  </Body1>
+                </div>
+                {item.remainingPercent === null ? null : (
+                  <ProgressBar
+                    value={item.remainingPercent}
+                    max={100}
+                    color={progressColor(item.remaining)}
+                    thickness="medium"
+                    aria-label={item.accessibleLabel}
+                  />
+                )}
+              </article>
+            ))}
+            <Button appearance="subtle" onClick={() => navigate("/limits")}>
+              利用上限・価値を開く
+            </Button>
+          </Card>
+        ) : null}
+
         <Card className={styles.card}>
           <CardHeader header={<Subtitle1 as="h2">要確認</Subtitle1>} />
           <div className={styles.kpis}>
@@ -412,76 +458,6 @@ export function OverviewPage({
           </Card>
         ) : null}
       </div>
-
-      {recentLimits.length > 0 ? (
-        <section
-          className={styles.recent}
-          aria-labelledby="overview-recent-heading"
-        >
-          <Subtitle1 as="h2" id="overview-recent-heading">
-            利用増加を最近確認した利用枠
-          </Subtitle1>
-          {recentLimits.map((item) => (
-            <article
-              className={styles.recentItem}
-              key={`${item.logicalAccountId}:${item.limitDefinitionId}`}
-              aria-label={item.accessibleLabel}
-            >
-              <div className={styles.recentHeader}>
-                <div>
-                  <Body1>
-                    {item.serviceName} / {item.accountName}
-                  </Body1>
-                  <Caption1>{item.limitName}</Caption1>
-                </div>
-                <StatusBadge status={item.remaining} />
-              </div>
-              {item.remainingPercent === null ? (
-                <Body1>{item.remainingLabel}</Body1>
-              ) : (
-                <ProgressBar
-                  value={item.remainingPercent}
-                  max={100}
-                  color={progressColor(item.remaining)}
-                  thickness="medium"
-                  aria-label={item.accessibleLabel}
-                />
-              )}
-              <Body1 title={item.tooltip}>残量 {item.remainingLabel}</Body1>
-              <Caption1 title={item.resetAt}>
-                {item.resetAt
-                  ? `${formatOverviewInstant(item.resetAt, displayTimeZone)} リセット`
-                  : item.reset.label}
-              </Caption1>
-              <Caption1 title={item.lastIncrease.occurredAt}>
-                利用増加:{" "}
-                {formatOverviewInstant(
-                  item.lastIncrease.occurredAt,
-                  displayTimeZone,
-                )}
-                （{item.lastIncrease.ageLabel}）
-              </Caption1>
-              <Caption1
-                title={item.freshness.observationAt}
-                className={
-                  item.freshness.status.code === "freshness_stale"
-                    ? styles.stale
-                    : undefined
-                }
-              >
-                最新観測:{" "}
-                {formatOverviewInstant(
-                  item.freshness.observationAt,
-                  displayTimeZone,
-                )}
-                （{item.freshness.ageLabel}）
-              </Caption1>
-              <StatusBadge status={item.freshness.status} />
-              <Caption1>{item.freshness.reason}</Caption1>
-            </article>
-          ))}
-        </section>
-      ) : null}
     </div>
   );
 }

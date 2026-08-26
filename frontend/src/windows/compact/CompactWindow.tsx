@@ -13,15 +13,19 @@ import {
   Subtitle1,
   Tooltip,
   makeStyles,
-  shorthands,
+  mergeClasses,
   tokens,
 } from "@fluentui/react-components";
 import {
+  ArrowSync16Regular,
   ChevronDown16Regular,
   ChevronUp16Regular,
+  Dismiss16Regular,
+  ErrorCircle16Regular,
   Eye16Regular,
   EyeOff16Regular,
   Open16Regular,
+  Warning16Regular,
 } from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OverviewSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
@@ -38,50 +42,58 @@ export const compactRefreshMilliseconds = 30_000;
 const useStyles = makeStyles({
   window: {
     minHeight: "100vh",
-    overflow: "auto",
+    maxWidth: "420px",
+    overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground2,
     color: tokens.colorNeutralForeground1,
     fontFamily:
       '"Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif',
-    ...shorthands.padding(tokens.spacingVerticalM, tokens.spacingHorizontalM),
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusXLarge,
   },
-  layout: { display: "grid", gap: tokens.spacingVerticalM, minWidth: 0 },
+  layout: { display: "grid", minWidth: 0 },
   header: {
     display: "flex",
-    justifyContent: "space-between",
-    alignItems: "start",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalS,
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS} ${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
-  title: { display: "grid", gap: tokens.spacingVerticalXXS, minWidth: 0 },
-  iconActions: { display: "flex", gap: tokens.spacingHorizontalXXS },
-  summary: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(5.5rem, 1fr))",
-    gap: tokens.spacingHorizontalS,
-  },
-  summaryButton: {
+  title: {
     minWidth: 0,
-    height: "auto",
-    whiteSpace: "nowrap",
-    paddingTop: tokens.spacingVerticalXS,
-    paddingBottom: tokens.spacingVerticalXS,
+    flexGrow: 1,
+    fontWeight: tokens.fontWeightSemibold,
+    color: tokens.colorNeutralForeground3,
   },
+  visuallyHidden: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    overflow: "hidden",
+    clip: "rect(0 0 0 0)",
+  },
+  headerStatus: { display: "flex", alignItems: "center", gap: 0 },
+  headerCount: { minWidth: 0, padding: `0 ${tokens.spacingHorizontalXS}` },
+  iconActions: { display: "flex", gap: tokens.spacingHorizontalXXS },
   value: { fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" },
   limits: {
     minWidth: 0,
-    maxHeight: "50vh",
     display: "grid",
-    gap: tokens.spacingVerticalS,
+    gap: tokens.spacingVerticalXXS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+  },
+  scrollableLimits: {
+    maxHeight: "50vh",
     overflowY: "auto",
     scrollbarGutter: "stable",
   },
   limit: {
     minWidth: 0,
     display: "grid",
-    gap: tokens.spacingVerticalXS,
-    padding: tokens.spacingVerticalS,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    gap: tokens.spacingVerticalXXS,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    border: "1px solid transparent",
     borderRadius: tokens.borderRadiusMedium,
     "@media (forced-colors: active)": { border: "1px solid CanvasText" },
   },
@@ -101,8 +113,11 @@ const useStyles = makeStyles({
   footer: {
     display: "flex",
     alignItems: "center",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     gap: tokens.spacingHorizontalXS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
   },
   errorCounter: {
     borderRadius: tokens.borderRadiusMedium,
@@ -112,18 +127,10 @@ const useStyles = makeStyles({
       border: "1px solid HighlightText",
     },
   },
-  stale: {
-    color: tokens.colorPaletteDarkOrangeForeground1,
-    "@media (forced-colors: active)": {
-      color: "CanvasText",
-      textDecorationLine: "underline",
-    },
-  },
-  actions: {
-    display: "flex",
-    justifyContent: "space-between",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalS,
+  update: {
+    marginLeft: "auto",
+    color: tokens.colorNeutralForeground3,
+    whiteSpace: "nowrap",
   },
 });
 
@@ -258,13 +265,49 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
       >
         <div className={styles.layout}>
           <header className={styles.header}>
-            <div className={styles.title}>
-              <Caption1>Token Monitor Analytics</Caption1>
-              <Subtitle1 as="h1" id="compact-title">
-                運用状態
-              </Subtitle1>
-            </div>
+            <div className={styles.title}>Token Monitor</div>
+            <Subtitle1
+              as="h1"
+              id="compact-title"
+              className={styles.visuallyHidden}
+            >
+              運用状態
+            </Subtitle1>
+            {snapshot && !snapshot.maintenance ? (
+              <div className={styles.headerStatus} aria-label="Hub 収集状態">
+                <Button
+                  appearance="subtle"
+                  size="small"
+                  className={styles.headerCount}
+                  icon={<ArrowSync16Regular />}
+                  aria-label={`定期収集 ${snapshot?.hubs.scheduledCount ?? 0} / ${snapshot?.hubs.enabledCount ?? 0}、実行中 ${snapshot?.hubs.runningCount ?? 0} 件`}
+                  onClick={() => openMainRoute("/hubs")}
+                >
+                  {snapshot?.hubs.scheduledCount ?? 0}/
+                  {snapshot?.hubs.enabledCount ?? 0}
+                </Button>
+                <Button
+                  appearance="subtle"
+                  size="small"
+                  className={styles.headerCount}
+                  icon={<ErrorCircle16Regular />}
+                  aria-label={`異常 Hub ${snapshot?.hubs.abnormalCount ?? 0} 件`}
+                  onClick={() => openMainRoute("/hubs")}
+                >
+                  {snapshot?.hubs.abnormalCount ?? 0}
+                </Button>
+              </div>
+            ) : null}
             <div className={styles.iconActions}>
+              <Tooltip content="メイン画面を開く" relationship="label">
+                <Button
+                  appearance="subtle"
+                  icon={<Open16Regular />}
+                  aria-label="メイン画面を開く"
+                  disabled={!backend.canOpenMain}
+                  onClick={() => openMainRoute("/overview")}
+                />
+              </Tooltip>
               <Tooltip
                 content={
                   privacyMode
@@ -285,13 +328,12 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   onClick={togglePrivacy}
                 />
               </Tooltip>
-              <Tooltip content="メイン画面を開く" relationship="label">
+              <Tooltip content="終了（定期収集も停止）" relationship="label">
                 <Button
                   appearance="subtle"
-                  icon={<Open16Regular />}
-                  aria-label="メイン画面を開く"
-                  disabled={!backend.canOpenMain}
-                  onClick={() => openMainRoute("/overview")}
+                  icon={<Dismiss16Regular />}
+                  aria-label="終了（定期収集も停止）"
+                  onClick={() => setQuitRequested(true)}
                 />
               </Tooltip>
             </div>
@@ -323,29 +365,14 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                 </div>
               ) : null}
               <div hidden={Boolean(snapshot.maintenance)}>
-                <div className={styles.summary} aria-label="Hub 収集状態">
-                  <SummaryButton
-                    label="定期収集"
-                    value={`${snapshot.hubs.scheduledCount} / ${snapshot.hubs.enabledCount}`}
-                    onClick={() => openMainRoute("/hubs")}
-                    styles={styles}
-                  />
-                  <SummaryButton
-                    label="実行中"
-                    value={`${snapshot.hubs.runningCount} 件`}
-                    onClick={() => openMainRoute("/hubs")}
-                    styles={styles}
-                  />
-                  <SummaryButton
-                    label="異常 Hub"
-                    value={`${snapshot.hubs.abnormalCount} 件`}
-                    onClick={() => openMainRoute("/hubs")}
-                    styles={styles}
-                  />
-                </div>
-
                 {expanded ? (
-                  <div className={styles.limits} aria-label="Hub 別状態">
+                  <div
+                    className={mergeClasses(
+                      styles.limits,
+                      styles.scrollableLimits,
+                    )}
+                    aria-label="Hub 別状態"
+                  >
                     {(snapshot.hubs.items ?? []).map((hub) => (
                       <div className={styles.limit} key={hub.id}>
                         <Body1>{hub.displayName}</Body1>
@@ -430,7 +457,10 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   </div>
                 ) : (
                   <section
-                    className={styles.limits}
+                    className={mergeClasses(
+                      styles.limits,
+                      expanded && styles.scrollableLimits,
+                    )}
                     data-region="limit-list"
                     aria-label="利用増加を最近確認した利用枠"
                   >
@@ -441,13 +471,14 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                         aria-label={item.accessibleLabel}
                       >
                         <div className={styles.limitHeader}>
-                          <div>
-                            <Body1>
-                              {item.serviceName} / {item.accountName}
-                            </Body1>
+                          <Body1>
+                            <strong>{item.serviceName}</strong>{" "}
+                            <Caption1>{item.accountName}・</Caption1>
                             <Caption1>{item.limitName}</Caption1>
-                          </div>
-                          <StatusBadge status={item.remaining} />
+                          </Body1>
+                          <Body1 className={styles.value} title={item.tooltip}>
+                            <strong>{item.remainingLabel}</strong>
+                          </Body1>
                         </div>
                         {item.remainingPercent === null ? (
                           <Body1>{item.remainingLabel}</Body1>
@@ -460,41 +491,21 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                             aria-label={item.accessibleLabel}
                           />
                         )}
-                        <Body1 className={styles.value} title={item.tooltip}>
-                          残量 {item.remainingLabel}
-                        </Body1>
                         <Caption1 title={item.resetAt}>
                           {item.resetAt
                             ? `${formatOverviewInstant(item.resetAt, settings.displayTimeZone)} リセット`
                             : item.reset.label}
                         </Caption1>
-                        <Caption1 title={item.lastIncrease.occurredAt}>
-                          利用増加:{" "}
-                          {formatOverviewInstant(
-                            item.lastIncrease.occurredAt,
-                            settings.displayTimeZone,
-                          )}
-                          （{item.lastIncrease.ageLabel}）
-                        </Caption1>
-                        <Caption1
-                          title={item.freshness.observationAt}
-                          className={
-                            item.freshness.status.code === "freshness_stale"
-                              ? styles.stale
-                              : undefined
-                          }
-                        >
-                          最新観測:{" "}
-                          {formatOverviewInstant(
-                            item.freshness.observationAt,
-                            settings.displayTimeZone,
-                          )}
-                          （{item.freshness.ageLabel}）
-                        </Caption1>
-                        <div className={styles.stateLine}>
-                          <StatusBadge status={item.freshness.status} />
-                          <Caption1>{item.freshness.reason}</Caption1>
-                        </div>
+                        {expanded ? (
+                          <>
+                            <Caption1 title={item.lastIncrease.occurredAt}>
+                              利用増加: {item.lastIncrease.ageLabel}
+                            </Caption1>
+                            <Caption1 title={item.freshness.observationAt}>
+                              最新観測: {item.freshness.ageLabel}
+                            </Caption1>
+                          </>
+                        ) : null}
                       </article>
                     ))}
                   </section>
@@ -504,17 +515,21 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   <Button
                     size="small"
                     appearance="subtle"
+                    icon={<ErrorCircle16Regular />}
+                    aria-label={`要確認 ${snapshot.review.actionItems.count} 件`}
                     onClick={() => openMainRoute("/review")}
                   >
-                    要確認 {snapshot.review.actionItems.count} 件
+                    {snapshot.review.actionItems.count}
                   </Button>
                   {snapshot.review.warnings.count > 0 ? (
                     <Button
                       size="small"
                       appearance="subtle"
+                      icon={<Warning16Regular />}
+                      aria-label={`警告 ${snapshot.review.warnings.count} 件`}
                       onClick={() => openMainRoute("/review")}
                     >
-                      警告 {snapshot.review.warnings.count} 件
+                      {snapshot.review.warnings.count}
                     </Button>
                   ) : null}
                   {snapshot.review.recalculationFailures.count > 0 ? (
@@ -533,8 +548,6 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                       処理失敗 {snapshot.review.recalculationFailures.count} 件
                     </Button>
                   ) : null}
-                </footer>
-                <div className={styles.actions}>
                   <Button
                     appearance="subtle"
                     icon={
@@ -549,22 +562,17 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                       expanded ? "利用枠を折りたたむ" : "利用枠を展開"
                     }
                     onClick={toggleExpanded}
+                  />
+                  <Caption1
+                    className={styles.update}
+                    role="status"
+                    aria-live="polite"
                   >
-                    {expanded ? "折りたたむ" : "展開"}
-                  </Button>
-                  <Button
-                    icon={<Open16Regular />}
-                    disabled={!backend.canOpenMain}
-                    onClick={() => openMainRoute("/overview")}
-                  >
-                    詳細
-                  </Button>
-                </div>
-                <Caption1 role="status" aria-live="polite">
-                  {updating
-                    ? "更新中"
-                    : `更新: ${formatOverviewInstant(snapshot.generatedAt, settings.displayTimeZone)}`}
-                </Caption1>
+                    {updating
+                      ? "更新中"
+                      : `${formatOverviewInstant(snapshot.generatedAt, settings.displayTimeZone)} 更新`}
+                  </Caption1>
+                </footer>
               </div>
             </>
           ) : null}
@@ -601,29 +609,5 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
         </DialogSurface>
       </Dialog>
     </>
-  );
-}
-
-function SummaryButton({
-  label,
-  value,
-  onClick,
-  styles,
-}: {
-  label: string;
-  value: string;
-  onClick: () => void;
-  styles: ReturnType<typeof useStyles>;
-}) {
-  return (
-    <Button
-      className={styles.summaryButton}
-      appearance="subtle"
-      onClick={onClick}
-    >
-      {label}
-      <br />
-      <span className={styles.value}>{value}</span>
-    </Button>
   );
 }
