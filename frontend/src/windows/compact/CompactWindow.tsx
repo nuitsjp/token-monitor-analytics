@@ -63,6 +63,7 @@ const useStyles = makeStyles({
   summaryButton: {
     minWidth: 0,
     height: "auto",
+    whiteSpace: "nowrap",
     paddingTop: tokens.spacingVerticalXS,
     paddingBottom: tokens.spacingVerticalXS,
   },

@@ -4,11 +4,14 @@ import App from "./App";
 import { createFakeBackend } from "./lib/backend";
 import "./styles.css";
 
-const browserTestBackend =
-  import.meta.env.DEV &&
-  new URLSearchParams(window.location.search).has("browserTest")
-    ? createFakeBackend({ canOpenMain: true })
-    : undefined;
+const search = new URLSearchParams(window.location.search);
+const browserTestBackend = import.meta.env.DEV
+  ? search.has("showcase")
+    ? (await import("./lib/showcase")).createShowcaseBackend()
+    : search.has("browserTest")
+      ? createFakeBackend({ canOpenMain: true })
+      : undefined
+  : undefined;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

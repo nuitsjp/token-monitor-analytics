@@ -660,7 +660,7 @@ export function LimitsPage({
   return (
     <main className={styles.page}>
       <div>
-        <Subtitle1>利用上限・価値</Subtitle1>
+        <Subtitle1 as="h1">利用上限・価値</Subtitle1>
         <Body1>
           Phase 1: 利用上限推定と根拠を確認します。価値比較はPhase
           2のため表示しません。
