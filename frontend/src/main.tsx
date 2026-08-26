@@ -5,8 +5,11 @@ import { createFakeBackend } from "./lib/backend";
 import "./styles.css";
 
 const search = new URLSearchParams(window.location.search);
+const useMockHub =
+  import.meta.env.DEV &&
+  (import.meta.env.VITE_MOCK_HUB === "1" || search.has("showcase"));
 const browserTestBackend = import.meta.env.DEV
-  ? search.has("showcase")
+  ? useMockHub
     ? (await import("./lib/showcase")).createShowcaseBackend()
     : search.has("browserTest")
       ? createFakeBackend({ canOpenMain: true })

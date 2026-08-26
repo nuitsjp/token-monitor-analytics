@@ -1,3 +1,14 @@
 [tools]
 go = "1.26.7"
 node = "24.19.0"
+
+[tasks.mock]
+description = "サンプルデータを返すモック Hub でフロントエンドを起動する"
+dir = "frontend"
+env = { VITE_MOCK_HUB = "1" }
+run = "npm run dev -- --host 0.0.0.0"
+
+[tasks."mock:screenshots"]
+description = "モック Hub のサンプル画面を artifacts/screenshots に保存する"
+dir = "frontend"
+run = "npm run test:e2e -- e2e/showcase-screenshots.spec.ts"
