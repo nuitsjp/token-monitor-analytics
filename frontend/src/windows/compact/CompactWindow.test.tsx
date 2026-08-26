@@ -217,10 +217,10 @@ describe("CompactWindow", () => {
 
     const root = screen.getByRole("main");
     expect(root).toHaveAttribute("data-compact-expanded", "false");
-    expect(await screen.findByText("Weekly 1")).toBeVisible();
-    expect(screen.getByText("Weekly 2")).toBeVisible();
-    expect(await screen.findAllByText(/利用増加 10分前/)).toHaveLength(2);
-    expect(await screen.findAllByText(/最新観測 5分前/)).toHaveLength(2);
+    expect(await screen.findByText(/Weekly 1$/)).toBeVisible();
+    expect(screen.getByText(/Weekly 2$/)).toBeVisible();
+    expect(screen.getAllByText("Reset")).toHaveLength(2);
+    expect(screen.getAllByText("8/27")).toHaveLength(2);
     expect(screen.getByText("1/1")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /^実行中/ }),
@@ -232,8 +232,7 @@ describe("CompactWindow", () => {
     await user.click(screen.getByRole("button", { name: "利用枠を展開" }));
 
     expect(root).toHaveAttribute("data-compact-expanded", "true");
-    expect(screen.getByText("Weekly 4")).toBeVisible();
-    expect(screen.getByText("現在の実行")).toBeVisible();
+    expect(screen.getByText(/Weekly 4$/)).toBeVisible();
     expect(screen.getByText("待機中")).toBeVisible();
     expect(expandedStates).toEqual([true]);
     expect(root.querySelector('[data-region="limit-list"]')).not.toBeNull();
@@ -386,7 +385,7 @@ describe("CompactWindow", () => {
     document.documentElement.style.fontSize = "200%";
     const backend = createFakeBackend({ overview: overview() });
     renderCompact(backend);
-    expect(await screen.findByText("Weekly 1")).toBeVisible();
+    expect(await screen.findByText(/Weekly 1$/)).toBeVisible();
     const result = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } },
     });

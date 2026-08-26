@@ -27,13 +27,20 @@ import {
   Warning16Regular,
 } from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { OverviewSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import type {
+  OverviewRecentLimitSnapshot,
+  OverviewSnapshot,
+} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { useSettings } from "../../app/providers";
 import { StatusBadge } from "../../components/StatusBadge";
 import { Gauge } from "../../components/design";
+import type { DesignStyles } from "../../components/designStyles";
 import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
 import type { FrontendAdapter } from "../../lib/backend";
-import { formatOverviewInstant } from "../../lib/overviewDisplay";
+import {
+  formatOverviewInstant,
+  splitOverviewInstant,
+} from "../../lib/overviewDisplay";
 
 export const compactRefreshMilliseconds = 30_000;
 
@@ -44,8 +51,7 @@ const useStyles = makeStyles({
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground2,
     color: tokens.colorNeutralForeground1,
-    fontFamily:
-      '"Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif',
+    fontFamily: "var(--font-ui)",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusXLarge,
   },
@@ -106,8 +112,8 @@ const useStyles = makeStyles({
   limit: {
     minWidth: 0,
     display: "grid",
-    gap: tokens.spacingVerticalXXS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    gap: "5px",
+    padding: `6px ${tokens.spacingHorizontalS}`,
     border: "1px solid transparent",
     borderRadius: tokens.borderRadiusMedium,
     "@media (forced-colors: active)": { border: "1px solid CanvasText" },
@@ -140,12 +146,13 @@ const useStyles = makeStyles({
   warningCount: {
     color: tokens.colorPaletteDarkOrangeForeground1,
   },
-  limitMeta: {
-    display: "flex",
-    flexWrap: "wrap",
-    columnGap: tokens.spacingHorizontalM,
-    rowGap: tokens.spacingVerticalXXS,
-    color: tokens.colorNeutralForeground3,
+  freshness: {
+    marginInlineStart: "auto",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "3px",
+    color: tokens.colorPaletteDarkOrangeForeground1,
+    fontWeight: tokens.fontWeightSemibold,
   },
   errorCounter: {
     borderRadius: tokens.borderRadiusMedium,
@@ -426,60 +433,42 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   >
                     {(snapshot.hubs.items ?? []).map((hub) => (
                       <div className={styles.limit} key={hub.id}>
-                        <Body1>{hub.displayName}</Body1>
-                        <div className={styles.stateLine}>
-                          <Caption1>接続</Caption1>
-                          <StatusBadge status={hub.connection} />
-                        </div>
-                        <div className={styles.stateLine}>
-                          <Caption1>定期収集</Caption1>
-                          <Body1>
-                            {hub.enabled && hub.collectionEnabled
-                              ? "有効"
-                              : "停止"}
+                        <div className={design.gaugeHeader}>
+                          <Body1 className={design.gaugeName}>
+                            {hub.displayName}
                           </Body1>
+                          {hub.enabled && hub.collectionEnabled ? null : (
+                            <Caption1 className={design.metaLabel}>
+                              停止中
+                            </Caption1>
+                          )}
                         </div>
                         <div className={styles.stateLine}>
-                          <Caption1>現在の実行</Caption1>
+                          <StatusBadge status={hub.connection} />
                           <StatusBadge status={hub.currentCollection} />
-                        </div>
-                        <div className={styles.stateLine}>
-                          <Caption1>最終取得</Caption1>
                           <StatusBadge status={hub.lastCollection} />
                         </div>
-                        {hub.lastSuccessAt ? (
-                          <Caption1>
-                            最終成功:{" "}
-                            <span title={hub.lastSuccessAt}>
-                              {formatOverviewInstant(
-                                hub.lastSuccessAt,
-                                settings.displayTimeZone,
-                              )}
-                            </span>
-                          </Caption1>
-                        ) : null}
-                        {hub.lastFailureAt ? (
-                          <Caption1>
-                            最終失敗:{" "}
-                            <span title={hub.lastFailureAt}>
-                              {formatOverviewInstant(
-                                hub.lastFailureAt,
-                                settings.displayTimeZone,
-                              )}
-                            </span>
-                          </Caption1>
-                        ) : null}
-                        {hub.lastSkippedAt ? (
-                          <Caption1>
-                            最終スキップ:{" "}
-                            <span title={hub.lastSkippedAt}>
-                              {formatOverviewInstant(
-                                hub.lastSkippedAt,
-                                settings.displayTimeZone,
-                              )}
-                            </span>
-                          </Caption1>
-                        ) : null}
+                        <HubTimeLine
+                          label="OK"
+                          japaneseLabel="最終成功"
+                          value={hub.lastSuccessAt}
+                          design={design}
+                          displayTimeZone={settings.displayTimeZone}
+                        />
+                        <HubTimeLine
+                          label="NG"
+                          japaneseLabel="最終失敗"
+                          value={hub.lastFailureAt}
+                          design={design}
+                          displayTimeZone={settings.displayTimeZone}
+                        />
+                        <HubTimeLine
+                          label="SKIP"
+                          japaneseLabel="最終スキップ"
+                          value={hub.lastSkippedAt}
+                          design={design}
+                          displayTimeZone={settings.displayTimeZone}
+                        />
                       </div>
                     ))}
                   </div>
@@ -521,20 +510,21 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                         key={`${item.logicalAccountId}:${item.limitDefinitionId}`}
                         aria-label={item.accessibleLabel}
                       >
-                        <div className={styles.limitHeader}>
-                          <Body1>
+                        <div className={design.gaugeHeader}>
+                          <Body1 className={design.gaugeName}>
                             <strong>{item.serviceName}</strong>{" "}
-                            <Caption1>{item.accountName}・</Caption1>
-                            <Caption1>{item.limitName}</Caption1>
+                            <span className={design.gaugeContext}>
+                              {item.accountName}・{item.limitName}
+                            </span>
                           </Body1>
                           <Body1
                             className={mergeClasses(
-                              styles.value,
+                              design.gaugePercent,
                               gaugeTextClass(design, item.remaining),
                             )}
                             title={item.tooltip}
                           >
-                            <strong>{item.remainingLabel}</strong>
+                            {item.remainingLabel}
                           </Body1>
                         </div>
                         {item.remainingPercent === null ? null : (
@@ -544,19 +534,12 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                             label={item.accessibleLabel}
                           />
                         )}
-                        <div className={styles.limitMeta}>
-                          <Caption1 title={item.resetAt}>
-                            {item.resetAt
-                              ? `${formatOverviewInstant(item.resetAt, settings.displayTimeZone)} リセット`
-                              : item.reset.label}
-                          </Caption1>
-                          <Caption1 title={item.lastIncrease.occurredAt}>
-                            利用増加 {item.lastIncrease.ageLabel}
-                          </Caption1>
-                          <Caption1 title={item.freshness.observationAt}>
-                            最新観測 {item.freshness.ageLabel}
-                          </Caption1>
-                        </div>
+                        <LimitResetLine
+                          item={item}
+                          design={design}
+                          styles={styles}
+                          displayTimeZone={settings.displayTimeZone}
+                        />
                       </article>
                     ))}
                   </section>
@@ -667,5 +650,78 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
         </DialogSurface>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * Reset date and time in fixed columns so every row lines up, with the
+ * freshness warning reduced to an icon (`docs/design-system.md` §5.5, §7.1).
+ */
+function LimitResetLine({
+  item,
+  design,
+  styles,
+  displayTimeZone,
+}: {
+  item: OverviewRecentLimitSnapshot;
+  design: DesignStyles;
+  styles: ReturnType<typeof useStyles>;
+  displayTimeZone: string;
+}) {
+  const reset = item.resetAt
+    ? splitOverviewInstant(item.resetAt, displayTimeZone)
+    : null;
+  const staleFreshness = item.freshness.status.intent !== "success";
+  return (
+    <div className={design.resetRow} title={item.tooltip}>
+      <span className={design.metaLabel}>Reset</span>
+      {reset ? (
+        <>
+          <span className={design.resetValue}>{reset.date}</span>
+          <span className={design.resetValue}>{reset.time}</span>
+        </>
+      ) : (
+        <span className={design.resetValue}>{item.reset.label}</span>
+      )}
+      {staleFreshness ? (
+        <span
+          className={styles.freshness}
+          title={item.freshness.observationAt}
+          aria-label={`最新観測 ${item.freshness.ageLabel}`}
+        >
+          <Warning16Regular aria-hidden="true" />
+          {item.freshness.ageLabel}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** Hub timestamps as `LABEL  M/D  H:MM`, aligned across rows. */
+function HubTimeLine({
+  label,
+  japaneseLabel,
+  value,
+  design,
+  displayTimeZone,
+}: {
+  label: string;
+  japaneseLabel: string;
+  value: string;
+  design: DesignStyles;
+  displayTimeZone: string;
+}) {
+  if (!value) return null;
+  const instant = splitOverviewInstant(value, displayTimeZone);
+  return (
+    <div
+      className={design.resetRow}
+      title={value}
+      aria-label={`${japaneseLabel} ${instant.date} ${instant.time}`}
+    >
+      <span className={design.metaLabel}>{label}</span>
+      <span className={design.resetValue}>{instant.date}</span>
+      <span className={design.resetValue}>{instant.time}</span>
+    </div>
   );
 }

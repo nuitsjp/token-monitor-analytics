@@ -30,6 +30,11 @@ interface SettingsContextValue {
 
 const settingsContext = createContext<SettingsContextValue | null>(null);
 
+const fontFamilyBase =
+  '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif';
+const lightTheme = { ...webLightTheme, fontFamilyBase };
+const darkTheme = { ...webDarkTheme, fontFamilyBase };
+
 function systemPrefersDark(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -111,7 +116,7 @@ export function AppProviders({
 
   return (
     <settingsContext.Provider value={value}>
-      <FluentProvider theme={dark ? webDarkTheme : webLightTheme}>
+      <FluentProvider theme={dark ? darkTheme : lightTheme}>
         {children}
       </FluentProvider>
     </settingsContext.Provider>

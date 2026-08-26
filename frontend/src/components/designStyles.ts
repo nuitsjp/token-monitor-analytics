@@ -24,6 +24,7 @@ export const useDesignStyles = makeStyles({
     fontSize: tokens.fontSizeBase500,
     lineHeight: tokens.lineHeightBase500,
     fontWeight: tokens.fontWeightSemibold,
+    letterSpacing: "-0.01em",
   },
   pageMeta: {
     marginLeft: "auto",
@@ -96,7 +97,7 @@ export const useDesignStyles = makeStyles({
     lineHeight: tokens.lineHeightHero700,
     fontWeight: tokens.fontWeightSemibold,
     fontVariantNumeric: "tabular-nums",
-    letterSpacing: "-0.3px",
+    letterSpacing: "-0.02em",
     overflowWrap: "anywhere",
   },
   metricRow: {
@@ -139,7 +140,28 @@ export const useDesignStyles = makeStyles({
     lineHeight: tokens.lineHeightBase400,
     fontWeight: tokens.fontWeightSemibold,
     fontVariantNumeric: "tabular-nums",
+    letterSpacing: "-0.01em",
   },
+  /** Small upper-case field label, used instead of a full sentence. */
+  metaLabel: {
+    fontSize: tokens.fontSizeBase100,
+    lineHeight: tokens.lineHeightBase200,
+    fontWeight: tokens.fontWeightSemibold,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: tokens.colorNeutralForeground3,
+  },
+  /** Fixed columns so the reset date and time line up across rows. */
+  resetRow: {
+    display: "grid",
+    gridTemplateColumns: "auto 3.4em 3.2em minmax(0, 1fr)",
+    alignItems: "baseline",
+    columnGap: tokens.spacingHorizontalS,
+    fontSize: tokens.fontSizeBase100,
+    lineHeight: tokens.lineHeightBase200,
+    color: tokens.colorNeutralForeground3,
+  },
+  resetValue: { fontVariantNumeric: "tabular-nums", textAlign: "end" },
   badgeRow: {
     display: "flex",
     flexWrap: "wrap",
@@ -160,6 +182,7 @@ export const useDesignStyles = makeStyles({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     fontWeight: tokens.fontWeightSemibold,
+    letterSpacing: "-0.005em",
   },
   gaugeContext: {
     color: tokens.colorNeutralForeground3,
@@ -169,6 +192,7 @@ export const useDesignStyles = makeStyles({
     flexShrink: 0,
     fontWeight: tokens.fontWeightBold,
     fontVariantNumeric: "tabular-nums",
+    letterSpacing: "-0.02em",
   },
   gaugeTrack: {
     height: "4px",

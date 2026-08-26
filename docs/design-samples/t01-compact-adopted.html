@@ -9,7 +9,7 @@
   T01（コンパクトウィンドウ）の採用案。
   ・上段＝案B（Today / This month をそれぞれ 1 行にまとめ、トークンと金額を同じ行へ）
   ・下段＝案A（枠名＋残量 % → フル幅ゲージ → リセット日時 の 3 段組リスト）
-  ・金額は USD、月次トークンは 10 億単位（B）で表記
+  ・金額は USD、トークンは丸めずフル桁で表記
   ・Today / This month / Reset は英語表記
   ・リセットの日付・時刻は等幅数字＋固定列で横位置を揃える
   ・本文は Inter Variable（OFL / fonts/Inter-LICENSE.txt）、日本語はシステムフォントへフォールバック
@@ -64,14 +64,14 @@ button:hover{background:var(--hover)}
 
 /* ---------- 上段 KPI（案B） ---------- */
 .kpi{background:var(--bg1);border-block:1px solid var(--stroke2)}
-.kpi>a{display:grid;grid-template-columns:66px 1fr auto;align-items:baseline;column-gap:10px;
-  padding:9px 14px;color:inherit;text-decoration:none}
+.kpi>a{display:grid;grid-template-columns:66px 1fr auto;align-items:baseline;column-gap:8px;
+  padding:9px 12px 9px 14px;color:inherit;text-decoration:none}
 .kpi>a+a{border-top:1px solid var(--stroke2)}
 .kpi>a:hover{background:var(--hover);text-decoration:none}
 .kpi .lb{font-size:11px;line-height:16px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg3)}
-.kpi .v{font-size:19px;line-height:25px;font-weight:620;letter-spacing:-.02em}
+.kpi .v{font-size:17px;line-height:24px;font-weight:620;letter-spacing:-.02em;white-space:nowrap}
 .kpi .u{font-size:10.5px;font-weight:450;color:var(--fg3);margin-left:4px;letter-spacing:0}
-.kpi .c{font-size:16px;line-height:25px;font-weight:600;color:var(--fg2);letter-spacing:-.01em}
+.kpi .c{font-size:15px;line-height:24px;font-weight:600;color:var(--fg2);letter-spacing:-.01em}
 
 /* ---------- 利用枠リスト（案A） ---------- */
 .qrow{display:block;padding:6px 8px;border-radius:var(--rM);cursor:pointer;color:inherit;text-decoration:none}
@@ -102,7 +102,7 @@ button:hover{background:var(--hover)}
 
 <div class="page">
   <div class="page-h"><h1>T01 コンパクトウィンドウ 採用案</h1></div>
-  <p class="page-note">上段は案B（Today / This month を 1 行ずつ、トークンと金額を同じ行に）、リストは案A（枠名＋残量 % → フル幅ゲージ → リセット日時）。金額は USD、月次トークンは 10 億単位（B）。Today / This month / Reset は英語表記で、リセットの日付・時刻は固定列＋等幅数字で全行の横位置を揃えています。本文フォントは Inter Variable。</p>
+  <p class="page-note">上段は案B（Today / This month を 1 行ずつ、トークンと金額を同じ行に）、リストは案A（枠名＋残量 % → フル幅ゲージ → リセット日時）。金額は USD、トークンは丸めずフル桁（10 億桁）で表示。Today / This month / Reset は英語表記で、リセットの日付・時刻は固定列＋等幅数字で全行の横位置を揃えています。本文フォントは Inter Variable。</p>
 
   <div class="row">
     <div class="mock">
@@ -123,9 +123,9 @@ button:hover{background:var(--hover)}
             <span class="v num">1,234,567<span class="u">tokens</span></span>
             <span class="c num">$18.42</span>
           </a>
-          <a href="#usage-month" aria-label="今月の利用トークン 18.23 ビリオン、利用金額 274.10 ドル。利用実績を開く">
+          <a href="#usage-month" aria-label="今月の利用トークン 18,234,567,890、利用金額 274.10 ドル。利用実績を開く">
             <span class="lb">This month</span>
-            <span class="v num">18.23<span class="u">B tokens</span></span>
+            <span class="v num">18,234,567,890<span class="u">tokens</span></span>
             <span class="c num">$274.10</span>
           </a>
         </div>

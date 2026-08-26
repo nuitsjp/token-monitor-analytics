@@ -49,8 +49,7 @@ const useStyles = makeStyles({
     gridTemplateColumns: "224px minmax(0, 1fr)",
     backgroundColor: tokens.colorNeutralBackground2,
     color: tokens.colorNeutralForeground1,
-    fontFamily:
-      '"Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif',
+    fontFamily: "var(--font-ui)",
     "@media (max-width: 55rem)": {
       gridTemplateColumns: "minmax(0, 1fr)",
     },

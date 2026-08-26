@@ -6,32 +6,11 @@
 ## T01 コンパクトウィンドウ 採用案（静的 HTML）
 
 上段は案B（Today / This month を 1 行ずつ、トークンと金額を同じ行に）、リストは案A（枠名＋残量 % → フル幅ゲージ → リセット日時）。
-金額は USD、月次トークンは 10 億単位（B）。Today / This month / Reset は英語表記で、リセットの日付・時刻は固定列＋等幅数字で桁を揃えています。
+金額は USD、トークンは丸めずフル桁で表示。Today / This month / Reset は英語表記で、リセットの日付・時刻は固定列＋等幅数字で桁を揃えています。
 本文フォントは Inter Variable（OFL、`docs/design-samples/fonts/`）。
 元ファイルは `docs/design-samples/t01-compact-adopted.html`（未実装のたたき台）。
 
 ![T01 採用案](./T01-adopted.png)
-
-## T01 コンパクトウィンドウ デザイン案（静的 HTML）
-
-上段に日次／月次の利用トークンと利用金額、下段に利用枠を縦方向へ 4 件以上並べた 3 案です。
-元ファイルは `docs/design-samples/t01-compact-options.html`（未実装のたたき台）。
-
-### 3 案の比較
-
-![T01 デザイン案 3 案の比較](./T01-options-overview.png)
-
-### 案A　KPI 2×2 タイル
-
-![案A KPI 2×2 タイル](./T01-option-A-kpi-tiles.png)
-
-### 案B　KPI 横 2 行＋高密度リスト
-
-![案B KPI 横 2 行＋高密度リスト](./T01-option-B-dense-list.png)
-
-### 案C　今日を主役にしたスタック
-
-![案C 今日を主役にしたスタック](./T01-option-C-hero-today.png)
 
 ## T01 コンパクトウィンドウ
 

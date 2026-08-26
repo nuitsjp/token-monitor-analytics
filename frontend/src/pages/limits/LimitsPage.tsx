@@ -16,7 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { StatusBadge } from "../../components/StatusBadge";
-import { Gauge } from "../../components/design";
+import { Gauge, KeyValue } from "../../components/design";
 import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
   CatalogSnapshot,
@@ -439,9 +439,8 @@ function SeriesTab({
   return (
     <div className={styles.detailGrid}>
       <div className={styles.card}>
-        <Caption1>利用枠系列</Caption1>
+        <Caption1>系列状態</Caption1>
         <Body1>
-          系列状態:{" "}
           {detail.series.seriesState === "normal"
             ? "正常"
             : detail.series.seriesState === "inconsistent"
@@ -451,24 +450,20 @@ function SeriesTab({
       </div>
       <div className={styles.card}>
         <Caption1>利用率</Caption1>
-        <Body1>
+        <Body1 className={styles.numeric}>
           {detail.series.usedPercentDetailLabel
             ? `${detail.series.usedPercentDetailLabel}%`
             : "—"}
         </Body1>
-        <Body1>
-          リセット:{" "}
-          <span
-            title={
-              detail.series.resetAt ? `UTC ${detail.series.resetAt}` : undefined
-            }
-          >
-            {formatResetDate(detail.series.resetAt, displayTimeZone)}
-          </span>
-        </Body1>
-        <Body1>
-          観測: {formatDate(detail.series.latestObservationAt, displayTimeZone)}
-        </Body1>
+        <KeyValue
+          label="リセット"
+          title={detail.series.resetAt ? `UTC ${detail.series.resetAt}` : ""}
+        >
+          {formatResetDate(detail.series.resetAt, displayTimeZone)}
+        </KeyValue>
+        <KeyValue label="観測">
+          {formatDate(detail.series.latestObservationAt, displayTimeZone)}
+        </KeyValue>
       </div>
     </div>
   );
