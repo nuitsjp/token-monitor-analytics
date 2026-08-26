@@ -83,7 +83,7 @@ Phase 1 と Phase 2 には別々の完了ゲートがあります。試作機能
 
 既定のデータベースは `%APPDATA%\Token Monitor Analytics\data.db` です。開発とテストでは `TOKEN_MONITOR_ANALYTICS_DB` で保存先を変更できます。Hub 共有シークレットは Generic Credential `TokenMonitorAnalytics/Hub/default` に保存されるため、登録した Windows ユーザーとアプリを実行するユーザーを同じにする必要があります。
 
-PoC は Hub URL のホストにかかわらず HTTP と HTTPS の両方を受け入れます。共有シークレットの平文送信を避けるため、HTTP はループバック接続だけに使用し、ループバック以外では証明書検証が成功する HTTPS を使用してください。Phase 1 ではこの制約をアプリ側で強制します。
+Phase 1 は `localhost`、ループバック IP、またはプライベート IP のリテラルに HTTP と HTTPS の両方を受け入れます。HTTP では共有シークレットが平文で送信されるため、利用者が管理する信頼済み LAN に限定してください。公開ネットワークでは証明書検証が成功する HTTPS を必須とし、この制約をアプリ側で強制します。
 
 PoC には、複数 Hub、不変の Hub 識別子、正式サービスと利用枠定義、論理アカウントの期間付き関連付け、活動主体の完全性確認、利用額専用観測時刻、推定観測点、隣接差分、非負最小二乗法、階数判定、Phase 1 の原子的なデータベース復元は実装されていません。
 

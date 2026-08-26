@@ -13,7 +13,9 @@ func TestValidateHubURL(t *testing.T) {
 		{name: "localhost HTTP", raw: "http://localhost:17321", want: "http://localhost:17321", ok: true},
 		{name: "IPv4 loopback HTTP", raw: "http://127.42.0.1:17321", want: "http://127.42.0.1:17321", ok: true},
 		{name: "IPv6 loopback HTTP", raw: "http://[::1]:17321", want: "http://[::1]:17321", ok: true},
-		{name: "remote HTTP", raw: "http://192.168.0.16:17321", ok: false},
+		{name: "private IPv4 HTTP", raw: "http://192.168.0.16:17321", want: "http://192.168.0.16:17321", ok: true},
+		{name: "private IPv6 HTTP", raw: "http://[fd00::16]:17321", want: "http://[fd00::16]:17321", ok: true},
+		{name: "public HTTP", raw: "http://203.0.113.10:17321", ok: false},
 		{name: "hostname that might resolve locally", raw: "http://hub.local:17321", ok: false},
 		{name: "userinfo", raw: "https://user:password@hub.example.test", ok: false},
 		{name: "query", raw: "https://hub.example.test?secret=x", ok: false},
@@ -23,7 +25,7 @@ func TestValidateHubURL(t *testing.T) {
 		{name: "relative", raw: "/hub", ok: false},
 		{name: "unsupported scheme", raw: "ftp://hub.example.test", ok: false},
 	}
-	t.Run("URL policy accepts loopback HTTP and requires remote HTTPS", func(t *testing.T) {
+	t.Run("URL policy accepts private and loopback HTTP and requires public HTTPS", func(t *testing.T) {
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
 				got, err := ValidateHubURL(test.raw)

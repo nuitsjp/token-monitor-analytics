@@ -44,7 +44,9 @@ func TestP1HubURLPolicyAndTLSValidation(t *testing.T) {
 			{name: "localhost HTTP", raw: "http://localhost:17321", want: true},
 			{name: "IPv4 loopback HTTP", raw: "http://127.0.0.1:17321", want: true},
 			{name: "IPv6 loopback HTTP", raw: "http://[::1]:17321", want: true},
-			{name: "remote HTTP", raw: "http://192.168.0.16:17321", want: false},
+			{name: "private IPv4 HTTP", raw: "http://192.168.0.16:17321", want: true},
+			{name: "private IPv6 HTTP", raw: "http://[fd00::16]:17321", want: true},
+			{name: "public HTTP", raw: "http://203.0.113.10:17321", want: false},
 			{name: "userinfo", raw: "https://user:password@hub.example.test", want: false},
 			{name: "query", raw: "https://hub.example.test?secret=x", want: false},
 			{name: "fragment", raw: "https://hub.example.test/#part", want: false},
@@ -330,4 +332,29 @@ func TestInvalidJSONIsClassifiedWithoutBody(t *testing.T) {
 			t.Fatal("untrusted data leaked into error")
 		}
 	})
+}
+
+func TestDefaultAllowlistAcceptsEvaluationHubForCollection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/health":
+			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"node-hub","coreBuildId":"sha256:798c308d20d7f9a22aad74f6feeb5f168210fd465c6aee590b517c40e801c292","runtimeBuildId":"sha256:dbdaa0b2aa2e8d627b939d6ab76a9029aa2807839fdbe4e7918edcab592fe749"}}`))
+		case "/api/stats":
+			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1"}]}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, DefaultAllowlist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.FetchStats(context.Background(), "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Contract.UsageUpdatedAt {
+		t.Fatal("evaluation Hub was promoted to estimation contract")
+	}
 }

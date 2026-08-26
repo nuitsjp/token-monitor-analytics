@@ -30,17 +30,17 @@ func ValidateHubURL(raw string) (string, error) {
 	if scheme != "http" && scheme != "https" {
 		return "", errors.New("hub URL scheme must be HTTP or HTTPS")
 	}
-	if scheme == "http" && !isLiteralLoopback(parsed.Hostname()) {
-		return "", errors.New("HTTP is allowed only for a literal loopback host")
+	if scheme == "http" && !isLiteralPrivateOrLoopback(parsed.Hostname()) {
+		return "", errors.New("HTTP is allowed only for a literal private or loopback host")
 	}
 	parsed.Scheme = scheme
 	return parsed.String(), nil
 }
 
-func isLiteralLoopback(host string) bool {
+func isLiteralPrivateOrLoopback(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
+	return address != nil && (address.IsLoopback() || address.IsPrivate())
 }

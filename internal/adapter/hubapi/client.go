@@ -77,8 +77,8 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 	return health, nil
 }
 
-// FetchStats performs the mandatory health check first.  The stats request is
-// never issued unless both allowlist stages match a usageUpdatedAt contract.
+// FetchStats performs the mandatory health check first. The stats request is
+// never issued unless both allowlist stages match a supported contract.
 func (c *Client) FetchStats(ctx context.Context, secret string) (Result, error) {
 	health, err := c.Health(ctx)
 	if err != nil {
@@ -111,8 +111,10 @@ func (c *Client) FetchStats(ctx context.Context, secret string) (Result, error) 
 	if err != nil {
 		return Result{Health: health, Contract: contract}, classify("stats", ClassificationInvalidJSON, "response JSON is invalid")
 	}
-	if err := requireUsageUpdatedAt(stats.Value); err != nil {
-		return Result{Health: health, Contract: contract}, classify("stats", ClassificationUnsupported, "stats does not satisfy the usageUpdatedAt contract")
+	if contract.UsageUpdatedAt {
+		if err := requireUsageUpdatedAt(stats.Value); err != nil {
+			return Result{Health: health, Contract: contract}, classify("stats", ClassificationUnsupported, "stats does not satisfy the usageUpdatedAt contract")
+		}
 	}
 	stats.HTTPStatus = response.StatusCode
 	return Result{Health: health, Stats: stats, Contract: contract}, nil
@@ -141,19 +143,19 @@ func validateURL(raw string) (*url.URL, error) {
 	if host == "" {
 		return nil, errors.New("hub URL host is invalid")
 	}
-	if parsed.Scheme == "http" && !isLoopback(host) {
-		return nil, errors.New("http is only allowed for loopback Hub hosts")
+	if parsed.Scheme == "http" && !isPrivateOrLoopback(host) {
+		return nil, errors.New("http is only allowed for private or loopback Hub hosts")
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	return parsed, nil
 }
 
-func isLoopback(host string) bool {
+func isPrivateOrLoopback(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	parsed := net.ParseIP(host)
-	return parsed != nil && parsed.IsLoopback()
+	return parsed != nil && (parsed.IsLoopback() || parsed.IsPrivate())
 }
 
 func readBody(body io.Reader) ([]byte, error) {

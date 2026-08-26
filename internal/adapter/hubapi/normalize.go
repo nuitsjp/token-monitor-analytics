@@ -124,19 +124,19 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 			}
 		}
 		clientCosts := map[string]any{}
-		hasCosts := false
 		if value, present := allTime["clientCosts"]; present {
 			var valid bool
 			clientCosts, valid = objectValue(value)
 			if !valid {
 				return NormalizedStats{}, errors.New("stats clientCosts is invalid")
 			}
-			hasCosts = true
-		}
-		if hasCosts && len(clientCosts) > 0 && (!usagePresent || !usageValid) {
-			return NormalizedStats{}, errors.New("stats device usageUpdatedAt is required")
 		}
 		for serviceID, amount := range clientCosts {
+			// Collection-only contracts retain raw costs but do not create cost
+			// observations without the dedicated observation timestamp.
+			if !usagePresent || !usageValid {
+				continue
+			}
 			cost, ok := numberValue(amount)
 			if !ok || cost == "" {
 				return NormalizedStats{}, errors.New("stats clientCosts value is invalid")

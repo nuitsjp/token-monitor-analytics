@@ -62,11 +62,31 @@ func TestHubIdentitySurvivesDuplicateURLUpdateAndDisable(t *testing.T) {
 	})
 }
 
-func TestCreateHubRejectsRemoteHTTPWithoutWriting(t *testing.T) {
+func TestCreateHubAcceptsPrivateHTTP(t *testing.T) {
 	lifecycle := openTestLifecycle(t)
 	now := time.Now().UTC()
 	err := lifecycle.CreateHub(context.Background(), Hub{
-		ID: uuid.NewString(), DisplayName: "Unsafe", URL: "http://192.168.0.16:17321",
+		ID: uuid.NewString(), DisplayName: "LAN Hub", URL: "http://192.168.0.16:17321",
+		CollectionEnabled: true, CollectionIntervalSeconds: 300, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, _ := lifecycle.DB()
+	var count int
+	if err := database.QueryRow(`SELECT count(*) FROM hubs`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("Hub count = %d", count)
+	}
+}
+
+func TestCreateHubRejectsPublicHTTPWithoutWriting(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	now := time.Now().UTC()
+	err := lifecycle.CreateHub(context.Background(), Hub{
+		ID: uuid.NewString(), DisplayName: "Public HTTP", URL: "http://203.0.113.10:17321",
 		CollectionEnabled: true, CollectionIntervalSeconds: 300, CreatedAt: now, UpdatedAt: now,
 	})
 	if err == nil {

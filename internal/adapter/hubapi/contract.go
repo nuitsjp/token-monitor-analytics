@@ -74,8 +74,8 @@ type BuildIdentity struct {
 
 type Contract struct {
 	Build BuildIdentity
-	// UsageUpdatedAt is intentionally explicit.  A build is not accepted for
-	// collection until its stats contract guarantees this field.
+	// UsageUpdatedAt distinguishes contracts that can participate in
+	// cost-to-limit estimation from collection-only contracts.
 	UsageUpdatedAt bool
 }
 
@@ -91,9 +91,9 @@ type stageTwoKey struct {
 	RuntimeBuildID string
 }
 
-// Allowlist is a two-stage allowlist.  Stage one recognizes the schema/runtime
-// family; stage two recognizes the exact build identity.  Only entries with
-// UsageUpdatedAt=true are suitable for this adapter.
+// Allowlist is a two-stage allowlist. Stage one recognizes the schema/runtime
+// family; stage two recognizes the exact build identity. Collection-only
+// contracts remain explicit entries and are never promoted to estimation.
 type Allowlist struct {
 	stageOne map[stageOneKey]struct{}
 	stageTwo map[stageTwoKey]Contract
@@ -105,7 +105,7 @@ func NewAllowlist(contracts ...Contract) Allowlist {
 		stageTwo: make(map[stageTwoKey]Contract),
 	}
 	for _, contract := range contracts {
-		if !contract.UsageUpdatedAt || !validBuildIdentity(contract.Build) {
+		if !validBuildIdentity(contract.Build) {
 			continue
 		}
 		one := stageOneKey{SchemaVersion: contract.Build.SchemaVersion, Runtime: contract.Build.Runtime}
@@ -116,17 +116,25 @@ func NewAllowlist(contracts ...Contract) Allowlist {
 	return a
 }
 
-// DefaultAllowlist is intentionally empty until a Hub build that guarantees
-// usageUpdatedAt has been verified.  In particular, the evaluation Hub build
-// observed by SP-01 is not a supported contract.
-var DefaultAllowlist = NewAllowlist()
+// DefaultAllowlist contains the verified evaluation Hub as a collection-only
+// contract. It is intentionally not estimation-capable because its device
+// rows do not guarantee usageUpdatedAt.
+var DefaultAllowlist = NewAllowlist(Contract{
+	Build: BuildIdentity{
+		SchemaVersion:  1,
+		Runtime:        "node-hub",
+		CoreBuildID:    "sha256:798c308d20d7f9a22aad74f6feeb5f168210fd465c6aee590b517c40e801c292",
+		RuntimeBuildID: "sha256:dbdaa0b2aa2e8d627b939d6ab76a9029aa2807839fdbe4e7918edcab592fe749",
+	},
+	UsageUpdatedAt: false,
+})
 
 func (a Allowlist) match(build BuildIdentity) (Contract, bool) {
 	if _, ok := a.stageOne[stageOneKey{SchemaVersion: build.SchemaVersion, Runtime: build.Runtime}]; !ok {
 		return Contract{}, false
 	}
 	contract, ok := a.stageTwo[stageTwoKey{SchemaVersion: build.SchemaVersion, Runtime: build.Runtime, CoreBuildID: build.CoreBuildID, RuntimeBuildID: build.RuntimeBuildID}]
-	return contract, ok && contract.UsageUpdatedAt
+	return contract, ok
 }
 
 type Health struct {

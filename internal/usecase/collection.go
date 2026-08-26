@@ -254,10 +254,10 @@ func (u *CollectionUsecase) recordSkipped(ctx context.Context, attempt sqliteada
 }
 
 func contractText(contract hubapi.Contract) string {
-	if !contract.UsageUpdatedAt {
+	if contract.Build.SchemaVersion <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("schema=%d;runtime=%s;core=%s;runtime_build=%s", contract.Build.SchemaVersion, contract.Build.Runtime, contract.Build.CoreBuildID, contract.Build.RuntimeBuildID)
+	return fmt.Sprintf("schema=%d;runtime=%s;core=%s;runtime_build=%s;usage_updated_at=%t", contract.Build.SchemaVersion, contract.Build.Runtime, contract.Build.CoreBuildID, contract.Build.RuntimeBuildID, contract.UsageUpdatedAt)
 }
 
 func safeFailureDetail(err error) string {

@@ -208,3 +208,17 @@ func TestNormalizeStatsUnknownFieldsDoNotChangeExtraction(t *testing.T) {
 		}
 	})
 }
+
+func TestNormalizeStatsKeepsLimitsWithoutUsageUpdatedAt(t *testing.T) {
+	raw := `{"devices":[{"deviceId":"device-1","periods":{"allTime":{"clientCosts":{"codex":1.5}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	result, err := NormalizeStats([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Costs) != 0 {
+		t.Fatalf("cost observations = %d, want 0", len(result.Costs))
+	}
+	if len(result.Limits) != 1 {
+		t.Fatalf("limit observations = %d, want 1", len(result.Limits))
+	}
+}

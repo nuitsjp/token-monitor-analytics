@@ -238,7 +238,7 @@ func (s *HubService) CheckHubConnection(ctx context.Context, hubID string) (HubS
 	secret = ""
 	state, detail := connectionOutcome(fetchErr)
 	contract := ""
-	if result.Contract.UsageUpdatedAt {
+	if result.Contract.Build.SchemaVersion > 0 {
 		contract = formatContract(result.Contract.Build)
 	}
 	if err := s.lifecycle.RecordHubConnectionAttempt(ctx, sqliteadapter.HubConnectionAttempt{
