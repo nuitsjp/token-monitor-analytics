@@ -477,7 +477,7 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
               >
                 <NavCount
                   className={styles.navBadge}
-                  toneClassName={styles.navBadgeError}
+                  toneClassName={styles.navBadgeWarning}
                   title="未解決"
                   value={navigationStatus.review.actionItems.count}
                 />

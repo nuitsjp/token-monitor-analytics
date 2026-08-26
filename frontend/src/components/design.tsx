@@ -47,10 +47,8 @@ export function KeyValue({
 }) {
   const styles = useDesignStyles();
   return (
-    <div className={styles.keyValue}>
-      <Caption1 className={styles.keyValueKey} title={title}>
-        {label}
-      </Caption1>
+    <div className={styles.keyValue} title={title}>
+      <Caption1 className={styles.keyValueKey}>{label}</Caption1>
       <Caption1 className={styles.keyValueValue}>{children}</Caption1>
     </div>
   );
