@@ -219,11 +219,15 @@ describe("CompactWindow", () => {
     expect(root).toHaveAttribute("data-compact-expanded", "false");
     expect(await screen.findByText("Weekly 1")).toBeVisible();
     expect(screen.getByText("Weekly 2")).toBeVisible();
-    expect(await screen.findAllByText(/利用増加:.*10分前/)).toHaveLength(2);
-    expect(await screen.findAllByText(/最新観測:.*5分前/)).toHaveLength(2);
-    expect(screen.getByText("定期 1/1")).toBeVisible();
-    expect(screen.getByText("実行中 0")).toBeVisible();
-    expect(screen.getByText("異常 0")).toBeVisible();
+    expect(await screen.findAllByText(/利用増加 10分前/)).toHaveLength(2);
+    expect(await screen.findAllByText(/最新観測 5分前/)).toHaveLength(2);
+    expect(screen.getByText("1/1")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /^実行中/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /異常 Hub/ }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Weekly 3")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "利用枠を展開" }));
 
@@ -289,7 +293,9 @@ describe("CompactWindow", () => {
     await user.click(
       await screen.findByRole("button", { name: "メイン画面を開く" }),
     );
-    await user.click(screen.getByRole("button", { name: /異常 Hub/ }));
+    await user.click(
+      screen.getByRole("button", { name: "定期収集 1 / 1、実行中 0 件" }),
+    );
     expect(routes).toEqual(["/overview", "/hubs"]);
   });
 

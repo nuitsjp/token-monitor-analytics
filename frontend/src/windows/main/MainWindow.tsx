@@ -1,7 +1,7 @@
 import {
-  Badge,
   Caption1,
   makeStyles,
+  mergeClasses,
   tokens,
 } from "@fluentui/react-components";
 import {
@@ -143,14 +143,56 @@ const useStyles = makeStyles({
   },
   navCounts: {
     display: "flex",
+    alignItems: "center",
     gap: tokens.spacingHorizontalXXS,
     marginLeft: "auto",
+  },
+  navBadge: {
+    minWidth: "16px",
+    height: "16px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+    borderRadius: tokens.borderRadiusCircular,
+    fontSize: "10px",
+    lineHeight: "16px",
+    fontWeight: tokens.fontWeightSemibold,
+    fontVariantNumeric: "tabular-nums",
+  },
+  navBadgeError: {
+    backgroundColor: tokens.colorPaletteRedBackground3,
+    color: tokens.colorNeutralForegroundOnBrand,
+  },
+  navBadgeWarning: {
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: tokens.colorPaletteDarkOrangeForeground1,
+    border: `1px solid ${tokens.colorPaletteDarkOrangeForeground1}`,
   },
   navStatusError: {
     padding: `0 ${tokens.spacingHorizontalL}`,
     color: tokens.colorPaletteRedForeground1,
   },
 });
+
+function NavCount({
+  value,
+  title,
+  className,
+  toneClassName,
+}: {
+  value: number;
+  title: string;
+  className: string;
+  toneClassName: string;
+}) {
+  if (value <= 0) return null;
+  return (
+    <span className={mergeClasses(className, toneClassName)} title={title}>
+      {value}
+    </span>
+  );
+}
 
 function breadcrumbForPath(pathname: string): {
   group: string;
@@ -433,15 +475,24 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
                 className={styles.navCounts}
                 aria-label={`未解決 ${navigationStatus.review.actionItems.count}件、警告 ${navigationStatus.review.warnings.count}件、処理失敗 ${navigationStatus.review.recalculationFailures.count}件`}
               >
-                <Badge size="small" color="warning" title="未解決">
-                  要{navigationStatus.review.actionItems.count}
-                </Badge>
-                <Badge size="small" color="severe" title="データ警告">
-                  警{navigationStatus.review.warnings.count}
-                </Badge>
-                <Badge size="small" color="danger" title="再計算失敗">
-                  失{navigationStatus.review.recalculationFailures.count}
-                </Badge>
+                <NavCount
+                  className={styles.navBadge}
+                  toneClassName={styles.navBadgeError}
+                  title="未解決"
+                  value={navigationStatus.review.actionItems.count}
+                />
+                <NavCount
+                  className={styles.navBadge}
+                  toneClassName={styles.navBadgeWarning}
+                  title="データ警告"
+                  value={navigationStatus.review.warnings.count}
+                />
+                <NavCount
+                  className={styles.navBadge}
+                  toneClassName={styles.navBadgeError}
+                  title="再計算失敗"
+                  value={navigationStatus.review.recalculationFailures.count}
+                />
               </span>
             ) : null}
           </NavLink>
@@ -495,15 +546,24 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
                 className={styles.navCounts}
                 aria-label={`接続異常 ${hubNavigationCounts.connectionFailures}件、最終取得失敗 ${hubNavigationCounts.collectionFailures}件、未対応契約 ${hubNavigationCounts.unsupportedContracts}件`}
               >
-                <Badge size="small" color="danger" title="接続異常">
-                  接{hubNavigationCounts.connectionFailures}
-                </Badge>
-                <Badge size="small" color="danger" title="最終取得失敗">
-                  取{hubNavigationCounts.collectionFailures}
-                </Badge>
-                <Badge size="small" color="warning" title="未対応契約">
-                  契{hubNavigationCounts.unsupportedContracts}
-                </Badge>
+                <NavCount
+                  className={styles.navBadge}
+                  toneClassName={styles.navBadgeError}
+                  title="接続異常"
+                  value={hubNavigationCounts.connectionFailures}
+                />
+                <NavCount
+                  className={styles.navBadge}
+                  toneClassName={styles.navBadgeError}
+                  title="最終取得失敗"
+                  value={hubNavigationCounts.collectionFailures}
+                />
+                <NavCount
+                  className={styles.navBadge}
+                  toneClassName={styles.navBadgeWarning}
+                  title="未対応契約"
+                  value={hubNavigationCounts.unsupportedContracts}
+                />
               </span>
             ) : null}
           </NavLink>

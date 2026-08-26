@@ -183,7 +183,9 @@ describe("OverviewPage", () => {
     expect(
       screen.getAllByRole("link", { name: "利用上限・価値を開く" }),
     ).toHaveLength(1);
-    expect(screen.getByRole("link", { name: "データ管理を開く" })).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "データ管理を開く" }),
+    ).toBeVisible();
     const user = userEvent.setup();
     const next = screen.getByRole("button", { name: "確認する" });
     next.focus();

@@ -25,9 +25,8 @@ import {
   Gauge,
   KeyValue,
   NavigationCard,
-  gaugeTextClass,
-  useDesignStyles,
 } from "../../components/design";
+import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
 import type {
   DataManagementStateSnapshot,
   FrontendAdapter,
@@ -364,16 +363,15 @@ export function OverviewPage({
             className={styles.statusValue}
           />
           <KeyValue label="最終成功" title={snapshot.hubs.lastSuccessAt}>
-            {formatOverviewInstant(snapshot.hubs.lastSuccessAt, displayTimeZone)}
+            {formatOverviewInstant(
+              snapshot.hubs.lastSuccessAt,
+              displayTimeZone,
+            )}
           </KeyValue>
         </NavigationCard>
 
         {recentLimits.length > 0 ? (
-          <NavigationCard
-            title="利用枠"
-            to="/limits"
-            ariaLabel="利用枠を開く"
-          >
+          <NavigationCard title="利用枠" to="/limits" ariaLabel="利用枠を開く">
             <div className={styles.limitList}>
               {recentLimits.slice(0, 2).map((item) => (
                 <div
