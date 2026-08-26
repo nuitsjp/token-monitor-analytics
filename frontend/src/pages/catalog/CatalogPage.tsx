@@ -15,10 +15,14 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useState } from "react";
+import type { StatusPresentationSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import { StatusBadge } from "../../components/StatusBadge";
+import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
   CatalogSnapshot,
   CandidateSplitInput,
   FrontendAdapter,
+  HubSnapshot,
   LabelChangeDecisionInput,
   LimitDefinitionInput,
   PlanInput,
@@ -28,6 +32,7 @@ import type {
   ServiceSnapshot,
   CreateServiceInput,
 } from "../../lib/backend";
+import { cycleTypeLabel } from "../../lib/displayLabels";
 
 const useStyles = makeStyles({
   page: { display: "grid", gap: tokens.spacingVerticalL, maxWidth: "96rem" },
@@ -123,12 +128,15 @@ const emptyDirtyForms: Record<DirtyForm, boolean> = {
 export function CatalogPage({
   backend,
   onDirtyChange,
+  displayTimeZone = backend.initialSettings.displayTimeZone,
 }: {
   backend: FrontendAdapter;
   onDirtyChange: (dirty: boolean) => void;
+  displayTimeZone?: string;
 }) {
   const styles = useStyles();
   const [catalog, setCatalog] = useState<CatalogSnapshot>(emptyCatalog);
+  const [hubs, setHubs] = useState<HubSnapshot[]>([]);
   const [tab, setTab] = useState<TabName>("services");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -146,7 +154,12 @@ export function CatalogPage({
     setLoading(true);
     setError("");
     try {
-      setCatalog(await backend.getCatalog());
+      const [nextCatalog, nextHubs] = await Promise.all([
+        backend.getCatalog(),
+        backend.getHubs(),
+      ]);
+      setCatalog(nextCatalog);
+      setHubs(nextHubs);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -189,7 +202,6 @@ export function CatalogPage({
   const versions = catalog.planVersions ?? [];
   const rules = catalog.planLimitRules ?? [];
   const labelCandidates = catalog.labelChangeCandidates ?? [];
-
   return (
     <div
       className={styles.page}
@@ -242,6 +254,7 @@ export function CatalogPage({
                 backend={backend}
                 services={services}
                 mappings={mappings}
+                displayTimeZone={displayTimeZone}
                 runSave={runSave}
                 setServiceDirty={(dirty) => setFormDirty("service", dirty)}
                 setMappingDirty={(dirty) => setFormDirty("mapping", dirty)}
@@ -252,6 +265,8 @@ export function CatalogPage({
               <CandidatesTab
                 backend={backend}
                 catalog={catalog}
+                hubs={hubs}
+                displayTimeZone={displayTimeZone}
                 runSave={runSave}
                 setDirty={(dirty) => setFormDirty("candidate", dirty)}
                 saving={saving}
@@ -261,6 +276,8 @@ export function CatalogPage({
                   backend={backend}
                   candidates={labelCandidates}
                   limits={limits}
+                  hubs={hubs}
+                  displayTimeZone={displayTimeZone}
                   runSave={runSave}
                   setDirty={(dirty) => setFormDirty("label", dirty)}
                   saving={saving}
@@ -294,6 +311,7 @@ export function CatalogPage({
                 versions={versions}
                 limits={limits}
                 rules={rules}
+                displayTimeZone={displayTimeZone}
                 runSave={runSave}
                 setVersionDirty={(dirty) => setFormDirty("version", dirty)}
                 setRuleDirty={(dirty) => setFormDirty("rule", dirty)}
@@ -311,6 +329,7 @@ function ServicesTab({
   backend,
   services,
   mappings,
+  displayTimeZone,
   runSave,
   setServiceDirty,
   setMappingDirty,
@@ -319,6 +338,7 @@ function ServicesTab({
   backend: FrontendAdapter;
   services: ServiceSnapshot[];
   mappings: CatalogSnapshot["serviceIdentifierMappings"];
+  displayTimeZone: string;
   runSave: (action: () => Promise<void>, message: string) => Promise<boolean>;
   setServiceDirty: (dirty: boolean) => void;
   setMappingDirty: (dirty: boolean) => void;
@@ -534,9 +554,7 @@ function ServicesTab({
                   編集
                 </Button>
               </div>
-              <div className={styles.meta}>
-                正式キー: {item.officialKey} / ID: {item.id}
-              </div>
+              <div className={styles.meta}>正式キー: {item.officialKey}</div>
               <div>
                 対応履歴:{" "}
                 {mappings?.filter((mapping) => mapping.serviceId === item.id)
@@ -553,12 +571,14 @@ function ServicesTab({
           <IdentifierList
             title="生利用額サービス識別子"
             items={mappings?.filter((item) => item.kind === "usage_cost") ?? []}
+            displayTimeZone={displayTimeZone}
           />
           <IdentifierList
             title="生利用枠サービス識別子"
             items={
               mappings?.filter((item) => item.kind === "usage_limit") ?? []
             }
+            displayTimeZone={displayTimeZone}
           />
         </div>
       </div>
@@ -569,9 +589,11 @@ function ServicesTab({
 function IdentifierList({
   title,
   items,
+  displayTimeZone,
 }: {
   title: string;
   items: NonNullable<CatalogSnapshot["serviceIdentifierMappings"]>;
+  displayTimeZone: string;
 }) {
   const styles = useStyles();
   return (
@@ -584,7 +606,8 @@ function IdentifierList({
           <div className={styles.evidence} key={item.id}>
             <span className={styles.raw}>{item.rawIdentifier}</span>
             <span className={styles.meta}>
-              {item.validFrom} ～ {item.validTo || "継続中"}
+              {formatInstant(item.validFrom, displayTimeZone)} ～{" "}
+              {formatInstant(item.validTo, displayTimeZone, "継続中")}
             </span>
           </div>
         ))
@@ -596,12 +619,16 @@ function IdentifierList({
 function CandidatesTab({
   backend,
   catalog,
+  hubs,
+  displayTimeZone,
   runSave,
   setDirty,
   saving,
 }: {
   backend: FrontendAdapter;
   catalog: CatalogSnapshot;
+  hubs: HubSnapshot[];
+  displayTimeZone: string;
   runSave: (action: () => Promise<void>, message: string) => Promise<boolean>;
   setDirty: (dirty: boolean) => void;
   saving: boolean;
@@ -680,8 +707,10 @@ function CandidatesTab({
                 報告プラン名: {item.rawReportedPlanName}
               </div>
               <div className={styles.meta}>
-                状態: {item.state} / 観測: {item.firstObservedAt || "—"} ～{" "}
-                {item.lastObservedAt || "—"}
+                状態:{" "}
+                <StatusBadge status={catalogCandidateStatus(item.state)} /> /
+                観測: {formatInstant(item.firstObservedAt, displayTimeZone)} ～{" "}
+                {formatInstant(item.lastObservedAt, displayTimeZone, "継続中")}
               </div>
               <div className={styles.meta}>
                 Hub 件数:{" "}
@@ -708,15 +737,16 @@ function CandidatesTab({
             生報告プラン名（原形）: {candidate.rawReportedPlanName}
           </div>
           <div className={styles.meta}>
-            最初: {candidate.firstObservedAt || "—"} / 最後:{" "}
-            {candidate.lastObservedAt || "—"}
+            最初: {formatInstant(candidate.firstObservedAt, displayTimeZone)} /
+            最後:{" "}
+            {formatInstant(candidate.lastObservedAt, displayTimeZone, "継続中")}
           </div>
           <div className={styles.evidence}>
             {(candidate.observations ?? []).map((observation) => (
               <div key={observation.id}>
-                Hub: {observation.hubId} / アカウント表示:{" "}
+                Hub: {hubDisplayName(observation.hubId, hubs)} / アカウント表示:{" "}
                 {observation.hubAccountDisplay || "—"} /{" "}
-                {observation.observedAt}
+                {formatInstant(observation.observedAt, displayTimeZone)}
               </div>
             ))}
           </div>
@@ -846,7 +876,7 @@ function CandidatesTab({
               {(candidate.observations ?? []).map((observation) => (
                 <Checkbox
                   key={observation.id}
-                  label={`${observation.hubId} / ${observation.observedAt}`}
+                  label={`${hubDisplayName(observation.hubId, hubs)} / ${formatInstant(observation.observedAt, displayTimeZone)}`}
                   checked={splitIDs.includes(observation.id)}
                   onChange={(_, data) => {
                     setSplitIDs((ids) =>
@@ -888,6 +918,8 @@ function LabelChangeList({
   backend,
   candidates,
   limits,
+  hubs,
+  displayTimeZone,
   runSave,
   setDirty,
   saving,
@@ -895,6 +927,8 @@ function LabelChangeList({
   backend: FrontendAdapter;
   candidates: NonNullable<CatalogSnapshot["labelChangeCandidates"]>;
   limits: NonNullable<CatalogSnapshot["limitDefinitions"]>;
+  hubs: HubSnapshot[];
+  displayTimeZone: string;
   runSave: (action: () => Promise<void>, message: string) => Promise<boolean>;
   setDirty: (dirty: boolean) => void;
   saving: boolean;
@@ -914,19 +948,25 @@ function LabelChangeList({
               {candidate.oldLabel} → {candidate.newLabel}
             </div>
             <div className={styles.meta}>
-              Hub: {candidate.hubId} / 端末: {candidate.deviceRecordKey} / 生
-              ID: {candidate.rawLimitServiceIdentifier}
+              Hub: {hubDisplayName(candidate.hubId, hubs)} / 端末:{" "}
+              {candidate.deviceRecordKey} / 生 識別子:{" "}
+              {candidate.rawLimitServiceIdentifier}
             </div>
             <div className={styles.meta}>
               kind: {candidate.normalizedKind} / metric:{" "}
-              {candidate.normalizedMetric} / UTC:{" "}
-              {candidate.firstObservedAt || "—"} ～{" "}
-              {candidate.lastObservedAt || "—"}
+              {candidate.normalizedMetric} / 観測期間:{" "}
+              {formatInstant(candidate.firstObservedAt, displayTimeZone)} ～{" "}
+              {formatInstant(
+                candidate.lastObservedAt,
+                displayTimeZone,
+                "継続中",
+              )}
             </div>
             <div className={styles.evidence}>
               {(candidate.windows ?? []).map((window) => (
                 <div key={window.id}>
-                  {window.windowKey} / {window.label} / {window.observedAt}
+                  {window.windowKey} / {window.label} /{" "}
+                  {formatInstant(window.observedAt, displayTimeZone)}
                 </div>
               ))}
             </div>
@@ -1165,10 +1205,12 @@ function LimitsTab({
               {item.meaning} / {item.unit}
             </Subtitle1>
             <div>
-              {serviceName(services, item.serviceId)} / 周期: {item.cycleType}
+              {serviceName(services, item.serviceId)} / 周期:{" "}
+              {cycleTypeLabel(item.cycleType)}
             </div>
             <div className={styles.meta}>
-              billing: {item.billingConfirmation} / ID: {item.id}
+              billing:{" "}
+              <StatusBadge status={billingStatus(item.billingConfirmation)} />
             </div>
             <Button
               onClick={() => {
@@ -1282,7 +1324,6 @@ function PlansTab({
               {item.isBaseline ? "（基準）" : ""}
             </Subtitle1>
             <div>{serviceName(services, item.serviceId)}</div>
-            <div className={styles.meta}>ID: {item.id}</div>
             <div className={styles.actions}>
               <Button
                 onClick={() => {
@@ -1322,6 +1363,7 @@ function VersionsTab({
   versions,
   limits,
   rules,
+  displayTimeZone,
   runSave,
   setVersionDirty,
   setRuleDirty,
@@ -1332,6 +1374,7 @@ function VersionsTab({
   versions: NonNullable<CatalogSnapshot["planVersions"]>;
   limits: NonNullable<CatalogSnapshot["limitDefinitions"]>;
   rules: NonNullable<CatalogSnapshot["planLimitRules"]>;
+  displayTimeZone: string;
   runSave: (action: () => Promise<void>, message: string) => Promise<boolean>;
   setVersionDirty: (dirty: boolean) => void;
   setRuleDirty: (dirty: boolean) => void;
@@ -1486,7 +1529,7 @@ function VersionsTab({
               <option value="">選択してください</option>
               {versions.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.name} ({item.validFrom})
+                  {item.name} ({formatInstant(item.validFrom, displayTimeZone)})
                 </option>
               ))}
             </Select>
@@ -1559,16 +1602,17 @@ function VersionsTab({
           <article className={styles.card} key={item.id}>
             <Subtitle1 as="h3">{item.name}</Subtitle1>
             <div>
-              {planName(plans, item.planId)} / [{item.validFrom},{" "}
-              {item.validTo || "∞"})
+              {planName(plans, item.planId)} / [
+              {formatInstant(item.validFrom, displayTimeZone)},{" "}
+              {formatInstant(item.validTo, displayTimeZone, "∞")})
             </div>
             <div className={styles.meta}>根拠: {item.officialSourceUrl}</div>
             {rules
               .filter((rule) => rule.planVersionId === item.id)
               .map((rule) => (
                 <div className={styles.evidence} key={rule.id}>
-                  利用枠: {rule.limitDefinitionId} / 上限: {rule.limit ?? "—"} /
-                  倍率: {rule.multiplier ?? "—"} / 根拠:{" "}
+                  利用枠: {limitName(limits, rule.limitDefinitionId)} / 上限:{" "}
+                  {rule.limit ?? "—"} / 倍率: {rule.multiplier ?? "—"} / 根拠:{" "}
                   {rule.officialSourceUrl}
                 </div>
               ))}
@@ -1614,13 +1658,110 @@ function toUTC(value: string): string {
 }
 function serviceName(services: ServiceSnapshot[], id: string): string {
   const service = services.find((item) => item.id === id);
-  return service ? `${service.provider} / ${service.name}` : `サービス ${id}`;
+  return service ? `${service.provider} / ${service.name}` : "サービス未表示";
 }
 function planName(
   plans: NonNullable<CatalogSnapshot["plans"]>,
   id: string,
 ): string {
-  return plans.find((item) => item.id === id)?.name ?? `プラン ${id}`;
+  return plans.find((item) => item.id === id)?.name ?? "プラン未表示";
+}
+
+function limitName(
+  limits: NonNullable<CatalogSnapshot["limitDefinitions"]>,
+  id: string,
+): string {
+  const limit = limits.find((item) => item.id === id);
+  return limit ? `${limit.meaning} / ${limit.unit}` : "利用枠定義未表示";
+}
+
+function hubDisplayName(hubID: string, hubs: HubSnapshot[]): string {
+  return hubs.find((hub) => hub.id === hubID)?.displayName || "Hub未表示";
+}
+
+function catalogCandidateStatus(state: string): StatusPresentationSnapshot {
+  const statuses: Record<
+    string,
+    [
+      string,
+      StatusPresentationSnapshot["intent"],
+      StatusPresentationSnapshot["icon"],
+    ]
+  > = {
+    unconfirmed: ["未確認", "warning", "warning"],
+    confirmed: ["確認済み", "success", "checkmark"],
+    rejected: ["対象外", "subtle", "info"],
+  };
+  const [label, intent, icon] = statuses[state] ?? [
+    "状態を確認",
+    "warning",
+    "warning",
+  ];
+  return catalogStatusSnapshot(
+    state,
+    label,
+    intent,
+    icon,
+    "同定候補の状態です。",
+  );
+}
+
+function billingStatus(state: string): StatusPresentationSnapshot {
+  const statuses: Record<
+    string,
+    [
+      string,
+      StatusPresentationSnapshot["intent"],
+      StatusPresentationSnapshot["icon"],
+    ]
+  > = {
+    unconfirmed: ["未確認", "warning", "warning"],
+    confirmed: ["月次利用枠として確認済み", "success", "checkmark"],
+    not_applicable: ["対象外", "subtle", "info"],
+  };
+  const [label, intent, icon] = statuses[state] ?? [
+    "状態を確認",
+    "warning",
+    "warning",
+  ];
+  return catalogStatusSnapshot(
+    state,
+    label,
+    intent,
+    icon,
+    "月次確認の状態です。",
+  );
+}
+
+function catalogStatusSnapshot(
+  code: string,
+  label: string,
+  intent: StatusPresentationSnapshot["intent"],
+  icon: StatusPresentationSnapshot["icon"],
+  description: string,
+): StatusPresentationSnapshot {
+  return {
+    code,
+    label,
+    intent,
+    icon,
+    description,
+    nextAction: "",
+    nextRoute: "",
+  };
+}
+
+function formatInstant(
+  value: string,
+  timeZone: string,
+  emptyLabel = "—",
+): string {
+  if (!value) return emptyLabel;
+  try {
+    return `${formatOverviewInstant(value, timeZone)}（UTC ${value}）`;
+  } catch {
+    return "日時不明";
+  }
 }
 function errorMessage(cause: unknown): string {
   return cause instanceof Error

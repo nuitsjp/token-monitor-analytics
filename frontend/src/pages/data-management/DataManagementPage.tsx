@@ -35,6 +35,7 @@ import { Dialogs } from "@wailsio/runtime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { presentStatus } from "../../lib/status";
+import { formatOverviewInstant } from "../../lib/overviewDisplay";
 
 export interface DataManagementErrorSnapshot {
   code: string;
@@ -401,11 +402,11 @@ const useStyles = makeStyles({
 
 export function DataManagementPage({
   backend,
-  displayTimeZone = "UTC",
+  displayTimeZone,
   pollIntervalMs = 500,
 }: {
   backend: DataManagementPageBackend;
-  displayTimeZone?: string;
+  displayTimeZone: string;
   pollIntervalMs?: number;
 }) {
   const styles = useStyles();
@@ -883,6 +884,7 @@ export function DataManagementPage({
       <PurgeConfirmationDialog
         open={purgeConfirmOpen}
         preview={state.purge.preview}
+        displayTimeZone={displayTimeZone}
         hubNames={hubNames}
         confirmationText={purgeConfirmationText}
         onConfirmationTextChange={setPurgeConfirmationText}
@@ -1104,7 +1106,7 @@ function RestorePanel({
           ) : null}
         </div>
         <Text className={styles.code}>
-          {restorePath || "ZIPは選択されていません。"}
+          {restorePath || "新しく検証するZIPは選択されていません。"}
         </Text>
         <Body1>
           形式・版・SHA-256・SQLite整合性・参照整合性・意味制約・秘密不在・再計算可能性を個別に検証します。
@@ -1687,6 +1689,7 @@ function RestoreConfirmationDialog({
 function PurgeConfirmationDialog({
   open,
   preview,
+  displayTimeZone,
   hubNames,
   confirmationText,
   onConfirmationTextChange,
@@ -1696,6 +1699,7 @@ function PurgeConfirmationDialog({
 }: {
   open: boolean;
   preview: DataManagementPurgePreviewSnapshot | null;
+  displayTimeZone: string;
   hubNames: Map<string, string>;
   confirmationText: string;
   onConfirmationTextChange: (value: string) => void;
@@ -1716,7 +1720,9 @@ function PurgeConfirmationDialog({
                 <Body1>
                   対象Hub: {formatSelectedHubs(preview.selection, hubNames)}
                 </Body1>
-                <Body1>対象期間: {formatRange(preview.selection, "UTC")}</Body1>
+                <Body1>
+                  対象期間: {formatRange(preview.selection, displayTimeZone)}
+                </Body1>
                 <Body1>
                   原JSONスナップショット:{" "}
                   {formatCount(preview.capacity.rawSnapshotCount)}
@@ -1928,18 +1934,8 @@ function formatCount(value: number): string {
 
 function formatTime(value: string, displayTimeZone: string): string {
   if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "日時不明";
   try {
-    return new Intl.DateTimeFormat("ja-JP", {
-      timeZone: displayTimeZone,
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).format(date);
+    return formatOverviewInstant(value, displayTimeZone);
   } catch {
     return "日時不明";
   }

@@ -49,9 +49,9 @@ tasks:
       - npm --prefix frontend run lint
 
   test:go:
-    summary: Runs domain and use case tests
+    summary: Runs application, desktop, domain, and use case tests
     cmds:
-      - go test . ./internal/domain ./internal/usecase
+      - go test . ./internal/desktop ./internal/domain ./internal/usecase
 
   test:integration:
     summary: Runs file SQLite and adapter integration tests

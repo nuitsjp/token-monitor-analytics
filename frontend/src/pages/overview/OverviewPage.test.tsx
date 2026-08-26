@@ -7,7 +7,12 @@ import type {
   OverviewSnapshot,
   StatusPresentationSnapshot,
 } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
-import { createFakeBackend, emptyOverviewSnapshot } from "../../lib/backend";
+import {
+  createFakeBackend,
+  emptyDataManagementState,
+  emptyOverviewSnapshot,
+} from "../../lib/backend";
+import type { DataManagementStateSnapshot } from "../../lib/backend";
 import { OverviewPage } from "./OverviewPage";
 
 function status(
@@ -113,8 +118,14 @@ function populatedOverview(): OverviewSnapshot {
   };
 }
 
-function renderPage(snapshot: OverviewSnapshot = emptyOverviewSnapshot) {
-  const backend = createFakeBackend({ overview: snapshot });
+function renderPage(
+  snapshot: OverviewSnapshot = emptyOverviewSnapshot,
+  dataManagementState: DataManagementStateSnapshot = emptyDataManagementState,
+) {
+  const backend = createFakeBackend({
+    overview: snapshot,
+    dataManagementState,
+  });
   render(
     <MemoryRouter>
       <main>
@@ -125,25 +136,75 @@ function renderPage(snapshot: OverviewSnapshot = emptyOverviewSnapshot) {
   return backend;
 }
 
+function dataManagementSummary(): DataManagementStateSnapshot {
+  return {
+    ...emptyDataManagementState,
+    backup: {
+      ...emptyDataManagementState.backup,
+      status: "succeeded",
+      artifact: {
+        path: "D:\\backup\\latest.zip",
+        artifactSha256: "a".repeat(64),
+        sizeBytes: 1024,
+        formatVersion: 1,
+        schemaVersion: 1,
+        appVersion: "test",
+        createdAt: "2026-08-26T00:08:00Z",
+        warning: "",
+      },
+    },
+    restore: {
+      ...emptyDataManagementState.restore,
+      trial: {
+        ...emptyDataManagementState.restore.trial,
+        status: "passed",
+        testedAt: "2026-08-26T00:09:00Z",
+      },
+    },
+  };
+}
+
 describe("OverviewPage", () => {
   it("shows recovery, checklist, Hub, review and available estimation data only", async () => {
     const user = userEvent.setup();
-    renderPage(populatedOverview());
+    renderPage(populatedOverview(), dataManagementSummary());
 
     expect(await screen.findByText("復元を回復")).toBeVisible();
+    expect(screen.getByText("接続状態")).toBeVisible();
+    expect(screen.getByText("現在の実行状態")).toBeVisible();
+    expect(screen.getByText("最終取得結果")).toBeVisible();
     expect(screen.getByText("推定状態")).toBeVisible();
     expect(screen.getByText("検証済み推定")).toBeVisible();
+    expect(
+      screen.getByText("非カレントの最新有効計算区間を参照中: 0件"),
+    ).toBeVisible();
     expect(screen.getByText("サービス・プラン同定候補: 2 件")).toBeVisible();
+    expect(screen.getByText("最新バックアップ")).toBeVisible();
+    expect(screen.getByText("成功 · 8/26 9:08")).toBeVisible();
+    expect(screen.getByText("復元試行")).toBeVisible();
+    expect(screen.getByText("合格 · 8/26 9:09")).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "利用上限・価値を開く" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "データ管理を開く" }),
+    ).toBeVisible();
     const next = screen.getByRole("button", { name: "次の設定へ" });
     next.focus();
     expect(next).toHaveFocus();
     await user.keyboard("{Enter}");
   });
 
-  it("does not render empty unimplemented metric cards", async () => {
+  it("shows zero-valued Phase 1 summaries without Phase 2 cards", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "概要" })).toBeVisible();
-    expect(screen.queryByText("推定状態")).not.toBeInTheDocument();
+    expect(screen.getByText("推定状態")).toBeVisible();
+    expect(screen.getByText("推定対象 0件")).toBeVisible();
+    expect(screen.getByText("最新バックアップ")).toBeVisible();
+    expect(screen.getAllByText("未実施")).toHaveLength(2);
+    expect(
+      screen.getByText("バックアップには資格情報を含みません。"),
+    ).toBeVisible();
     expect(
       screen.queryByText("利用増加を最近確認した利用枠"),
     ).not.toBeInTheDocument();

@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type {
   LimitSeriesDetailSnapshot,
   LimitSeriesSnapshot,
@@ -225,20 +225,46 @@ function renderLimits(
   );
 }
 
+afterEach(() => vi.restoreAllMocks());
+
 it("shows M03 Go-owned state/remaining/estimate and all evidence rows", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(
+    new Date("2026-08-26T00:00:00Z").getTime(),
+  );
   const user = userEvent.setup();
   renderLimits("/limits", "Asia/Tokyo");
   expect(await screen.findByText("74.5%")).toBeVisible();
   expect(screen.getByText("74.5%")).toBeVisible();
   expect(screen.getByText("123.00")).toBeVisible();
+  expect(screen.getByText("リセット")).toBeVisible();
+  expect(screen.getByText("8/27 9:00")).toBeVisible();
+  expect(screen.getByText("25.5%")).toBeVisible();
+  expect(screen.queryByText("25.50%")).not.toBeInTheDocument();
   await user.click(screen.getByRole("link", { name: "詳細" }));
   expect(await screen.findByRole("tab", { name: "根拠" })).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "根拠" }));
   expect(screen.getByText("利用率が減少した隣接行です。")).toBeVisible();
-  expect(screen.getByRole("link", { name: "M08で確認" })).toHaveAttribute(
-    "href",
-    "/evidence?observationId=observation-1",
+  expect(
+    screen.getByRole("link", { name: "観測と根拠で確認" }),
+  ).toHaveAttribute("href", "/evidence?observationId=observation-1");
+});
+
+it("labels unknown and elapsed reset instants explicitly", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(
+    new Date("2026-08-26T00:00:00Z").getTime(),
   );
+  const unknown = { ...series(), id: "unknown-reset", resetAt: "" };
+  const elapsed = {
+    ...series(),
+    id: "elapsed-reset",
+    logicalAccountId: "account-2",
+    resetAt: "2026-08-25T00:00:00Z",
+  };
+
+  renderLimits("/limits", "UTC", backend([unknown, elapsed]));
+
+  expect(await screen.findByText("経過済み")).toBeVisible();
+  expect(screen.getAllByText("不明").length).toBeGreaterThan(0);
 });
 
 it("P1-UI-04 shows current state, API-converted estimate, quality, and an uncomputed reason", async () => {

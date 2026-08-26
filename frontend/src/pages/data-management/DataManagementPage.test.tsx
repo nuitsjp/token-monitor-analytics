@@ -266,6 +266,44 @@ beforeEach(() => {
 });
 
 describe("DataManagementPage", () => {
+  it("uses the required display timezone in the purge confirmation range", async () => {
+    const fake = fakeBackend({
+      ...baseState(),
+      purge: {
+        status: "ready",
+        cancelAllowed: false,
+        preview: {
+          selection: {
+            allHubs: true,
+            hubIds: [],
+            startAt: "2026-08-26T00:00:00Z",
+            endAt: "2026-08-27T00:00:00Z",
+          },
+          capacity: {
+            databaseSizeBytes: 0,
+            rawSnapshotCount: 1,
+            oldestCompletedAt: "",
+            latestCompletedAt: "",
+            rawJsonBytes: 0,
+          },
+          requiredConfirmationText: "確認",
+        },
+        result: null,
+        error: null,
+      },
+    });
+    renderPage(fake.backend);
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("tab", { name: "明示パージ" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "最終確認へ" }));
+    expect(
+      await screen.findByText("対象期間: [8/26 9:00, 8/27 9:00)"),
+    ).toBeVisible();
+  });
+
   it("loads capacity and hubs in parallel and shows all five capacity facts without automatic deletion warnings", async () => {
     const stateRequest = deferred<DataManagementStateSnapshot>();
     const hubsRequest = deferred<DataManagementHubSnapshot[]>();
@@ -286,8 +324,8 @@ describe("DataManagementPage", () => {
 
     expect(await screen.findByText("10 MiB")).toBeVisible();
     expect(screen.getByText("1,234")).toBeVisible();
-    expect(screen.getByText("2026/8/1 9:00")).toBeVisible();
-    expect(screen.getByText("2026/8/26 9:00")).toBeVisible();
+    expect(screen.getByText("8/1 9:00")).toBeVisible();
+    expect(screen.getByText("8/26 9:00")).toBeVisible();
     expect(screen.getByText("2 KiB")).toBeVisible();
     expect(screen.queryByText(/自動削除|任意閾値/)).not.toBeInTheDocument();
   });
@@ -438,7 +476,7 @@ describe("DataManagementPage", () => {
       "operation-random-1",
     );
     expect(await screen.findByText("合格")).toBeVisible();
-    expect(screen.getByText("2026/8/26 2:03 UTC")).toBeVisible();
+    expect(screen.getByText("8/26 2:03 UTC")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "最終確認へ" }));
     expect(

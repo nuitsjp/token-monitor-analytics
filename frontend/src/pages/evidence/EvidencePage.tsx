@@ -14,16 +14,20 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import type {
   CollectionAttemptSnapshot,
   CostObservationSnapshot,
   FrontendAdapter,
   LimitObservationSnapshot,
+  LimitSeriesDetailSnapshot,
+  LimitSeriesSnapshot,
   RawSnapshotDetail,
   RawSnapshotSnapshot,
 } from "../../lib/backend";
 import type { HubSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import { StatusBadge } from "../../components/StatusBadge";
+import { formatOverviewInstant } from "../../lib/overviewDisplay";
 
 const useStyles = makeStyles({
   page: { display: "grid", gap: tokens.spacingVerticalL, maxWidth: "96rem" },
@@ -89,7 +93,8 @@ const useStyles = makeStyles({
   },
 });
 
-type EvidenceTab = "attempts" | "raw" | "observations";
+type EvidenceTab =
+  "attempts" | "raw" | "observations" | "series" | "calculation";
 
 export function EvidencePage({
   backend,
@@ -102,21 +107,29 @@ export function EvidencePage({
   const [searchParams] = useSearchParams();
   const targetObservationID = searchParams.get("observationId") ?? "";
   const targetSnapshotID = searchParams.get("snapshotId") ?? "";
+  const targetSeriesID = searchParams.get("seriesId") ?? "";
   const [hubs, setHubs] = useState<HubSnapshot[]>([]);
   const [hubID, setHubID] = useState("");
-  const [tab, setTab] = useState<EvidenceTab>("attempts");
+  const [tab, setTab] = useState<EvidenceTab>(
+    targetSeriesID ? "series" : "attempts",
+  );
   const [query, setQuery] = useState("");
   const [state, setState] = useState("");
   const [attempts, setAttempts] = useState<CollectionAttemptSnapshot[]>([]);
   const [rawSnapshots, setRawSnapshots] = useState<RawSnapshotSnapshot[]>([]);
   const [costs, setCosts] = useState<CostObservationSnapshot[]>([]);
   const [limits, setLimits] = useState<LimitObservationSnapshot[]>([]);
+  const [series, setSeries] = useState<LimitSeriesSnapshot[]>([]);
+  const [selectedSeriesID, setSelectedSeriesID] = useState(targetSeriesID);
+  const [seriesDetail, setSeriesDetail] =
+    useState<LimitSeriesDetailSnapshot | null>(null);
   const [rawDetail, setRawDetail] = useState<RawSnapshotDetail | null>(null);
   const [rawMode, setRawMode] = useState<"tree" | "text">("tree");
   const [rawQuery, setRawQuery] = useState("");
   const [copiedPath, setCopiedPath] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [seriesError, setSeriesError] = useState("");
   const activeTab = targetObservationID
     ? "observations"
     : targetSnapshotID
@@ -124,16 +137,51 @@ export function EvidencePage({
       : tab;
   const activeQuery = targetObservationID || targetSnapshotID || query;
 
-  useEffect(() => {
-    void backend
-      .getHubs()
-      .then((items) => {
-        setHubs(items);
-        setHubID((current) => current || items[0]?.id || "");
-      })
-      .catch((cause: unknown) => setError(errorMessage(cause)))
-      .finally(() => setLoading(false));
+  const loadHubs = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const items = await backend.getHubs();
+      setHubs(items);
+      setHubID((current) => current || items[0]?.id || "");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setLoading(false);
+    }
   }, [backend]);
+
+  const loadSeries = useCallback(async () => {
+    setSeriesError("");
+    try {
+      const nextSeries = await backend.getLimitSeries({
+        serviceId: "",
+        status: "",
+        planVersionId: "",
+        limitDefinitionId: "",
+        sortBy: "status",
+        descending: false,
+      });
+      setSeries(nextSeries);
+      setSelectedSeriesID((current) => current || nextSeries[0]?.id || "");
+    } catch (cause) {
+      setSeriesError(errorMessage(cause));
+    }
+  }, [backend]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadHubs();
+    void loadSeries();
+  }, [loadHubs, loadSeries]);
+
+  useEffect(() => {
+    if (!selectedSeriesID) return;
+    void backend
+      .getLimitSeriesDetail(selectedSeriesID)
+      .then(setSeriesDetail)
+      .catch((cause: unknown) => setSeriesError(errorMessage(cause)));
+  }, [backend, selectedSeriesID]);
 
   const loadEvidence = useCallback(async () => {
     if (!hubID) return;
@@ -218,6 +266,23 @@ export function EvidencePage({
       ),
     [limits, activeQuery],
   );
+  const filteredSeries = useMemo(
+    () =>
+      series.filter((item) =>
+        includesQuery(
+          [
+            item.id,
+            item.serviceName,
+            item.logicalAccountName,
+            item.limitDefinitionName,
+            item.state.label,
+            item.stateReason,
+          ],
+          activeQuery,
+        ),
+      ),
+    [activeQuery, series],
+  );
 
   return (
     <div className={styles.page} role="region" aria-label="観測と根拠画面">
@@ -269,11 +334,24 @@ export function EvidencePage({
         <Tab value="attempts">取得</Tab>
         <Tab value="raw">原 JSON</Tab>
         <Tab value="observations">元観測</Tab>
+        <Tab value="series">利用枠系列</Tab>
+        <Tab value="calculation">計算根拠</Tab>
       </TabList>
       {error && (
         <MessageBar intent="error">
           <MessageBarBody>
-            {error} <Button onClick={() => void loadEvidence()}>再試行</Button>
+            {error}{" "}
+            <Button onClick={() => void (hubID ? loadEvidence() : loadHubs())}>
+              再試行
+            </Button>
+          </MessageBarBody>
+        </MessageBar>
+      )}
+      {seriesError && (
+        <MessageBar intent="warning">
+          <MessageBarBody>
+            利用枠系列を読み込めませんでした。{seriesError}{" "}
+            <Button onClick={() => void loadSeries()}>系列を再試行</Button>
           </MessageBarBody>
         </MessageBar>
       )}
@@ -374,12 +452,25 @@ export function EvidencePage({
             </section>
           )}
         </>
-      ) : (
+      ) : activeTab === "observations" ? (
         <ObservationList
           costs={filteredCosts}
           limits={filteredLimits}
           displayTimeZone={displayTimeZone}
           targetObservationID={targetObservationID}
+        />
+      ) : activeTab === "series" ? (
+        <SeriesTrace
+          items={filteredSeries}
+          selectedSeriesID={selectedSeriesID}
+          detail={seriesDetail}
+          displayTimeZone={displayTimeZone}
+          onSelect={setSelectedSeriesID}
+        />
+      ) : (
+        <CalculationTrace
+          detail={seriesDetail}
+          displayTimeZone={displayTimeZone}
         />
       )}
     </div>
@@ -557,21 +648,30 @@ function AttemptList({
       {items.map((item) => (
         <article className={styles.row} key={item.attemptId}>
           <div>
-            {item.trigger} / {item.state}
+            {attemptTriggerLabel(item.trigger)} /{" "}
+            {attemptStateLabel(item.state)}
           </div>
           <div className={styles.meta}>
-            {formatInstant(item.startedAt, displayTimeZone)} / UTC:{" "}
+            開始: {formatInstant(item.startedAt, displayTimeZone)} / UTC:{" "}
             {item.startedAt}
           </div>
+          <div className={styles.meta}>
+            完了: {formatInstant(item.completedAt, displayTimeZone)}
+            {item.completedAt ? ` / UTC: ${item.completedAt}` : ""}
+          </div>
           <div>
-            health: {item.healthHttpStatus ?? "—"} / stats:{" "}
+            接続確認 HTTP: {item.healthHttpStatus ?? "—"} / 統計 HTTP:{" "}
             {item.statsHttpStatus ?? "—"}
           </div>
           {item.failureCode && (
             <div>
-              {item.failureCode}: {item.failureDetail || "詳細なし"}
+              {attemptFailureLabel(item.failureCode)}:{" "}
+              {item.failureDetail || "詳細なし"}
             </div>
           )}
+          {item.normalizationErrorPath ? (
+            <div>正規化エラー箇所: {item.normalizationErrorPath}</div>
+          ) : null}
           {item.apiContract && (
             <div className={styles.meta}>契約: {item.apiContract}</div>
           )}
@@ -608,14 +708,14 @@ function ObservationList({
           }
         >
           <div>
-            利用額 / {item.rawServiceIdentifier} / USD {item.costUsdText}
+            利用額 / {item.rawServiceIdentifier} / {formatUSD(item.costUsdText)}
           </div>
           <div className={styles.meta}>
             {formatInstant(item.usageUpdatedAt, displayTimeZone)} / UTC:{" "}
             {item.usageUpdatedAt}
           </div>
           <div className={styles.meta}>
-            {item.jsonPath} / {item.dedupeState}
+            JSON パス: {item.jsonPath} / {dedupeStateLabel(item.dedupeState)}
           </div>
         </article>
       ))}
@@ -642,11 +742,169 @@ function ObservationList({
             {item.providerUpdatedAt}
           </div>
           <div className={styles.meta}>
-            {item.jsonPath} / {item.dedupeState}
+            JSON パス: {item.jsonPath} / {dedupeStateLabel(item.dedupeState)}
           </div>
         </article>
       ))}
     </div>
+  );
+}
+
+function SeriesTrace({
+  items,
+  selectedSeriesID,
+  detail,
+  displayTimeZone,
+  onSelect,
+}: {
+  items: LimitSeriesSnapshot[];
+  selectedSeriesID: string;
+  detail: LimitSeriesDetailSnapshot | null;
+  displayTimeZone: string;
+  onSelect: (seriesID: string) => void;
+}) {
+  const styles = useStyles();
+  return (
+    <div className={styles.list} aria-label="利用枠系列一覧">
+      {items.length === 0 ? (
+        <Body1>利用枠系列はありません。</Body1>
+      ) : (
+        items.map((item) => (
+          <article
+            className={`${styles.row} ${item.id === selectedSeriesID ? styles.targetRow : ""}`}
+            key={item.id}
+          >
+            <div>
+              {item.serviceName} /{" "}
+              {item.logicalAccountName || "論理アカウント未設定"} /{" "}
+              {item.limitDefinitionName || "利用枠未設定"}
+            </div>
+            <div className={styles.meta}>
+              状態: <StatusBadge status={item.state} />
+              {item.stateReason ? `（${item.stateReason}）` : ""}
+            </div>
+            <Button
+              appearance={
+                item.id === selectedSeriesID ? "primary" : "secondary"
+              }
+              onClick={() => onSelect(item.id)}
+            >
+              この系列を確認
+            </Button>
+          </article>
+        ))
+      )}
+      {detail && (
+        <SeriesDetail detail={detail} displayTimeZone={displayTimeZone} />
+      )}
+    </div>
+  );
+}
+
+function SeriesDetail({
+  detail,
+  displayTimeZone,
+}: {
+  detail: LimitSeriesDetailSnapshot;
+  displayTimeZone: string;
+}) {
+  const styles = useStyles();
+  const intervals = [
+    ...(detail.current ? [detail.current] : []),
+    ...(detail.history ?? []),
+  ];
+  return (
+    <section className={styles.row} aria-label="利用枠系列の状態と区間">
+      <Subtitle1 as="h2">系列の状態と区間</Subtitle1>
+      <Body1>
+        状態: <StatusBadge status={detail.series.state} />
+      </Body1>
+      <Body1>状態理由: {detail.series.stateReason || "理由なし"}</Body1>
+      <Body1>
+        最新観測:{" "}
+        {formatInstant(detail.series.latestObservationAt, displayTimeZone)}
+      </Body1>
+      {intervals.length === 0 ? (
+        <Body1>計算区間はありません。</Body1>
+      ) : (
+        <div aria-label="計算区間一覧">
+          {intervals.map((interval) => (
+            <div className={styles.meta} key={interval.id}>
+              {interval.roleLabel || "区間"}:{" "}
+              {formatInstant(interval.validFrom, displayTimeZone)} ～{" "}
+              {formatInstant(interval.validTo, displayTimeZone)} /{" "}
+              {interval.stateLabel || interval.state || "状態不明"}
+              {interval.exclusionReason
+                ? `（${interval.exclusionReason}）`
+                : ""}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CalculationTrace({
+  detail,
+  displayTimeZone,
+}: {
+  detail: LimitSeriesDetailSnapshot | null;
+  displayTimeZone: string;
+}) {
+  const styles = useStyles();
+  if (!detail) return <Body1>系列を選択すると計算根拠を表示します。</Body1>;
+  const result = detail.series.result;
+  const evidence = result?.evidence ?? [];
+  const differences = result?.differenceRows ?? [];
+  return (
+    <section className={styles.list} aria-label="計算根拠">
+      <article className={styles.row}>
+        <Subtitle1 as="h2">計算結果</Subtitle1>
+        <Body1>状態: {result?.status.label || "未算出"}</Body1>
+        <Body1>
+          理由:{" "}
+          {result?.statusReason || detail.series.stateReason || "理由なし"}
+        </Body1>
+        <Body1>
+          計算期間: {formatInstant(result?.validFrom ?? "", displayTimeZone)} ～{" "}
+          {formatInstant(result?.validTo ?? "", displayTimeZone)}
+        </Body1>
+        <Body1>
+          観測点数: {result?.observationPointCount ?? 0} / 差分行数:{" "}
+          {result?.differenceRowCount ?? 0} / 計算論理版:{" "}
+          {result?.calculationLogicVersion || "—"}
+        </Body1>
+      </article>
+      <article className={styles.row}>
+        <Subtitle1 as="h2">差分と根拠</Subtitle1>
+        {differences.length === 0 && evidence.length === 0 ? (
+          <Body1>差分行と観測根拠はありません。</Body1>
+        ) : (
+          <div className={styles.list}>
+            {differences.map((row) => (
+              <div className={styles.meta} key={row.id}>
+                差分: {formatInstant(row.startAt, displayTimeZone)} ～{" "}
+                {formatInstant(row.endAt, displayTimeZone)} /{" "}
+                {row.accepted ? "採用" : "除外"}
+                {row.exclusionReason ? `（${row.exclusionReason}）` : ""}
+              </div>
+            ))}
+            {evidence.map((item) => (
+              <div className={styles.meta} key={item.id}>
+                根拠: {evidenceKindLabel(item.kind)} /{" "}
+                {formatInstant(item.observedAt, displayTimeZone)} /{" "}
+                {item.m08Route ? (
+                  <Link to={item.m08Route}>観測と根拠で確認</Link>
+                ) : (
+                  "導線なし"
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </article>
+    </section>
   );
 }
 
@@ -661,14 +919,84 @@ function includesQuery(values: string[], query: string): boolean {
 function formatInstant(value: string, timeZone: string): string {
   if (!value) return "—";
   try {
-    return new Intl.DateTimeFormat("ja-JP", {
-      dateStyle: "medium",
-      timeStyle: "medium",
-      timeZone,
-    }).format(new Date(value));
+    return formatOverviewInstant(value, timeZone);
   } catch {
-    return value;
+    return "日時不明";
   }
+}
+
+function attemptTriggerLabel(value: string): string {
+  return (
+    (
+      {
+        manual: "手動取得",
+        scheduled: "定期取得",
+        startup: "起動時取得",
+      } as Record<string, string>
+    )[value] ?? "取得"
+  );
+}
+
+function attemptStateLabel(value: string): string {
+  return (
+    (
+      {
+        succeeded: "成功",
+        failed: "失敗",
+        running: "実行中",
+        skipped: "スキップ",
+      } as Record<string, string>
+    )[value] ?? "状態不明"
+  );
+}
+
+function attemptFailureLabel(value: string): string {
+  return (
+    (
+      {
+        stats_http_error: "統計 API の取得失敗",
+        health_http_error: "接続確認 API の取得失敗",
+        authentication_failed: "認証失敗",
+        timeout: "応答待ち時間超過",
+        unsupported_contract: "未対応 API 契約",
+        invalid_json: "応答形式エラー",
+      } as Record<string, string>
+    )[value] ?? "取得失敗"
+  );
+}
+
+function dedupeStateLabel(value: string): string {
+  return (
+    (
+      {
+        canonical: "正規観測",
+        duplicate: "重複観測",
+        conflict: "重複排除不整合",
+        excluded: "計算対象外",
+      } as Record<string, string>
+    )[value] ?? "重複排除状態不明"
+  );
+}
+
+function evidenceKindLabel(value: string): string {
+  return (
+    (
+      {
+        matched_observation: "対応する観測",
+        calculation_interval: "計算区間",
+        difference_row: "利用率と利用額の差分",
+        plan_history: "プラン履歴",
+        completeness: "活動主体の完全性",
+      } as Record<string, string>
+    )[value] ?? "計算根拠"
+  );
+}
+
+function formatUSD(value: string): string {
+  const exactValue = value.trim();
+  return exactValue && Number.isFinite(Number(exactValue))
+    ? `${exactValue} USD`
+    : "金額不明";
 }
 
 function prettyJSON(value: string): string {

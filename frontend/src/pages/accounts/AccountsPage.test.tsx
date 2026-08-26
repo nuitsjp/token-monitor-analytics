@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AccountSnapshot,
@@ -162,7 +163,7 @@ const linking: LinkingSnapshot = {
   hubSwitches: [],
 };
 
-function renderPage() {
+function renderPage(initialEntry = "/accounts") {
   const backend = createFakeBackend({
     accounts,
     hubs: [hub, secondHub],
@@ -171,18 +172,23 @@ function renderPage() {
   });
   const onDirtyChange = vi.fn();
   render(
-    <main aria-label="メイン画面">
-      <AccountsPage
-        backend={backend}
-        onDirtyChange={onDirtyChange}
-        displayTimeZone="Asia/Tokyo"
-      />
-    </main>,
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <main aria-label="メイン画面">
+        <AccountsPage
+          backend={backend}
+          onDirtyChange={onDirtyChange}
+          displayTimeZone="Asia/Tokyo"
+        />
+      </main>
+    </MemoryRouter>,
   );
   return { backend, onDirtyChange };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.history.replaceState({}, "", "/");
+});
 
 describe("AccountsPage", () => {
   it("shows the seven M05 tabs and supports account editing", async () => {
@@ -265,12 +271,12 @@ describe("AccountsPage", () => {
       "version-1",
     );
     await user.type(
-      screen.getByRole("textbox", { name: "開始（UTC / RFC3339Nano）" }),
+      screen.getByRole("textbox", { name: "開始日時（UTC）" }),
       "2026-08-25T00:00:00Z",
     );
     await user.type(
       screen.getByRole("textbox", {
-        name: "終了（UTC / RFC3339Nano、空欄可）",
+        name: "終了日時（UTC・空欄可）",
       }),
       "2026-08-26T00:00:00Z",
     );
@@ -303,7 +309,7 @@ describe("AccountsPage", () => {
       "logical-1",
     );
     await user.type(
-      screen.getByRole("textbox", { name: "開始（RFC3339Nano UTC）" }),
+      screen.getByRole("textbox", { name: "開始日時（UTC）" }),
       "2026-08-25T00:00:00Z",
     );
     await user.click(screen.getByRole("button", { name: "影響を確認" }));
@@ -329,7 +335,7 @@ describe("AccountsPage", () => {
       "limit-definition-1",
     );
     await user.type(
-      screen.getByRole("textbox", { name: "開始（RFC3339Nano UTC）" }),
+      screen.getByRole("textbox", { name: "開始日時（UTC）" }),
       "2026-08-25T00:00:00Z",
     );
     await user.click(screen.getByRole("button", { name: "影響を確認" }));
@@ -357,7 +363,7 @@ describe("AccountsPage", () => {
       "cost-source-1",
     );
     await user.type(
-      screen.getByRole("textbox", { name: "開始（RFC3339Nano UTC）" }),
+      screen.getByRole("textbox", { name: "開始日時（UTC）" }),
       "2026-08-25T00:00:00Z",
     );
     expect(
@@ -407,7 +413,7 @@ describe("AccountsPage", () => {
       "device-1",
     );
     await user.type(
-      screen.getByRole("textbox", { name: "切替日時（RFC3339Nano UTC）" }),
+      screen.getByRole("textbox", { name: "切替日時（UTC）" }),
       "2026-08-25T00:00:00Z",
     );
     expect(screen.getByRole("button", { name: "確定" })).toBeDisabled();
@@ -417,6 +423,17 @@ describe("AccountsPage", () => {
     expect(screen.getByRole("button", { name: "確定" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "確定" }));
     await waitFor(() => expect(confirmSwitch).toHaveBeenCalled());
+  });
+
+  it("filters and highlights the account selected by an audit link", async () => {
+    renderPage("/accounts?accountId=logical-1");
+
+    expect(await screen.findByTestId("target-account")).toHaveTextContent(
+      "既存アカウント",
+    );
+    expect(screen.getByRole("textbox", { name: "検索" })).toHaveValue(
+      "既存アカウント",
+    );
   });
 
   it("has no automatically detectable accessibility violations", async () => {

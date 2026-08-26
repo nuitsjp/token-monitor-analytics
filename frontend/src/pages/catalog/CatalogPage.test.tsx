@@ -91,6 +91,10 @@ describe("CatalogPage", () => {
       await screen.findByRole("heading", { name: "raw-limit-exact" }),
     ).toBeVisible();
     expect(screen.getAllByText(/報告名そのまま/).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("未確認。同定候補の状態です。")).toBeVisible();
+    expect(screen.queryByText("ID: service-1")).not.toBeInTheDocument();
+    expect(screen.queryByText("2026-08-20T00:00:00Z")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Hub: hub-1/)).not.toBeInTheDocument();
     const result = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } },
     });

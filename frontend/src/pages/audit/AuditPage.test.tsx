@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditRecord } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { createFakeBackend } from "../../lib/backend";
@@ -21,9 +22,11 @@ const audit = (overrides: Partial<AuditRecord> = {}): AuditRecord => ({
 
 function renderPage(backend: ReturnType<typeof createFakeBackend>) {
   return render(
-    <main aria-label="メイン画面">
-      <AuditPage backend={backend} />
-    </main>,
+    <MemoryRouter>
+      <main aria-label="メイン画面">
+        <AuditPage backend={backend} />
+      </main>
+    </MemoryRouter>,
   );
 }
 
@@ -53,7 +56,13 @@ describe("AuditPage", () => {
     expect(
       await screen.findByRole("columnheader", { name: "変更前" }),
     ).toBeVisible();
-    expect(screen.getByText("credential_saved")).toBeVisible();
+    expect(screen.getByText("資格情報を保存")).toBeVisible();
+    expect(screen.queryByText("credential_saved")).not.toBeInTheDocument();
+    expect(screen.queryByText("hub-1")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Hubの詳細" })).toHaveAttribute(
+      "href",
+      "/hubs?hubId=hub-1",
+    );
     expect(screen.getByRole("cell", { name: /\[非表示\]/ })).toBeVisible();
     expect(screen.queryByText("sentinel-secret")).not.toBeInTheDocument();
     expect(

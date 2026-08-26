@@ -50,16 +50,29 @@ describe("compact window", () => {
   });
 
   it("uses a MemoryRouter and opens M01 as the default main route", async () => {
-    const backend = createFakeBackend({ canOpenMain: true });
+    const backend = createFakeBackend({ canOpenMain: true, isShowcase: true });
     render(<App backend={backend} location="http://localhost/?window=main" />);
 
     expect(await screen.findByRole("heading", { name: "概要" })).toBeVisible();
+    expect(screen.getByText("サンプルデータ（モック Hub）")).toBeVisible();
     expect(
       screen.getByRole("navigation", { name: "メインメニュー" }),
     ).toBeVisible();
+    expect(
+      screen.getByRole("navigation", { name: "パンくず" }),
+    ).toHaveTextContent("利用状況");
+    expect(
+      screen.getByRole("navigation", { name: "パンくず" }),
+    ).toHaveTextContent("概要");
     expect(screen.getAllByRole("link", { name: /表示設定/ })).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: /概要/ })).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: /監査記録/ })).toHaveLength(1);
+    expect(
+      await screen.findByLabelText("未解決 0件、警告 0件、処理失敗 0件"),
+    ).toBeVisible();
+    expect(
+      screen.getByLabelText("接続異常 0件、最終取得失敗 0件、未対応契約 0件"),
+    ).toBeVisible();
     expect(screen.queryByText(/M0[01]|T01/)).not.toBeInTheDocument();
   });
 
@@ -104,7 +117,7 @@ describe("compact window", () => {
 
     await user.click(await screen.findByRole("link", { name: "表示設定" }));
     await user.click(await screen.findByRole("radio", { name: "ダーク" }));
-    await user.click(screen.getByRole("button", { name: "保存" }));
+    await user.click(screen.getByRole("button", { name: "確認して保存" }));
     await waitFor(async () =>
       expect((await backend.getSettings()).theme).toBe("dark"),
     );
@@ -161,8 +174,12 @@ describe("compact window", () => {
 
   it("shows the shared dirty-state guard for a main close request", async () => {
     let confirmations = 0;
+    let mainDirty = false;
     const backend = createFakeBackend({
       canOpenMain: true,
+      onSetMainDirty: (dirty) => {
+        mainDirty = dirty;
+      },
       onConfirmCloseMain: () => {
         confirmations += 1;
       },
@@ -172,14 +189,15 @@ describe("compact window", () => {
 
     await user.click(await screen.findByRole("link", { name: "表示設定" }));
     await user.click(await screen.findByRole("radio", { name: "ダーク" }));
-    emitFakeBackendEvent(backend, "window:main-close-requested");
+    await waitFor(() => expect(mainDirty).toBe(true));
+    act(() => emitFakeBackendEvent(backend, "window:main-close-requested"));
     expect(
       await screen.findByRole("heading", { name: "メイン画面を閉じますか？" }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "キャンセル" }));
+    await user.click(await screen.findByRole("button", { name: "キャンセル" }));
     expect(confirmations).toBe(0);
 
-    emitFakeBackendEvent(backend, "window:main-close-requested");
+    act(() => emitFakeBackendEvent(backend, "window:main-close-requested"));
     await user.click(
       await screen.findByRole("button", { name: "破棄して続行" }),
     );

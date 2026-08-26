@@ -14,10 +14,11 @@ import (
 )
 
 type SettingsSnapshot struct {
-	Theme           string   `json:"theme"`
-	DisplayTimeZone string   `json:"displayTimeZone"`
-	IANATimeZones   []string `json:"ianaTimeZones"`
-	SystemDark      bool     `json:"systemDark"`
+	Theme             string   `json:"theme"`
+	DisplayTimeZone   string   `json:"displayTimeZone"`
+	IANATimeZones     []string `json:"ianaTimeZones"`
+	TimezoneConfirmed bool     `json:"timezoneConfirmed"`
+	SystemDark        bool     `json:"systemDark"`
 }
 
 type SaveSettingsInput struct {
@@ -66,10 +67,11 @@ func (s *SettingsService) GetSettings(ctx context.Context) (SettingsSnapshot, er
 		zone, _ = timezoneadapter.WindowsIDToIANA(windowsID)
 	}
 	return SettingsSnapshot{
-		Theme:           theme,
-		DisplayTimeZone: zone,
-		IANATimeZones:   timezoneadapter.IANAOptions(),
-		SystemDark:      application.Get() != nil && application.Get().Env.IsDarkMode(),
+		Theme:             theme,
+		DisplayTimeZone:   zone,
+		IANATimeZones:     timezoneadapter.IANAOptions(),
+		TimezoneConfirmed: confirmed == 1,
+		SystemDark:        application.Get() != nil && application.Get().Env.IsDarkMode(),
 	}, nil
 }
 

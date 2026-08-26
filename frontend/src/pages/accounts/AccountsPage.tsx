@@ -15,6 +15,10 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
+import type { StatusPresentationSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import { StatusBadge } from "../../components/StatusBadge";
+import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
   AccountSnapshot,
   CatalogSnapshot,
@@ -36,6 +40,7 @@ import type {
   UsageCostSourceCompletenessInput,
   UsageLimitAssociationInput,
 } from "../../lib/backend";
+import { cycleTypeLabel } from "../../lib/displayLabels";
 
 const useStyles = makeStyles({
   page: { display: "grid", gap: tokens.spacingVerticalL, maxWidth: "96rem" },
@@ -55,6 +60,10 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     boxShadow: tokens.shadow4,
     minWidth: 0,
+  },
+  targetCard: {
+    outline: `2px solid ${tokens.colorBrandStroke1}`,
+    backgroundColor: tokens.colorBrandBackground2,
   },
   form: {
     display: "grid",
@@ -179,6 +188,8 @@ export function AccountsPage({
   displayTimeZone: string;
 }) {
   const styles = useStyles();
+  const [searchParams] = useSearchParams();
+  const targetAccountID = searchParams.get("accountId") ?? "";
   const [data, setData] = useState<AccountsData>(emptyData);
   const [tab, setTab] = useState<AccountTab>("logical");
   const [loading, setLoading] = useState(true);
@@ -228,12 +239,19 @@ export function AccountsPage({
         linking,
         catalog,
       });
+      const targetAccount = (accounts.logicalAccounts ?? []).find(
+        (item) => item.id === targetAccountID,
+      );
+      if (targetAccount) {
+        setTab("logical");
+        setSearch(targetAccount.displayName);
+      }
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setLoading(false);
     }
-  }, [backend]);
+  }, [backend, targetAccountID]);
 
   useEffect(() => {
     // The initial read synchronizes this page with the external Wails adapter.
@@ -380,8 +398,8 @@ export function AccountsPage({
           を別Hub間で自動統合しません。
         </Body1>
         <div className={styles.meta}>
-          有効期間は UTC の半開区間 [開始, 終了) です。入力日時は RFC3339Nano の
-          UTC 瞬時を使用します。
+          有効期間は UTC の半開区間 [開始, 終了) です。日時は UTC
+          として入力します。
         </div>
       </div>
       {error ? (
@@ -694,7 +712,13 @@ export function AccountsPage({
                 <Body1>論理アカウントはありません。</Body1>
               ) : (
                 filteredAccounts.map((item) => (
-                  <article className={styles.card} key={item.id}>
+                  <article
+                    className={`${styles.card} ${item.id === targetAccountID ? styles.targetCard : ""}`}
+                    key={item.id}
+                    data-testid={
+                      item.id === targetAccountID ? "target-account" : undefined
+                    }
+                  >
                     <div className={styles.sectionTitle}>
                       <Subtitle1 as="h2">{item.displayName}</Subtitle1>
                       <div className={styles.actions}>
@@ -745,9 +769,18 @@ export function AccountsPage({
                     </div>
                     <div>{serviceName(item.serviceId)}</div>
                     <div className={styles.meta}>
-                      {item.archivedAt
-                        ? `アーカイブ済み（${formatInstantPair(item.archivedAt, displayTimeZone)}）`
-                        : "有効"}
+                      <StatusBadge
+                        status={logicalAccountStatus(
+                          item.archivedAt ? "archived" : "active",
+                        )}
+                      />
+                      {item.archivedAt ? (
+                        <>
+                          （
+                          {formatInstantPair(item.archivedAt, displayTimeZone)}
+                          ）
+                        </>
+                      ) : null}
                     </div>
                     <div className={styles.meta}>
                       登録: {formatInstantPair(item.createdAt, displayTimeZone)}{" "}
@@ -901,7 +934,9 @@ export function AccountsPage({
                       <Subtitle1 as="h2">
                         {item.displayName || item.accountKey}
                       </Subtitle1>
-                      <span>{candidateStateLabel(item.state)}</span>
+                      <StatusBadge
+                        status={accountCandidateStatus(item.state)}
+                      />
                     </div>
                     <div>
                       {hubName(item.hubId)} / {serviceName(item.serviceId)}
@@ -923,9 +958,12 @@ export function AccountsPage({
                       <span>
                         観測期間:{" "}
                         {formatInstant(item.firstObservedAt, displayTimeZone)}{" "}
-                        ～ {formatInstant(item.lastObservedAt, displayTimeZone)}{" "}
-                        / UTC: [{item.firstObservedAt || "不明"},{" "}
-                        {item.lastObservedAt || "継続中"})
+                        ～{" "}
+                        {formatInstant(
+                          item.lastObservedAt,
+                          displayTimeZone,
+                          "継続中",
+                        )}
                       </span>
                     </div>
                     <div className={styles.actions}>
@@ -1072,7 +1110,7 @@ export function AccountsPage({
                     ))}
                   </Select>
                 </Field>
-                <Field label="開始（UTC / RFC3339Nano）" required>
+                <Field label="開始日時（UTC）" required>
                   <Input
                     value={historyForm.validFrom}
                     placeholder="2026-08-25T00:00:00Z"
@@ -1085,7 +1123,7 @@ export function AccountsPage({
                     }}
                   />
                 </Field>
-                <Field label="終了（UTC / RFC3339Nano、空欄可）">
+                <Field label="終了日時（UTC・空欄可）">
                   <Input
                     value={historyForm.validTo}
                     placeholder="継続中"
@@ -1141,8 +1179,7 @@ export function AccountsPage({
                     <div className={styles.meta}>
                       有効期間: [
                       {formatInstant(item.validFrom, displayTimeZone)},{" "}
-                      {formatInstant(item.validTo, displayTimeZone)}) / UTC: [
-                      {item.validFrom}, {item.validTo || "継続中"})
+                      {formatInstant(item.validTo, displayTimeZone, "継続中")})
                     </div>
                   </article>
                 ))
@@ -1166,17 +1203,82 @@ export function AccountsPage({
   );
 }
 
-function candidateStateLabel(state: string): string {
-  switch (state) {
-    case "associated":
-      return "関連付け済み";
-    case "rejected":
-      return "対象外";
-    case "archived_reconfirmation":
-      return "アーカイブ後再確認";
-    default:
-      return "未確認";
-  }
+function accountCandidateStatus(state: string): StatusPresentationSnapshot {
+  const statuses: Record<
+    string,
+    [
+      string,
+      StatusPresentationSnapshot["intent"],
+      StatusPresentationSnapshot["icon"],
+    ]
+  > = {
+    unconfirmed: ["未確認", "warning", "warning"],
+    associated: ["関連付け済み", "success", "checkmark"],
+    rejected: ["対象外", "subtle", "info"],
+    archived_reconfirmation: ["アーカイブ後再確認", "warning", "warning"],
+  };
+  const [label, intent, icon] = statuses[state] ?? [
+    "状態を確認",
+    "warning",
+    "warning",
+  ];
+  return accountStatusSnapshot(state, label, intent, icon, "候補の状態です。");
+}
+
+function logicalAccountStatus(
+  state: "active" | "archived",
+): StatusPresentationSnapshot {
+  return state === "active"
+    ? accountStatusSnapshot(
+        state,
+        "有効",
+        "success",
+        "checkmark",
+        "利用中の論理アカウントです。",
+      )
+    : accountStatusSnapshot(
+        state,
+        "アーカイブ済み",
+        "subtle",
+        "info",
+        "アーカイブされた論理アカウントです。",
+      );
+}
+
+function completenessStatus(state: string): StatusPresentationSnapshot {
+  return state === "confirmed"
+    ? accountStatusSnapshot(
+        state,
+        "確認済み",
+        "success",
+        "checkmark",
+        "完全性が確認されています。",
+      )
+    : accountStatusSnapshot(
+        state,
+        "未確認",
+        "warning",
+        "warning",
+        "完全性の確認が必要です。",
+      );
+}
+
+function accountStatusSnapshot(
+  code: string,
+  label: string,
+  intent: StatusPresentationSnapshot["intent"],
+  icon: StatusPresentationSnapshot["icon"],
+  description: string,
+): StatusPresentationSnapshot {
+  return {
+    code,
+    label,
+    intent,
+    icon,
+    description,
+    nextAction: "",
+    nextRoute: "",
+  };
 }
 
 type LinkingDirtyForm = "cost" | "limit" | "completeness" | "switch";
@@ -1650,7 +1752,7 @@ function LinkingTabs({
             </Select>
           </Field>
           <div className={styles.grid}>
-            <Field label="開始（RFC3339Nano UTC）" required>
+            <Field label="開始日時（UTC）" required>
               <Input
                 value={costForm.validFrom}
                 onChange={(_, value) => {
@@ -1660,7 +1762,7 @@ function LinkingTabs({
                 }}
               />
             </Field>
-            <Field label="終了（RFC3339Nano UTC、空欄可）">
+            <Field label="終了日時（UTC・空欄可）">
               <Input
                 value={costForm.validTo}
                 onChange={(_, value) => {
@@ -1726,8 +1828,7 @@ function LinkingTabs({
                 <div>{sourceName("usage_cost", item.usageCostSourceId)}</div>
                 <div className={styles.meta}>
                   有効期間: [{formatInstant(item.validFrom, displayTimeZone)},{" "}
-                  {formatInstant(item.validTo, displayTimeZone, "継続中")}) /
-                  UTC: [{item.validFrom}, {item.validTo || "継続中"})
+                  {formatInstant(item.validTo, displayTimeZone, "継続中")})
                 </div>
               </article>
             ))
@@ -1827,13 +1928,14 @@ function LinkingTabs({
                 .filter((item) => !item.archivedAt)
                 .map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.meaning} / {item.unit} / {item.cycleType}
+                    {item.meaning} / {item.unit} /{" "}
+                    {cycleTypeLabel(item.cycleType)}
                   </option>
                 ))}
             </Select>
           </Field>
           <div className={styles.grid}>
-            <Field label="開始（RFC3339Nano UTC）" required>
+            <Field label="開始日時（UTC）" required>
               <Input
                 value={limitForm.validFrom}
                 onChange={(_, value) => {
@@ -1843,7 +1945,7 @@ function LinkingTabs({
                 }}
               />
             </Field>
-            <Field label="終了（RFC3339Nano UTC、空欄可）">
+            <Field label="終了日時（UTC・空欄可）">
               <Input
                 value={limitForm.validTo}
                 onChange={(_, value) => {
@@ -1916,8 +2018,7 @@ function LinkingTabs({
                 </div>
                 <div className={styles.meta}>
                   有効期間: [{formatInstant(item.validFrom, displayTimeZone)},{" "}
-                  {formatInstant(item.validTo, displayTimeZone, "継続中")}) /
-                  UTC: [{item.validFrom}, {item.validTo || "継続中"})
+                  {formatInstant(item.validTo, displayTimeZone, "継続中")})
                 </div>
               </article>
             ))
@@ -1989,7 +2090,7 @@ function LinkingTabs({
             </Select>
           </Field>
           <div className={styles.grid}>
-            <Field label="開始（RFC3339Nano UTC）" required>
+            <Field label="開始日時（UTC）" required>
               <Input
                 value={completenessForm.validFrom}
                 onChange={(_, value) => {
@@ -2004,7 +2105,7 @@ function LinkingTabs({
                 }}
               />
             </Field>
-            <Field label="終了（RFC3339Nano UTC、空欄可）">
+            <Field label="終了日時（UTC・空欄可）">
               <Input
                 value={completenessForm.validTo}
                 onChange={(_, value) => {
@@ -2105,8 +2206,8 @@ function LinkingTabs({
                   {sourceName("usage_cost", item.usageCostSourceId)}
                 </Subtitle1>
                 <div>
-                  状態: {item.state === "confirmed" ? "確認済み" : "未確認"} /
-                  対象主体:{" "}
+                  状態: <StatusBadge status={completenessStatus(item.state)} />{" "}
+                  / 対象主体:{" "}
                   {(item.logicalAccountIds ?? []).map(accountName).join("、") ||
                     "なし"}{" "}
                   / 除外対象:{" "}
@@ -2114,8 +2215,7 @@ function LinkingTabs({
                 </div>
                 <div className={styles.meta}>
                   対象期間: [{formatInstant(item.validFrom, displayTimeZone)},{" "}
-                  {formatInstant(item.validTo, displayTimeZone, "継続中")}) /
-                  UTC: [{item.validFrom}, {item.validTo || "継続中"})
+                  {formatInstant(item.validTo, displayTimeZone, "継続中")})
                 </div>
                 <Button
                   onClick={() => {
@@ -2301,7 +2401,7 @@ function LinkingTabs({
               ))}
             </Select>
           </Field>
-          <Field label="切替日時（RFC3339Nano UTC）" required>
+          <Field label="切替日時（UTC）" required>
             <Input
               value={switchForm.switchedAt}
               onChange={(_, value) => {
@@ -2380,8 +2480,7 @@ function ImpactPreviewSummary({
           {intervals.map((interval, index) => (
             <li key={`${interval.start}-${interval.end}-${index}`}>
               [{formatInstant(interval.start, displayTimeZone)},{" "}
-              {formatInstant(interval.end, displayTimeZone)}) / UTC: [
-              {interval.start}, {interval.end})
+              {formatInstant(interval.end, displayTimeZone, "継続中")})
             </li>
           ))}
         </ul>
@@ -2400,18 +2499,14 @@ function formatInstant(
 ): string {
   if (!value) return emptyLabel;
   try {
-    return new Intl.DateTimeFormat("ja-JP", {
-      dateStyle: "medium",
-      timeStyle: "medium",
-      timeZone,
-    }).format(new Date(value));
+    return `${formatOverviewInstant(value, timeZone)}（UTC ${value}）`;
   } catch {
-    return value;
+    return "日時不明";
   }
 }
 
 function formatInstantPair(value: string, timeZone: string): string {
-  return value ? `${formatInstant(value, timeZone)} / UTC: ${value}` : "不明";
+  return value ? formatInstant(value, timeZone) : "不明";
 }
 
 function intervalsOverlap(

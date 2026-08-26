@@ -1,10 +1,19 @@
-import { Caption1, makeStyles, tokens } from "@fluentui/react-components";
+import {
+  Badge,
+  Caption1,
+  makeStyles,
+  tokens,
+} from "@fluentui/react-components";
 import {
   Settings16Regular,
   Cloud16Regular,
   Home16Regular,
   History16Regular,
   Warning16Regular,
+  AppsListRegular,
+  Database16Regular,
+  DocumentSearch16Regular,
+  People16Regular,
 } from "@fluentui/react-icons";
 import {
   MemoryRouter,
@@ -12,6 +21,7 @@ import {
   NavLink,
   Route,
   Routes,
+  useLocation,
   useNavigate,
 } from "react-router";
 import { useCallback, useEffect, useState } from "react";
@@ -19,7 +29,7 @@ import {
   DirtyStateDialog,
   useDirtyStateGuard,
 } from "../../components/DirtyStateGuard";
-import type { FrontendAdapter } from "../../lib/backend";
+import type { FrontendAdapter, OverviewSnapshot } from "../../lib/backend";
 import { SettingsPage } from "../../pages/settings/SettingsPage";
 import { HubsPage } from "../../pages/hubs/HubsPage";
 import { AuditPage } from "../../pages/audit/AuditPage";
@@ -61,6 +71,7 @@ const useStyles = makeStyles({
   brand: {
     display: "flex",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: tokens.spacingHorizontalS,
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalL}`,
     fontWeight: tokens.fontWeightSemibold,
@@ -110,7 +121,102 @@ const useStyles = makeStyles({
       padding: tokens.spacingVerticalL,
     },
   },
+  pageHeader: {
+    display: "flex",
+    alignItems: "center",
+    minHeight: "20px",
+    marginBottom: tokens.spacingVerticalM,
+  },
+  breadcrumb: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase300,
+  },
+  showcaseBadge: {
+    color: tokens.colorPaletteDarkOrangeForeground1,
+    border: `1px solid ${tokens.colorPaletteDarkOrangeBorderActive}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+    whiteSpace: "nowrap",
+  },
+  navCounts: {
+    display: "flex",
+    gap: tokens.spacingHorizontalXXS,
+    marginLeft: "auto",
+  },
+  navStatusError: {
+    padding: `0 ${tokens.spacingHorizontalL}`,
+    color: tokens.colorPaletteRedForeground1,
+  },
 });
+
+function breadcrumbForPath(pathname: string): {
+  group: string;
+  label: string;
+  route: string;
+} {
+  if (pathname.startsWith("/limits")) {
+    return { group: "利用状況", label: "利用上限・価値", route: "/limits" };
+  }
+  if (pathname === "/overview") {
+    return { group: "利用状況", label: "概要", route: "/overview" };
+  }
+  if (pathname === "/review") {
+    return { group: "確認・設定", label: "要確認", route: "/review" };
+  }
+  if (pathname === "/accounts") {
+    return {
+      group: "確認・設定",
+      label: "アカウント・関連付け",
+      route: "/accounts",
+    };
+  }
+  if (pathname === "/catalog") {
+    return {
+      group: "確認・設定",
+      label: "サービス・プラン",
+      route: "/catalog",
+    };
+  }
+  if (pathname === "/hubs") {
+    return { group: "収集・データ", label: "Hub・収集", route: "/hubs" };
+  }
+  if (pathname === "/evidence") {
+    return { group: "収集・データ", label: "観測と根拠", route: "/evidence" };
+  }
+  if (pathname === "/audit") {
+    return { group: "収集・データ", label: "監査記録", route: "/audit" };
+  }
+  if (pathname === "/data") {
+    return { group: "収集・データ", label: "データ管理", route: "/data" };
+  }
+  return { group: "設定", label: "表示設定", route: "/settings" };
+}
+
+function navigationHubCounts(snapshot: OverviewSnapshot): {
+  connectionFailures: number;
+  collectionFailures: number;
+  unsupportedContracts: number;
+} {
+  const hubs = snapshot.hubs.items ?? [];
+  const active = hubs.filter((hub) => hub.enabled);
+  return {
+    connectionFailures: active.filter(
+      (hub) =>
+        hub.connection.code !== "connected" &&
+        hub.connection.code !== "not_checked" &&
+        hub.connection.code !== "unsupported_contract",
+    ).length,
+    collectionFailures: active.filter(
+      (hub) => hub.lastCollection.code === "collection_failed",
+    ).length,
+    unsupportedContracts: active.filter(
+      (hub) => hub.connection.code === "unsupported_contract",
+    ).length,
+  };
+}
 
 function MainRoutes({
   backend,
@@ -141,14 +247,28 @@ function MainRoutes({
           <LimitsPage backend={backend} displayTimeZone={displayTimeZone} />
         }
       />
-      <Route path="/data" element={<DataManagementPage backend={backend} />} />
+      <Route
+        path="/data"
+        element={
+          <DataManagementPage
+            backend={backend}
+            displayTimeZone={displayTimeZone}
+          />
+        }
+      />
       <Route
         path="/settings"
         element={<SettingsPage onDirtyChange={setDirty} />}
       />
       <Route
         path="/hubs"
-        element={<HubsPage backend={backend} onDirtyChange={setDirty} />}
+        element={
+          <HubsPage
+            backend={backend}
+            onDirtyChange={setDirty}
+            displayTimeZone={displayTimeZone}
+          />
+        }
       />
       <Route
         path="/evidence"
@@ -170,7 +290,13 @@ function MainRoutes({
       />
       <Route
         path="/catalog"
-        element={<CatalogPage backend={backend} onDirtyChange={setDirty} />}
+        element={
+          <CatalogPage
+            backend={backend}
+            onDirtyChange={setDirty}
+            displayTimeZone={displayTimeZone}
+          />
+        }
       />
       <Route
         path="/accounts"
@@ -190,8 +316,12 @@ function MainRoutes({
 function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
   const styles = useStyles();
   const navigate = useNavigate();
+  const location = useLocation();
   const { settings } = useSettings();
   const [dirty, setDirty] = useState(false);
+  const [navigationStatus, setNavigationStatus] =
+    useState<OverviewSnapshot | null>(null);
+  const [navigationStatusError, setNavigationStatusError] = useState("");
   const guard = useDirtyStateGuard(backend, dirty);
   const guardedNavigate = useCallback(
     (path: string) => void guard.request("navigate", () => navigate(path)),
@@ -204,6 +334,35 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
       }),
     [backend, guardedNavigate],
   );
+  useEffect(() => {
+    let active = true;
+    const refreshNavigationStatus = () => {
+      void backend
+        .getOverview(false)
+        .then((value) => {
+          if (!active) return;
+          setNavigationStatus(value);
+          setNavigationStatusError("");
+        })
+        .catch(() => {
+          if (!active) return;
+          setNavigationStatus(null);
+          setNavigationStatusError("状態件数を取得できません");
+        });
+    };
+    refreshNavigationStatus();
+    const interval = window.setInterval(refreshNavigationStatus, 30_000);
+    window.addEventListener("focus", refreshNavigationStatus);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshNavigationStatus);
+    };
+  }, [backend, location.pathname]);
+  const breadcrumb = breadcrumbForPath(location.pathname);
+  const hubNavigationCounts = navigationStatus
+    ? navigationHubCounts(navigationStatus)
+    : null;
   return (
     <>
       <DirtyStateDialog guard={guard} />
@@ -212,7 +371,17 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           <div className={styles.brand}>
             <span className={styles.brandLogo} aria-hidden="true" />
             <span>Token Monitor</span>
+            {backend.isShowcase ? (
+              <Caption1 className={styles.showcaseBadge}>
+                サンプルデータ（モック Hub）
+              </Caption1>
+            ) : null}
           </div>
+          {navigationStatusError ? (
+            <Caption1 className={styles.navStatusError} role="status">
+              {navigationStatusError}
+            </Caption1>
+          ) : null}
           <Caption1 className={styles.navCategory}>利用状況</Caption1>
           <NavLink
             to="/overview"
@@ -241,7 +410,7 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
               }
             }}
           >
-            <span aria-hidden="true">◌</span>
+            <AppsListRegular aria-hidden="true" />
             <span>利用上限・価値</span>
           </NavLink>
           <Caption1 className={styles.navCategory}>確認・設定</Caption1>
@@ -259,6 +428,22 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <Warning16Regular aria-hidden="true" />
             <span>要確認</span>
+            {navigationStatus ? (
+              <span
+                className={styles.navCounts}
+                aria-label={`未解決 ${navigationStatus.review.actionItems.count}件、警告 ${navigationStatus.review.warnings.count}件、処理失敗 ${navigationStatus.review.recalculationFailures.count}件`}
+              >
+                <Badge size="small" color="warning" title="未解決">
+                  要{navigationStatus.review.actionItems.count}
+                </Badge>
+                <Badge size="small" color="severe" title="データ警告">
+                  警{navigationStatus.review.warnings.count}
+                </Badge>
+                <Badge size="small" color="danger" title="再計算失敗">
+                  失{navigationStatus.review.recalculationFailures.count}
+                </Badge>
+              </span>
+            ) : null}
           </NavLink>
           <NavLink
             to="/accounts"
@@ -272,7 +457,7 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
               }
             }}
           >
-            <span aria-hidden="true">◎</span>
+            <People16Regular aria-hidden="true" />
             <span>アカウント・関連付け</span>
           </NavLink>
           <NavLink
@@ -287,7 +472,7 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
               }
             }}
           >
-            <span aria-hidden="true">◈</span>
+            <AppsListRegular aria-hidden="true" />
             <span>サービス・プラン</span>
           </NavLink>
           <Caption1 className={styles.navCategory}>収集・データ</Caption1>
@@ -305,6 +490,22 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <Cloud16Regular aria-hidden="true" />
             <span>Hub・収集</span>
+            {hubNavigationCounts ? (
+              <span
+                className={styles.navCounts}
+                aria-label={`接続異常 ${hubNavigationCounts.connectionFailures}件、最終取得失敗 ${hubNavigationCounts.collectionFailures}件、未対応契約 ${hubNavigationCounts.unsupportedContracts}件`}
+              >
+                <Badge size="small" color="danger" title="接続異常">
+                  接{hubNavigationCounts.connectionFailures}
+                </Badge>
+                <Badge size="small" color="danger" title="最終取得失敗">
+                  取{hubNavigationCounts.collectionFailures}
+                </Badge>
+                <Badge size="small" color="warning" title="未対応契約">
+                  契{hubNavigationCounts.unsupportedContracts}
+                </Badge>
+              </span>
+            ) : null}
           </NavLink>
           <NavLink
             to="/evidence"
@@ -318,7 +519,7 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
               }
             }}
           >
-            <span aria-hidden="true">◎</span>
+            <DocumentSearch16Regular aria-hidden="true" />
             <span>観測と根拠</span>
           </NavLink>
           <NavLink
@@ -348,7 +549,7 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
               }
             }}
           >
-            <span aria-hidden="true">▣</span>
+            <Database16Regular aria-hidden="true" />
             <span>データ管理</span>
           </NavLink>
           <div className={styles.navBottom}>
@@ -370,6 +571,23 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           </div>
         </nav>
         <main className={styles.content} aria-label="メイン画面">
+          <header className={styles.pageHeader}>
+            <nav className={styles.breadcrumb} aria-label="パンくず">
+              <NavLink
+                to={breadcrumb.route}
+                onClick={(event) => {
+                  if (dirty) {
+                    event.preventDefault();
+                    guardedNavigate(breadcrumb.route);
+                  }
+                }}
+              >
+                {breadcrumb.group}
+              </NavLink>
+              <span aria-hidden="true">›</span>
+              <span aria-current="page">{breadcrumb.label}</span>
+            </nav>
+          </header>
           <MainRoutes
             backend={backend}
             setDirty={setDirty}

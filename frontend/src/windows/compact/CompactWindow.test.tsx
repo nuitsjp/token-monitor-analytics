@@ -174,6 +174,16 @@ afterEach(() => {
 });
 
 describe("CompactWindow", () => {
+  it("marks showcase data as mock Hub data", async () => {
+    renderCompact(
+      createFakeBackend({ isShowcase: true, overview: overview(false) }),
+    );
+
+    expect(
+      await screen.findByText("サンプルデータ（モック Hub）"),
+    ).toBeVisible();
+  });
+
   it("QL-UI-07 uses a dedicated dark error-counter fill with at least 4.5:1 white-text contrast", async () => {
     renderCompact(
       createFakeBackend({
@@ -209,6 +219,11 @@ describe("CompactWindow", () => {
     expect(root).toHaveAttribute("data-compact-expanded", "false");
     expect(await screen.findByText("Weekly 1")).toBeVisible();
     expect(screen.getByText("Weekly 2")).toBeVisible();
+    expect(await screen.findAllByText(/利用増加:.*10分前/)).toHaveLength(2);
+    expect(await screen.findAllByText(/最新観測:.*5分前/)).toHaveLength(2);
+    expect(screen.getByText("定期 1/1")).toBeVisible();
+    expect(screen.getByText("実行中 0")).toBeVisible();
+    expect(screen.getByText("異常 0")).toBeVisible();
     expect(screen.queryByText("Weekly 3")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "利用枠を展開" }));
 

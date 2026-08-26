@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { StatusBadge } from "../../components/StatusBadge";
+import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
   CatalogSnapshot,
   EstimationEvidenceSnapshot,
@@ -24,6 +25,7 @@ import type {
   LimitSeriesSnapshot,
   LimitSeriesDetailSnapshot,
 } from "../../lib/backend";
+import { cycleTypeLabel } from "../../lib/displayLabels";
 
 const useStyles = makeStyles({
   page: { display: "grid", gap: tokens.spacingVerticalL, maxWidth: "110rem" },
@@ -51,7 +53,7 @@ const useStyles = makeStyles({
   },
   row: {
     display: "grid",
-    gridTemplateColumns: "minmax(14rem, 2fr) repeat(4, minmax(8rem, 1fr)) auto",
+    gridTemplateColumns: "minmax(14rem, 2fr) repeat(5, minmax(8rem, 1fr)) auto",
     alignItems: "center",
     gap: tokens.spacingHorizontalM,
     padding: tokens.spacingVerticalM,
@@ -103,14 +105,32 @@ type DetailTab = "current" | "series" | "quality" | "history" | "evidence";
 function formatDate(value: string, timeZone: string): string {
   if (!value) return "—";
   try {
-    return new Intl.DateTimeFormat("ja-JP", {
-      dateStyle: "medium",
-      timeStyle: "medium",
-      timeZone,
-    }).format(new Date(value));
+    return formatOverviewInstant(value, timeZone);
   } catch {
     return value;
   }
+}
+
+function formatResetDate(value: string, timeZone: string): string {
+  if (!value) return "不明";
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) return "不明";
+  if (instant.getTime() <= Date.now()) return "経過済み";
+  return formatDate(value, timeZone);
+}
+
+function evidenceKindLabel(value: string): string {
+  return (
+    (
+      {
+        matched_observation: "対応する観測",
+        calculation_interval: "計算区間",
+        difference_row: "利用率と利用額の差分",
+        plan_history: "プラン履歴",
+        completeness: "活動主体の完全性",
+      } as Record<string, string>
+    )[value] ?? "計算根拠"
+  );
 }
 
 function FilterBar({
@@ -261,7 +281,8 @@ function SeriesRow({
       <div className={styles.cell}>
         <Body1>{item.logicalAccountName}</Body1>
         <Caption1 className={styles.muted}>
-          {item.serviceName} / {item.limitDefinitionName} / {item.cycleType}
+          {item.serviceName} / {item.limitDefinitionName} /{" "}
+          {cycleTypeLabel(item.cycleType)}
         </Caption1>
       </div>
       <div className={styles.cell}>
@@ -272,14 +293,18 @@ function SeriesRow({
       <div className={styles.cell}>
         <Caption1>最新利用率</Caption1>
         <Body1>
-          {item.usedPercentDetailLabel
-            ? `${item.usedPercentDetailLabel}%`
-            : "—"}
+          {item.usedPercentLabel ? `${item.usedPercentLabel}%` : "—"}
         </Body1>
       </div>
       <div className={styles.cell}>
         <Caption1>残り（%）</Caption1>
         <Body1>{item.remainingLabel || "—"}</Body1>
+      </div>
+      <div className={styles.cell}>
+        <Caption1>リセット</Caption1>
+        <Body1 title={item.resetAt ? `UTC ${item.resetAt}` : undefined}>
+          {formatResetDate(item.resetAt, displayTimeZone)}
+        </Body1>
       </div>
       <div className={styles.cell}>
         <Caption1>観測時刻</Caption1>
@@ -401,7 +426,14 @@ function SeriesTab({
             : "—"}
         </Body1>
         <Body1>
-          リセット: {formatDate(detail.series.resetAt, displayTimeZone)}
+          リセット:{" "}
+          <span
+            title={
+              detail.series.resetAt ? `UTC ${detail.series.resetAt}` : undefined
+            }
+          >
+            {formatResetDate(detail.series.resetAt, displayTimeZone)}
+          </span>
         </Body1>
         <Body1>
           観測: {formatDate(detail.series.latestObservationAt, displayTimeZone)}
@@ -488,13 +520,13 @@ function EvidenceRow({
   const styles = useStyles();
   return (
     <tr>
-      <td className={styles.td}>{evidence.kind}</td>
+      <td className={styles.td}>{evidenceKindLabel(evidence.kind)}</td>
       <td className={styles.td}>根拠を保持</td>
       <td className={styles.td}>
         {formatDate(evidence.observedAt, displayTimeZone)}
       </td>
       <td className={styles.td}>
-        <Link to={evidence.m08Route}>M08で確認</Link>
+        <Link to={evidence.m08Route}>観測と根拠で確認</Link>
       </td>
     </tr>
   );

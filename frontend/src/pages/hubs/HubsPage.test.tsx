@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HubSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { createFakeBackend } from "../../lib/backend";
@@ -36,11 +37,16 @@ const hub = (overrides: Partial<HubSnapshot> = {}): HubSnapshot => ({
   ...overrides,
 });
 
-function renderPage(backend: ReturnType<typeof createFakeBackend>) {
+function renderPage(
+  backend: ReturnType<typeof createFakeBackend>,
+  initialEntry = "/hubs",
+) {
   return render(
-    <main aria-label="メイン画面">
-      <HubsPage backend={backend} onDirtyChange={vi.fn()} />
-    </main>,
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <main aria-label="メイン画面">
+        <HubsPage backend={backend} onDirtyChange={vi.fn()} />
+      </main>
+    </MemoryRouter>,
   );
 }
 
@@ -66,6 +72,7 @@ async function fillForm(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  window.history.replaceState({}, "", "/");
 });
 
 beforeEach(() => {
@@ -174,7 +181,7 @@ describe("HubsPage", () => {
       expect(stopCollection).toHaveBeenCalledWith("hub-disable"),
     );
     expect(setHubEnabled).toHaveBeenCalledWith("hub-disable", false);
-    expect(await screen.findByText(/Hub: 無効/)).toBeVisible();
+    expect(await screen.findByLabelText("Hub: 無効")).toBeVisible();
   });
 
   it("allows manual collection while periodic collection is stopped", async () => {
@@ -191,6 +198,106 @@ describe("HubsPage", () => {
     expect(
       screen.getByRole("button", { name: "定期収集を開始" }),
     ).toBeEnabled();
+  });
+
+  it("shows collection schedule, latest results, API capability, and detailed history", async () => {
+    const backend = createFakeBackend({
+      hubs: [
+        hub({
+          apiContract: "schema=1; runtime=node-hub; usageUpdatedAt=false",
+        }),
+      ],
+      collectionAttempts: [
+        {
+          attemptId: "attempt-success",
+          hubId: "hub-1",
+          trigger: "manual",
+          state: "succeeded",
+          startedAt: "2026-08-26T00:04:59Z",
+          completedAt: "2026-08-26T00:05:00Z",
+          analyticsIntervalSeconds: 300,
+          healthHttpStatus: 200,
+          statsHttpStatus: 200,
+          apiContract: "schema=1; runtime=node-hub; usageUpdatedAt=false",
+          healthSnapshotId: "health-1",
+          statsSnapshotId: "stats-1",
+          failureCode: "",
+          failureDetail: "",
+          normalizationErrorPath: "",
+        },
+        {
+          attemptId: "attempt-failure",
+          hubId: "hub-1",
+          trigger: "scheduled",
+          state: "failed",
+          startedAt: "2026-08-25T23:59:59Z",
+          completedAt: "2026-08-26T00:00:00Z",
+          analyticsIntervalSeconds: 300,
+          healthHttpStatus: 200,
+          statsHttpStatus: 503,
+          apiContract: "schema=1; runtime=node-hub; usageUpdatedAt=false",
+          healthSnapshotId: "health-0",
+          statsSnapshotId: "",
+          failureCode: "stats_http_error",
+          failureDetail: "一時的に利用できません。",
+          normalizationErrorPath: "",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderPage(backend);
+
+    expect(await screen.findByText("収集間隔: 5分")).toBeVisible();
+    expect(screen.getByText(/次回予定: .*登録間隔から算出/)).toBeVisible();
+    expect(screen.getByText(/最終成功: 8\/26 0:05/)).toBeVisible();
+    expect(screen.getByText(/最終失敗: 8\/26 0:00/)).toBeVisible();
+    expect(
+      screen.getByText("対応 API 契約: スキーマ 1 / 実装 node-hub"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "収集能力: 利用枠・利用額に対応（利用額観測時刻は非対応）",
+      ),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "取得履歴" }));
+    expect(
+      await screen.findByText(/接続確認 HTTP: 200 \/ 統計 HTTP: 503/),
+    ).toBeVisible();
+    expect(screen.getAllByText(/統計 API の取得失敗/)[0]).toBeVisible();
+  });
+
+  it("keeps the Hub list usable when one history request fails", async () => {
+    const backend = createFakeBackend({
+      hubs: [hub(), hub({ id: "hub-2", displayName: "別 Hub" })],
+    });
+    vi.spyOn(backend, "getCollectionAttempts").mockImplementation(
+      async (hubID) => {
+        if (hubID === "hub-2") throw new Error("履歴取得失敗");
+        return [];
+      },
+    );
+
+    renderPage(backend);
+
+    expect(
+      await screen.findByRole("heading", { name: "既存 Hub" }),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "別 Hub" })).toBeVisible();
+    expect(screen.getByText(/別 Hub の取得履歴を読み込めません/)).toBeVisible();
+  });
+
+  it("opens and highlights the Hub selected by an audit link", async () => {
+    const backend = createFakeBackend({
+      hubs: [hub(), hub({ id: "hub-2", displayName: "対象 Hub" })],
+    });
+
+    renderPage(backend, "/hubs?hubId=hub-2");
+
+    expect(await screen.findByTestId("target-hub")).toHaveTextContent(
+      "対象 Hub",
+    );
+    expect(screen.getByLabelText("取得履歴")).toBeVisible();
   });
 
   it("displays a backend error when saving fails", async () => {

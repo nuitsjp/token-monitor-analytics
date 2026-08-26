@@ -55,6 +55,7 @@ const useStyles = makeStyles({
   header: {
     display: "flex",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: tokens.spacingHorizontalXS,
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS} ${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -66,6 +67,13 @@ const useStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground3,
   },
+  showcaseBadge: {
+    color: tokens.colorPaletteDarkOrangeForeground1,
+    border: `1px solid ${tokens.colorPaletteDarkOrangeBorderActive}`,
+    borderRadius: tokens.borderRadiusMedium,
+    padding: `0 ${tokens.spacingHorizontalXXS}`,
+    whiteSpace: "nowrap",
+  },
   visuallyHidden: {
     position: "absolute",
     width: "1px",
@@ -73,8 +81,17 @@ const useStyles = makeStyles({
     overflow: "hidden",
     clip: "rect(0 0 0 0)",
   },
-  headerStatus: { display: "flex", alignItems: "center", gap: 0 },
-  headerCount: { minWidth: 0, padding: `0 ${tokens.spacingHorizontalXS}` },
+  headerStatus: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXXS,
+  },
+  headerCount: {
+    minWidth: 0,
+    padding: `0 ${tokens.spacingHorizontalXXS}`,
+    fontSize: tokens.fontSizeBase200,
+  },
   iconActions: { display: "flex", gap: tokens.spacingHorizontalXXS },
   value: { fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" },
   limits: {
@@ -113,7 +130,7 @@ const useStyles = makeStyles({
   footer: {
     display: "flex",
     alignItems: "center",
-    flexWrap: "nowrap",
+    flexWrap: "wrap",
     gap: tokens.spacingHorizontalXS,
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -266,6 +283,11 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
         <div className={styles.layout}>
           <header className={styles.header}>
             <div className={styles.title}>Token Monitor</div>
+            {backend.isShowcase ? (
+              <Caption1 className={styles.showcaseBadge}>
+                サンプルデータ（モック Hub）
+              </Caption1>
+            ) : null}
             <Subtitle1
               as="h1"
               id="compact-title"
@@ -273,7 +295,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
             >
               運用状態
             </Subtitle1>
-            {snapshot && !snapshot.maintenance ? (
+            {snapshot ? (
               <div className={styles.headerStatus} aria-label="Hub 収集状態">
                 <Button
                   appearance="subtle"
@@ -283,8 +305,18 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   aria-label={`定期収集 ${snapshot?.hubs.scheduledCount ?? 0} / ${snapshot?.hubs.enabledCount ?? 0}、実行中 ${snapshot?.hubs.runningCount ?? 0} 件`}
                   onClick={() => openMainRoute("/hubs")}
                 >
-                  {snapshot?.hubs.scheduledCount ?? 0}/
+                  定期 {snapshot?.hubs.scheduledCount ?? 0}/
                   {snapshot?.hubs.enabledCount ?? 0}
+                </Button>
+                <Button
+                  appearance="subtle"
+                  size="small"
+                  className={styles.headerCount}
+                  icon={<ArrowSync16Regular />}
+                  aria-label={`実行中 ${snapshot?.hubs.runningCount ?? 0} 件`}
+                  onClick={() => openMainRoute("/hubs")}
+                >
+                  実行中 {snapshot?.hubs.runningCount ?? 0}
                 </Button>
                 <Button
                   appearance="subtle"
@@ -294,7 +326,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   aria-label={`異常 Hub ${snapshot?.hubs.abnormalCount ?? 0} 件`}
                   onClick={() => openMainRoute("/hubs")}
                 >
-                  {snapshot?.hubs.abnormalCount ?? 0}
+                  異常 {snapshot?.hubs.abnormalCount ?? 0}
                 </Button>
               </div>
             ) : null}
@@ -496,16 +528,22 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                             ? `${formatOverviewInstant(item.resetAt, settings.displayTimeZone)} リセット`
                             : item.reset.label}
                         </Caption1>
-                        {expanded ? (
-                          <>
-                            <Caption1 title={item.lastIncrease.occurredAt}>
-                              利用増加: {item.lastIncrease.ageLabel}
-                            </Caption1>
-                            <Caption1 title={item.freshness.observationAt}>
-                              最新観測: {item.freshness.ageLabel}
-                            </Caption1>
-                          </>
-                        ) : null}
+                        <Caption1 title={item.lastIncrease.occurredAt}>
+                          利用増加:{" "}
+                          {formatOverviewInstant(
+                            item.lastIncrease.occurredAt,
+                            settings.displayTimeZone,
+                          )}
+                          （{item.lastIncrease.ageLabel}）
+                        </Caption1>
+                        <Caption1 title={item.freshness.observationAt}>
+                          最新観測:{" "}
+                          {formatOverviewInstant(
+                            item.freshness.observationAt,
+                            settings.displayTimeZone,
+                          )}
+                          （{item.freshness.ageLabel}）
+                        </Caption1>
                       </article>
                     ))}
                   </section>
@@ -519,35 +557,39 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                     aria-label={`要確認 ${snapshot.review.actionItems.count} 件`}
                     onClick={() => openMainRoute("/review")}
                   >
-                    {snapshot.review.actionItems.count}
+                    要確認 {snapshot.review.actionItems.count} 件
                   </Button>
-                  {snapshot.review.warnings.count > 0 ? (
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      icon={<Warning16Regular />}
-                      aria-label={`警告 ${snapshot.review.warnings.count} 件`}
-                      onClick={() => openMainRoute("/review")}
-                    >
-                      {snapshot.review.warnings.count}
-                    </Button>
-                  ) : null}
-                  {snapshot.review.recalculationFailures.count > 0 ? (
-                    <Button
-                      size="small"
-                      appearance="subtle"
-                      className={styles.errorCounter}
-                      data-error-counter="true"
-                      style={
-                        dark
-                          ? { backgroundColor: "#8f1d22", color: "#ffffff" }
-                          : undefined
-                      }
-                      onClick={() => openMainRoute("/review")}
-                    >
-                      処理失敗 {snapshot.review.recalculationFailures.count} 件
-                    </Button>
-                  ) : null}
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    icon={<Warning16Regular />}
+                    aria-label={`警告 ${snapshot.review.warnings.count} 件`}
+                    onClick={() => openMainRoute("/review")}
+                  >
+                    警告 {snapshot.review.warnings.count} 件
+                  </Button>
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    className={
+                      snapshot.review.recalculationFailures.count > 0
+                        ? styles.errorCounter
+                        : undefined
+                    }
+                    data-error-counter={
+                      snapshot.review.recalculationFailures.count > 0
+                        ? "true"
+                        : undefined
+                    }
+                    style={
+                      dark && snapshot.review.recalculationFailures.count > 0
+                        ? { backgroundColor: "#8f1d22", color: "#ffffff" }
+                        : undefined
+                    }
+                    onClick={() => openMainRoute("/review")}
+                  >
+                    処理失敗 {snapshot.review.recalculationFailures.count} 件
+                  </Button>
                   <Button
                     appearance="subtle"
                     icon={

@@ -11,6 +11,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import type {
   AuditFilterInput,
   AuditPage as AuditPageResult,
@@ -310,11 +311,10 @@ function AuditRow({
         </time>
         <div className={styles.meta}>UTC: {item.occurredAt}</div>
       </td>
-      <td className={styles.cell}>{item.actor}</td>
-      <td className={styles.cell}>{item.action}</td>
+      <td className={styles.cell}>{auditActorLabel(item.actor)}</td>
+      <td className={styles.cell}>{auditActionLabel(item.action)}</td>
       <td className={styles.cell}>
-        <div>{item.entityType}</div>
-        <div className={styles.meta}>{item.entityId}</div>
+        <AuditTarget item={item} styles={styles} />
       </td>
       <td className={styles.cell}>
         <pre className={styles.json}>{formatJSON(item.beforeJson)}</pre>
@@ -324,6 +324,109 @@ function AuditRow({
       </td>
     </tr>
   );
+}
+
+function AuditTarget({
+  item,
+  styles,
+}: {
+  item: AuditRecord;
+  styles: ReturnType<typeof useStyles>;
+}) {
+  const target = auditTarget(item);
+  if (!target.to) return <div>{target.label}</div>;
+  return (
+    <Link to={target.to} aria-label={`${target.label}の詳細`}>
+      {target.label}の詳細
+      <div className={styles.meta}>対象の詳細を開く</div>
+    </Link>
+  );
+}
+
+type AuditTargetInfo = { label: string; to?: string };
+
+function auditActorLabel(actor: string): string {
+  const labels: Record<string, string> = {
+    user: "利用者",
+    system: "システム",
+    scheduler: "スケジューラ",
+  };
+  return labels[actor.toLocaleLowerCase()] ?? "操作者";
+}
+
+function auditActionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    credential_saved: "資格情報を保存",
+    credential_deleted: "資格情報を削除",
+    credential_reconfirmed: "資格情報を再確認",
+    hub_connection_succeeded: "Hub接続確認に成功",
+    hub_connection_failed: "Hub接続確認に失敗",
+    collection_succeeded: "収集に成功",
+    collection_failed: "収集に失敗",
+    collection_skipped: "収集をスキップ",
+    restore_succeeded: "復元に成功",
+    restore_failed: "復元に失敗",
+    purge_succeeded: "パージに成功",
+    purge_failed: "パージに失敗",
+    settings_updated: "表示設定を変更",
+    service_created: "サービスを登録",
+    plan_created: "プランを登録",
+    association_created: "関連付けを登録",
+    association_deleted: "関連付けを削除",
+    create: "登録",
+    update: "更新",
+    delete: "削除",
+    confirm: "確認",
+    reject: "却下",
+    release: "解除",
+    correct: "訂正",
+    split: "分割",
+  };
+  return labels[action] ?? "操作を記録";
+}
+
+function auditTarget(item: AuditRecord): AuditTargetInfo {
+  const type = item.entityType.toLocaleLowerCase();
+  const encodedID = encodeURIComponent(item.entityId);
+  if (type.includes("hub")) {
+    return { label: "Hub", to: `/hubs?hubId=${encodedID}` };
+  }
+  if (type.includes("observation") || type.includes("snapshot")) {
+    const parameter = type.includes("snapshot")
+      ? "snapshotId"
+      : "observationId";
+    return { label: "観測と根拠", to: `/evidence?${parameter}=${encodedID}` };
+  }
+  if (type.includes("account")) {
+    return { label: "アカウント", to: `/accounts?accountId=${encodedID}` };
+  }
+  if (
+    type.includes("service") ||
+    type.includes("plan") ||
+    type.includes("catalog")
+  ) {
+    return { label: "サービス・プラン", to: "/catalog" };
+  }
+  if (
+    type.includes("restore") ||
+    type.includes("purge") ||
+    type.includes("backup") ||
+    type.includes("data")
+  ) {
+    return { label: "データ管理", to: "/data" };
+  }
+  if (
+    type.includes("calculation") ||
+    type.includes("interval") ||
+    type.includes("estimation") ||
+    type.includes("series")
+  ) {
+    return { label: "利用枠系列", to: "/limits" };
+  }
+  if (type.includes("setting")) {
+    return { label: "表示設定", to: "/settings" };
+  }
+  return { label: "操作対象" };
 }
 
 function formatJSON(value: string): string {

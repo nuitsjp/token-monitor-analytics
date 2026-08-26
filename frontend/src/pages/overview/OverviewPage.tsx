@@ -18,7 +18,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { OverviewSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { StatusBadge } from "../../components/StatusBadge";
-import type { FrontendAdapter } from "../../lib/backend";
+import type {
+  DataManagementStateSnapshot,
+  FrontendAdapter,
+} from "../../lib/backend";
 import {
   formatOverviewBytes,
   formatOverviewInstant,
@@ -62,6 +65,14 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: tokens.spacingHorizontalS,
     alignItems: "center",
+  },
+  statusGroups: {
+    display: "grid",
+    gap: tokens.spacingVerticalS,
+  },
+  statusGroup: {
+    display: "grid",
+    gap: tokens.spacingVerticalXXS,
   },
   kpis: {
     display: "grid",
@@ -138,16 +149,64 @@ export function OverviewPage({
   const navigate = useNavigate();
   const heading = useRef<HTMLHeadingElement>(null);
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null);
+  const [dataManagement, setDataManagement] =
+    useState<DataManagementStateSnapshot | null>(null);
+  const [latestValidReferenceCount, setLatestValidReferenceCount] = useState<
+    number | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [auxiliaryError, setAuxiliaryError] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setAuxiliaryError("");
     try {
-      setSnapshot(await backend.getOverview(false));
+      const [overviewResult, dataManagementResult, limitSeriesResult] =
+        await Promise.allSettled([
+          backend.getOverview(false),
+          backend.getDataManagementState(),
+          backend.getLimitSeries({
+            serviceId: "",
+            status: "",
+            planVersionId: "",
+            limitDefinitionId: "",
+            sortBy: "status",
+            descending: false,
+          }),
+        ]);
+      if (overviewResult.status === "rejected") {
+        throw overviewResult.reason;
+      }
+      setSnapshot(overviewResult.value);
+      if (dataManagementResult.status === "fulfilled") {
+        setDataManagement(dataManagementResult.value);
+      } else {
+        setDataManagement(null);
+      }
+      if (limitSeriesResult.status === "fulfilled") {
+        setLatestValidReferenceCount(
+          limitSeriesResult.value.filter(
+            (item) => item.latestValidReference !== null,
+          ).length,
+        );
+      } else {
+        setLatestValidReferenceCount(null);
+      }
+      const unavailable = [
+        dataManagementResult.status === "rejected" ? "データ管理状態" : "",
+        limitSeriesResult.status === "rejected" ? "推定参照数" : "",
+      ].filter(Boolean);
+      if (unavailable.length > 0) {
+        setAuxiliaryError(
+          `${unavailable.join("・")}を読み込めませんでした。再試行してください。`,
+        );
+      }
     } catch {
       setError("概要を読み込めませんでした。");
       setSnapshot(null);
+      setDataManagement(null);
+      setLatestValidReferenceCount(null);
     } finally {
       setLoading(false);
     }
@@ -225,6 +284,8 @@ export function OverviewPage({
   const completed = checklist.filter((item) => item.status.code === "complete");
   const estimations = snapshot.estimation.states ?? [];
   const recentLimits = snapshot.recentLimits ?? [];
+  const backup = dataManagement?.backup;
+  const restoreTrial = dataManagement?.restore.trial;
   return (
     <div className={styles.page}>
       <header className={styles.intro}>
@@ -235,6 +296,17 @@ export function OverviewPage({
           {formatOverviewInstant(snapshot.generatedAt, displayTimeZone)} 更新
         </Caption1>
       </header>
+
+      {auxiliaryError ? (
+        <MessageBar intent="warning">
+          <MessageBarBody>
+            {auxiliaryError}
+            <Button appearance="transparent" onClick={() => void load()}>
+              再試行
+            </Button>
+          </MessageBarBody>
+        </MessageBar>
+      ) : null}
 
       {snapshot.recoveryNotice ? (
         <MessageBar
@@ -330,16 +402,22 @@ export function OverviewPage({
               styles={styles}
             />
           </div>
-          <div className={styles.statusList}>
-            {[
-              ...(snapshot.hubs.connectionStates ?? []),
-              ...(snapshot.hubs.currentCollectionStates ?? []),
-              ...(snapshot.hubs.lastCollectionStates ?? []),
-            ].map((item) => (
-              <span key={item.status.code}>
-                <StatusBadge status={item.status} /> {item.count}件
-              </span>
-            ))}
+          <div className={styles.statusGroups}>
+            <StatusGroup
+              label="接続状態"
+              items={snapshot.hubs.connectionStates ?? []}
+              styles={styles}
+            />
+            <StatusGroup
+              label="現在の実行状態"
+              items={snapshot.hubs.currentCollectionStates ?? []}
+              styles={styles}
+            />
+            <StatusGroup
+              label="最終取得結果"
+              items={snapshot.hubs.lastCollectionStates ?? []}
+              styles={styles}
+            />
           </div>
           <Caption1 title={snapshot.hubs.lastSuccessAt}>
             最終成功:{" "}
@@ -411,55 +489,113 @@ export function OverviewPage({
           </Button>
         </Card>
 
-        {estimations.length > 0 ? (
-          <Card className={styles.card}>
-            <CardHeader header={<Subtitle1 as="h2">推定状態</Subtitle1>} />
-            <div className={styles.statusList}>
-              {estimations.map((item) => (
+        <Card className={styles.card}>
+          <CardHeader header={<Subtitle1 as="h2">推定状態</Subtitle1>} />
+          <div className={styles.statusList}>
+            {estimations.length > 0 ? (
+              estimations.map((item) => (
                 <span key={item.status.code}>
                   <StatusBadge status={item.status} /> {item.count}件
                 </span>
-              ))}
-            </div>
-          </Card>
-        ) : null}
+              ))
+            ) : (
+              <Body1>推定対象 0件</Body1>
+            )}
+          </div>
+          <Body1>
+            非カレントの最新有効計算区間を参照中:{" "}
+            {latestValidReferenceCount === null
+              ? "取得不能"
+              : `${latestValidReferenceCount}件`}
+          </Body1>
+          <Button appearance="subtle" onClick={() => navigate("/limits")}>
+            利用上限・価値を開く
+          </Button>
+        </Card>
 
-        {snapshot.capacity.databaseSizeBytes > 0 ||
-        snapshot.capacity.rawSnapshotCount > 0 ? (
-          <Card className={styles.card}>
-            <CardHeader header={<Subtitle1 as="h2">保存データ</Subtitle1>} />
-            <div className={styles.kpis}>
-              <KPI
-                label="データベース"
-                value={formatOverviewBytes(snapshot.capacity.databaseSizeBytes)}
-                styles={styles}
-              />
-              <KPI
-                label="原 JSON"
-                value={`${snapshot.capacity.rawSnapshotCount} 件`}
-                styles={styles}
-              />
+        <Card className={styles.card}>
+          <CardHeader header={<Subtitle1 as="h2">保存データ</Subtitle1>} />
+          <div className={styles.kpis}>
+            <KPI
+              label="データベース"
+              value={formatOverviewBytes(snapshot.capacity.databaseSizeBytes)}
+              styles={styles}
+            />
+            <KPI
+              label="原 JSON"
+              value={`${snapshot.capacity.rawSnapshotCount} 件`}
+              styles={styles}
+            />
+          </div>
+          {snapshot.capacity.rawSnapshotCount > 0 ? (
+            <Caption1
+              title={`${snapshot.capacity.oldestSnapshotAt} – ${snapshot.capacity.latestSnapshotAt}`}
+            >
+              {formatOverviewInstant(
+                snapshot.capacity.oldestSnapshotAt,
+                displayTimeZone,
+              )}{" "}
+              ～{" "}
+              {formatOverviewInstant(
+                snapshot.capacity.latestSnapshotAt,
+                displayTimeZone,
+              )}
+            </Caption1>
+          ) : null}
+          {backup ? (
+            <div>
+              <Caption1>最新バックアップ</Caption1>
+              <Body1>
+                {operationStatusLabel(backup.status)}
+                {backup.artifact?.createdAt
+                  ? ` · ${formatOverviewInstant(backup.artifact.createdAt, displayTimeZone)}`
+                  : ""}
+              </Body1>
             </div>
-            {snapshot.capacity.rawSnapshotCount > 0 ? (
-              <Caption1
-                title={`${snapshot.capacity.oldestSnapshotAt} – ${snapshot.capacity.latestSnapshotAt}`}
-              >
-                {formatOverviewInstant(
-                  snapshot.capacity.oldestSnapshotAt,
-                  displayTimeZone,
-                )}{" "}
-                ～{" "}
-                {formatOverviewInstant(
-                  snapshot.capacity.latestSnapshotAt,
-                  displayTimeZone,
-                )}
-              </Caption1>
-            ) : null}
-          </Card>
-        ) : null}
+          ) : null}
+          {restoreTrial ? (
+            <div>
+              <Caption1>復元試行</Caption1>
+              <Body1>
+                {operationStatusLabel(restoreTrial.status)}
+                {restoreTrial.testedAt
+                  ? ` · ${formatOverviewInstant(restoreTrial.testedAt, displayTimeZone)}`
+                  : ""}
+              </Body1>
+            </div>
+          ) : null}
+          <Caption1>バックアップには資格情報を含みません。</Caption1>
+          <Button appearance="subtle" onClick={() => navigate("/data")}>
+            データ管理を開く
+          </Button>
+        </Card>
       </div>
     </div>
   );
+}
+
+function operationStatusLabel(status: string): string {
+  switch (status) {
+    case "success":
+    case "succeeded":
+      return "成功";
+    case "passed":
+      return "合格";
+    case "failed":
+      return "失敗";
+    case "creating":
+      return "作成中";
+    case "validating":
+      return "検証中";
+    case "running":
+      return "試験中";
+    case "not_run":
+      return "未実施";
+    case "cancelled":
+      return "キャンセル済み";
+    default:
+      return "状態不明";
+  }
 }
 
 function KPI({
@@ -490,6 +626,29 @@ function StatusKPI({
     <div className={styles.kpi}>
       <StatusBadge status={item.status} />
       <span className={styles.number}>{item.count} 件</span>
+    </div>
+  );
+}
+
+function StatusGroup({
+  label,
+  items,
+  styles,
+}: {
+  label: string;
+  items: NonNullable<OverviewSnapshot["hubs"]["connectionStates"]>;
+  styles: ReturnType<typeof useStyles>;
+}) {
+  return (
+    <div className={styles.statusGroup}>
+      <Caption1>{label}</Caption1>
+      <div className={styles.statusList}>
+        {items.map((item) => (
+          <span key={item.status.code}>
+            <StatusBadge status={item.status} /> {item.count}件
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

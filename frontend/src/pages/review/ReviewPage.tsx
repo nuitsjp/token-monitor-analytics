@@ -16,6 +16,9 @@ import {
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
+import type { StatusPresentationSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import { StatusBadge } from "../../components/StatusBadge";
+import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
   FrontendAdapter,
   HubSnapshot,
@@ -533,18 +536,14 @@ function ReviewItemCard({
         >
           {targetLabel(item)}
         </Button>
-        <span
-          className={`${styles.badge} ${warningKinds.has(item.kind) ? styles.warningBadge : ""}`}
-        >
-          {warningKinds.has(item.kind) ? "データ警告" : "要確認作業"}
-        </span>
+        <StatusBadge status={reviewCategoryStatus(item.kind)} />
       </div>
       <dl className={styles.grid}>
         <ReviewField styles={styles} label="種類">
           {kindLabel(item.kind)}
         </ReviewField>
         <ReviewField styles={styles} label="状態">
-          {stateLabel(item.state)}
+          <StatusBadge status={reviewStateStatus(item.state)} />
         </ReviewField>
         <ReviewField styles={styles} label="Hub">
           {hubLabel(item.hubId, hubs)}
@@ -563,7 +562,7 @@ function ReviewItemCard({
           {formatInstantPair(item.lastObservedAt, displayTimeZone)}
         </ReviewField>
         <ReviewField styles={styles} label="推定影響">
-          {impactLabel(item.impact)}
+          <StatusBadge status={reviewImpactStatus(item.impact)} />
         </ReviewField>
       </dl>
     </div>
@@ -611,7 +610,7 @@ function ReviewDetail({
           )}
         </ReviewField>
         <ReviewField styles={styles} label="推定除外理由">
-          {item.estimationExclusionReason || "なし"}
+          {userFacingReason(item.estimationExclusionReason)}
         </ReviewField>
         <ReviewField styles={styles} label="現在の関連付け">
           <CurrentAssociationDetails
@@ -713,33 +712,88 @@ function nonSecretDetails(item: ReviewItemSnapshot): string {
 }
 
 function kindLabel(value: string): string {
-  return kindOptions.find(([kind]) => kind === value)?.[1] ?? value;
-}
-
-function stateLabel(value: string): string {
   return (
-    (
-      {
-        unconfirmed: "未確認",
-        archived_reconfirmation: "アーカイブ後再確認",
-        missing: "欠落",
-        active: "有効",
-        conflict: "不整合",
-      } as Record<string, string>
-    )[value] ?? value
+    kindOptions.find(([kind]) => kind === value)?.[1] ?? "その他の確認項目"
   );
 }
 
-function impactLabel(value: string): string {
-  return (
-    (
-      {
-        current_calculation_impact: "カレント計算へ影響",
-        calculation_interval_impossible: "計算区間形成不能",
-        current_no_impact: "現在影響なし",
-      } as Record<string, string>
-    )[value] ?? value
+function reviewCategoryStatus(kind: string): StatusPresentationSnapshot {
+  return statusSnapshot(
+    kind,
+    warningKinds.has(kind) ? "データ警告" : "要確認作業",
+    warningKinds.has(kind) ? "warning" : "informative",
+    warningKinds.has(kind) ? "warning" : "info",
+    warningKinds.has(kind)
+      ? "データ内容の確認が必要です。"
+      : "関連設定の確認が必要です。",
   );
+}
+
+function reviewStateStatus(value: string): StatusPresentationSnapshot {
+  const statuses: Record<
+    string,
+    [
+      string,
+      StatusPresentationSnapshot["intent"],
+      StatusPresentationSnapshot["icon"],
+    ]
+  > = {
+    unconfirmed: ["未確認", "warning", "warning"],
+    archived_reconfirmation: ["アーカイブ後再確認", "warning", "warning"],
+    missing: ["欠落", "danger", "error"],
+    active: ["有効", "success", "checkmark"],
+    conflict: ["不整合", "danger", "error"],
+  };
+  const [label, intent, icon] = statuses[value] ?? [
+    "状態を確認",
+    "warning",
+    "warning",
+  ];
+  return statusSnapshot(value, label, intent, icon, "確認が必要な状態です。");
+}
+
+function reviewImpactStatus(value: string): StatusPresentationSnapshot {
+  const statuses: Record<
+    string,
+    [
+      string,
+      StatusPresentationSnapshot["intent"],
+      StatusPresentationSnapshot["icon"],
+    ]
+  > = {
+    current_calculation_impact: ["カレント計算へ影響", "danger", "error"],
+    calculation_interval_impossible: ["計算区間形成不能", "danger", "error"],
+    current_no_impact: ["現在影響なし", "success", "checkmark"],
+  };
+  const [label, intent, icon] = statuses[value] ?? [
+    "影響を確認",
+    "warning",
+    "warning",
+  ];
+  return statusSnapshot(value, label, intent, icon, "影響の確認が必要です。");
+}
+
+function statusSnapshot(
+  code: string,
+  label: string,
+  intent: StatusPresentationSnapshot["intent"],
+  icon: StatusPresentationSnapshot["icon"],
+  description: string,
+): StatusPresentationSnapshot {
+  return {
+    code,
+    label,
+    intent,
+    icon,
+    description,
+    nextAction: "",
+    nextRoute: "",
+  };
+}
+
+function userFacingReason(reason: string): string {
+  if (!reason) return "なし";
+  return reason.replace(/\bM0?8\b/gi, "計算確認画面");
 }
 
 function tabLabel(tab: ReviewTab): string {
@@ -757,7 +811,7 @@ function destinationFor(item: ReviewItemSnapshot): string {
 }
 
 function formatInstantPair(value: string, timeZone: string): string {
-  return value ? `${formatInstant(value, timeZone)} / UTC: ${value}` : "不明";
+  return value ? formatInstant(value, timeZone) : "不明";
 }
 
 function formatPeriod(start: string, end: string, timeZone: string): string {
@@ -767,17 +821,11 @@ function formatPeriod(start: string, end: string, timeZone: string): string {
 }
 
 function formatInstant(value: string, timeZone: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "日時不明";
-  return new Intl.DateTimeFormat("ja-JP", {
-    timeZone,
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(date);
+  try {
+    return formatOverviewInstant(value, timeZone);
+  } catch {
+    return "日時不明";
+  }
 }
 
 function toUTC(value: string): string {

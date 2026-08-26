@@ -155,6 +155,7 @@ export interface SettingsSnapshot {
   theme: ThemePreference;
   displayTimeZone: string;
   ianaTimeZones: readonly string[];
+  timezoneConfirmed: boolean;
   systemDark?: boolean;
 }
 
@@ -173,6 +174,7 @@ export type FrontendEventName =
 
 export interface FrontendAdapter {
   readonly canOpenMain: boolean;
+  readonly isShowcase: boolean;
   readonly initialSettings: SettingsSnapshot;
   getSettings(): Promise<SettingsSnapshot>;
   saveSettings(
@@ -329,6 +331,7 @@ export const defaultSettings: SettingsSnapshot = {
   theme: "system",
   displayTimeZone: "UTC",
   ianaTimeZones: ["UTC", "Asia/Tokyo", "America/Los_Angeles", "Europe/London"],
+  timezoneConfirmed: false,
   systemDark: false,
 };
 
@@ -347,13 +350,17 @@ function asSettings(
         ? theme
         : fallback.theme,
     displayTimeZone:
-      typeof displayTimeZone === "string" && displayTimeZone.length > 0
+      typeof displayTimeZone === "string"
         ? displayTimeZone
         : fallback.displayTimeZone,
     ianaTimeZones:
       Array.isArray(zones) && zones.every((zone) => typeof zone === "string")
         ? zones
         : fallback.ianaTimeZones,
+    timezoneConfirmed:
+      typeof record.timezoneConfirmed === "boolean"
+        ? record.timezoneConfirmed
+        : fallback.timezoneConfirmed,
     systemDark:
       typeof record.systemDark === "boolean"
         ? record.systemDark
@@ -367,6 +374,7 @@ function asPromise<T>(value: Promise<T> | T): Promise<T> {
 
 export interface FakeBackendOptions {
   canOpenMain?: boolean;
+  isShowcase?: boolean;
   settings?: Partial<SettingsSnapshot>;
   onOpenMain?: () => void;
   onOpenMainRoute?: (route: string) => void;
@@ -606,10 +614,14 @@ export function createFakeBackend(
   };
   const backend: FakeFrontendAdapter = {
     canOpenMain: options.canOpenMain ?? false,
+    isShowcase: options.isShowcase ?? false,
     initialSettings: settings,
     getSettings: async () => settings,
     saveSettings: async (next) => {
-      settings = asSettings({ ...settings, ...next }, settings);
+      settings = asSettings(
+        { ...settings, ...next, timezoneConfirmed: true },
+        settings,
+      );
       return settings;
     },
     OpenMain: async () => options.onOpenMain?.(),
@@ -1475,6 +1487,7 @@ export function createProductionBackend(
   const settings = createWailsSettingsAdapter(options.settingsService);
   return {
     canOpenMain: options.canOpenMain ?? false,
+    isShowcase: false,
     initialSettings: initial,
     getSettings: () =>
       asPromise(settings.getSettings()).then((value) =>

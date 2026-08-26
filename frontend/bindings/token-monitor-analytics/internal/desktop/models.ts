@@ -938,6 +938,7 @@ export interface SettingsSnapshot {
     "theme": string;
     "displayTimeZone": string;
     "ianaTimeZones": string[] | null;
+    "timezoneConfirmed": boolean;
     "systemDark": boolean;
 }
 
