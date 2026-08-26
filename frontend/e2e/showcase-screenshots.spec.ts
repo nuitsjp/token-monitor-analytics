@@ -67,7 +67,9 @@ test("captures populated showcase screens at their intended window sizes", async
   await captureCurrent(page, "T01-compact.png");
 
   await page.getByRole("button", { name: "利用枠を展開" }).click();
-  await expect(page.getByText("要確認 1 件")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "要確認 1 件" }),
+  ).toBeVisible();
   await page.setViewportSize({ width: 420, height: 600 });
   await captureCurrent(page, "T01-compact-expanded.png");
   await page.getByRole("button", { name: "プライバシーモード" }).click();

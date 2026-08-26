@@ -23,6 +23,23 @@ export function formatOverviewInstant(
   }).format(instant);
 }
 
+/**
+ * Splits a formatted instant into its date and time part so lists can align
+ * both in fixed columns (`docs/design-samples/t01-compact-adopted.html`).
+ */
+export function splitOverviewInstant(
+  value: string,
+  displayTimeZone: string,
+): { date: string; time: string } {
+  const formatted = formatOverviewInstant(value, displayTimeZone);
+  const separator = formatted.lastIndexOf(" ");
+  if (separator < 0) return { date: formatted, time: "" };
+  return {
+    date: formatted.slice(0, separator),
+    time: formatted.slice(separator + 1),
+  };
+}
+
 export function formatOverviewBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;

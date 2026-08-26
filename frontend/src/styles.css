@@ -1,8 +1,22 @@
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/inter-latin-wght-normal.woff2") format("woff2");
+}
+
 :root {
-  font-family:
-    "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+  --font-ui:
+    "Inter Variable", "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI",
+    Meiryo, sans-serif;
+  font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings:
+    "cv05" 1,
+    "ss03" 1;
 }
 
 * {
@@ -35,8 +49,7 @@ button,
 input,
 select,
 textarea {
-  font-family:
-    "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+  font-family: var(--font-ui);
 }
 
 @media (max-width: 720px) {

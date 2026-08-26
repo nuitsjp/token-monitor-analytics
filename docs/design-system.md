@@ -106,7 +106,7 @@ Fluent UI React v9 `webLightTheme` / `webDarkTheme` を基底とする。独自�
 
 ## 4. タイポグラフィ
 
-フォントは `"Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif`。数値には常に `font-variant-numeric: tabular-nums` を適用する。
+フォントは `"Inter Variable", "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif`（Inter Variable は SIL OFL でアプリに同梱し、和文はシステムフォントへフォールバックする）。数値には常に `font-variant-numeric: tabular-nums` を適用する。
 
 | 役割 | サイズ / 行高 / 太さ | Fluent 相当 |
 | --- | --- | --- |

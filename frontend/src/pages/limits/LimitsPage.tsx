@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { StatusBadge } from "../../components/StatusBadge";
+import { Gauge, KeyValue } from "../../components/design";
 import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
   CatalogSnapshot,
@@ -64,11 +65,30 @@ const useStyles = makeStyles({
     containIntrinsicSize: "0 88px",
     "@media (max-width: 70rem)": { gridTemplateColumns: "1fr 1fr" },
   },
+  rowHeader: {
+    display: "grid",
+    gridTemplateColumns: "minmax(14rem, 2fr) repeat(5, minmax(8rem, 1fr)) auto",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalM,
+    padding: `0 ${tokens.spacingHorizontalM}`,
+    color: tokens.colorNeutralForeground3,
+    "@media (max-width: 70rem)": { display: "none" },
+  },
   cell: {
     minWidth: 0,
     display: "grid",
     gap: tokens.spacingVerticalXXS,
     overflowWrap: "anywhere",
+  },
+  usageCell: {
+    minWidth: 0,
+    display: "grid",
+    gap: tokens.spacingVerticalXXS,
+    alignContent: "center",
+  },
+  numeric: {
+    fontVariantNumeric: "tabular-nums",
+    fontWeight: tokens.fontWeightSemibold,
   },
   muted: { color: tokens.colorNeutralForeground3 },
   status: { fontWeight: tokens.fontWeightSemibold },
@@ -286,32 +306,34 @@ function SeriesRow({
         </Caption1>
       </div>
       <div className={styles.cell}>
-        <Caption1>状態</Caption1>
         <StatusBadge status={item.state} />
-        <Caption1>{item.stateReason}</Caption1>
+        <Caption1 className={styles.muted}>{item.stateReason}</Caption1>
       </div>
-      <div className={styles.cell}>
-        <Caption1>最新利用率</Caption1>
-        <Body1>
+      <div className={styles.usageCell}>
+        <Body1 className={styles.numeric} title={item.usedPercentDetailLabel}>
           {item.usedPercentLabel ? `${item.usedPercentLabel}%` : "—"}
+        </Body1>
+        {item.usedPercent === null ? null : (
+          <Gauge
+            percent={item.usedPercent}
+            label={`利用率 ${item.usedPercentLabel}%`}
+          />
+        )}
+      </div>
+      <div className={styles.usageCell}>
+        <Body1 className={styles.numeric} title={item.remainingDetailLabel}>
+          {item.remainingLabel || "—"}
         </Body1>
       </div>
       <div className={styles.cell}>
-        <Caption1>残り（%）</Caption1>
-        <Body1>{item.remainingLabel || "—"}</Body1>
-      </div>
-      <div className={styles.cell}>
-        <Caption1>リセット</Caption1>
         <Body1 title={item.resetAt ? `UTC ${item.resetAt}` : undefined}>
           {formatResetDate(item.resetAt, displayTimeZone)}
         </Body1>
       </div>
       <div className={styles.cell}>
-        <Caption1>観測時刻</Caption1>
         <Body1>{formatDate(item.latestObservationAt, displayTimeZone)}</Body1>
       </div>
       <div className={styles.cell}>
-        <Caption1>系列</Caption1>
         <Body1>
           {item.seriesState === "normal"
             ? "正常"
@@ -354,6 +376,15 @@ function SeriesList({
           key={`${group[0].planVersionId}|${group[0].limitDefinitionId}`}
         >
           <GroupHeader item={group[0]} displayTimeZone={displayTimeZone} />
+          <div className={styles.rowHeader} aria-hidden="true">
+            <Caption1>利用枠</Caption1>
+            <Caption1>状態</Caption1>
+            <Caption1>最新利用率</Caption1>
+            <Caption1>残り</Caption1>
+            <Caption1>リセット</Caption1>
+            <Caption1>観測時刻</Caption1>
+            <Caption1>系列</Caption1>
+          </div>
           {group.map((item) => (
             <SeriesRow
               item={item}
@@ -408,9 +439,8 @@ function SeriesTab({
   return (
     <div className={styles.detailGrid}>
       <div className={styles.card}>
-        <Caption1>利用枠系列</Caption1>
+        <Caption1>系列状態</Caption1>
         <Body1>
-          系列状態:{" "}
           {detail.series.seriesState === "normal"
             ? "正常"
             : detail.series.seriesState === "inconsistent"
@@ -420,24 +450,20 @@ function SeriesTab({
       </div>
       <div className={styles.card}>
         <Caption1>利用率</Caption1>
-        <Body1>
+        <Body1 className={styles.numeric}>
           {detail.series.usedPercentDetailLabel
             ? `${detail.series.usedPercentDetailLabel}%`
             : "—"}
         </Body1>
-        <Body1>
-          リセット:{" "}
-          <span
-            title={
-              detail.series.resetAt ? `UTC ${detail.series.resetAt}` : undefined
-            }
-          >
-            {formatResetDate(detail.series.resetAt, displayTimeZone)}
-          </span>
-        </Body1>
-        <Body1>
-          観測: {formatDate(detail.series.latestObservationAt, displayTimeZone)}
-        </Body1>
+        <KeyValue
+          label="リセット"
+          title={detail.series.resetAt ? `UTC ${detail.series.resetAt}` : ""}
+        >
+          {formatResetDate(detail.series.resetAt, displayTimeZone)}
+        </KeyValue>
+        <KeyValue label="観測">
+          {formatDate(detail.series.latestObservationAt, displayTimeZone)}
+        </KeyValue>
       </div>
     </div>
   );
