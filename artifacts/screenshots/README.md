@@ -3,6 +3,15 @@
 このページの全 38 枚は、実 Hub ではなく組み込みのモック Hub が返すサンプルデータで生成しています。
 再生成コマンドは `mise run mock:screenshots` です。
 
+## T01 コンパクトウィンドウ 採用案（静的 HTML）
+
+上段は案B（Today / This month を 1 行ずつ、トークンと金額を同じ行に）、リストは案A（枠名＋残量 % → フル幅ゲージ → リセット日時）。
+金額は USD、月次トークンは 10 億単位（B）。Today / This month / Reset は英語表記で、リセットの日付・時刻は固定列＋等幅数字で桁を揃えています。
+本文フォントは Inter Variable（OFL、`docs/design-samples/fonts/`）。
+元ファイルは `docs/design-samples/t01-compact-adopted.html`（未実装のたたき台）。
+
+![T01 採用案](./T01-adopted.png)
+
 ## T01 コンパクトウィンドウ デザイン案（静的 HTML）
 
 上段に日次／月次の利用トークンと利用金額、下段に利用枠を縦方向へ 4 件以上並べた 3 案です。

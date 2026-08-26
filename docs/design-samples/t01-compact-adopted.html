@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T01 コンパクトウィンドウ 採用案 — Token Monitor Analytics</title>
+<link rel="stylesheet" href="tokens.css">
+<!--
+  T01（コンパクトウィンドウ）の採用案。
+  ・上段＝案B（Today / This month をそれぞれ 1 行にまとめ、トークンと金額を同じ行へ）
+  ・下段＝案A（枠名＋残量 % → フル幅ゲージ → リセット日時 の 3 段組リスト）
+  ・金額は USD、月次トークンは 10 億単位（B）で表記
+  ・Today / This month / Reset は英語表記
+  ・リセットの日付・時刻は等幅数字＋固定列で横位置を揃える
+  ・本文は Inter Variable（OFL / fonts/Inter-LICENSE.txt）、日本語はシステムフォントへフォールバック
+-->
+<style>
+@font-face{
+  font-family:"Inter Variable";
+  font-style:normal;
+  font-weight:100 900;
+  font-display:swap;
+  src:url("fonts/inter-latin-wght-normal.woff2") format("woff2");
+}
+:root{
+  --font-ui:"Inter Variable","Segoe UI Variable Text","Segoe UI","Yu Gothic UI",Meiryo,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg3);color:var(--fg1);font-family:var(--font-ui);font-size:14px;line-height:1.43;
+  -webkit-font-smoothing:antialiased;font-feature-settings:"cv05" 1,"ss03" 1}
+.page{max-width:1400px;margin:0 auto;padding:24px}
+.page-h h1{font-size:20px;line-height:28px;margin:0 0 4px;font-weight:650;letter-spacing:-.01em}
+.page-note{color:var(--fg3);margin:0 0 24px;max-width:760px}
+.row{display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start}
+.mock>h2{font-size:14px;color:var(--fg3);font-weight:600;margin:0 0 4px}
+.mock>p{font-size:12px;color:var(--fg3);margin:0 0 10px;max-width:360px}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+.sm{font-size:12px;line-height:16px}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"cv05" 1}
+.ic{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.ic-s{width:14px;height:14px}
+button{font:inherit;font-weight:600;border:1px solid var(--stroke1);background:var(--bg1);
+  border-radius:var(--rM);height:32px;padding:0 12px;cursor:pointer;color:var(--fg1)}
+button:hover{background:var(--hover)}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;background:none;border-radius:var(--rM);color:var(--fg3)}
+.icon-btn:hover{background:var(--hover);color:var(--fg1)}
+.count{display:inline-flex;align-items:center;gap:4px;font-weight:600;cursor:pointer;border:none;background:none;padding:2px 6px;border-radius:var(--rM);font-size:13px}
+.count:hover{background:var(--hover)}
+.c-err{color:var(--err-fg)} .c-warn{color:var(--warn-fg)}
+
+/* ---------- シェル ---------- */
+.t01{width:360px;background:var(--bg2);border:1px solid var(--stroke1);border-radius:var(--rXL);box-shadow:var(--shadow28);overflow:hidden;display:flex;flex-direction:column}
+.t01 .tb{display:flex;align-items:center;gap:6px;padding:6px 6px 6px 12px}
+.t01 .tb .name{font-weight:600;font-size:12px;color:var(--fg3);flex:1;letter-spacing:.01em}
+.t01 .meta{display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:11px;color:var(--fg3);background:var(--bg1);border-bottom:1px solid var(--stroke2)}
+.t01 .meta .sp{flex:1}
+.t01 .meta .wchip{display:inline-flex;align-items:center;gap:3px;color:var(--warn-fg);font-weight:600;cursor:pointer}
+.t01 .frames{padding:6px 8px;display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow:auto}
+.t01 .ft{display:flex;align-items:center;gap:4px;padding:6px 10px;border-top:1px solid var(--stroke2);background:var(--bg1)}
+.t01 .ft .sp{flex:1}
+.t01 .ft .upd{font-size:10px;color:var(--fg3)}
+.more{display:flex;justify-content:center;padding:0}
+
+/* ---------- 上段 KPI（案B） ---------- */
+.kpi{background:var(--bg1);border-block:1px solid var(--stroke2)}
+.kpi>a{display:grid;grid-template-columns:66px 1fr auto;align-items:baseline;column-gap:10px;
+  padding:9px 14px;color:inherit;text-decoration:none}
+.kpi>a+a{border-top:1px solid var(--stroke2)}
+.kpi>a:hover{background:var(--hover);text-decoration:none}
+.kpi .lb{font-size:11px;line-height:16px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg3)}
+.kpi .v{font-size:19px;line-height:25px;font-weight:620;letter-spacing:-.02em}
+.kpi .u{font-size:10.5px;font-weight:450;color:var(--fg3);margin-left:4px;letter-spacing:0}
+.kpi .c{font-size:16px;line-height:25px;font-weight:600;color:var(--fg2);letter-spacing:-.01em}
+
+/* ---------- 利用枠リスト（案A） ---------- */
+.qrow{display:block;padding:6px 8px;border-radius:var(--rM);cursor:pointer;color:inherit;text-decoration:none}
+.qrow:hover{background:var(--bg4);text-decoration:none}
+.qrow .l1{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.qrow .nm{font-size:13.5px;font-weight:600;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qrow .nm .svc{color:var(--fg1)} .qrow .nm .ctx{color:var(--fg3);font-weight:450;font-size:12px}
+.qrow .pct{font-size:14.5px;font-weight:680;letter-spacing:-.02em;flex:none}
+.qbar{height:4px;border-radius:var(--pill);background:var(--bg6);overflow:hidden;margin:6px 0 5px}
+.qbar>i{display:block;height:100%;border-radius:var(--pill)}
+/* リセット行：ラベル・日付・時刻を固定列にして全行で横位置を揃える */
+.rst{display:grid;grid-template-columns:38px 40px 40px;column-gap:8px;font-size:11px;line-height:15px;color:var(--fg3)}
+.rst .rl{font-weight:600;letter-spacing:.03em;text-transform:uppercase}
+.rst .rd{text-align:right}
+.rst .rt{text-align:right}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M7.14 2.6a1 1 0 0 1 1.72 0l5.55 9.9A1 1 0 0 1 13.55 14H2.45a1 1 0 0 1-.86-1.5l5.55-9.9Z"/><path d="M8 6.2v3.1"/><path d="M8 11.6v.05"/></symbol>
+  <symbol id="i-err" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.8v3.6"/><path d="M8 10.9v.05"/></symbol>
+  <symbol id="i-sync" viewBox="0 0 16 16"><path d="M13.2 8A5.2 5.2 0 1 1 11 3.8"/><path d="M11.4 1.6v2.5H8.9"/></symbol>
+  <symbol id="i-open" viewBox="0 0 16 16"><path d="M9.5 2.5h4v4"/><path d="M13.3 2.7 7.8 8.2"/><path d="M11 9.5V12a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 3 12V7a1.5 1.5 0 0 1 1.5-1.5H7"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.8 8s2.3-4.1 6.2-4.1S14.2 8 14.2 8s-2.3 4.1-6.2 4.1S1.8 8 1.8 8Z"/><circle cx="8" cy="8" r="1.8"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 16 16"><path d="M3.8 6 8 10.4 12.2 6"/></symbol>
+</svg>
+
+<div class="page">
+  <div class="page-h"><h1>T01 コンパクトウィンドウ 採用案</h1></div>
+  <p class="page-note">上段は案B（Today / This month を 1 行ずつ、トークンと金額を同じ行に）、リストは案A（枠名＋残量 % → フル幅ゲージ → リセット日時）。金額は USD、月次トークンは 10 億単位（B）。Today / This month / Reset は英語表記で、リセットの日付・時刻は固定列＋等幅数字で全行の横位置を揃えています。本文フォントは Inter Variable。</p>
+
+  <div class="row">
+    <div class="mock">
+      <h2>採用案　上段=B / リスト=A</h2>
+      <p>360×600px。利用枠は 5 件表示＋展開ボタン。</p>
+      <div class="t01" style="height:600px">
+        <div class="tb">
+          <span class="name">Token Monitor</span>
+          <button class="count" aria-label="定期収集が有効な Hub 3/4・実行中 0"><svg class="ic ic-s"><use href="#i-sync"/></svg><span class="num sm">3/4</span></button>
+          <button class="count c-err" aria-label="Hub 異常 1件。該当 Hub を開く"><svg class="ic ic-s"><use href="#i-err"/></svg><span class="sm">1</span></button>
+          <button class="icon-btn" aria-label="メイン画面を開く"><svg class="ic"><use href="#i-open"/></svg></button>
+          <button class="icon-btn" aria-label="プライバシーモードをオンにする" aria-pressed="false"><svg class="ic"><use href="#i-eye"/></svg></button>
+          <button class="icon-btn" aria-label="終了（定期収集も停止）"><svg class="ic"><use href="#i-x"/></svg></button>
+        </div>
+        <div class="kpi">
+          <a href="#usage-today" aria-label="今日の利用トークン 1,234,567、利用金額 18.42 ドル。利用実績を開く">
+            <span class="lb">Today</span>
+            <span class="v num">1,234,567<span class="u">tokens</span></span>
+            <span class="c num">$18.42</span>
+          </a>
+          <a href="#usage-month" aria-label="今月の利用トークン 18.23 ビリオン、利用金額 274.10 ドル。利用実績を開く">
+            <span class="lb">This month</span>
+            <span class="v num">18.23<span class="u">B tokens</span></span>
+            <span class="c num">$274.10</span>
+          </a>
+        </div>
+        <div class="meta">
+          <a class="wchip" href="#history" aria-label="対象期間に取得失敗 1件。取得履歴を開く"><svg class="ic ic-s"><use href="#i-warn"/></svg>取得失敗 1</a>
+          <span class="sp"></span>
+          <span aria-label="Hub 最終成功 5分前から8日前。未観測 1">9:05 更新</span>
+        </div>
+        <div class="frames">
+          <a class="qrow" href="#q1" aria-label="Codex 個人 Weekly の利用枠詳細を開く。残り 38.2%、8月27日 14時00分リセット">
+            <div class="l1"><span class="nm"><span class="svc">Codex</span> <span class="ctx">個人・Weekly</span></span><span class="pct num" style="color:var(--amber-fg)">38.2%</span></div>
+            <div class="qbar" role="img" aria-label="Codex 残り 38.2%"><i style="width:38.2%;background:var(--amber)"></i></div>
+            <div class="rst"><span class="rl">Reset</span><span class="rd num">8/27</span><span class="rt num">14:00</span></div>
+          </a>
+          <a class="qrow" href="#q2" aria-label="Claude Code 仕事 Weekly の利用枠詳細を開く。残り 64.0%、8月30日 9時00分リセット">
+            <div class="l1"><span class="nm"><span class="svc">Claude Code</span> <span class="ctx">仕事・Weekly</span></span><span class="pct num" style="color:var(--ok-fg)">64.0%</span></div>
+            <div class="qbar" role="img" aria-label="Claude Code 残り 64.0%"><i style="width:64%;background:var(--ok)"></i></div>
+            <div class="rst"><span class="rl">Reset</span><span class="rd num">8/30</span><span class="rt num">9:00</span></div>
+          </a>
+          <a class="qrow" href="#q3" aria-label="Copilot 個人 Monthly の利用枠詳細を開く。残り 8.5%、9月1日 0時00分リセット">
+            <div class="l1"><span class="nm"><span class="svc">Copilot</span> <span class="ctx">個人・Monthly</span></span><span class="pct num" style="color:var(--err-fg)">8.5%</span></div>
+            <div class="qbar" role="img" aria-label="Copilot 残り 8.5%"><i style="width:8.5%;background:var(--err)"></i></div>
+            <div class="rst"><span class="rl">Reset</span><span class="rd num">9/1</span><span class="rt num">0:00</span></div>
+          </a>
+          <a class="qrow" href="#q4" aria-label="Gemini 仕事 Daily の利用枠詳細を開く。残り 91.4%、8月27日 0時00分リセット">
+            <div class="l1"><span class="nm"><span class="svc">Gemini</span> <span class="ctx">仕事・Daily</span></span><span class="pct num" style="color:var(--ok-fg)">91.4%</span></div>
+            <div class="qbar" role="img" aria-label="Gemini 残り 91.4%"><i style="width:91.4%;background:var(--ok)"></i></div>
+            <div class="rst"><span class="rl">Reset</span><span class="rd num">8/27</span><span class="rt num">0:00</span></div>
+          </a>
+          <a class="qrow" href="#q5" aria-label="Codex 仕事 5h の利用枠詳細を開く。残り 27.0%、8月26日 13時00分リセット">
+            <div class="l1"><span class="nm"><span class="svc">Codex</span> <span class="ctx">仕事・5h</span></span><span class="pct num" style="color:var(--amber-fg)">27.0%</span></div>
+            <div class="qbar" role="img" aria-label="Codex 残り 27.0%"><i style="width:27%;background:var(--amber)"></i></div>
+            <div class="rst"><span class="rl">Reset</span><span class="rd num">8/26</span><span class="rt num">13:00</span></div>
+          </a>
+          <div class="more"><button class="icon-btn" aria-label="展開してさらに表示"><svg class="ic"><use href="#i-chev-d"/></svg></button></div>
+        </div>
+        <div class="ft">
+          <button class="count c-err" aria-label="要確認 3件"><svg class="ic"><use href="#i-err"/></svg>3</button>
+          <button class="count c-warn" aria-label="データ警告 1件"><svg class="ic"><use href="#i-warn"/></svg>1</button>
+          <span class="sp"></span>
+          <span class="upd num">9:05</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
