@@ -1,0 +1,42 @@
+version: "2"
+
+run:
+  build-tags:
+    - production
+  timeout: 10m
+
+linters:
+  default: none
+  enable:
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - depguard
+    - durationcheck
+    - errcheck
+    - errorlint
+    - exhaustive
+    - govet
+    - ineffassign
+    - nilerr
+    - noctx
+    - nolintlint
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+  settings:
+    depguard:
+      rules:
+        repository-boundary:
+          list-mode: lax
+          deny:
+            - pkg: token-monitor-analytics/poc
+              desc: production code must not import the proof of concept
+    exhaustive:
+      default-signifies-exhaustive: true
+  exclusions:
+    generated: strict
+    paths:
+      - ^poc/
+      - ^frontend/

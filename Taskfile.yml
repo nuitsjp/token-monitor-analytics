@@ -24,10 +24,9 @@ tasks:
       - wails3 generate bindings -clean=true -ts -i
 
   generate:check:
-    summary: Regenerates committed code and rejects differences
+    summary: Compares committed generated code without changing the worktree
     cmds:
-      - task: generate
-      - git diff --exit-code -- internal/adapter/sqlite/sqlcgen frontend/bindings
+      - powershell -NoProfile -File scripts/check-generation.ps1
 
   fmt:
     summary: Formats Go and frontend sources
@@ -44,9 +43,34 @@ tasks:
   lint:
     summary: Runs Go and frontend static analysis
     cmds:
-      - go vet . ./internal/...
-      - staticcheck . ./internal/...
-      - npm --prefix frontend run lint
+      - golangci-lint run . ./internal/... ./tests/...
+      - npm --prefix frontend run typecheck
+      - npm --prefix frontend run lint -- --max-warnings=0 --report-unused-disable-directives
+      - powershell -NoProfile -File scripts/check-powershell.ps1
+
+  policy:check:
+    summary: Checks repository-specific architecture, traceability, design, SQL, and dependency policies
+    cmds:
+      - task: requirements:check
+      - task: screens:check
+      - go test ./tests/policy/... ./tests/traceability/...
+      - powershell -NoProfile -File scripts/check-package-versions.ps1
+      - powershell -NoProfile -File scripts/check-diff.ps1
+      - go mod tidy -diff
+      - go mod verify
+      - sqlc compile
+      - sqlc vet
+      - sqlc diff
+
+  security:check:
+    summary: Runs blocking vulnerability and secret checks
+    cmds:
+      - powershell -NoProfile -File scripts/check-security.ps1
+
+  security:advisory:
+    summary: Records reviewed advisory security findings
+    cmds:
+      - powershell -NoProfile -File scripts/check-gosec-advisory.ps1
 
   test:go:
     summary: Runs application, desktop, domain, and use case tests
@@ -117,10 +141,10 @@ tasks:
   verify:
     summary: Runs generation, formatting, lint, tests, and Windows build
     cmds:
-      - task: requirements:check
-      - task: screens:check
+      - task: policy:check
       - task: generate:check
       - task: fmt:check
       - task: lint
+      - task: security:check
       - task: test
       - task: build

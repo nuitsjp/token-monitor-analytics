@@ -32,7 +32,7 @@ func TestInsertObservationsRollsBackBothKindsTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := database.QueryRow(`SELECT count(*) FROM usage_cost_observations`).Scan(&count); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM usage_cost_observations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
@@ -92,11 +92,11 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	database, _ := lifecycle.DB()
-	rows, err := database.Query(`SELECT hub_id, dedupe_state FROM usage_cost_observations ORDER BY hub_id`)
+	rows, err := database.QueryContext(context.Background(), `SELECT hub_id, dedupe_state FROM usage_cost_observations ORDER BY hub_id`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	count := 0
 	for rows.Next() {
 		var hubID, state string
@@ -107,6 +107,9 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 			t.Fatalf("state = %s, want canonical", state)
 		}
 		count++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	t.Run("DM-OBS-03 dedupe never crosses Hub boundaries", func(t *testing.T) {
 		if count != 2 {
@@ -120,10 +123,10 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 	}
 	t.Run("DM-OBS-01 repeated identical cost observation keeps one canonical value", func(t *testing.T) {
 		var canonical, duplicateState int
-		if err := database.QueryRow(`SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'canonical'`, duplicate.HubID, duplicate.DedupeKey).Scan(&canonical); err != nil {
+		if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'canonical'`, duplicate.HubID, duplicate.DedupeKey).Scan(&canonical); err != nil {
 			t.Fatal(err)
 		}
-		if err := database.QueryRow(`SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'duplicate'`, duplicate.HubID, duplicate.DedupeKey).Scan(&duplicateState); err != nil {
+		if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'duplicate'`, duplicate.HubID, duplicate.DedupeKey).Scan(&duplicateState); err != nil {
 			t.Fatal(err)
 		}
 		if canonical != 1 || duplicateState != 1 {
@@ -139,7 +142,7 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 	}
 	t.Run("API-COST-06 conflicting value at one usage timestamp is unusable", func(t *testing.T) {
 		var states int
-		if err := database.QueryRow(`SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'conflict'`, conflict.HubID, conflict.DedupeKey).Scan(&states); err != nil {
+		if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'conflict'`, conflict.HubID, conflict.DedupeKey).Scan(&states); err != nil {
 			t.Fatal(err)
 		}
 		if states != 3 {
@@ -148,7 +151,7 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 	})
 	t.Run("DM-OBS-02 conflicting cost observations are marked conflict", func(t *testing.T) {
 		var state string
-		if err := database.QueryRow(`SELECT dedupe_state FROM usage_cost_observations WHERE observation_id = ?`, conflict.ObservationID).Scan(&state); err != nil {
+		if err := database.QueryRowContext(t.Context(), `SELECT dedupe_state FROM usage_cost_observations WHERE observation_id = ?`, conflict.ObservationID).Scan(&state); err != nil {
 			t.Fatal(err)
 		}
 		if state != "conflict" {

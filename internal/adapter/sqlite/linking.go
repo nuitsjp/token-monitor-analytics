@@ -151,7 +151,7 @@ func (l *Lifecycle) EnsureUsageLimitSource(ctx context.Context, source UsageLimi
 	return result, nil
 }
 
-func (l *Lifecycle) ListUsageCostSources(ctx context.Context, hubID string) ([]UsageCostSource, error) {
+func (l *Lifecycle) ListUsageCostSources(ctx context.Context, hubID string) (result []UsageCostSource, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -167,8 +167,12 @@ func (l *Lifecycle) ListUsageCostSources(ctx context.Context, hubID string) ([]U
 	if err != nil {
 		return nil, fmt.Errorf("list usage cost sources: %w", err)
 	}
-	defer rows.Close()
-	result := make([]UsageCostSource, 0)
+	result = make([]UsageCostSource, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close usage cost source rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var source UsageCostSource
 		if err := scanUsageCostSource(rows, &source); err != nil {
@@ -182,7 +186,7 @@ func (l *Lifecycle) ListUsageCostSources(ctx context.Context, hubID string) ([]U
 	return result, nil
 }
 
-func (l *Lifecycle) ListUsageLimitSources(ctx context.Context, hubID string) ([]UsageLimitSource, error) {
+func (l *Lifecycle) ListUsageLimitSources(ctx context.Context, hubID string) (result []UsageLimitSource, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -198,8 +202,12 @@ func (l *Lifecycle) ListUsageLimitSources(ctx context.Context, hubID string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("list usage limit sources: %w", err)
 	}
-	defer rows.Close()
-	result := make([]UsageLimitSource, 0)
+	result = make([]UsageLimitSource, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close usage limit source rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var source UsageLimitSource
 		if err := scanUsageLimitSource(rows, &source); err != nil {
@@ -347,7 +355,7 @@ func (l *Lifecycle) UpdateUsageLimitAssociation(ctx context.Context, association
 	return nil
 }
 
-func (l *Lifecycle) ListUsageCostAssociations(ctx context.Context, sourceID string) ([]UsageCostAssociation, error) {
+func (l *Lifecycle) ListUsageCostAssociations(ctx context.Context, sourceID string) (result []UsageCostAssociation, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -363,8 +371,12 @@ func (l *Lifecycle) ListUsageCostAssociations(ctx context.Context, sourceID stri
 	if err != nil {
 		return nil, fmt.Errorf("list usage cost associations: %w", err)
 	}
-	defer rows.Close()
-	result := make([]UsageCostAssociation, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close usage cost association rows: %w", closeErr)
+		}
+	}()
+	result = make([]UsageCostAssociation, 0)
 	for rows.Next() {
 		var item UsageCostAssociation
 		if err := scanUsageCostAssociation(rows, &item); err != nil {
@@ -378,7 +390,7 @@ func (l *Lifecycle) ListUsageCostAssociations(ctx context.Context, sourceID stri
 	return result, nil
 }
 
-func (l *Lifecycle) ListUsageLimitAssociations(ctx context.Context, sourceID string) ([]UsageLimitAssociation, error) {
+func (l *Lifecycle) ListUsageLimitAssociations(ctx context.Context, sourceID string) (result []UsageLimitAssociation, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -394,8 +406,12 @@ func (l *Lifecycle) ListUsageLimitAssociations(ctx context.Context, sourceID str
 	if err != nil {
 		return nil, fmt.Errorf("list usage limit associations: %w", err)
 	}
-	defer rows.Close()
-	result := make([]UsageLimitAssociation, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close usage limit association rows: %w", closeErr)
+		}
+	}()
+	result = make([]UsageLimitAssociation, 0)
 	for rows.Next() {
 		var item UsageLimitAssociation
 		if err := scanUsageLimitAssociation(rows, &item); err != nil {
@@ -493,7 +509,7 @@ func (l *Lifecycle) UpdateUsageCostSourceCompleteness(ctx context.Context, compl
 	return nil
 }
 
-func (l *Lifecycle) ListUsageCostSourceCompleteness(ctx context.Context, sourceID string) ([]UsageCostSourceCompleteness, error) {
+func (l *Lifecycle) ListUsageCostSourceCompleteness(ctx context.Context, sourceID string) (result []UsageCostSourceCompleteness, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -509,8 +525,12 @@ func (l *Lifecycle) ListUsageCostSourceCompleteness(ctx context.Context, sourceI
 	if err != nil {
 		return nil, fmt.Errorf("list source completeness: %w", err)
 	}
-	defer rows.Close()
-	result := make([]UsageCostSourceCompleteness, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close usage cost source completeness rows: %w", closeErr)
+		}
+	}()
+	result = make([]UsageCostSourceCompleteness, 0)
 	for rows.Next() {
 		var item UsageCostSourceCompleteness
 		if err := scanCompleteness(rows, &item); err != nil {
@@ -552,7 +572,7 @@ func (l *Lifecycle) ConfirmHubSwitch(ctx context.Context, switchRecord HubSwitch
 	return nil
 }
 
-func (l *Lifecycle) ListHubSwitches(ctx context.Context) ([]HubSwitch, error) {
+func (l *Lifecycle) ListHubSwitches(ctx context.Context) (result []HubSwitch, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -561,8 +581,12 @@ func (l *Lifecycle) ListHubSwitches(ctx context.Context) ([]HubSwitch, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list Hub switches: %w", err)
 	}
-	defer rows.Close()
-	result := make([]HubSwitch, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close Hub switch rows: %w", closeErr)
+		}
+	}()
+	result = make([]HubSwitch, 0)
 	for rows.Next() {
 		var item HubSwitch
 		var switched, created string
@@ -608,7 +632,7 @@ func (l *Lifecycle) PreviewUsageCostSourceCompleteness(ctx context.Context, comp
 	return preview, nil
 }
 
-func (l *Lifecycle) PreviewHubSwitch(ctx context.Context, switchRecord HubSwitch) (ImpactPreview, error) {
+func (l *Lifecycle) PreviewHubSwitch(ctx context.Context, switchRecord HubSwitch) (preview ImpactPreview, err error) {
 	if err := switchRecord.Validate(); err != nil {
 		return ImpactPreview{}, err
 	}
@@ -616,8 +640,8 @@ func (l *Lifecycle) PreviewHubSwitch(ctx context.Context, switchRecord HubSwitch
 	if err != nil {
 		return ImpactPreview{}, err
 	}
-	preview := ImpactPreview{SourceKind: "hub_switch", IntervalStart: switchRecord.SwitchedAt.UTC(), IntervalEnd: catalogPeriodEnd(nil)}
-	rows, err := database.QueryContext(ctx, `
+	preview = ImpactPreview{SourceKind: "hub_switch", IntervalStart: switchRecord.SwitchedAt.UTC(), IntervalEnd: catalogPeriodEnd(nil)}
+	sourceRows, err := database.QueryContext(ctx, `
 		SELECT usage_cost_source_id FROM usage_cost_sources
 		WHERE (hub_id = ? AND device_id = ?) OR (hub_id = ? AND device_id = ?)
 		UNION
@@ -628,18 +652,19 @@ func (l *Lifecycle) PreviewHubSwitch(ctx context.Context, switchRecord HubSwitch
 	if err != nil {
 		return ImpactPreview{}, fmt.Errorf("list Hub switch sources: %w", err)
 	}
-	for rows.Next() {
+	defer func() {
+		if closeErr := sourceRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close Hub switch sources: %w", closeErr)
+		}
+	}()
+	for sourceRows.Next() {
 		var sourceID string
-		if err := rows.Scan(&sourceID); err != nil {
-			_ = rows.Close()
+		if err := sourceRows.Scan(&sourceID); err != nil {
 			return ImpactPreview{}, fmt.Errorf("scan Hub switch source: %w", err)
 		}
 		preview.AffectedSourceIDs = append(preview.AffectedSourceIDs, sourceID)
 	}
-	if err := rows.Close(); err != nil {
-		return ImpactPreview{}, fmt.Errorf("close Hub switch sources: %w", err)
-	}
-	if err := rows.Err(); err != nil {
+	if err := sourceRows.Err(); err != nil {
 		return ImpactPreview{}, fmt.Errorf("read Hub switch sources: %w", err)
 	}
 	if len(preview.AffectedSourceIDs) == 0 {
@@ -651,7 +676,7 @@ func (l *Lifecycle) PreviewHubSwitch(ctx context.Context, switchRecord HubSwitch
 		sourceArgs = append(sourceArgs, sourceID)
 	}
 	observationArgs := append(append([]any{}, sourceArgs...), sourceArgs...)
-	rows, err = database.QueryContext(ctx, `SELECT observation_id, observed_at FROM (
+	observationRows, err := database.QueryContext(ctx, `SELECT observation_id, observed_at FROM (
 		SELECT o.observation_id, o.usage_updated_at AS observed_at
 		FROM usage_cost_observations o JOIN usage_cost_sources s ON s.hub_id = o.hub_id AND s.device_id = o.device_id AND s.raw_service_identifier = o.raw_service_identifier
 		WHERE s.usage_cost_source_id IN (`+placeholders+`) AND o.dedupe_state = 'canonical'
@@ -663,48 +688,51 @@ func (l *Lifecycle) PreviewHubSwitch(ctx context.Context, switchRecord HubSwitch
 	if err != nil {
 		return ImpactPreview{}, fmt.Errorf("list Hub switch observations: %w", err)
 	}
-	for rows.Next() {
+	defer func() {
+		if closeErr := observationRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close Hub switch observations: %w", closeErr)
+		}
+	}()
+	for observationRows.Next() {
 		var observationID, observed string
-		if err := rows.Scan(&observationID, &observed); err != nil {
-			_ = rows.Close()
+		if err := observationRows.Scan(&observationID, &observed); err != nil {
 			return ImpactPreview{}, fmt.Errorf("scan Hub switch observation: %w", err)
 		}
 		preview.AffectedObservationIDs = append(preview.AffectedObservationIDs, observationID)
 	}
-	if err := rows.Close(); err != nil {
-		return ImpactPreview{}, fmt.Errorf("close Hub switch observations: %w", err)
-	}
-	if err := rows.Err(); err != nil {
+	if err := observationRows.Err(); err != nil {
 		return ImpactPreview{}, fmt.Errorf("read Hub switch observations: %w", err)
 	}
 	intervalArgs := append(append([]any{}, sourceArgs...), catalogPeriodText(switchRecord.SwitchedAt), catalogPeriodText(switchRecord.SwitchedAt))
-	rows, err = database.QueryContext(ctx, `SELECT calculation_interval_id, valid_from, valid_to FROM calculation_intervals WHERE usage_limit_source_id IN (`+placeholders+`) AND valid_from <= ? AND ? < valid_to ORDER BY valid_from, calculation_interval_id`, intervalArgs...)
+	intervalRows, err := database.QueryContext(ctx, `SELECT calculation_interval_id, valid_from, valid_to FROM calculation_intervals WHERE usage_limit_source_id IN (`+placeholders+`) AND valid_from <= ? AND ? < valid_to ORDER BY valid_from, calculation_interval_id`, intervalArgs...)
 	if err != nil {
 		return ImpactPreview{}, fmt.Errorf("list Hub switch calculation intervals: %w", err)
 	}
-	for rows.Next() {
+	defer func() {
+		if closeErr := intervalRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close Hub switch calculation interval rows: %w", closeErr)
+		}
+	}()
+	for intervalRows.Next() {
 		var intervalID, from, to string
-		if err := rows.Scan(&intervalID, &from, &to); err != nil {
-			_ = rows.Close()
+		if err := intervalRows.Scan(&intervalID, &from, &to); err != nil {
 			return ImpactPreview{}, fmt.Errorf("scan Hub switch calculation interval: %w", err)
 		}
 		start, parseErr := parseUTC(from)
 		if parseErr != nil {
-			_ = rows.Close()
 			return ImpactPreview{}, fmt.Errorf("parse Hub switch interval start: %w", parseErr)
 		}
 		end, parseErr := parseUTC(to)
 		if parseErr != nil {
-			_ = rows.Close()
 			return ImpactPreview{}, fmt.Errorf("parse Hub switch interval end: %w", parseErr)
 		}
 		preview.AffectedCalculationIntervalIDs = append(preview.AffectedCalculationIntervalIDs, intervalID)
 		preview.AffectedCalculationIntervals = append(preview.AffectedCalculationIntervals, ImpactInterval{Start: start, End: end})
 	}
-	if err := rows.Close(); err != nil {
-		return ImpactPreview{}, fmt.Errorf("close Hub switch calculation intervals: %w", err)
+	if err := intervalRows.Err(); err != nil {
+		return ImpactPreview{}, fmt.Errorf("read Hub switch calculation intervals: %w", err)
 	}
-	return preview, rows.Err()
+	return preview, nil
 }
 
 // CanUseUsageCostSourceForEstimation rejects the entire requested interval if
@@ -756,11 +784,11 @@ func (l *Lifecycle) CanUseUsageCostSourceForEstimation(ctx context.Context, sour
 	return false, nil
 }
 
-func (l *Lifecycle) previewSource(ctx context.Context, sourceID, kind string, start time.Time, end *time.Time, join, observedColumn, idColumn string) (ImpactPreview, error) {
+func (l *Lifecycle) previewSource(ctx context.Context, sourceID, kind string, start time.Time, end *time.Time, join, observedColumn, idColumn string) (preview ImpactPreview, err error) {
 	if strings.TrimSpace(sourceID) == "" || start.IsZero() {
 		return ImpactPreview{}, errors.New("impact preview source and start are required")
 	}
-	preview := ImpactPreview{SourceID: sourceID, SourceKind: kind, AffectedSourceIDs: []string{sourceID}, IntervalStart: start.UTC(), IntervalEnd: catalogPeriodEnd(end)}
+	preview = ImpactPreview{SourceID: sourceID, SourceKind: kind, AffectedSourceIDs: []string{sourceID}, IntervalStart: start.UTC(), IntervalEnd: catalogPeriodEnd(end)}
 	database, err := l.DB()
 	if err != nil {
 		return ImpactPreview{}, err
@@ -774,7 +802,11 @@ func (l *Lifecycle) previewSource(ctx context.Context, sourceID, kind string, st
 	if err != nil {
 		return ImpactPreview{}, fmt.Errorf("preview source observations: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close impact preview observation rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var id, observed string
 		if err := rows.Scan(&id, &observed); err != nil {
@@ -791,7 +823,7 @@ func (l *Lifecycle) previewSource(ctx context.Context, sourceID, kind string, st
 	return preview, nil
 }
 
-func (l *Lifecycle) listCostCompletenessCalculationImpact(ctx context.Context, sourceID string, start time.Time, end *time.Time) ([]string, []ImpactInterval, error) {
+func (l *Lifecycle) listCostCompletenessCalculationImpact(ctx context.Context, sourceID string, start time.Time, end *time.Time) (ids []string, intervals []ImpactInterval, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, nil, err
@@ -809,9 +841,11 @@ func (l *Lifecycle) listCostCompletenessCalculationImpact(ctx context.Context, s
 	if err != nil {
 		return nil, nil, fmt.Errorf("list completeness calculation impact: %w", err)
 	}
-	defer rows.Close()
-	var ids []string
-	var intervals []ImpactInterval
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close completeness calculation impact rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var id, from, to string
 		if err := rows.Scan(&id, &from, &to); err != nil {

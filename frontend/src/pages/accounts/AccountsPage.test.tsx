@@ -8,7 +8,7 @@ import type {
   CatalogSnapshot,
   HubSnapshot,
   LinkingSnapshot,
-} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+} from "../../lib/backend";
 import { createFakeBackend } from "../../lib/backend";
 import { AccountsPage } from "./AccountsPage";
 

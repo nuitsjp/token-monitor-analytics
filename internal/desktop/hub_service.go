@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	credentialadapter "token-monitor-analytics/internal/adapter/credential"
-	"token-monitor-analytics/internal/adapter/hubapi"
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
@@ -22,12 +20,45 @@ type CredentialStore interface {
 }
 
 type HubService struct {
-	lifecycle   *sqliteadapter.Lifecycle
+	repository  HubRepository
 	credentials CredentialStore
 	clock       usecase.Clock
 	ids         usecase.IDGenerator
-	allowlist   hubapi.Allowlist
+	client      HubClientFactory
 	gate        *usecase.MaintenanceGate
+}
+
+type HubRepository interface {
+	ListHubRows(context.Context) ([]domain.HubRow, error)
+	GetHubRow(context.Context, string) (domain.HubRow, error)
+	ListCredentialAuditEvents(context.Context, string) ([]domain.CredentialAuditEvent, error)
+	CreateHub(context.Context, domain.Hub) error
+	UpdateHub(context.Context, string, string, string, int64, time.Time) error
+	SetHubCollectionEnabled(context.Context, string, bool, time.Time) error
+	SetHubEnabled(context.Context, string, bool, time.Time) error
+	RecordHubConnectionAttempt(context.Context, domain.HubConnectionAttempt) error
+	AppendCredentialAudit(context.Context, domain.CredentialAudit) error
+}
+
+type HubClient interface {
+	FetchStats(context.Context, string) (HubFetchResult, error)
+}
+
+type HubClientFactory func(string) (HubClient, error)
+
+type HubFetchResult struct {
+	Contract HubContract
+}
+
+type HubContract struct {
+	Build HubBuildIdentity
+}
+
+type HubBuildIdentity struct {
+	SchemaVersion  int
+	Runtime        string
+	CoreBuildID    string
+	RuntimeBuildID string
 }
 
 type UUIDGenerator struct{}
@@ -64,22 +95,30 @@ type UpdateHubInput struct {
 	CollectionIntervalSeconds int64  `json:"collectionIntervalSeconds"`
 }
 
-func NewHubService(lifecycle *sqliteadapter.Lifecycle, credentials credentialadapter.Manager, gate *usecase.MaintenanceGate) *HubService {
-	return NewHubServiceWithDependencies(lifecycle, credentials, usecase.SystemClock{}, UUIDGenerator{}, gate)
+func NewHubService(repository HubRepository, credentials CredentialStore, gate *usecase.MaintenanceGate) *HubService {
+	return NewHubServiceWithDependencies(repository, credentials, usecase.SystemClock{}, UUIDGenerator{}, gate)
 }
 
-func NewHubServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, credentials CredentialStore, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) *HubService {
+func NewHubServiceWithDependencies(repository HubRepository, credentials CredentialStore, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) *HubService {
+	return newHubService(repository, credentials, clock, ids, nil, gate)
+}
+
+func NewHubServiceWithClient(repository HubRepository, credentials CredentialStore, clock usecase.Clock, ids usecase.IDGenerator, client HubClientFactory, gate *usecase.MaintenanceGate) *HubService {
+	return newHubService(repository, credentials, clock, ids, client, gate)
+}
+
+func newHubService(repository HubRepository, credentials CredentialStore, clock usecase.Clock, ids usecase.IDGenerator, client HubClientFactory, gate *usecase.MaintenanceGate) *HubService {
 	if clock == nil {
 		clock = usecase.SystemClock{}
 	}
 	if ids == nil {
 		ids = UUIDGenerator{}
 	}
-	return &HubService{lifecycle: lifecycle, credentials: credentials, clock: clock, ids: ids, allowlist: hubapi.DefaultAllowlist, gate: gate}
+	return &HubService{repository: repository, credentials: credentials, clock: clock, ids: ids, client: client, gate: gate}
 }
 
 func (s *HubService) GetHubs(ctx context.Context) ([]HubSnapshot, error) {
-	rows, err := s.lifecycle.ListHubRows(ctx)
+	rows, err := s.repository.ListHubRows(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +144,7 @@ func (s *HubService) CreateHub(ctx context.Context, input CreateHubInput) (HubSn
 		return HubSnapshot{}, err
 	}
 	now := s.now()
-	if err := s.lifecycle.CreateHub(ctx, sqliteadapter.Hub{
+	if err := s.repository.CreateHub(ctx, domain.Hub{
 		ID: id, DisplayName: input.DisplayName, URL: input.URL,
 		CollectionEnabled:         input.CollectionEnabled,
 		CollectionIntervalSeconds: input.CollectionIntervalSeconds,
@@ -127,7 +166,7 @@ func (s *HubService) UpdateHub(ctx context.Context, input UpdateHubInput) (HubSn
 		return HubSnapshot{}, err
 	}
 	defer release()
-	if err := s.lifecycle.UpdateHub(ctx, input.ID, input.DisplayName, input.URL, input.CollectionIntervalSeconds, s.now()); err != nil {
+	if err := s.repository.UpdateHub(ctx, input.ID, input.DisplayName, input.URL, input.CollectionIntervalSeconds, s.now()); err != nil {
 		return HubSnapshot{}, err
 	}
 	return s.GetHub(ctx, input.ID)
@@ -139,7 +178,7 @@ func (s *HubService) SetHubCollectionEnabled(ctx context.Context, hubID string, 
 		return HubSnapshot{}, err
 	}
 	defer release()
-	if err := s.lifecycle.SetHubCollectionEnabled(ctx, hubID, enabled, s.now()); err != nil {
+	if err := s.repository.SetHubCollectionEnabled(ctx, hubID, enabled, s.now()); err != nil {
 		return HubSnapshot{}, err
 	}
 	return s.GetHub(ctx, hubID)
@@ -151,7 +190,7 @@ func (s *HubService) SetHubEnabled(ctx context.Context, hubID string, enabled bo
 		return HubSnapshot{}, err
 	}
 	defer release()
-	if err := s.lifecycle.SetHubEnabled(ctx, hubID, enabled, s.now()); err != nil {
+	if err := s.repository.SetHubEnabled(ctx, hubID, enabled, s.now()); err != nil {
 		return HubSnapshot{}, err
 	}
 	return s.GetHub(ctx, hubID)
@@ -166,7 +205,7 @@ func (s *HubService) SaveCredential(ctx context.Context, hubID, secret string) (
 	if secret == "" {
 		return HubSnapshot{}, errors.New("credential secret is empty")
 	}
-	if _, err := s.lifecycle.GetHubRow(ctx, hubID); err != nil {
+	if _, err := s.repository.GetHubRow(ctx, hubID); err != nil {
 		return HubSnapshot{}, err
 	}
 	if err := s.saveCredential(ctx, hubID, secret); err != nil {
@@ -181,7 +220,7 @@ func (s *HubService) DeleteCredential(ctx context.Context, hubID string) (HubSna
 		return HubSnapshot{}, err
 	}
 	defer release()
-	if _, err := s.lifecycle.GetHubRow(ctx, hubID); err != nil {
+	if _, err := s.repository.GetHubRow(ctx, hubID); err != nil {
 		return HubSnapshot{}, err
 	}
 	if err := s.appendCredentialEvent(ctx, hubID, "credential_delete_started"); err != nil {
@@ -202,21 +241,24 @@ func (s *HubService) CheckHubConnection(ctx context.Context, hubID string) (HubS
 		return HubSnapshot{}, err
 	}
 	defer release()
-	row, err := s.lifecycle.GetHubRow(ctx, hubID)
+	row, err := s.repository.GetHubRow(ctx, hubID)
 	if err != nil {
 		return HubSnapshot{}, err
 	}
 	if !row.Hub.Enabled {
 		return HubSnapshot{}, errors.New("disabled hub cannot be checked")
 	}
-	events, err := s.lifecycle.ListCredentialAuditEvents(ctx, hubID)
+	events, err := s.repository.ListCredentialAuditEvents(ctx, hubID)
 	if err != nil {
 		return HubSnapshot{}, err
 	}
 	if !domain.CredentialReadyForConnection(toDomainEvents(events)) {
 		return HubSnapshot{}, errors.New("hub credential is not ready for connection")
 	}
-	client, err := hubapi.NewClient(row.Hub.URL, s.allowlist)
+	if s.client == nil {
+		return HubSnapshot{}, errors.New("hub client is unavailable")
+	}
+	client, err := s.client(row.Hub.URL)
 	if err != nil {
 		return HubSnapshot{}, err
 	}
@@ -226,7 +268,7 @@ func (s *HubService) CheckHubConnection(ctx context.Context, hubID string) (HubS
 	}
 	if !found {
 		now := s.now()
-		if err := s.lifecycle.RecordHubConnectionAttempt(ctx, sqliteadapter.HubConnectionAttempt{
+		if err := s.repository.RecordHubConnectionAttempt(ctx, domain.HubConnectionAttempt{
 			AttemptID: s.mustUUID(), HubID: hubID, CheckedAt: now,
 			State: "authentication_failed", FailureDetail: "共有秘密が登録されていません",
 		}); err != nil {
@@ -235,13 +277,12 @@ func (s *HubService) CheckHubConnection(ctx context.Context, hubID string) (HubS
 		return s.GetHub(ctx, hubID)
 	}
 	result, fetchErr := client.FetchStats(ctx, secret)
-	secret = ""
 	state, detail := connectionOutcome(fetchErr)
 	contract := ""
 	if result.Contract.Build.SchemaVersion > 0 {
 		contract = formatContract(result.Contract.Build)
 	}
-	if err := s.lifecycle.RecordHubConnectionAttempt(ctx, sqliteadapter.HubConnectionAttempt{
+	if err := s.repository.RecordHubConnectionAttempt(ctx, domain.HubConnectionAttempt{
 		AttemptID: s.mustUUID(), HubID: hubID, CheckedAt: s.now(), State: state,
 		APIContract: contract, FailureDetail: detail,
 	}); err != nil {
@@ -256,7 +297,7 @@ func (s *HubService) CheckHubConnection(ctx context.Context, hubID string) (HubS
 }
 
 func (s *HubService) GetHub(ctx context.Context, hubID string) (HubSnapshot, error) {
-	row, err := s.lifecycle.GetHubRow(ctx, hubID)
+	row, err := s.repository.GetHubRow(ctx, hubID)
 	if err != nil {
 		return HubSnapshot{}, err
 	}
@@ -280,33 +321,33 @@ func connectionOutcome(err error) (string, string) {
 	if err == nil {
 		return "connected", ""
 	}
-	switch hubapi.ClassificationOf(err) {
-	case hubapi.ClassificationAuth:
+	switch {
+	case strings.Contains(strings.ToLower(err.Error()), "auth"):
 		return "authentication_failed", "認証に失敗しました"
-	case hubapi.ClassificationTLS:
+	case strings.Contains(strings.ToLower(err.Error()), "tls"):
 		return "tls_error", "TLS 証明書を検証できません"
-	case hubapi.ClassificationTimeout:
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
 		return "timeout", "Hub への接続がタイムアウトしました"
-	case hubapi.ClassificationUnsupported:
+	case strings.Contains(strings.ToLower(err.Error()), "unsupported"):
 		return "unsupported_contract", "対応する API 契約ではありません"
-	case hubapi.ClassificationInvalidJSON, hubapi.ClassificationBodyTooLarge:
+	case strings.Contains(strings.ToLower(err.Error()), "invalid_json") || strings.Contains(strings.ToLower(err.Error()), "body_too_large"):
 		return "invalid_json", "応答を安全に読み取れません"
 	default:
 		return "unreachable", "Hub に接続できません"
 	}
 }
 
-func formatContract(build hubapi.BuildIdentity) string {
+func formatContract(build HubBuildIdentity) string {
 	return fmt.Sprintf("%d/%s/%s/%s", build.SchemaVersion, build.Runtime, build.CoreBuildID, build.RuntimeBuildID)
 }
 
 func (s *HubService) appendCredentialEvent(ctx context.Context, hubID, action string) error {
-	events, err := s.lifecycle.ListCredentialAuditEvents(ctx, hubID)
+	events, err := s.repository.ListCredentialAuditEvents(ctx, hubID)
 	if err != nil {
 		return err
 	}
 	before := domain.DeriveCredentialState(toDomainEvents(events))
-	afterEvents := append(append([]sqliteadapter.CredentialAuditEvent(nil), events...), sqliteadapter.CredentialAuditEvent{Action: action})
+	afterEvents := append(append([]domain.CredentialAuditEvent(nil), events...), domain.CredentialAuditEvent{Action: action})
 	after := domain.DeriveCredentialState(toDomainEvents(afterEvents))
 	beforeJSON, _ := json.Marshal(struct {
 		CredentialState string `json:"credentialState"`
@@ -314,22 +355,22 @@ func (s *HubService) appendCredentialEvent(ctx context.Context, hubID, action st
 	afterJSON, _ := json.Marshal(struct {
 		CredentialState string `json:"credentialState"`
 	}{string(after)})
-	return s.lifecycle.AppendCredentialAudit(ctx, sqliteadapter.CredentialAudit{
+	return s.repository.AppendCredentialAudit(ctx, domain.CredentialAudit{
 		AuditID: s.mustUUID(), OccurredAt: s.now(), Action: action, HubID: hubID,
 		BeforeJSON: string(beforeJSON), AfterJSON: string(afterJSON),
 	})
 }
 
-func toDomainEvents(events []sqliteadapter.CredentialAuditEvent) []domain.CredentialEvent {
+func toDomainEvents(events []domain.CredentialAuditEvent) []domain.CredentialEvent {
 	result := make([]domain.CredentialEvent, len(events))
 	for i, event := range events {
-		result[i] = domain.CredentialEvent{Sequence: event.Sequence, Action: event.Action}
+		result[i] = domain.CredentialEvent(event)
 	}
 	return result
 }
 
-func (s *HubService) snapshot(ctx context.Context, row sqliteadapter.HubRow) (HubSnapshot, error) {
-	events, err := s.lifecycle.ListCredentialAuditEvents(ctx, row.Hub.ID)
+func (s *HubService) snapshot(ctx context.Context, row domain.HubRow) (HubSnapshot, error) {
+	events, err := s.repository.ListCredentialAuditEvents(ctx, row.Hub.ID)
 	if err != nil {
 		return HubSnapshot{}, err
 	}

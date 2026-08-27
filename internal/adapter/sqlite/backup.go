@@ -39,7 +39,7 @@ func (l *Lifecycle) Backup(ctx context.Context, destinationPath string) error {
 	if err != nil {
 		return fmt.Errorf("acquire backup connection: %w", err)
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	if err := connection.Raw(func(raw any) error {
 		backuper, ok := raw.(onlineBackuper)
 		if !ok {
@@ -147,21 +147,8 @@ func (l *Lifecycle) ValidateBackupDatabase(ctx context.Context, path string) err
 		}
 	}
 	if validationErr == nil {
-		rows, err := database.QueryContext(ctx, `PRAGMA foreign_key_check`)
-		if err != nil {
-			validationErr = fmt.Errorf("run foreign_key_check: %w", err)
-		} else {
-			if rows.Next() {
-				validationErr = fmt.Errorf("foreign_key_check found a violation")
-			}
-			if closeErr := rows.Close(); validationErr == nil && closeErr != nil {
-				validationErr = fmt.Errorf("close foreign_key_check: %w", closeErr)
-			}
-			if validationErr == nil {
-				if err := rows.Err(); err != nil {
-					validationErr = fmt.Errorf("read foreign_key_check: %w", err)
-				}
-			}
+		if err := validateForeignKeyCheck(ctx, database); err != nil {
+			validationErr = err
 		}
 	}
 	if validationErr == nil {
@@ -198,7 +185,7 @@ func (l *Lifecycle) ValidateBackupDatabase(ctx context.Context, path string) err
 	return nil
 }
 
-func validateBackupSchema(ctx context.Context, database *sql.DB) error {
+func validateBackupSchema(ctx context.Context, database *sql.DB) (err error) {
 	var schemaVersion int64
 	if err := database.QueryRowContext(ctx, `SELECT schema_version FROM schema_metadata WHERE singleton = 1`).Scan(&schemaVersion); err != nil {
 		return fmt.Errorf("read backup schema version: %w", err)
@@ -210,6 +197,11 @@ func validateBackupSchema(ctx context.Context, database *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("inspect backup schema: %w", err)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close backup schema rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var objectType, name, definition string
 		if err := rows.Scan(&objectType, &name, &definition); err != nil {
@@ -222,9 +214,6 @@ func validateBackupSchema(ctx context.Context, database *sql.DB) error {
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read backup schema objects: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close backup schema objects: %w", err)
 	}
 	var theme string
 	var displayTimezone sql.NullString
@@ -242,7 +231,12 @@ func validateBackupSchema(ctx context.Context, database *sql.DB) error {
 
 func containsForbiddenIdentifier(value string) bool {
 	for _, field := range strings.FieldsFunc(value, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '_'
+		switch {
+		case r == '_', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return false
+		default:
+			return true
+		}
 	}) {
 		if domain.IsRawSecretField(field) {
 			return true
@@ -251,12 +245,16 @@ func containsForbiddenIdentifier(value string) bool {
 	return false
 }
 
-func validateRawSnapshots(ctx context.Context, database *sql.DB) error {
+func validateRawSnapshots(ctx context.Context, database *sql.DB) (err error) {
 	rows, err := database.QueryContext(ctx, `SELECT response_kind, body FROM raw_snapshots`)
 	if err != nil {
 		return fmt.Errorf("read raw snapshots for backup: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close raw snapshot rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var kind string
 		var body []byte
@@ -269,6 +267,25 @@ func validateRawSnapshots(ctx context.Context, database *sql.DB) error {
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read raw snapshots for backup: %w", err)
+	}
+	return nil
+}
+
+func validateForeignKeyCheck(ctx context.Context, database *sql.DB) (err error) {
+	rows, err := database.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("run foreign_key_check: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close foreign key check rows: %w", closeErr)
+		}
+	}()
+	if rows.Next() {
+		return fmt.Errorf("foreign_key_check found a violation")
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read foreign_key_check: %w", err)
 	}
 	return nil
 }

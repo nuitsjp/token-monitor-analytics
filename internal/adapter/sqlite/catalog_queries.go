@@ -4,12 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"token-monitor-analytics/internal/domain"
 )
 
-func (l *Lifecycle) ListServices(ctx context.Context, includeArchived bool) ([]Service, error) {
+func (l *Lifecycle) ListServices(ctx context.Context, includeArchived bool) (result []Service, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -23,8 +22,11 @@ func (l *Lifecycle) ListServices(ctx context.Context, includeArchived bool) ([]S
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
 	}
-	defer rows.Close()
-	var result []Service
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close services rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var service Service
 		var archived, created, updated sql.NullString
@@ -55,7 +57,7 @@ func (l *Lifecycle) ListServices(ctx context.Context, includeArchived bool) ([]S
 	return result, nil
 }
 
-func (l *Lifecycle) ListServiceIdentifierMappings(ctx context.Context, kind domain.ServiceIdentifierKind, rawIdentifier string) ([]ServiceIdentifierMapping, error) {
+func (l *Lifecycle) ListServiceIdentifierMappings(ctx context.Context, kind domain.ServiceIdentifierKind, rawIdentifier string) (result []ServiceIdentifierMapping, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -79,8 +81,11 @@ func (l *Lifecycle) ListServiceIdentifierMappings(ctx context.Context, kind doma
 	if err != nil {
 		return nil, fmt.Errorf("list service identifier mappings: %w", err)
 	}
-	defer rows.Close()
-	var result []ServiceIdentifierMapping
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close service identifier mapping rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var mapping ServiceIdentifierMapping
 		var kindText string
@@ -113,7 +118,7 @@ func (l *Lifecycle) ListServiceIdentifierMappings(ctx context.Context, kind doma
 	return result, nil
 }
 
-func (l *Lifecycle) ListLimitDefinitions(ctx context.Context, includeArchived bool) ([]LimitDefinition, error) {
+func (l *Lifecycle) ListLimitDefinitions(ctx context.Context, includeArchived bool) (result []LimitDefinition, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -127,8 +132,11 @@ func (l *Lifecycle) ListLimitDefinitions(ctx context.Context, includeArchived bo
 	if err != nil {
 		return nil, fmt.Errorf("list limit definitions: %w", err)
 	}
-	defer rows.Close()
-	var result []LimitDefinition
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close limit definition rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var definition LimitDefinition
 		var confirmation, created, updated string
@@ -161,7 +169,7 @@ func (l *Lifecycle) ListLimitDefinitions(ctx context.Context, includeArchived bo
 	return result, nil
 }
 
-func (l *Lifecycle) ListPlans(ctx context.Context, serviceID string, includeArchived bool) ([]Plan, error) {
+func (l *Lifecycle) ListPlans(ctx context.Context, serviceID string, includeArchived bool) (result []Plan, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -180,8 +188,11 @@ func (l *Lifecycle) ListPlans(ctx context.Context, serviceID string, includeArch
 	if err != nil {
 		return nil, fmt.Errorf("list plans: %w", err)
 	}
-	defer rows.Close()
-	var result []Plan
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close plan rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var plan Plan
 		var baseline int
@@ -214,7 +225,7 @@ func (l *Lifecycle) ListPlans(ctx context.Context, serviceID string, includeArch
 	return result, nil
 }
 
-func (l *Lifecycle) ListPlanVersions(ctx context.Context, planID string) ([]PlanVersion, error) {
+func (l *Lifecycle) ListPlanVersions(ctx context.Context, planID string) (result []PlanVersion, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -230,8 +241,11 @@ func (l *Lifecycle) ListPlanVersions(ctx context.Context, planID string) ([]Plan
 	if err != nil {
 		return nil, fmt.Errorf("list plan versions: %w", err)
 	}
-	defer rows.Close()
-	var result []PlanVersion
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close plan version rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var version PlanVersion
 		var from, created string
@@ -262,7 +276,7 @@ func (l *Lifecycle) ListPlanVersions(ctx context.Context, planID string) ([]Plan
 	return result, nil
 }
 
-func (l *Lifecycle) ListPlanLimitRules(ctx context.Context, planVersionID string) ([]PlanLimitRule, error) {
+func (l *Lifecycle) ListPlanLimitRules(ctx context.Context, planVersionID string) (result []PlanLimitRule, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -278,8 +292,11 @@ func (l *Lifecycle) ListPlanLimitRules(ctx context.Context, planVersionID string
 	if err != nil {
 		return nil, fmt.Errorf("list plan limit rules: %w", err)
 	}
-	defer rows.Close()
-	var result []PlanLimitRule
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close plan limit rule rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var rule PlanLimitRule
 		var limit, multiplier sql.NullFloat64
@@ -307,7 +324,7 @@ func (l *Lifecycle) ListPlanLimitRules(ctx context.Context, planVersionID string
 	return result, nil
 }
 
-func (l *Lifecycle) ListStandardPrices(ctx context.Context, planVersionID string) ([]StandardPrice, error) {
+func (l *Lifecycle) ListStandardPrices(ctx context.Context, planVersionID string) (result []StandardPrice, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -323,8 +340,11 @@ func (l *Lifecycle) ListStandardPrices(ctx context.Context, planVersionID string
 	if err != nil {
 		return nil, fmt.Errorf("list standard prices: %w", err)
 	}
-	defer rows.Close()
-	var result []StandardPrice
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close standard price rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var price StandardPrice
 		var from, created string
@@ -355,7 +375,7 @@ func (l *Lifecycle) ListStandardPrices(ctx context.Context, planVersionID string
 	return result, nil
 }
 
-func (l *Lifecycle) ListIdentificationCandidates(ctx context.Context, state domain.CandidateState) ([]IdentificationCandidate, error) {
+func (l *Lifecycle) ListIdentificationCandidates(ctx context.Context, state domain.CandidateState) (result []IdentificationCandidate, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -371,8 +391,11 @@ func (l *Lifecycle) ListIdentificationCandidates(ctx context.Context, state doma
 	if err != nil {
 		return nil, fmt.Errorf("list identification candidates: %w", err)
 	}
-	defer rows.Close()
-	var result []IdentificationCandidate
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close identification candidate rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var candidate IdentificationCandidate
 		if err := scanCandidate(rows, &candidate); err != nil {
@@ -386,15 +409,9 @@ func (l *Lifecycle) ListIdentificationCandidates(ctx context.Context, state doma
 	return result, nil
 }
 
-type IdentificationCandidateObservation struct {
-	ID                string
-	CandidateID       string
-	HubID             string
-	HubAccountDisplay string
-	ObservedAt        time.Time
-}
+type IdentificationCandidateObservation = domain.IdentificationCandidateObservation
 
-func (l *Lifecycle) ListIdentificationCandidateObservations(ctx context.Context, candidateID string) ([]IdentificationCandidateObservation, error) {
+func (l *Lifecycle) ListIdentificationCandidateObservations(ctx context.Context, candidateID string) (result []IdentificationCandidateObservation, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -403,8 +420,11 @@ func (l *Lifecycle) ListIdentificationCandidateObservations(ctx context.Context,
 	if err != nil {
 		return nil, fmt.Errorf("list candidate observations: %w", err)
 	}
-	defer rows.Close()
-	var result []IdentificationCandidateObservation
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close identification candidate observation rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var item IdentificationCandidateObservation
 		var observed string

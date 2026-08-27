@@ -89,10 +89,10 @@ func TestClaimRecalculationRequestIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := database.Exec(`INSERT INTO configuration_audits (audit_id, occurred_at, actor, action, entity_type, entity_id) VALUES ('audit-recalc', ?, 'test', 'test', 'test', 'test')`, utcText(now)); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO configuration_audits (audit_id, occurred_at, actor, action, entity_type, entity_id) VALUES ('audit-recalc', ?, 'test', 'test', 'test', 'test')`, utcText(now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO recalculation_requests (request_id, audit_id, requested_at, interval_start, interval_end, scope_json, state) VALUES ('request-recalc', 'audit-recalc', ?, ?, ?, '{"serviceIDs":[],"definitionIDs":[],"accountIDs":[],"sourceIDs":[],"costSourceIDs":[],"intervalIDs":["interval-a"]}', 'pending')`, utcText(now), utcText(now), utcText(now.Add(time.Hour))); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO recalculation_requests (request_id, audit_id, requested_at, interval_start, interval_end, scope_json, state) VALUES ('request-recalc', 'audit-recalc', ?, ?, ?, '{"serviceIDs":[],"definitionIDs":[],"accountIDs":[],"sourceIDs":[],"costSourceIDs":[],"intervalIDs":["interval-a"]}', 'pending')`, utcText(now), utcText(now), utcText(now.Add(time.Hour))); err != nil {
 		t.Fatal(err)
 	}
 	request, claimed, err := lifecycle.ClaimRecalculationRequest(context.Background(), "worker-a")
@@ -145,7 +145,7 @@ func TestRecalculateScopeFiltersIntervalsByConfirmedIDs(t *testing.T) {
 				args = []any{utcText(now)}
 			}
 		}
-		if _, err := database.Exec(statement, args...); err != nil {
+		if _, err := database.ExecContext(context.Background(), statement, args...); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -154,27 +154,27 @@ func TestRecalculateScopeFiltersIntervalsByConfirmedIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := database.QueryRow(`SELECT count(*) FROM estimation_results`).Scan(&count); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM estimation_results`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
 		t.Fatalf("scoped recalculation result count = %d, want 1", count)
 	}
 	var intervalIDs string
-	if err := database.QueryRow(`SELECT calculation_interval_ids_json FROM estimation_results`).Scan(&intervalIDs); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT calculation_interval_ids_json FROM estimation_results`).Scan(&intervalIDs); err != nil {
 		t.Fatal(err)
 	}
 	if intervalIDs != `[`+`"scope-interval-a"`+`]` {
 		t.Fatalf("scoped interval IDs = %s", intervalIDs)
 	}
-	if _, err := database.Exec(`DELETE FROM estimation_results`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `DELETE FROM estimation_results`); err != nil {
 		t.Fatal(err)
 	}
 	costScope := domain.RecalculationRequest{IntervalStart: now.Add(30 * time.Minute), IntervalEnd: now.Add(time.Hour), ScopeJSON: `{"serviceIDs":["scope-service"],"definitionIDs":["scope-definition"],"accountIDs":["scope-account-a"],"sourceIDs":[],"costSourceIDs":["cost-source-a"],"intervalIDs":[]}`}
 	if err := lifecycle.Recalculate(context.Background(), costScope); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.QueryRow(`SELECT count(*) FROM estimation_results`).Scan(&count); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM estimation_results`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -193,7 +193,7 @@ func TestCatalogMutationScopeTargetsAffectedService(t *testing.T) {
 		t.Fatal(err)
 	}
 	var scopeJSON string
-	if err := database.QueryRow(`SELECT scope_json FROM recalculation_requests WHERE request_id = (SELECT request_id FROM configuration_audits WHERE entity_type = 'catalog_service' AND entity_id = 'scoped-service' ORDER BY occurred_at DESC LIMIT 1)`).Scan(&scopeJSON); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT scope_json FROM recalculation_requests WHERE request_id = (SELECT request_id FROM configuration_audits WHERE entity_type = 'catalog_service' AND entity_id = 'scoped-service' ORDER BY occurred_at DESC LIMIT 1)`).Scan(&scopeJSON); err != nil {
 		t.Fatal(err)
 	}
 	want := `{"serviceIDs":["scoped-service"],"definitionIDs":[],"accountIDs":[],"sourceIDs":[],"costSourceIDs":[],"intervalIDs":[]}`

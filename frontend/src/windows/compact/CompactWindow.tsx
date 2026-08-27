@@ -27,16 +27,18 @@ import {
   Warning16Regular,
 } from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  OverviewRecentLimitSnapshot,
-  OverviewSnapshot,
-} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { useSettings } from "../../app/providers";
 import { StatusBadge } from "../../components/StatusBadge";
 import { Gauge } from "../../components/design";
+import { designTokens } from "../../components/designTokens";
 import type { DesignStyles } from "../../components/designStyles";
 import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
-import type { FrontendAdapter, UsageSnapshot } from "../../lib/backend";
+import type {
+  FrontendAdapter,
+  OverviewRecentLimitSnapshot,
+  OverviewSnapshot,
+  UsageSnapshot,
+} from "../../lib/backend";
 import {
   formatOverviewInstant,
   splitOverviewInstant,
@@ -669,7 +671,11 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                       aria-label={`処理失敗 ${snapshot.review.recalculationFailures.count} 件`}
                       style={
                         dark
-                          ? { backgroundColor: "#8f1d22", color: "#ffffff" }
+                          ? {
+                              backgroundColor:
+                                designTokens.dark.errorCounterBackground,
+                              color: designTokens.dark.errorCounterForeground,
+                            }
                           : undefined
                       }
                       onClick={() => openMainRoute("/review")}

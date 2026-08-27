@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
-	timezoneadapter "token-monitor-analytics/internal/adapter/timezone"
 	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
@@ -22,12 +20,13 @@ const usageExportSchemaVersion = "2"
 
 type UsageReader interface {
 	ListUsageAnalysisObservations(context.Context) ([]domain.UsageObservation, error)
-	ListUsageNativeAmounts(context.Context) ([]sqliteadapter.UsageNativeAmount, error)
+	ListUsageNativeAmounts(context.Context) ([]domain.UsageNativeAmount, error)
 }
 
 type UsageService struct {
-	reader UsageReader
-	clock  usecase.Clock
+	reader   UsageReader
+	clock    usecase.Clock
+	timezone TimezoneProvider
 }
 
 type UsageFilterInput struct {
@@ -148,22 +147,26 @@ type UsageExportRowSnapshot struct {
 	EvidenceRoute    string  `json:"evidenceRoute"`
 }
 
-func NewUsageService(lifecycle *sqliteadapter.Lifecycle) (*UsageService, error) {
-	if lifecycle == nil {
+func NewUsageService(reader UsageReader) (*UsageService, error) {
+	if reader == nil {
 		return nil, errors.New("usage service lifecycle is required")
 	}
-	return NewUsageServiceWithDependencies(lifecycle, usecase.SystemClock{})
+	return NewUsageServiceWithDependencies(reader, usecase.SystemClock{})
 }
 
-func NewUsageServiceWithDependencies(reader UsageReader, clock usecase.Clock) (*UsageService, error) {
+func NewUsageServiceWithDependencies(reader UsageReader, clock usecase.Clock, timezone ...TimezoneProvider) (*UsageService, error) {
 	if reader == nil || clock == nil {
 		return nil, errors.New("usage service dependencies are required")
 	}
-	return &UsageService{reader: reader, clock: clock}, nil
+	provider := TimezoneProvider(systemTimezoneProvider{})
+	if len(timezone) > 0 && timezone[0] != nil {
+		provider = timezone[0]
+	}
+	return &UsageService{reader: reader, clock: clock, timezone: provider}, nil
 }
 
 func (s *UsageService) GetUsage(ctx context.Context, input UsageFilterInput) (UsageSnapshot, error) {
-	from, to, location, err := validateUsageFilter(input)
+	from, to, location, err := s.validateUsageFilter(input)
 	if err != nil {
 		return UsageSnapshot{}, err
 	}
@@ -313,7 +316,7 @@ func (s *UsageService) ExportUsage(ctx context.Context, input UsageFilterInput, 
 	}
 }
 
-func validateUsageFilter(input UsageFilterInput) (time.Time, time.Time, *time.Location, error) {
+func (s *UsageService) validateUsageFilter(input UsageFilterInput) (time.Time, time.Time, *time.Location, error) {
 	from, err := time.Parse(time.RFC3339Nano, input.From)
 	if err != nil {
 		return time.Time{}, time.Time{}, nil, errors.New("usage period start must be RFC3339")
@@ -322,7 +325,7 @@ func validateUsageFilter(input UsageFilterInput) (time.Time, time.Time, *time.Lo
 	if err != nil || !from.Before(to) {
 		return time.Time{}, time.Time{}, nil, errors.New("usage period end must be after the start")
 	}
-	location, err := timezoneadapter.LoadLocation(input.DisplayTimeZone)
+	location, err := s.timezone.LoadLocation(input.DisplayTimeZone)
 	if err != nil {
 		return time.Time{}, time.Time{}, nil, err
 	}

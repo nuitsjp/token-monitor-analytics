@@ -18,7 +18,6 @@ import {
 } from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import type { OverviewSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { StatusBadge } from "../../components/StatusBadge";
 import {
   CountStat,
@@ -30,6 +29,7 @@ import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
 import type {
   DataManagementStateSnapshot,
   FrontendAdapter,
+  OverviewSnapshot,
   UsageSnapshot,
 } from "../../lib/backend";
 import {
@@ -178,6 +178,7 @@ export function OverviewPage({
     }
   }, [backend, displayTimeZone]);
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=mount synchronizes adapter-backed state; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // The initial read synchronizes this page with the external Wails adapter.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
@@ -234,7 +235,7 @@ export function OverviewPage({
             <Body1 as="strong">{snapshot.maintenance.status.label}</Body1>{" "}
             {snapshot.maintenance.status.description}
             <div className={styles.errorActions}>
-              <Button onClick={() => navigate("/data")}>
+              <Button onClick={() => void navigate("/data")}>
                 データ管理を開く
               </Button>
             </div>
@@ -306,7 +307,7 @@ export function OverviewPage({
             表示タイムゾーンを確認してください。{" "}
             <Button
               appearance="transparent"
-              onClick={() => navigate("/settings")}
+              onClick={() => void navigate("/settings")}
             >
               表示設定を開く
             </Button>
@@ -336,7 +337,7 @@ export function OverviewPage({
               <Button
                 size="small"
                 className={styles.setupAction}
-                onClick={() => navigate(nextStep.route)}
+                onClick={() => void navigate(nextStep.route)}
               >
                 確認する
               </Button>

@@ -87,10 +87,10 @@ func TestAccountsKeepCrossHubSameKeyAsCandidatesAndFlagArchivedReconfirmation(t 
 		t.Fatal(err)
 	}
 	var audits, requests int
-	if err := database.QueryRow(`SELECT count(*) FROM configuration_audits WHERE entity_type IN ('catalog_hub_account_candidate', 'catalog_logical_account')`).Scan(&audits); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM configuration_audits WHERE entity_type IN ('catalog_hub_account_candidate', 'catalog_logical_account')`).Scan(&audits); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.QueryRow(`SELECT count(*) FROM recalculation_requests`).Scan(&requests); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM recalculation_requests`).Scan(&requests); err != nil {
 		t.Fatal(err)
 	}
 	if audits == 0 || requests < audits {
@@ -200,10 +200,10 @@ func TestLogicalAccountSplitAndMergePreserveAuditAndArchiveSource(t *testing.T) 
 		t.Fatal(err)
 	}
 	var auditsBefore, requestsBefore int
-	if err := database.QueryRow(`SELECT count(*) FROM configuration_audits`).Scan(&auditsBefore); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM configuration_audits`).Scan(&auditsBefore); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.QueryRow(`SELECT count(*) FROM recalculation_requests`).Scan(&requestsBefore); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM recalculation_requests`).Scan(&requestsBefore); err != nil {
 		t.Fatal(err)
 	}
 	badAccount := LogicalAccount{ID: "split-rollback", ServiceID: service.ID, DisplayName: "Should rollback", CreatedAt: now, UpdatedAt: now}
@@ -211,17 +211,17 @@ func TestLogicalAccountSplitAndMergePreserveAuditAndArchiveSource(t *testing.T) 
 		t.Fatal("split with a missing candidate was accepted")
 	}
 	var count int
-	if err := database.QueryRow(`SELECT count(*) FROM logical_accounts WHERE logical_account_id = ?`, badAccount.ID).Scan(&count); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM logical_accounts WHERE logical_account_id = ?`, badAccount.ID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
 		t.Fatalf("rolled-back split account count = %d", count)
 	}
 	var auditsAfter, requestsAfter int
-	if err := database.QueryRow(`SELECT count(*) FROM configuration_audits`).Scan(&auditsAfter); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM configuration_audits`).Scan(&auditsAfter); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.QueryRow(`SELECT count(*) FROM recalculation_requests`).Scan(&requestsAfter); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM recalculation_requests`).Scan(&requestsAfter); err != nil {
 		t.Fatal(err)
 	}
 	if auditsAfter != auditsBefore || requestsAfter != requestsBefore {
@@ -235,14 +235,14 @@ func TestLogicalAccountSplitAndMergePreserveAuditAndArchiveSource(t *testing.T) 
 		t.Fatal(err)
 	}
 	var owner string
-	if err := database.QueryRow(`SELECT logical_account_id FROM hub_account_candidates WHERE hub_account_candidate_id = 'candidate-1'`).Scan(&owner); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT logical_account_id FROM hub_account_candidates WHERE hub_account_candidate_id = 'candidate-1'`).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
 	if owner != target.ID {
 		t.Fatalf("merged candidate owner = %q, want %q", owner, target.ID)
 	}
 	var archived sqlNullString
-	if err := database.QueryRow(`SELECT archived_at FROM logical_accounts WHERE logical_account_id = ?`, newAccount.ID).Scan(&archived); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT archived_at FROM logical_accounts WHERE logical_account_id = ?`, newAccount.ID).Scan(&archived); err != nil {
 		t.Fatal(err)
 	}
 	if !archived.Valid {
@@ -271,10 +271,10 @@ func insertAccountTestHub(t *testing.T, lifecycle *Lifecycle, now time.Time, id 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO hubs (hub_id, display_name, url, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES (?, ?, ?, 1, 300, ?, ?)`, hubID, id, "https://"+id+".example", utcText(now), utcText(now)); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO hubs (hub_id, display_name, url, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES (?, ?, ?, 1, 300, ?, ?)`, hubID, id, "https://"+id+".example", utcText(now), utcText(now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO hub_connection_statuses (hub_id, state) VALUES (?, 'not_checked')`, hubID); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO hub_connection_statuses (hub_id, state) VALUES (?, 'not_checked')`, hubID); err != nil {
 		t.Fatal(err)
 	}
 	return hubID

@@ -16,7 +16,6 @@ import {
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import type { StatusPresentationSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
@@ -31,14 +30,15 @@ import type {
   PlanVersionSnapshot,
   ServiceSnapshot,
   SplitLogicalAccountInput,
-  UpdateLogicalAccountInput,
-  UpdatePlanHistoryInput,
+  StatusPresentationSnapshot,
   HubSwitchInput,
   ImpactPreviewSnapshot,
   LinkingSnapshot,
   UsageCostAssociationInput,
   UsageCostSourceCompletenessInput,
   UsageLimitAssociationInput,
+  UpdateLogicalAccountInput,
+  UpdatePlanHistoryInput,
 } from "../../lib/backend";
 import { cycleTypeLabel } from "../../lib/displayLabels";
 
@@ -254,6 +254,7 @@ export function AccountsPage({
   }, [backend, targetAccountID]);
 
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=mount synchronizes adapter-backed state; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // The initial read synchronizes this page with the external Wails adapter.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
@@ -451,10 +452,10 @@ export function AccountsPage({
                 onSubmit={(event) => {
                   event.preventDefault();
                   const input = editingLogicalID
-                    ? ({
+                    ? {
                         ...logicalForm,
                         id: editingLogicalID,
-                      } as UpdateLogicalAccountInput)
+                      }
                     : logicalForm;
                   if (!input.serviceId || !input.displayName.trim()) return;
                   void runSave(
@@ -464,9 +465,7 @@ export function AccountsPage({
                             input as UpdateLogicalAccountInput,
                           )
                         : backend
-                            .createLogicalAccount(
-                              input as CreateLogicalAccountInput,
-                            )
+                            .createLogicalAccount(input)
                             .then(() => undefined),
                     editingLogicalID
                       ? "論理アカウントを更新しました。"
@@ -1046,10 +1045,10 @@ export function AccountsPage({
                 )
                   return;
                 const input = editingHistoryID
-                  ? ({
+                  ? {
                       ...historyForm,
                       id: editingHistoryID,
-                    } as UpdatePlanHistoryInput)
+                    }
                   : historyForm;
                 void runSave(
                   () =>
@@ -1057,9 +1056,7 @@ export function AccountsPage({
                       ? backend.updatePlanHistory(
                           input as UpdatePlanHistoryInput,
                         )
-                      : backend
-                          .createPlanHistory(input as CreatePlanHistoryInput)
-                          .then(() => undefined),
+                      : backend.createPlanHistory(input).then(() => undefined),
                   editingHistoryID
                     ? "プラン履歴を修正しました。"
                     : "プラン履歴を登録しました。",

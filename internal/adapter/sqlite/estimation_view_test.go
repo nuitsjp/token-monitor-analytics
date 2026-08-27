@@ -38,7 +38,7 @@ func TestListCurrentLimitSeriesUsesExactSourceAndAssociationPeriod(t *testing.T)
 		{`INSERT INTO usage_limit_observations (observation_id, snapshot_id, hub_id, device_id, raw_service_identifier, account_key, provider_updated_at, window_key, normalized_kind, normalized_metric, normalized_label, plan_label, used_percent, resets_at, analytics_interval_seconds, normalization_generation, normalization_rule_version, normalization_logic_version, json_path, dedupe_state, dedupe_key, value_fingerprint) VALUES ('view-conflict', 'view-snapshot', 'view-hub', 'view-device', 'view.raw', 'view-account-key', ?, 'view-window', 'weekly', 'percent', 'View Weekly', 'View Plan', 30, ?, 300, 1, 'rule', 'logic', '$.limit3', 'conflict', 'view-dedupe-3', 'view-fingerprint-3')`, []any{utcText(now.Add(-3 * time.Minute)), utcText(now.Add(time.Hour))}},
 	}
 	for _, statement := range statements {
-		if _, err := database.Exec(statement.query, statement.args...); err != nil {
+		if _, err := database.ExecContext(context.Background(), statement.query, statement.args...); err != nil {
 			t.Fatal(err)
 		}
 	}

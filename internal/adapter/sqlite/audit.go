@@ -10,7 +10,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
+
+	"token-monitor-analytics/internal/domain"
 )
 
 const (
@@ -21,37 +22,16 @@ const (
 // AuditListOptions describes a read-only audit query. Cursor is an opaque
 // value returned by ListConfigurationAudits and identifies the last sequence
 // in the previous page.
-type AuditListOptions struct {
-	Cursor     string
-	Limit      int
-	From       *time.Time
-	To         *time.Time
-	EntityType string
-	Action     string
-}
+type AuditListOptions = domain.AuditListOptions
 
-type ConfigurationAudit struct {
-	Sequence   int64
-	AuditID    string
-	OccurredAt time.Time
-	Actor      string
-	Action     string
-	EntityType string
-	EntityID   string
-	BeforeJSON string
-	AfterJSON  string
-}
+type ConfigurationAudit = domain.ConfigurationAudit
 
-type ConfigurationAuditPage struct {
-	Items      []ConfigurationAudit
-	NextCursor string
-	HasMore    bool
-}
+type ConfigurationAuditPage = domain.ConfigurationAuditPage
 
 // ListConfigurationAudits returns a stable, newest-first page. The sequence
 // primary key is the tie-breaker, so records inserted while paging cannot
 // move an already-read record to an earlier page.
-func (l *Lifecycle) ListConfigurationAudits(ctx context.Context, options AuditListOptions) (ConfigurationAuditPage, error) {
+func (l *Lifecycle) ListConfigurationAudits(ctx context.Context, options AuditListOptions) (page ConfigurationAuditPage, err error) {
 	limit := options.Limit
 	if limit == 0 {
 		limit = defaultAuditPageSize
@@ -92,7 +72,11 @@ func (l *Lifecycle) ListConfigurationAudits(ctx context.Context, options AuditLi
 	if err != nil {
 		return ConfigurationAuditPage{}, fmt.Errorf("list configuration audits: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close configuration audits: %w", closeErr)
+		}
+	}()
 
 	items := make([]ConfigurationAudit, 0, limit)
 	for rows.Next() {
@@ -125,7 +109,7 @@ func (l *Lifecycle) ListConfigurationAudits(ctx context.Context, options AuditLi
 	if err := rows.Err(); err != nil {
 		return ConfigurationAuditPage{}, fmt.Errorf("read configuration audits: %w", err)
 	}
-	page := ConfigurationAuditPage{Items: items}
+	page = ConfigurationAuditPage{Items: items}
 	if len(items) > limit {
 		page.HasMore = true
 		page.Items = items[:limit]

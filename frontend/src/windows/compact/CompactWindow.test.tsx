@@ -2,18 +2,19 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type {
-  OverviewRecentLimitSnapshot,
-  OverviewSnapshot,
-  StatusPresentationSnapshot,
-} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { AppProviders } from "../../app/providers";
 import {
   createFakeBackend,
   emitFakeBackendEvent,
   emptyOverviewSnapshot,
 } from "../../lib/backend";
-import type { FrontendAdapter, HubSnapshot } from "../../lib/backend";
+import type {
+  FrontendAdapter,
+  HubSnapshot,
+  OverviewRecentLimitSnapshot,
+  OverviewSnapshot,
+  StatusPresentationSnapshot,
+} from "../../lib/backend";
 import { CompactWindow, compactRefreshMilliseconds } from "./CompactWindow";
 
 function hub(collectionEnabled: boolean): HubSnapshot {
@@ -199,10 +200,10 @@ describe("CompactWindow", () => {
       expect(document.documentElement.dataset.theme).toBe("dark"),
     );
     const style = getComputedStyle(counter);
-    expect(style.backgroundColor).toBe("rgb(143, 29, 34)");
+    expect(style.backgroundColor).toBe("rgb(209, 52, 56)");
     expect(style.color).toBe("rgb(255, 255, 255)");
     expect(
-      contrastRatio([143, 29, 34], [255, 255, 255]),
+      contrastRatio([209, 52, 56], [255, 255, 255]),
     ).toBeGreaterThanOrEqual(4.5);
   });
   it("shows two real limits collapsed and four after native expansion", async () => {

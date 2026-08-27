@@ -84,7 +84,7 @@ func LocalTimeCandidates(local stdtime.Time, loc *stdtime.Location) []LocalTimeC
 
 	candidates := make([]LocalTimeCandidate, 0, len(offsets))
 	for offset := range offsets {
-		instant := wall.Add(-stdtime.Duration(offset) * stdtime.Second).UTC()
+		instant := wall.Add(stdtime.Duration(-int64(offset) * int64(stdtime.Second))).UTC()
 		actual := instant.In(loc)
 		if actual.Year() != year || actual.Month() != month || actual.Day() != day ||
 			actual.Hour() != hour || actual.Minute() != minute || actual.Second() != second ||

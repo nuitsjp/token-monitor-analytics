@@ -106,7 +106,7 @@ func (Manager) Read(hubID string) (string, bool, error) {
 		}
 		return "", false, fmt.Errorf("read Windows credential: %w", callErr)
 	}
-	defer credFree.Call(uintptr(unsafe.Pointer(native)))
+	defer func() { _, _, _ = credFree.Call(uintptr(unsafe.Pointer(native))) }()
 	if native.CredentialBlobSize == 0 {
 		return "", true, nil
 	}

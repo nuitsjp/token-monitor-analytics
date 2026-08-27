@@ -1,9 +1,18 @@
 package timezone
 
 import (
+	"archive/zip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 	stdtime "time"
 )
@@ -45,6 +54,54 @@ func TestIANAOptionsAreGeneratedAndLoadable(t *testing.T) {
 	}
 	if _, err := LoadLocation("America/NotAZone"); !errors.Is(err, ErrUnsupportedIANA) {
 		t.Fatalf("unknown IANA error = %v, want ErrUnsupportedIANA", err)
+	}
+}
+
+func TestGeneratedTimezoneDataMatchesFixedSources(t *testing.T) {
+	goRootOutput, err := exec.CommandContext(t.Context(), "go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Fatalf("locate Go root: %v", err)
+	}
+	zoneinfoPath := filepath.Join(strings.TrimSpace(string(goRootOutput)), "lib", "time", "zoneinfo.zip")
+	zoneinfo, err := os.ReadFile(zoneinfoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zoneinfoHash := sha256.Sum256(zoneinfo)
+	if got := hex.EncodeToString(zoneinfoHash[:]); got != GoZoneinfoSHA256 {
+		t.Fatalf("zoneinfo.zip SHA-256 = %s, want %s", got, GoZoneinfoSHA256)
+	}
+	archive, err := zip.OpenReader(zoneinfoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := archive.Close(); err != nil {
+			t.Errorf("close zoneinfo.zip: %v", err)
+		}
+	}()
+	zones := make([]string, 0, len(archive.File))
+	for _, file := range archive.File {
+		if !file.FileInfo().IsDir() {
+			zones = append(zones, file.Name)
+		}
+	}
+	sort.Strings(zones)
+	if !slices.Equal(zones, IANAOptions()) {
+		t.Fatal("iana_zones_generated.go differs from the fixed Go zoneinfo.zip")
+	}
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate timezone test")
+	}
+	mapping, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "windows_to_iana_generated.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappingHash := sha256.Sum256(mapping)
+	if got := hex.EncodeToString(mappingHash[:]); got != CLDRGeneratedTableSHA256 {
+		t.Fatalf("windows_to_iana_generated.go SHA-256 = %s, want %s", got, CLDRGeneratedTableSHA256)
 	}
 }
 

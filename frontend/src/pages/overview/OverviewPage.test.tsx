@@ -3,16 +3,16 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
-import type {
-  OverviewSnapshot,
-  StatusPresentationSnapshot,
-} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import {
   createFakeBackend,
   emptyDataManagementState,
   emptyOverviewSnapshot,
 } from "../../lib/backend";
-import type { DataManagementStateSnapshot } from "../../lib/backend";
+import type {
+  DataManagementStateSnapshot,
+  OverviewSnapshot,
+  StatusPresentationSnapshot,
+} from "../../lib/backend";
 import { OverviewPage } from "./OverviewPage";
 
 function status(

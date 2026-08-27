@@ -771,12 +771,14 @@ export function LimitsPage({
     }
   }, [backend, input]);
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=mount synchronizes adapter-backed limits; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // The fetch updates external adapter-backed state after the component mounts.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
   useEffect(() => {
     if (!seriesID) {
+      // Exception: Rule=react-hooks/set-state-in-effect; Reason=clearing the series selection clears its dependent detail; Scope=next line; Owner=frontend; Expires=2026-12-31.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setDetail(null);
       return;
@@ -811,7 +813,7 @@ export function LimitsPage({
       ) : null}
       {detail ? (
         <div className={styles.detail}>
-          <Button onClick={() => navigate("/limits")}>一覧へ戻る</Button>
+          <Button onClick={() => void navigate("/limits")}>一覧へ戻る</Button>
           <DetailPanel detail={detail} displayTimeZone={displayTimeZone} />
         </div>
       ) : (

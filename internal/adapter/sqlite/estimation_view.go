@@ -13,7 +13,7 @@ import (
 // ListCurrentLimitSeries returns every currently effective account limit
 // association. A missing interval or result is intentionally represented in
 // the row so M03 can explain why a series is not computed.
-func (l *Lifecycle) ListCurrentLimitSeries(ctx context.Context, now time.Time) ([]domain.LimitSeriesView, error) {
+func (l *Lifecycle) ListCurrentLimitSeries(ctx context.Context, now time.Time) (result []domain.LimitSeriesView, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -95,7 +95,12 @@ ORDER BY s.name, la.display_name, ld.meaning, ula.usage_limit_association_id`,
 	if err != nil {
 		return nil, fmt.Errorf("list current limit series: %w", err)
 	}
-	result := make([]domain.LimitSeriesView, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close current limit series rows: %w", closeErr)
+		}
+	}()
+	result = make([]domain.LimitSeriesView, 0)
 	for rows.Next() {
 		var item domain.LimitSeriesView
 		var planHistoryID, planVersionID, planVersionName, ruleID, billingConfirmation sql.NullString
@@ -184,11 +189,7 @@ ORDER BY s.name, la.display_name, ld.meaning, ula.usage_limit_association_id`,
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return nil, fmt.Errorf("read current limit series: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
 	}
 	for index := range result {
 		if result[index].Interval == nil {
@@ -216,7 +217,7 @@ ORDER BY s.name, la.display_name, ld.meaning, ula.usage_limit_association_id`,
 // ListCalculationIntervalViews is used by the M03 history pane. The query
 // returns intervals for one account/definition/source tuple, including
 // excluded intervals and their boundaries.
-func (l *Lifecycle) ListCalculationIntervalViews(ctx context.Context, serviceID, accountID, definitionID, sourceID string) ([]domain.CalculationIntervalView, error) {
+func (l *Lifecycle) ListCalculationIntervalViews(ctx context.Context, serviceID, accountID, definitionID, sourceID string) (result []domain.CalculationIntervalView, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -225,7 +226,12 @@ func (l *Lifecycle) ListCalculationIntervalViews(ctx context.Context, serviceID,
 	if err != nil {
 		return nil, fmt.Errorf("list calculation interval history: %w", err)
 	}
-	result := make([]domain.CalculationIntervalView, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close calculation interval history rows: %w", closeErr)
+		}
+	}()
+	result = make([]domain.CalculationIntervalView, 0)
 	for rows.Next() {
 		var item domain.CalculationIntervalView
 		var planVersion, from, to, boundaryJSON string
@@ -247,10 +253,6 @@ func (l *Lifecycle) ListCalculationIntervalViews(ctx context.Context, serviceID,
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	for index := range result {

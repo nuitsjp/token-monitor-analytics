@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
@@ -16,10 +15,30 @@ import (
 // names are returned exactly as stored; this service never guesses a product
 // catalog from a string.
 type CatalogService struct {
-	lifecycle *sqliteadapter.Lifecycle
-	usecase   *usecase.CatalogUsecase
-	clock     usecase.Clock
-	gate      *usecase.MaintenanceGate
+	repository CatalogRepository
+	usecase    *usecase.CatalogUsecase
+	clock      usecase.Clock
+	gate       *usecase.MaintenanceGate
+}
+
+type CatalogRepository interface {
+	usecase.CatalogStore
+	UpdateService(context.Context, domain.Service) error
+	ArchiveService(context.Context, string, time.Time) error
+	UpdateServiceIdentifierMapping(context.Context, domain.ServiceIdentifierMapping) error
+	SetBillingConfirmation(context.Context, string, domain.BillingConfirmation, time.Time) error
+	SetBaselinePlan(context.Context, string, string, time.Time) error
+	ListServices(context.Context, bool) ([]domain.Service, error)
+	ListServiceIdentifierMappings(context.Context, domain.ServiceIdentifierKind, string) ([]domain.ServiceIdentifierMapping, error)
+	ListLimitDefinitions(context.Context, bool) ([]domain.LimitDefinition, error)
+	ListPlans(context.Context, string, bool) ([]domain.Plan, error)
+	ListPlanVersions(context.Context, string) ([]domain.PlanVersion, error)
+	ListPlanLimitRules(context.Context, string) ([]domain.PlanLimitRule, error)
+	ListStandardPrices(context.Context, string) ([]domain.StandardPrice, error)
+	ListIdentificationCandidates(context.Context, domain.CandidateState) ([]domain.IdentificationCandidate, error)
+	ListIdentificationCandidateObservations(context.Context, string) ([]domain.IdentificationCandidateObservation, error)
+	ListLimitLabelChangeCandidates(context.Context, domain.LabelChangeState) ([]domain.LimitLabelChangeCandidate, error)
+	ListLimitLabelChangeWindows(context.Context, string) ([]domain.LimitLabelChangeWindow, error)
 }
 
 type CatalogSnapshot struct {
@@ -246,26 +265,26 @@ type LabelChangeDecisionInput struct {
 	LimitDefinitionID string `json:"limitDefinitionId"`
 }
 
-func NewCatalogService(lifecycle *sqliteadapter.Lifecycle, gate *usecase.MaintenanceGate) (*CatalogService, error) {
-	if lifecycle == nil || gate == nil {
+func NewCatalogService(repository CatalogRepository, gate *usecase.MaintenanceGate) (*CatalogService, error) {
+	if repository == nil || gate == nil {
 		return nil, errors.New("catalog lifecycle and maintenance gate are required")
 	}
-	uc, err := usecase.NewCatalogUsecase(lifecycle, usecase.SystemClock{}, UUIDGenerator{})
+	uc, err := usecase.NewCatalogUsecase(repository, usecase.SystemClock{}, UUIDGenerator{})
 	if err != nil {
 		return nil, err
 	}
-	return &CatalogService{lifecycle: lifecycle, usecase: uc, clock: usecase.SystemClock{}, gate: gate}, nil
+	return &CatalogService{repository: repository, usecase: uc, clock: usecase.SystemClock{}, gate: gate}, nil
 }
 
-func NewCatalogServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) (*CatalogService, error) {
-	if lifecycle == nil || gate == nil {
+func NewCatalogServiceWithDependencies(repository CatalogRepository, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) (*CatalogService, error) {
+	if repository == nil || gate == nil {
 		return nil, errors.New("catalog lifecycle and maintenance gate are required")
 	}
-	uc, err := usecase.NewCatalogUsecase(lifecycle, clock, ids)
+	uc, err := usecase.NewCatalogUsecase(repository, clock, ids)
 	if err != nil {
 		return nil, err
 	}
-	return &CatalogService{lifecycle: lifecycle, usecase: uc, clock: clock, gate: gate}, nil
+	return &CatalogService{repository: repository, usecase: uc, clock: clock, gate: gate}, nil
 }
 
 func (s *CatalogService) GetCatalog(ctx context.Context) (CatalogSnapshot, error) {
@@ -309,7 +328,7 @@ func (s *CatalogService) GetCatalog(ctx context.Context) (CatalogSnapshot, error
 }
 
 func (s *CatalogService) GetServices(ctx context.Context, includeArchived bool) ([]ServiceSnapshot, error) {
-	rows, err := s.lifecycle.ListServices(ctx, includeArchived)
+	rows, err := s.repository.ListServices(ctx, includeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +340,7 @@ func (s *CatalogService) GetServices(ctx context.Context, includeArchived bool) 
 }
 
 func (s *CatalogService) GetServiceIdentifierMappings(ctx context.Context, kind string) ([]ServiceIdentifierMappingSnapshot, error) {
-	rows, err := s.lifecycle.ListServiceIdentifierMappings(ctx, domain.ServiceIdentifierKind(kind), "")
+	rows, err := s.repository.ListServiceIdentifierMappings(ctx, domain.ServiceIdentifierKind(kind), "")
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +352,7 @@ func (s *CatalogService) GetServiceIdentifierMappings(ctx context.Context, kind 
 }
 
 func (s *CatalogService) GetLimitDefinitions(ctx context.Context, includeArchived bool) ([]LimitDefinitionSnapshot, error) {
-	rows, err := s.lifecycle.ListLimitDefinitions(ctx, includeArchived)
+	rows, err := s.repository.ListLimitDefinitions(ctx, includeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +364,7 @@ func (s *CatalogService) GetLimitDefinitions(ctx context.Context, includeArchive
 }
 
 func (s *CatalogService) GetPlans(ctx context.Context, serviceID string, includeArchived bool) ([]PlanSnapshot, error) {
-	rows, err := s.lifecycle.ListPlans(ctx, serviceID, includeArchived)
+	rows, err := s.repository.ListPlans(ctx, serviceID, includeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +376,7 @@ func (s *CatalogService) GetPlans(ctx context.Context, serviceID string, include
 }
 
 func (s *CatalogService) GetPlanVersions(ctx context.Context, planID string) ([]PlanVersionSnapshot, error) {
-	rows, err := s.lifecycle.ListPlanVersions(ctx, planID)
+	rows, err := s.repository.ListPlanVersions(ctx, planID)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +388,7 @@ func (s *CatalogService) GetPlanVersions(ctx context.Context, planID string) ([]
 }
 
 func (s *CatalogService) GetPlanLimitRules(ctx context.Context, planVersionID string) ([]PlanLimitRuleSnapshot, error) {
-	rows, err := s.lifecycle.ListPlanLimitRules(ctx, planVersionID)
+	rows, err := s.repository.ListPlanLimitRules(ctx, planVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +400,7 @@ func (s *CatalogService) GetPlanLimitRules(ctx context.Context, planVersionID st
 }
 
 func (s *CatalogService) GetStandardPrices(ctx context.Context, planVersionID string) ([]StandardPriceSnapshot, error) {
-	rows, err := s.lifecycle.ListStandardPrices(ctx, planVersionID)
+	rows, err := s.repository.ListStandardPrices(ctx, planVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -393,13 +412,13 @@ func (s *CatalogService) GetStandardPrices(ctx context.Context, planVersionID st
 }
 
 func (s *CatalogService) GetIdentificationCandidates(ctx context.Context, state string) ([]IdentificationCandidateSnapshot, error) {
-	rows, err := s.lifecycle.ListIdentificationCandidates(ctx, domain.CandidateState(state))
+	rows, err := s.repository.ListIdentificationCandidates(ctx, domain.CandidateState(state))
 	if err != nil {
 		return nil, err
 	}
 	result := make([]IdentificationCandidateSnapshot, 0, len(rows))
 	for _, row := range rows {
-		observations, listErr := s.lifecycle.ListIdentificationCandidateObservations(ctx, row.ID)
+		observations, listErr := s.repository.ListIdentificationCandidateObservations(ctx, row.ID)
 		if listErr != nil {
 			return nil, listErr
 		}
@@ -414,13 +433,13 @@ func (s *CatalogService) GetIdentificationCandidates(ctx context.Context, state 
 }
 
 func (s *CatalogService) GetLabelChangeCandidates(ctx context.Context, state string) ([]LabelChangeCandidateSnapshot, error) {
-	rows, err := s.lifecycle.ListLimitLabelChangeCandidates(ctx, domain.LabelChangeState(state))
+	rows, err := s.repository.ListLimitLabelChangeCandidates(ctx, domain.LabelChangeState(state))
 	if err != nil {
 		return nil, err
 	}
 	result := make([]LabelChangeCandidateSnapshot, 0, len(rows))
 	for _, row := range rows {
-		windows, listErr := s.lifecycle.ListLimitLabelChangeWindows(ctx, row.ID)
+		windows, listErr := s.repository.ListLimitLabelChangeWindows(ctx, row.ID)
 		if listErr != nil {
 			return nil, listErr
 		}
@@ -459,7 +478,7 @@ func (s *CatalogService) UpdateService(ctx context.Context, input UpdateServiceI
 	}
 	row.Provider, row.Name, row.OfficialKey = input.Provider, input.Name, input.OfficialKey
 	row.UpdatedAt = s.now()
-	if err := s.lifecycle.UpdateService(ctx, row); err != nil {
+	if err := s.repository.UpdateService(ctx, row); err != nil {
 		return ServiceSnapshot{}, err
 	}
 	return serviceSnapshot(row), nil
@@ -471,7 +490,7 @@ func (s *CatalogService) ArchiveService(ctx context.Context, serviceID string) e
 		return err
 	}
 	defer release()
-	return s.lifecycle.ArchiveService(ctx, serviceID, s.now())
+	return s.repository.ArchiveService(ctx, serviceID, s.now())
 }
 
 func (s *CatalogService) RestoreService(ctx context.Context, serviceID string) error {
@@ -486,7 +505,7 @@ func (s *CatalogService) RestoreService(ctx context.Context, serviceID string) e
 	}
 	row.ArchivedAt = nil
 	row.UpdatedAt = s.now()
-	return s.lifecycle.UpdateService(ctx, row)
+	return s.repository.UpdateService(ctx, row)
 }
 
 func (s *CatalogService) CreateServiceIdentifierMapping(ctx context.Context, input ServiceIdentifierMappingInput) error {
@@ -512,14 +531,14 @@ func (s *CatalogService) UpdateServiceIdentifierMapping(ctx context.Context, inp
 	if err != nil {
 		return err
 	}
-	rows, err := s.lifecycle.ListServiceIdentifierMappings(ctx, "", "")
+	rows, err := s.repository.ListServiceIdentifierMappings(ctx, "", "")
 	if err != nil {
 		return err
 	}
 	for _, existing := range rows {
 		if existing.ID == mapping.ID {
 			mapping.CreatedAt = existing.CreatedAt
-			return s.lifecycle.UpdateServiceIdentifierMapping(ctx, mapping)
+			return s.repository.UpdateServiceIdentifierMapping(ctx, mapping)
 		}
 	}
 	return errors.New("service identifier mapping was not found")
@@ -547,7 +566,7 @@ func (s *CatalogService) UpdateLimitDefinition(ctx context.Context, input LimitD
 	if err != nil {
 		return err
 	}
-	rows, err := s.lifecycle.ListLimitDefinitions(ctx, true)
+	rows, err := s.repository.ListLimitDefinitions(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -569,7 +588,7 @@ func (s *CatalogService) SetBillingConfirmation(ctx context.Context, definitionI
 		return err
 	}
 	defer release()
-	return s.lifecycle.SetBillingConfirmation(ctx, definitionID, domain.BillingConfirmation(confirmation), s.now())
+	return s.repository.SetBillingConfirmation(ctx, definitionID, domain.BillingConfirmation(confirmation), s.now())
 }
 func (s *CatalogService) CreatePlan(ctx context.Context, input PlanInput) error {
 	release, err := acquireEdit(ctx, s.gate)
@@ -593,7 +612,7 @@ func (s *CatalogService) UpdatePlan(ctx context.Context, input PlanInput) error 
 	if err != nil {
 		return err
 	}
-	rows, err := s.lifecycle.ListPlans(ctx, "", true)
+	rows, err := s.repository.ListPlans(ctx, "", true)
 	if err != nil {
 		return err
 	}
@@ -613,7 +632,7 @@ func (s *CatalogService) SetBaselinePlan(ctx context.Context, serviceID, planID 
 		return err
 	}
 	defer release()
-	return s.lifecycle.SetBaselinePlan(ctx, serviceID, planID, s.now())
+	return s.repository.SetBaselinePlan(ctx, serviceID, planID, s.now())
 }
 func (s *CatalogService) CreatePlanVersion(ctx context.Context, input PlanVersionInput) error {
 	release, err := acquireEdit(ctx, s.gate)
@@ -662,7 +681,7 @@ func (s *CatalogService) UpdateStandardPrice(ctx context.Context, input Standard
 	if err != nil {
 		return err
 	}
-	rows, err := s.lifecycle.ListStandardPrices(ctx, "")
+	rows, err := s.repository.ListStandardPrices(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -729,7 +748,7 @@ func (s *CatalogService) serviceByID(ctx context.Context, id string) (domain.Ser
 	if strings.TrimSpace(id) == "" {
 		return domain.Service{}, errors.New("service ID is required")
 	}
-	rows, err := s.lifecycle.ListServices(ctx, true)
+	rows, err := s.repository.ListServices(ctx, true)
 	if err != nil {
 		return domain.Service{}, err
 	}

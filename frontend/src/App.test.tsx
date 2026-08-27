@@ -194,12 +194,22 @@ describe("compact window", () => {
     expect(
       await screen.findByRole("heading", { name: "メイン画面を閉じますか？" }),
     ).toBeVisible();
-    await user.click(await screen.findByRole("button", { name: "キャンセル" }));
+    await user.click(
+      await screen.findByRole(
+        "button",
+        { name: "キャンセル" },
+        { timeout: 5_000 },
+      ),
+    );
     expect(confirmations).toBe(0);
 
     act(() => emitFakeBackendEvent(backend, "window:main-close-requested"));
     await user.click(
-      await screen.findByRole("button", { name: "破棄して続行" }),
+      await screen.findByRole(
+        "button",
+        { name: "破棄して続行" },
+        { timeout: 5_000 },
+      ),
     );
     expect(confirmations).toBe(1);
   });

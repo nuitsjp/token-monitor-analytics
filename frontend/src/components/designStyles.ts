@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from "@fluentui/react-components";
-import type { StatusPresentationSnapshot } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import type { StatusPresentationSnapshot } from "../lib/backend";
 
 /**
  * Shared surfaces for the main window. The rules come from
@@ -250,6 +250,8 @@ export function toneClass(styles: DesignStyles, tone: StatusTone): string {
       return styles.danger;
     case "caution":
       return styles.caution;
+    case "muted":
+      return styles.muted;
     default:
       return styles.muted;
   }
@@ -279,6 +281,8 @@ export function gaugeFillColor(
       return tokens.colorPaletteMarigoldBackground3;
     case "remaining_low":
       return tokens.colorPaletteRedBackground3;
+    case undefined:
+      return tokens.colorNeutralBackground6;
     default:
       return tokens.colorNeutralBackground6;
   }

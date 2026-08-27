@@ -39,7 +39,7 @@ func (i restoreCancelInjector) Check(point string) error {
 func TestRestoreApplierRoundTripsLogicalContentsAndAddsOneGlobalAudit(t *testing.T) {
 	ctx := context.Background()
 	lifecycle, candidate, manifest := newRestoreApplyFixture(t, "dark")
-	defer lifecycle.Close()
+	defer func() { _ = lifecycle.Close() }()
 	want, err := logicalSnapshot(ctx, candidate)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestRestoreApplierRoundTripsLogicalContentsAndAddsOneGlobalAudit(t *testing
 			t.Fatal(err)
 		}
 		var afterJSON string
-		if err := database.QueryRow(`SELECT after_json FROM configuration_audits WHERE audit_id = 'audit-one' AND action = 'restore_succeeded'`).Scan(&afterJSON); err != nil {
+		if err := database.QueryRowContext(t.Context(), `SELECT after_json FROM configuration_audits WHERE audit_id = 'audit-one' AND action = 'restore_succeeded'`).Scan(&afterJSON); err != nil {
 			t.Fatal(err)
 		}
 		var audit struct {
@@ -113,7 +113,7 @@ func TestRestoreApplierRollsBackEveryPrecommitFailurePoint(t *testing.T) {
 			t.Run(point, func(t *testing.T) {
 				ctx := context.Background()
 				lifecycle, candidate, manifest := newRestoreApplyFixture(t, "dark")
-				defer lifecycle.Close()
+				defer func() { _ = lifecycle.Close() }()
 				applier, err := NewRestoreApplier(lifecycle, restorePointFailure(point))
 				if err != nil {
 					t.Fatal(err)
@@ -165,7 +165,7 @@ func TestRestoreApplierTreatsPostcommitFailureAsCleanupWarning(t *testing.T) {
 	if err := lifecycle.Close(); err != nil {
 		t.Fatal(err)
 	}
-	recovery, err := RecoverPendingRestore(dataDirectory)
+	recovery, err := RecoverPendingRestore(t.Context(), dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,13 +175,13 @@ func TestRestoreApplierTreatsPostcommitFailureAsCleanupWarning(t *testing.T) {
 	if err := lifecycle.Open(context.Background(), filepath.Join(dataDirectory, RestoreDatabaseName)); err != nil {
 		t.Fatal(err)
 	}
-	defer lifecycle.Close()
+	defer func() { _ = lifecycle.Close() }()
 	database, err := lifecycle.DB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	var theme string
-	if err := database.QueryRow(`SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
 		t.Fatal(err)
 	}
 	if theme != "dark" {
@@ -191,7 +191,7 @@ func TestRestoreApplierTreatsPostcommitFailureAsCleanupWarning(t *testing.T) {
 
 func TestRestoreApplierRevalidatesCandidateImmediatelyBeforeSwap(t *testing.T) {
 	lifecycle, candidate, manifest := newRestoreApplyFixture(t, "dark")
-	defer lifecycle.Close()
+	defer func() { _ = lifecycle.Close() }()
 	file, err := os.OpenFile(candidate, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestRestoreApplierRevalidatesCandidateImmediatelyBeforeSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 	var theme string
-	if err := database.QueryRow(`SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
 		t.Fatal(err)
 	}
 	if theme != "system" {
@@ -229,7 +229,7 @@ func TestRestoreApplierRevalidatesCandidateImmediatelyBeforeSwap(t *testing.T) {
 
 func TestRestoreApplierHonorsCancellationBeforeFirstOriginalMove(t *testing.T) {
 	lifecycle, candidate, manifest := newRestoreApplyFixture(t, "dark")
-	defer lifecycle.Close()
+	defer func() { _ = lifecycle.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	applier, err := NewRestoreApplier(lifecycle, restoreCancelInjector{point: "journal_prepared", cancel: cancel})
 	if err != nil {
@@ -244,7 +244,7 @@ func TestRestoreApplierHonorsCancellationBeforeFirstOriginalMove(t *testing.T) {
 		t.Fatal(err)
 	}
 	var theme string
-	if err := database.QueryRow(`SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
 		t.Fatal(err)
 	}
 	if theme != "system" {
@@ -254,7 +254,11 @@ func TestRestoreApplierHonorsCancellationBeforeFirstOriginalMove(t *testing.T) {
 
 func TestRestoreApplierFinishesAtomicPhaseAfterOriginalMoveDespiteCancellation(t *testing.T) {
 	lifecycle, candidate, manifest := newRestoreApplyFixture(t, "dark")
-	defer lifecycle.Close()
+	defer func() {
+		if err := lifecycle.Close(); err != nil {
+			t.Errorf("close lifecycle: %v", err)
+		}
+	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	applier, err := NewRestoreApplier(lifecycle, restoreCancelInjector{point: "original_database_moved", cancel: cancel})
 	if err != nil {
@@ -268,7 +272,7 @@ func TestRestoreApplierFinishesAtomicPhaseAfterOriginalMoveDespiteCancellation(t
 		t.Fatal(err)
 	}
 	var theme string
-	if err := database.QueryRow(`SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
 		t.Fatal(err)
 	}
 	if theme != "dark" {
@@ -279,12 +283,16 @@ func TestRestoreApplierFinishesAtomicPhaseAfterOriginalMoveDespiteCancellation(t
 func TestRestoreApplierRollsBackWhenSuccessAuditCannotBeInserted(t *testing.T) {
 	ctx := context.Background()
 	lifecycle, candidate, manifest := newRestoreApplyFixture(t, "dark")
-	defer lifecycle.Close()
+	defer func() {
+		if err := lifecycle.Close(); err != nil {
+			t.Errorf("close lifecycle: %v", err)
+		}
+	}()
 	database, err := sql.Open("sqlite", sqliteReadWriteDSN(candidate))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO configuration_audits
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO configuration_audits
 		(audit_id, occurred_at, actor, action, entity_type, entity_id)
 		VALUES ('audit-one', '2026-08-26T00:00:00Z', 'test', 'test', 'test', 'test')`); err != nil {
 		_ = database.Close()
@@ -310,7 +318,7 @@ func TestRestoreApplierRollsBackWhenSuccessAuditCannotBeInserted(t *testing.T) {
 		t.Fatal(err)
 	}
 	var theme string
-	if err := operational.QueryRow(`SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+	if err := operational.QueryRowContext(t.Context(), `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
 		t.Fatal(err)
 	}
 	if theme != "system" {

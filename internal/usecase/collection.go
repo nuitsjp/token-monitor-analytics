@@ -7,19 +7,17 @@ import (
 	"sync"
 	"time"
 
-	"token-monitor-analytics/internal/adapter/hubapi"
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/domain"
 )
 
 type CollectionStore interface {
-	GetHubRow(context.Context, string) (sqliteadapter.HubRow, error)
-	ListCredentialAuditEvents(context.Context, string) ([]sqliteadapter.CredentialAuditEvent, error)
+	GetHubRow(context.Context, string) (domain.HubRow, error)
+	ListCredentialAuditEvents(context.Context, string) ([]domain.CredentialAuditEvent, error)
 	SetHubCollectionEnabled(context.Context, string, bool, time.Time) error
-	CreateCollectionAttempt(context.Context, sqliteadapter.CollectionAttempt) error
-	FinishCollectionAttempt(context.Context, sqliteadapter.CollectionAttempt) error
-	SaveRawSnapshots(context.Context, []sqliteadapter.RawSnapshot) error
-	InsertAllObservations(context.Context, []sqliteadapter.CostObservation, []sqliteadapter.UsageObservation, []sqliteadapter.LimitObservation) error
+	CreateCollectionAttempt(context.Context, domain.CollectionAttempt) error
+	FinishCollectionAttempt(context.Context, domain.CollectionAttempt) error
+	SaveRawSnapshots(context.Context, []domain.RawSnapshot) error
+	InsertAllObservations(context.Context, []domain.CostObservation, []domain.CollectionUsageObservation, []domain.LimitObservation) error
 }
 
 type CredentialReader interface {
@@ -27,28 +25,134 @@ type CredentialReader interface {
 }
 
 type CollectionClient interface {
-	FetchStats(context.Context, string) (hubapi.Result, error)
+	FetchStats(context.Context, string) (CollectionResult, error)
 }
 
-type CollectionClientFactory func(rawURL string, allowlist hubapi.Allowlist) (CollectionClient, error)
+type CollectionClientFactory func(rawURL string) (CollectionClient, error)
+
+type CollectionResponse struct {
+	Raw        []byte
+	HTTPStatus int
+}
+
+type CollectionResult struct {
+	Health   CollectionResponse
+	Stats    CollectionResponse
+	Contract CollectionContract
+}
+
+type CollectionContract struct {
+	Build          CollectionBuildIdentity
+	UsageUpdatedAt bool
+}
+
+type CollectionBuildIdentity struct {
+	SchemaVersion  int
+	Runtime        string
+	CoreBuildID    string
+	RuntimeBuildID string
+}
+
+type NormalizedCostObservation struct {
+	DeviceID             string
+	RawServiceIdentifier string
+	UsageUpdatedAt       time.Time
+	CostUSDText          string
+	SyncUploadIntervalMS *int64
+	SourceTimezone       string
+	SourceLocalDate      string
+	JSONPath             string
+	DedupeKey            string
+	ValueFingerprint     string
+}
+
+type NormalizedUsageObservation struct {
+	DeviceID             string
+	RawServiceIdentifier string
+	UsageUpdatedAt       time.Time
+	TokenCount           int64
+	APICostUSDText       string
+	ModelTokens          map[string]int64
+	ModelCosts           map[string]string
+	SourceTimezone       string
+	SourceLocalDate      string
+	JSONPath             string
+	DedupeKey            string
+	ValueFingerprint     string
+}
+
+type NormalizedLimitObservation struct {
+	DeviceID              string
+	RawServiceIdentifier  string
+	AccountKey            string
+	ProviderUpdatedAt     time.Time
+	WindowKey             string
+	NormalizedKind        string
+	NormalizedMetric      string
+	NormalizedLabel       string
+	PlanLabel             string
+	UsedPercent           *float64
+	AbsoluteUsedText      string
+	AbsoluteLimitText     string
+	AbsoluteRemainingText string
+	Currency              string
+	ResetsAt              *time.Time
+	SyncUploadIntervalMS  *int64
+	LimitsRefreshMS       *int64
+	SourceTimezone        string
+	SourceLocalDate       string
+	JSONPath              string
+	DedupeKey             string
+	ValueFingerprint      string
+	WindowKeyConflict     bool
+}
+
+type NormalizedStats struct {
+	Costs  []NormalizedCostObservation
+	Usage  []NormalizedUsageObservation
+	Limits []NormalizedLimitObservation
+}
+
+type CollectionDependencies struct {
+	NormalizeStats            func([]byte) (NormalizedStats, error)
+	ClassifyError             func(error) string
+	NormalizationGeneration   int64
+	NormalizationRuleVersion  string
+	NormalizationLogicVersion string
+}
+
+type CollectionError struct {
+	Classification string
+	Reason         string
+}
+
+func (e *CollectionError) Error() string { return e.Reason }
+
+func CollectionClassificationOf(err error) string {
+	var classified *CollectionError
+	if errors.As(err, &classified) {
+		return classified.Classification
+	}
+	return ""
+}
 
 type CollectionUsecase struct {
-	store       CollectionStore
-	credentials CredentialReader
-	factory     CollectionClientFactory
-	clock       Clock
-	ids         IDGenerator
-	allowlist   hubapi.Allowlist
-	gate        *MaintenanceGate
-	mu          sync.Mutex
-	active      map[string]struct{}
+	store        CollectionStore
+	credentials  CredentialReader
+	factory      CollectionClientFactory
+	clock        Clock
+	ids          IDGenerator
+	dependencies CollectionDependencies
+	gate         *MaintenanceGate
+	mu           sync.Mutex
+	active       map[string]struct{}
 }
 
-func NewCollectionUsecase(store CollectionStore, credentials CredentialReader, factory CollectionClientFactory, clock Clock, ids IDGenerator, allowlist hubapi.Allowlist, gate *MaintenanceGate) (*CollectionUsecase, error) {
-	if store == nil || credentials == nil || factory == nil || clock == nil || ids == nil || gate == nil {
+func NewCollectionUsecase(store CollectionStore, credentials CredentialReader, factory CollectionClientFactory, clock Clock, ids IDGenerator, dependencies CollectionDependencies, gate *MaintenanceGate) (*CollectionUsecase, error) {
+	if store == nil || credentials == nil || factory == nil || clock == nil || ids == nil || gate == nil || dependencies.NormalizeStats == nil || dependencies.ClassifyError == nil {
 		return nil, errors.New("collection usecase dependencies are required")
 	}
-	return &CollectionUsecase{store: store, credentials: credentials, factory: factory, clock: clock, ids: ids, allowlist: allowlist, gate: gate, active: make(map[string]struct{})}, nil
+	return &CollectionUsecase{store: store, credentials: credentials, factory: factory, clock: clock, ids: ids, dependencies: dependencies, gate: gate, active: make(map[string]struct{})}, nil
 }
 
 func (u *CollectionUsecase) StartCollection(ctx context.Context, hubID string) error {
@@ -112,7 +216,7 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 	started := u.clock.Now().UTC()
 	if !row.Hub.Enabled {
 		completed := u.clock.Now().UTC()
-		attempt := sqliteadapter.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "skipped", StartedAt: started, CompletedAt: &completed, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds, FailureCode: "hub_disabled"}
+		attempt := domain.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "skipped", StartedAt: started, CompletedAt: &completed, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds, FailureCode: "hub_disabled"}
 		if err := u.recordSkipped(ctx, attempt); err != nil {
 			return fmt.Errorf("record disabled Hub collection: %w", err)
 		}
@@ -120,7 +224,7 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 	}
 	if trigger == "scheduled" && !row.Hub.CollectionEnabled {
 		completed := u.clock.Now().UTC()
-		attempt := sqliteadapter.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "skipped", StartedAt: started, CompletedAt: &completed, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds, FailureCode: "collection_disabled"}
+		attempt := domain.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "skipped", StartedAt: started, CompletedAt: &completed, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds, FailureCode: "collection_disabled"}
 		if err := u.recordSkipped(ctx, attempt); err != nil {
 			return fmt.Errorf("record disabled collection: %w", err)
 		}
@@ -128,7 +232,7 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 	}
 	if !u.acquire(hubID) {
 		completed := u.clock.Now().UTC()
-		attempt := sqliteadapter.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "skipped", StartedAt: started, CompletedAt: &completed, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds, FailureCode: "duplicate_in_flight"}
+		attempt := domain.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "skipped", StartedAt: started, CompletedAt: &completed, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds, FailureCode: "duplicate_in_flight"}
 		if err := u.recordSkipped(ctx, attempt); err != nil {
 			return fmt.Errorf("record skipped collection: %w", err)
 		}
@@ -136,7 +240,7 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 	}
 	defer u.release(hubID)
 
-	attempt := sqliteadapter.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "started", StartedAt: started, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds}
+	attempt := domain.CollectionAttempt{AttemptID: u.ids.New(), HubID: hubID, Trigger: trigger, State: "started", StartedAt: started, AnalyticsIntervalSeconds: row.Hub.CollectionIntervalSeconds}
 	if err := u.store.CreateCollectionAttempt(ctx, attempt); err != nil {
 		return fmt.Errorf("start collection attempt: %w", err)
 	}
@@ -147,14 +251,14 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 	attempt.StatsHTTPStatus = nonZeroStatus(result.Stats.HTTPStatus)
 	attempt.APIContract = contractText(result.Contract)
 
-	var snapshots []sqliteadapter.RawSnapshot
+	var snapshots []domain.RawSnapshot
 	if len(result.Health.Raw) > 0 && result.Health.HTTPStatus > 0 {
 		attempt.HealthSnapshotID = u.ids.New()
-		snapshots = append(snapshots, sqliteadapter.RawSnapshot{SnapshotID: attempt.HealthSnapshotID, AttemptID: attempt.AttemptID, HubID: hubID, ResponseKind: "health", ReceivedStartedAt: started, ReceivedCompletedAt: completed, HTTPStatus: result.Health.HTTPStatus, APIContract: attempt.APIContract, Body: result.Health.Raw})
+		snapshots = append(snapshots, domain.RawSnapshot{SnapshotID: attempt.HealthSnapshotID, AttemptID: attempt.AttemptID, HubID: hubID, ResponseKind: "health", ReceivedStartedAt: started, ReceivedCompletedAt: completed, HTTPStatus: result.Health.HTTPStatus, APIContract: attempt.APIContract, Body: result.Health.Raw})
 	}
 	if collectErr == nil && len(result.Stats.Raw) > 0 && result.Stats.HTTPStatus > 0 {
 		attempt.StatsSnapshotID = u.ids.New()
-		snapshots = append(snapshots, sqliteadapter.RawSnapshot{SnapshotID: attempt.StatsSnapshotID, AttemptID: attempt.AttemptID, HubID: hubID, ResponseKind: "stats", ReceivedStartedAt: started, ReceivedCompletedAt: completed, HTTPStatus: result.Stats.HTTPStatus, APIContract: attempt.APIContract, Body: result.Stats.Raw})
+		snapshots = append(snapshots, domain.RawSnapshot{SnapshotID: attempt.StatsSnapshotID, AttemptID: attempt.AttemptID, HubID: hubID, ResponseKind: "stats", ReceivedStartedAt: started, ReceivedCompletedAt: completed, HTTPStatus: result.Stats.HTTPStatus, APIContract: attempt.APIContract, Body: result.Stats.Raw})
 	}
 	if len(snapshots) > 0 {
 		if err := u.store.SaveRawSnapshots(ctx, snapshots); err != nil {
@@ -164,7 +268,7 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 		}
 	}
 	if collectErr != nil {
-		attempt.State, attempt.FailureCode, attempt.FailureDetail = "failed", string(hubapi.ClassificationOf(collectErr)), safeFailureDetail(collectErr)
+		attempt.State, attempt.FailureCode, attempt.FailureDetail = "failed", u.dependencies.ClassifyError(collectErr), safeFailureDetail(collectErr, u.dependencies.ClassifyError)
 		if attempt.FailureCode == "" {
 			attempt.FailureCode = "collection"
 		}
@@ -174,7 +278,7 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 		return nil
 	}
 
-	normalized, normalizeErr := hubapi.NormalizeStats(result.Stats.Raw)
+	normalized, normalizeErr := u.dependencies.NormalizeStats(result.Stats.Raw)
 	if normalizeErr != nil {
 		attempt.State, attempt.FailureCode, attempt.FailureDetail, attempt.NormalizationErrorPath = "failed", "normalization_failed", "stats normalization failed", "$"
 		if err := u.store.FinishCollectionAttempt(ctx, attempt); err != nil {
@@ -194,42 +298,41 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 	return nil
 }
 
-func (u *CollectionUsecase) fetch(ctx context.Context, row sqliteadapter.HubRow) (hubapi.Result, error) {
+func (u *CollectionUsecase) fetch(ctx context.Context, row domain.HubRow) (CollectionResult, error) {
 	events, err := u.store.ListCredentialAuditEvents(ctx, row.Hub.ID)
 	if err != nil {
-		return hubapi.Result{}, errors.New("credential state could not be read")
+		return CollectionResult{}, errors.New("credential state could not be read")
 	}
 	if domain.DeriveCredentialState(toCredentialEvents(events)) != domain.CredentialRegistered {
-		return hubapi.Result{}, &hubapi.Error{Classification: hubapi.ClassificationAuth, Operation: "stats", Reason: "credential is not ready"}
+		return CollectionResult{}, &CollectionError{Classification: "auth", Reason: "credential is not ready"}
 	}
-	client, err := u.factory(row.Hub.URL, u.allowlist)
+	client, err := u.factory(row.Hub.URL)
 	if err != nil {
-		return hubapi.Result{}, err
+		return CollectionResult{}, err
 	}
 	secret, found, err := u.credentials.Read(row.Hub.ID)
 	if err != nil {
-		return hubapi.Result{}, errors.New("credential could not be read")
+		return CollectionResult{}, errors.New("credential could not be read")
 	}
 	if !found {
-		return hubapi.Result{}, &hubapi.Error{Classification: hubapi.ClassificationAuth, Operation: "stats", Reason: "credential is not registered"}
+		return CollectionResult{}, &CollectionError{Classification: "auth", Reason: "credential is not registered"}
 	}
 	result, err := client.FetchStats(ctx, secret)
-	secret = ""
 	return result, err
 }
 
-func (u *CollectionUsecase) saveObservations(ctx context.Context, normalized hubapi.NormalizedStats, attempt sqliteadapter.CollectionAttempt) error {
-	costs := make([]sqliteadapter.CostObservation, 0, len(normalized.Costs))
+func (u *CollectionUsecase) saveObservations(ctx context.Context, normalized NormalizedStats, attempt domain.CollectionAttempt) error {
+	costs := make([]domain.CostObservation, 0, len(normalized.Costs))
 	for _, item := range normalized.Costs {
-		costs = append(costs, sqliteadapter.CostObservation{ObservationID: u.ids.New(), UsageCostSourceID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, CostUSDText: item.CostUSDText, SyncUploadIntervalMS: item.SyncUploadIntervalMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: hubapi.NormalizationGeneration, NormalizationRuleVersion: hubapi.NormalizationRuleVersion, NormalizationLogicVersion: hubapi.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+		costs = append(costs, domain.CostObservation{ObservationID: u.ids.New(), UsageCostSourceID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, CostUSDText: item.CostUSDText, SyncUploadIntervalMS: item.SyncUploadIntervalMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: u.dependencies.NormalizationGeneration, NormalizationRuleVersion: u.dependencies.NormalizationRuleVersion, NormalizationLogicVersion: u.dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
 	}
-	usage := make([]sqliteadapter.UsageObservation, 0, len(normalized.Usage))
+	usage := make([]domain.CollectionUsageObservation, 0, len(normalized.Usage))
 	for _, item := range normalized.Usage {
-		usage = append(usage, sqliteadapter.UsageObservation{ObservationID: u.ids.New(), UsageCostSourceID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: hubapi.NormalizationGeneration, NormalizationRuleVersion: hubapi.NormalizationRuleVersion, NormalizationLogicVersion: hubapi.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+		usage = append(usage, domain.CollectionUsageObservation{ObservationID: u.ids.New(), UsageCostSourceID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: u.dependencies.NormalizationGeneration, NormalizationRuleVersion: u.dependencies.NormalizationRuleVersion, NormalizationLogicVersion: u.dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
 	}
-	limits := make([]sqliteadapter.LimitObservation, 0, len(normalized.Limits))
+	limits := make([]domain.LimitObservation, 0, len(normalized.Limits))
 	for _, item := range normalized.Limits {
-		limits = append(limits, sqliteadapter.LimitObservation{ObservationID: u.ids.New(), UsageLimitSourceID: u.ids.New(), HubAccountCandidateID: u.ids.New(), IdentificationCandidateID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: hubapi.NormalizationGeneration, NormalizationRuleVersion: hubapi.NormalizationRuleVersion, NormalizationLogicVersion: hubapi.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
+		limits = append(limits, domain.LimitObservation{ObservationID: u.ids.New(), UsageLimitSourceID: u.ids.New(), HubAccountCandidateID: u.ids.New(), IdentificationCandidateID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: u.dependencies.NormalizationGeneration, NormalizationRuleVersion: u.dependencies.NormalizationRuleVersion, NormalizationLogicVersion: u.dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
 	}
 	return u.store.InsertAllObservations(ctx, costs, usage, limits)
 }
@@ -250,23 +353,23 @@ func (u *CollectionUsecase) release(hubID string) {
 	u.mu.Unlock()
 }
 
-func (u *CollectionUsecase) recordSkipped(ctx context.Context, attempt sqliteadapter.CollectionAttempt) error {
+func (u *CollectionUsecase) recordSkipped(ctx context.Context, attempt domain.CollectionAttempt) error {
 	if err := u.store.CreateCollectionAttempt(ctx, attempt); err != nil {
 		return err
 	}
 	return u.store.FinishCollectionAttempt(ctx, attempt)
 }
 
-func contractText(contract hubapi.Contract) string {
+func contractText(contract CollectionContract) string {
 	if contract.Build.SchemaVersion <= 0 {
 		return ""
 	}
 	return fmt.Sprintf("schema=%d;runtime=%s;core=%s;runtime_build=%s;usage_updated_at=%t", contract.Build.SchemaVersion, contract.Build.Runtime, contract.Build.CoreBuildID, contract.Build.RuntimeBuildID, contract.UsageUpdatedAt)
 }
 
-func safeFailureDetail(err error) string {
-	if classified := hubapi.ClassificationOf(err); classified != "" {
-		return string(classified)
+func safeFailureDetail(err error, classify func(error) string) string {
+	if classified := classify(err); classified != "" {
+		return classified
 	}
 	return "collection failed"
 }
@@ -278,10 +381,10 @@ func nonZeroStatus(value int) *int {
 	return &value
 }
 
-func toCredentialEvents(events []sqliteadapter.CredentialAuditEvent) []domain.CredentialEvent {
+func toCredentialEvents(events []domain.CredentialAuditEvent) []domain.CredentialEvent {
 	result := make([]domain.CredentialEvent, 0, len(events))
 	for _, event := range events {
-		result = append(result, domain.CredentialEvent{Sequence: event.Sequence, Action: event.Action})
+		result = append(result, domain.CredentialEvent(event))
 	}
 	return result
 }

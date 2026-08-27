@@ -10,57 +10,11 @@ import (
 	"token-monitor-analytics/internal/domain"
 )
 
-// OverviewData is the read model shared by M01 and T01. It contains no raw
-// response bodies or credentials.
-type OverviewData struct {
-	TimezoneConfirmed          bool
-	Hubs                       []OverviewHub
-	ReviewActionCount          int
-	ReviewWarningCount         int
-	ReviewActionKindCounts     map[string]int
-	ReviewWarningKindCounts    map[string]int
-	RecalculationFailureCount  int
-	EstimationStatusCounts     map[string]int
-	RawSnapshotCount           int64
-	OldestSnapshotAt           *time.Time
-	LatestSnapshotAt           *time.Time
-	ServiceCount               int
-	LogicalAccountCount        int
-	LimitAssociationCount      int
-	CostAssociationCount       int
-	ConfirmedCompletenessCount int
-	DatabaseSizeBytes          int64
-	RecentLimits               []OverviewRecentLimit
-}
+type OverviewData = domain.OverviewData
 
-type OverviewHub struct {
-	ID                        string
-	DisplayName               string
-	Enabled                   bool
-	CollectionEnabled         bool
-	CollectionIntervalSeconds int64
-	ConnectionState           string
-	CollectionRunning         bool
-	LastCollectionState       string
-	LastCollectionAt          *time.Time
-	LastSuccessAt             *time.Time
-	LastFailureAt             *time.Time
-	LastSkippedAt             *time.Time
-}
+type OverviewHub = domain.OverviewHub
 
-type OverviewRecentLimit struct {
-	LogicalAccountID    string
-	LimitDefinitionID   string
-	ServiceName         string
-	AccountName         string
-	LimitName           string
-	CycleType           string
-	UsedPercent         float64
-	ResetsAt            *time.Time
-	LastIncreaseAt      time.Time
-	LatestObservationAt time.Time
-	ExpectedInterval    time.Duration
-}
+type OverviewRecentLimit = domain.OverviewRecentLimit
 
 // ReadOverviewData reads one consistent, non-secret overview from canonical
 // tables. Display calculations and privacy masking remain in the desktop DTO
@@ -128,7 +82,7 @@ func readOverviewSettings(ctx context.Context, database *sql.DB, result *Overvie
 	return nil
 }
 
-func readOverviewHubs(ctx context.Context, database *sql.DB, result *OverviewData) error {
+func readOverviewHubs(ctx context.Context, database *sql.DB, result *OverviewData) (err error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT h.hub_id, h.display_name, h.enabled, h.collection_enabled, h.collection_interval_seconds,
 		       hs.state,
@@ -144,7 +98,11 @@ func readOverviewHubs(ctx context.Context, database *sql.DB, result *OverviewDat
 	if err != nil {
 		return fmt.Errorf("read overview Hubs: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close overview Hub rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var hub OverviewHub
 		var enabled, collectionEnabled, collectionRunning int
@@ -205,31 +163,31 @@ func readOverviewCounts(ctx context.Context, database *sql.DB, result *OverviewD
 	return nil
 }
 
-func readOverviewEstimationCounts(ctx context.Context, database *sql.DB, result *OverviewData) error {
+func readOverviewEstimationCounts(ctx context.Context, database *sql.DB, result *OverviewData) (err error) {
 	rows, err := database.QueryContext(ctx, `SELECT status, COUNT(*) FROM estimation_results GROUP BY status ORDER BY status`)
 	if err != nil {
 		return fmt.Errorf("read overview estimation counts: %w", err)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close overview estimation count rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var status string
 		var count int
 		if err := rows.Scan(&status, &count); err != nil {
-			_ = rows.Close()
 			return fmt.Errorf("scan overview estimation count: %w", err)
 		}
 		result.EstimationStatusCounts[status] = count
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return fmt.Errorf("read overview estimation counts: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close overview estimation counts: %w", err)
 	}
 	return nil
 }
 
-func readOverviewRecentLimits(ctx context.Context, database *sql.DB, result *OverviewData, now time.Time) error {
+func readOverviewRecentLimits(ctx context.Context, database *sql.DB, result *OverviewData, now time.Time) (err error) {
 	nowText := utcText(now)
 	rows, err := database.QueryContext(ctx, `
 		WITH valid AS (
@@ -292,7 +250,11 @@ func readOverviewRecentLimits(ctx context.Context, database *sql.DB, result *Ove
 	if err != nil {
 		return fmt.Errorf("read overview recent limits: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close overview recent limit rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var item OverviewRecentLimit
 		var reset sql.NullString

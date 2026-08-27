@@ -32,11 +32,11 @@ func TestHubIdentitySurvivesDuplicateURLUpdateAndDisable(t *testing.T) {
 	}
 
 	database, _ := lifecycle.DB()
-	rows, err := database.Query(`SELECT hub_id, url, collection_enabled FROM hubs ORDER BY created_at`)
+	rows, err := database.QueryContext(context.Background(), `SELECT hub_id, url, collection_enabled FROM hubs ORDER BY created_at`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type result struct {
 		id      string
 		url     string
@@ -49,6 +49,9 @@ func TestHubIdentitySurvivesDuplicateURLUpdateAndDisable(t *testing.T) {
 			t.Fatal(err)
 		}
 		got = append(got, item)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	t.Run("P1-HUB-01 Hub identity is immutable across URL changes and disable", func(t *testing.T) {
 		if len(got) != 2 || got[0].id != firstID || got[0].url != "https://new.example.test" || got[0].enabled || got[1].id != secondID {
@@ -74,7 +77,7 @@ func TestCreateHubAcceptsPrivateHTTP(t *testing.T) {
 	}
 	database, _ := lifecycle.DB()
 	var count int
-	if err := database.QueryRow(`SELECT count(*) FROM hubs`).Scan(&count); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM hubs`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -94,7 +97,7 @@ func TestCreateHubRejectsPublicHTTPWithoutWriting(t *testing.T) {
 	}
 	database, _ := lifecycle.DB()
 	var count int
-	if err := database.QueryRow(`SELECT count(*) FROM hubs`).Scan(&count); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM hubs`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {

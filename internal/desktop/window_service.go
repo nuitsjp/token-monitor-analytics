@@ -11,7 +11,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
+	"token-monitor-analytics/internal/domain"
 )
 
 type WindowService struct {
@@ -30,8 +30,13 @@ type WindowController struct {
 	compactExpanded bool
 	main            *application.WebviewWindow
 	mainDirty       bool
-	storage         *sqliteadapter.Lifecycle
+	storage         WindowPlacementStore
 	maintenance     maintenanceStateReader
+}
+
+type WindowPlacementStore interface {
+	GetWindowPlacement(context.Context, string) (domain.WindowPlacement, bool, error)
+	SaveWindowPlacement(context.Context, string, domain.WindowPlacement) error
 }
 
 const (
@@ -44,7 +49,7 @@ const (
 	mainCompactGap        = 16
 )
 
-func NewWindowService(storage *sqliteadapter.Lifecycle) (*WindowService, *WindowController) {
+func NewWindowService(storage WindowPlacementStore) (*WindowService, *WindowController) {
 	controller := &WindowController{storage: storage}
 	return &WindowService{controller: controller}, controller
 }
@@ -66,10 +71,10 @@ func (s *WindowController) SetCompact(window *application.WebviewWindow) {
 	window.SetAlwaysOnTop(true)
 	window.SetMinimiseButtonState(application.ButtonDisabled)
 	window.SetMaximiseButtonState(application.ButtonDisabled)
-	s.registerPlacement(window, "compact", compactCollapsedWidth, compactDefaultHeight, compactMinWidth, compactMinHeight)
+	s.registerPlacement(context.Background(), window, "compact", compactCollapsedWidth, compactDefaultHeight, compactMinWidth, compactMinHeight)
 
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
-		s.savePlacement(window, "compact")
+		s.savePlacement(context.Background(), window, "compact")
 		event.Cancel()
 		if s.restoreApplyActive() {
 			window.EmitEvent("maintenance:close-blocked", "復元中はアプリを終了できません。")
@@ -95,11 +100,11 @@ func (s *WindowService) OpenMainRoute(ctx context.Context, route string) error {
 
 // SetCompactExpanded changes the T01 width while retaining its saved placement.
 // The saved width is also the persisted expanded state.
-func (s *WindowService) SetCompactExpanded(_ context.Context, expanded bool) {
-	s.controller.SetCompactExpanded(expanded)
+func (s *WindowService) SetCompactExpanded(ctx context.Context, expanded bool) {
+	s.controller.SetCompactExpanded(ctx, expanded)
 }
 
-func (s *WindowController) OpenMainRoute(_ context.Context, route string) {
+func (s *WindowController) OpenMainRoute(ctx context.Context, route string) {
 	s.mu.Lock()
 	if s.main != nil {
 		window := s.main
@@ -126,9 +131,9 @@ func (s *WindowController) OpenMainRoute(_ context.Context, route string) {
 		URL:              "/?window=main&route=" + url.QueryEscape(route),
 	})
 	s.main = window
-	s.registerPlacement(window, "main", 1280, 800, 1024, 640)
+	s.registerPlacement(ctx, window, "main", 1280, 800, 1024, 640)
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
-		s.savePlacement(window, "main")
+		s.savePlacement(ctx, window, "main")
 		if s.restoreApplyActive() {
 			event.Cancel()
 			window.EmitEvent("maintenance:close-blocked", "復元中はウィンドウを閉じられません。")
@@ -204,7 +209,7 @@ func (s *WindowController) restoreApplyActive() bool {
 	return state.Active && state.Phase == "restore_apply"
 }
 
-func (s *WindowController) SetCompactExpanded(expanded bool) {
+func (s *WindowController) SetCompactExpanded(ctx context.Context, expanded bool) {
 	s.mu.Lock()
 	compact := s.compact
 	s.compactExpanded = expanded
@@ -212,12 +217,12 @@ func (s *WindowController) SetCompactExpanded(expanded bool) {
 	if compact == nil {
 		return
 	}
-	s.normalizePlacement(compact, "compact")
+	s.normalizePlacement(ctx, compact, "compact")
 }
 
-func (s *WindowController) registerPlacement(window *application.WebviewWindow, kind string, defaultWidth, defaultHeight, minWidth, minHeight int) {
+func (s *WindowController) registerPlacement(ctx context.Context, window *application.WebviewWindow, kind string, defaultWidth, defaultHeight, minWidth, minHeight int) {
 	window.OnWindowEvent(events.Common.WindowRuntimeReady, func(*application.WindowEvent) {
-		s.restorePlacement(window, kind, defaultWidth, defaultHeight, minWidth, minHeight)
+		s.restorePlacement(ctx, window, kind, defaultWidth, defaultHeight, minWidth, minHeight)
 	})
 	for _, eventType := range []events.WindowEventType{
 		events.Common.WindowDidMove,
@@ -225,16 +230,16 @@ func (s *WindowController) registerPlacement(window *application.WebviewWindow, 
 		events.Common.WindowDPIChanged,
 	} {
 		window.OnWindowEvent(eventType, func(*application.WindowEvent) {
-			s.normalizePlacement(window, kind)
+			s.normalizePlacement(ctx, window, kind)
 		})
 	}
 }
 
-func (s *WindowController) restorePlacement(window *application.WebviewWindow, kind string, defaultWidth, defaultHeight, minWidth, minHeight int) {
+func (s *WindowController) restorePlacement(ctx context.Context, window *application.WebviewWindow, kind string, defaultWidth, defaultHeight, minWidth, minHeight int) {
 	if s.storage == nil || s.app == nil {
 		return
 	}
-	placement, found, err := s.storage.GetWindowPlacement(context.Background(), kind)
+	placement, found, err := s.storage.GetWindowPlacement(ctx, kind)
 	if err != nil {
 		log.Printf("restore %s window placement: %v", kind, err)
 		return
@@ -283,7 +288,7 @@ func (s *WindowController) restorePlacement(window *application.WebviewWindow, k
 	}
 }
 
-func (s *WindowController) normalizePlacement(window *application.WebviewWindow, kind string) {
+func (s *WindowController) normalizePlacement(ctx context.Context, window *application.WebviewWindow, kind string) {
 	if window == nil {
 		return
 	}
@@ -291,7 +296,8 @@ func (s *WindowController) normalizePlacement(window *application.WebviewWindow,
 	if err != nil || screen == nil {
 		return
 	}
-	if kind == "compact" {
+	switch kind {
+	case "compact":
 		s.mu.Lock()
 		expanded := s.compactExpanded
 		s.mu.Unlock()
@@ -301,10 +307,10 @@ func (s *WindowController) normalizePlacement(window *application.WebviewWindow,
 		if bounds != current {
 			window.SetBounds(bounds)
 		}
-	} else if kind == "main" {
+	case "main":
 		s.placeMainWithoutCompactOverlap(window)
 	}
-	s.savePlacement(window, kind)
+	s.savePlacement(ctx, window, kind)
 }
 
 func (s *WindowController) placeMainWithoutCompactOverlap(window *application.WebviewWindow) {
@@ -327,7 +333,7 @@ func (s *WindowController) placeMainWithoutCompactOverlap(window *application.We
 	}
 }
 
-func (s *WindowController) savePlacement(window *application.WebviewWindow, kind string) {
+func (s *WindowController) savePlacement(ctx context.Context, window *application.WebviewWindow, kind string) {
 	if s.storage == nil || window == nil || window.IsMinimised() || window.IsMaximised() || window.IsFullscreen() {
 		return
 	}
@@ -336,11 +342,11 @@ func (s *WindowController) savePlacement(window *application.WebviewWindow, kind
 		return
 	}
 	bounds := window.Bounds()
-	placement := sqliteadapter.WindowPlacement{
+	placement := domain.WindowPlacement{
 		X: bounds.X, Y: bounds.Y, Width: bounds.Width, Height: bounds.Height,
 		DPI: int(math.Round(float64(screen.ScaleFactor) * 96)), Monitor: screen.ID,
 	}
-	if err := s.storage.SaveWindowPlacement(context.Background(), kind, placement); err != nil {
+	if err := s.storage.SaveWindowPlacement(ctx, kind, placement); err != nil {
 		log.Printf("save %s window placement: %v", kind, err)
 	}
 }

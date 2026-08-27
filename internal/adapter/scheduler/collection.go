@@ -59,10 +59,10 @@ func (s *Scheduler) Restore(ctx context.Context) error {
 		}
 		credentialEvents := make([]domain.CredentialEvent, 0, len(events))
 		for _, event := range events {
-			credentialEvents = append(credentialEvents, domain.CredentialEvent{Sequence: event.Sequence, Action: event.Action})
+			credentialEvents = append(credentialEvents, domain.CredentialEvent(event))
 		}
 		if row.Hub.Enabled && row.Hub.CollectionEnabled && domain.DeriveCredentialState(credentialEvents) == domain.CredentialRegistered {
-			if err := s.startJob(row.Hub.ID, row.Hub.CollectionIntervalSeconds); err != nil {
+			if err := s.startJob(ctx, row.Hub.ID, row.Hub.CollectionIntervalSeconds); err != nil {
 				_ = s.Close()
 				return err
 			}
@@ -99,7 +99,7 @@ func (s *Scheduler) Start(ctx context.Context, hubID string) error {
 	if !running {
 		return nil
 	}
-	return s.startJob(hubID, row.Hub.CollectionIntervalSeconds)
+	return s.startJob(ctx, hubID, row.Hub.CollectionIntervalSeconds)
 }
 
 func (s *Scheduler) Stop(ctx context.Context, hubID string) error {
@@ -134,7 +134,10 @@ func (s *Scheduler) Close() error {
 	return nil
 }
 
-func (s *Scheduler) startJob(hubID string, intervalSeconds int64) error {
+func (s *Scheduler) startJob(ctx context.Context, hubID string, intervalSeconds int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if intervalSeconds <= 0 {
 		return errors.New("collection interval must be positive")
 	}
@@ -147,7 +150,7 @@ func (s *Scheduler) startJob(hubID string, intervalSeconds int64) error {
 		s.mu.Unlock()
 		return nil
 	}
-	jobContext, cancel := context.WithCancel(s.ctx)
+	jobContext, cancel := context.WithCancel(ctx)
 	s.jobs[hubID] = cancel
 	s.wg.Add(1)
 	s.mu.Unlock()

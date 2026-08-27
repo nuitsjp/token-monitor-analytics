@@ -28,6 +28,7 @@ interface PendingRequest {
   action?: () => void | Promise<void>;
 }
 
+// Exception: Rule=react-refresh/only-export-components; Reason=the guard hook and component share one navigation contract; Scope=next line; Owner=frontend; Expires=2026-12-31.
 // eslint-disable-next-line react-refresh/only-export-components
 export function useDirtyStateGuard(
   backend: FrontendAdapter,

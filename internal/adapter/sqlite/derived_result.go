@@ -303,7 +303,7 @@ func appendResultEvidence(existing []domain.EstimationEvidence, points []domain.
 	return result
 }
 
-func (l *Lifecycle) enrichDerivedResultEvidence(ctx context.Context, database *sql.DB, result *domain.DerivedResult) error {
+func (l *Lifecycle) enrichDerivedResultEvidence(ctx context.Context, database *sql.DB, result *domain.DerivedResult) (err error) {
 	seen := make(map[string]struct{}, len(result.Evidence))
 	for _, item := range result.Evidence {
 		seen[evidenceKey(item)] = struct{}{}
@@ -346,17 +346,21 @@ func (l *Lifecycle) enrichDerivedResultEvidence(ctx context.Context, database *s
 			if err != nil {
 				return fmt.Errorf("find estimation plan history evidence: %w", err)
 			}
+			defer func() {
+				if closeErr := rows.Close(); closeErr != nil && err == nil {
+					err = fmt.Errorf("close estimation plan history evidence rows: %w", closeErr)
+				}
+			}()
 			for rows.Next() {
 				var id, from string
 				var to sql.NullString
 				if err := rows.Scan(&id, &from, &to); err != nil {
-					_ = rows.Close()
 					return err
 				}
 				add(domain.EstimationEvidence{ID: "plan-history:" + point.ID + ":" + id, Kind: "plan_history", PointID: point.ID, PlanHistoryID: id, LogicalAccountID: accountID, PlanVersionID: point.LimitSeriesPlanVersionIDs[index], DetailsJSON: `{"validFrom":"` + from + `","validTo":"` + to.String + `"` + `}`})
 			}
-			if err := rows.Close(); err != nil {
-				return err
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("read estimation plan history evidence: %w", err)
 			}
 		}
 	}
@@ -367,7 +371,7 @@ func evidenceKey(item domain.EstimationEvidence) string {
 	return strings.Join([]string{item.Kind, item.PointID, item.SourceID, item.ObservationID, item.SnapshotID, item.AssociationID, item.CompletenessID, item.PlanHistoryID}, "|")
 }
 
-func (l *Lifecycle) ListEstimationResults(ctx context.Context, serviceID string) ([]domain.DerivedResult, error) {
+func (l *Lifecycle) ListEstimationResults(ctx context.Context, serviceID string) (result []domain.DerivedResult, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -383,21 +387,20 @@ func (l *Lifecycle) ListEstimationResults(ctx context.Context, serviceID string)
 	if err != nil {
 		return nil, fmt.Errorf("list estimation results: %w", err)
 	}
-	var result []domain.DerivedResult
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close estimation result rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		item, err := scanDerivedResultRow(rows)
 		if err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return nil, fmt.Errorf("read estimation results: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
 	}
 	for index := range result {
 		if err := l.loadDerivedResultChildren(ctx, database, &result[index]); err != nil {
@@ -464,17 +467,21 @@ func scanDerivedResultRow(scanner rowScanner) (domain.DerivedResult, error) {
 	return item, nil
 }
 
-func (l *Lifecycle) loadDerivedResultChildren(ctx context.Context, database *sql.DB, result *domain.DerivedResult) error {
-	rows, err := database.QueryContext(ctx, `SELECT estimation_result_series_id, usage_limit_source_id, logical_account_id, plan_version_id, calculation_interval_id, multiplier, estimated_limit, plan_limit_rule_id, plan_limit_rule_ids_json FROM estimation_result_series WHERE estimation_result_id = ? ORDER BY usage_limit_source_id, logical_account_id, plan_version_id`, result.ID)
+func (l *Lifecycle) loadDerivedResultChildren(ctx context.Context, database *sql.DB, result *domain.DerivedResult) (err error) {
+	seriesRows, err := database.QueryContext(ctx, `SELECT estimation_result_series_id, usage_limit_source_id, logical_account_id, plan_version_id, calculation_interval_id, multiplier, estimated_limit, plan_limit_rule_id, plan_limit_rule_ids_json FROM estimation_result_series WHERE estimation_result_id = ? ORDER BY usage_limit_source_id, logical_account_id, plan_version_id`, result.ID)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
+	defer func() {
+		if closeErr := seriesRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close estimation result series rows: %w", closeErr)
+		}
+	}()
+	for seriesRows.Next() {
 		var item domain.EstimationResultSeries
 		var ruleIDs string
 		var multiplier, estimatedLimit sql.NullFloat64
-		if err := rows.Scan(&item.ID, &item.UsageLimitSourceID, &item.LogicalAccountID, &item.PlanVersionID, &item.CalculationIntervalID, &multiplier, &estimatedLimit, &item.PlanLimitRuleID, &ruleIDs); err != nil {
-			_ = rows.Close()
+		if err := seriesRows.Scan(&item.ID, &item.UsageLimitSourceID, &item.LogicalAccountID, &item.PlanVersionID, &item.CalculationIntervalID, &multiplier, &estimatedLimit, &item.PlanLimitRuleID, &ruleIDs); err != nil {
 			return err
 		}
 		if multiplier.Valid {
@@ -486,74 +493,80 @@ func (l *Lifecycle) loadDerivedResultChildren(ctx context.Context, database *sql
 			item.EstimatedLimit = &value
 		}
 		if err := json.Unmarshal([]byte(ruleIDs), &item.PlanLimitRuleIDs); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		result.Series = append(result.Series, item)
 	}
-	if err := rows.Close(); err != nil {
-		return err
+	if err := seriesRows.Err(); err != nil {
+		return fmt.Errorf("read estimation result series: %w", err)
 	}
-	rows, err = database.QueryContext(ctx, `SELECT estimation_result_difference_row_id, start_point_id, end_point_id, start_at, end_at, coefficients_json, cost, accepted, exclusion_reason FROM estimation_result_difference_rows WHERE estimation_result_id = ? ORDER BY row_index`, result.ID)
+	differenceRows, err := database.QueryContext(ctx, `SELECT estimation_result_difference_row_id, start_point_id, end_point_id, start_at, end_at, coefficients_json, cost, accepted, exclusion_reason FROM estimation_result_difference_rows WHERE estimation_result_id = ? ORDER BY row_index`, result.ID)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
+	defer func() {
+		if closeErr := differenceRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close estimation result difference rows: %w", closeErr)
+		}
+	}()
+	for differenceRows.Next() {
 		var item domain.EstimationDifferenceRow
 		var start, end, coefficients string
 		var accepted int
-		if err := rows.Scan(&item.ID, &item.StartPointID, &item.EndPointID, &start, &end, &coefficients, &item.Cost, &accepted, &item.ExclusionReason); err != nil {
-			_ = rows.Close()
+		if err := differenceRows.Scan(&item.ID, &item.StartPointID, &item.EndPointID, &start, &end, &coefficients, &item.Cost, &accepted, &item.ExclusionReason); err != nil {
 			return err
 		}
 		item.StartAt, err = parseUTC(start)
 		if err != nil {
-			_ = rows.Close()
 			return err
 		}
 		item.EndAt, err = parseUTC(end)
 		if err != nil {
-			_ = rows.Close()
 			return err
 		}
 		if err := json.Unmarshal([]byte(coefficients), &item.Coefficients); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		item.Accepted = accepted != 0
 		result.DifferenceRows = append(result.DifferenceRows, item)
 	}
-	if err := rows.Close(); err != nil {
-		return err
+	if err := differenceRows.Err(); err != nil {
+		return fmt.Errorf("read estimation result difference rows: %w", err)
 	}
-	rows, err = database.QueryContext(ctx, `SELECT estimation_result_evidence_id, evidence_kind, point_id, source_id, observation_id, snapshot_id, association_id, completeness_id, plan_history_id, logical_account_id, plan_version_id, observed_at, time_delta_ns, normalization_generation, normalization_rule_version, normalization_logic_version, details_json FROM estimation_result_evidence WHERE estimation_result_id = ? ORDER BY evidence_kind, estimation_result_evidence_id`, result.ID)
+	evidenceRows, err := database.QueryContext(ctx, `SELECT estimation_result_evidence_id, evidence_kind, point_id, source_id, observation_id, snapshot_id, association_id, completeness_id, plan_history_id, logical_account_id, plan_version_id, observed_at, time_delta_ns, normalization_generation, normalization_rule_version, normalization_logic_version, details_json FROM estimation_result_evidence WHERE estimation_result_id = ? ORDER BY evidence_kind, estimation_result_evidence_id`, result.ID)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
+	defer func() {
+		if closeErr := evidenceRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close estimation result evidence rows: %w", closeErr)
+		}
+	}()
+	for evidenceRows.Next() {
 		var item domain.EstimationEvidence
 		var observed sql.NullString
 		var delta int64
-		if err := rows.Scan(&item.ID, &item.Kind, &item.PointID, &item.SourceID, &item.ObservationID, &item.SnapshotID, &item.AssociationID, &item.CompletenessID, &item.PlanHistoryID, &item.LogicalAccountID, &item.PlanVersionID, &observed, &delta, &item.NormalizationGeneration, &item.NormalizationRuleVersion, &item.NormalizationLogicVersion, &item.DetailsJSON); err != nil {
-			_ = rows.Close()
+		if err := evidenceRows.Scan(&item.ID, &item.Kind, &item.PointID, &item.SourceID, &item.ObservationID, &item.SnapshotID, &item.AssociationID, &item.CompletenessID, &item.PlanHistoryID, &item.LogicalAccountID, &item.PlanVersionID, &observed, &delta, &item.NormalizationGeneration, &item.NormalizationRuleVersion, &item.NormalizationLogicVersion, &item.DetailsJSON); err != nil {
 			return err
 		}
 		item.TimeDelta = time.Duration(delta)
 		if observed.Valid {
 			item.ObservedAt, err = parseUTC(observed.String)
 			if err != nil {
-				_ = rows.Close()
 				return err
 			}
 		}
 		result.Evidence = append(result.Evidence, item)
 	}
-	return rows.Close()
+	if err := evidenceRows.Err(); err != nil {
+		return fmt.Errorf("read estimation result evidence: %w", err)
+	}
+	return nil
 }
 
 // ListFallbackResults returns only the newest eligible result for each
 // account/plan pair. No age cutoff is applied.
-func (l *Lifecycle) ListFallbackResults(ctx context.Context, serviceID, definitionID, cycle string, currentFrom time.Time) ([]domain.FallbackResult, error) {
+func (l *Lifecycle) ListFallbackResults(ctx context.Context, serviceID, definitionID, cycle string, currentFrom time.Time) (result []domain.FallbackResult, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -562,9 +575,12 @@ func (l *Lifecycle) ListFallbackResults(ctx context.Context, serviceID, definiti
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close fallback result rows: %w", closeErr)
+		}
+	}()
 	seen := map[string]struct{}{}
-	var result []domain.FallbackResult
 	for rows.Next() {
 		var item domain.FallbackResult
 		var from, to, status string
@@ -680,7 +696,7 @@ func (l *Lifecycle) FailRecalculationRequest(ctx context.Context, requestID, fai
 // Recalculate executes only the derived-result path. Calculation intervals and
 // source facts are immutable inputs here; the worker never invokes their save
 // operation.
-func (l *Lifecycle) Recalculate(ctx context.Context, request domain.RecalculationRequest) error {
+func (l *Lifecycle) Recalculate(ctx context.Context, request domain.RecalculationRequest) (err error) {
 	scope, err := domain.DecodeRecalculationScope(request.ScopeJSON)
 	if err != nil {
 		return err
@@ -720,16 +736,20 @@ func (l *Lifecycle) Recalculate(ctx context.Context, request domain.Recalculatio
 	if queryErr != nil {
 		return fmt.Errorf("list recalculation intervals: %w", queryErr)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close recalculation interval rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var id string
 		if scanErr := rows.Scan(&id); scanErr != nil {
-			_ = rows.Close()
 			return scanErr
 		}
 		intervalIDs = append(intervalIDs, id)
 	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return closeErr
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read recalculation intervals: %w", err)
 	}
 	for _, intervalID := range sortedUnique(intervalIDs) {
 		points, err := l.ListEstimationPoints(ctx, intervalID)

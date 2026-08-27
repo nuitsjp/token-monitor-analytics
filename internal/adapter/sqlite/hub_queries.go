@@ -6,23 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"token-monitor-analytics/internal/domain"
 )
 
 // HubRow is the read model used by the Hub desktop service. It deliberately
 // contains no credential value; Credential Manager is the only secret store.
-type HubRow struct {
-	Hub                   Hub
-	ConnectionState       string
-	ConnectionCheckedAt   *time.Time
-	ConnectionFailureNote string
-}
+type HubRow = domain.HubRow
 
-type CredentialAuditEvent struct {
-	Sequence int64
-	Action   string
-}
+type CredentialAuditEvent = domain.CredentialAuditEvent
 
-func (l *Lifecycle) ListHubRows(ctx context.Context) ([]HubRow, error) {
+func (l *Lifecycle) ListHubRows(ctx context.Context) (result []HubRow, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -37,8 +31,11 @@ func (l *Lifecycle) ListHubRows(ctx context.Context) ([]HubRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list Hubs: %w", err)
 	}
-	defer rows.Close()
-	var result []HubRow
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close Hub rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var (
 			hub                           Hub
@@ -94,7 +91,7 @@ func (l *Lifecycle) GetHubRow(ctx context.Context, hubID string) (HubRow, error)
 	return HubRow{}, errors.New("hub was not found")
 }
 
-func (l *Lifecycle) ListCredentialAuditEvents(ctx context.Context, hubID string) ([]CredentialAuditEvent, error) {
+func (l *Lifecycle) ListCredentialAuditEvents(ctx context.Context, hubID string) (events []CredentialAuditEvent, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -111,8 +108,11 @@ func (l *Lifecycle) ListCredentialAuditEvents(ctx context.Context, hubID string)
 	if err != nil {
 		return nil, fmt.Errorf("list credential audit events: %w", err)
 	}
-	defer rows.Close()
-	var events []CredentialAuditEvent
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close credential audit event rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var event CredentialAuditEvent
 		if err := rows.Scan(&event.Sequence, &event.Action); err != nil {
@@ -126,23 +126,9 @@ func (l *Lifecycle) ListCredentialAuditEvents(ctx context.Context, hubID string)
 	return events, nil
 }
 
-type CredentialAudit struct {
-	AuditID    string
-	OccurredAt time.Time
-	Action     string
-	HubID      string
-	BeforeJSON string
-	AfterJSON  string
-}
+type CredentialAudit = domain.CredentialAudit
 
-type HubConnectionAttempt struct {
-	AttemptID     string
-	HubID         string
-	CheckedAt     time.Time
-	State         string
-	APIContract   string
-	FailureDetail string
-}
+type HubConnectionAttempt = domain.HubConnectionAttempt
 
 func (l *Lifecycle) RecordHubConnectionAttempt(ctx context.Context, attempt HubConnectionAttempt) error {
 	if attempt.AttemptID == "" || attempt.HubID == "" || attempt.CheckedAt.IsZero() || attempt.State == "" {

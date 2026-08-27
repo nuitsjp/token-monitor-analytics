@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
@@ -198,11 +197,11 @@ type LimitSeriesDetailSnapshot struct {
 	History []CalculationIntervalSnapshot `json:"history"`
 }
 
-func NewEstimationService(lifecycle *sqliteadapter.Lifecycle) (*EstimationService, error) {
-	if lifecycle == nil {
+func NewEstimationService(reader EstimationReader) (*EstimationService, error) {
+	if reader == nil {
 		return nil, errors.New("estimation service lifecycle is required")
 	}
-	return NewEstimationServiceWithDependencies(lifecycle, usecase.SystemClock{})
+	return NewEstimationServiceWithDependencies(reader, usecase.SystemClock{})
 }
 
 func NewEstimationServiceWithDependencies(reader EstimationReader, clock usecase.Clock) (*EstimationService, error) {
@@ -749,5 +748,3 @@ func nullableStringLess(left, right string) bool {
 	}
 	return left < right
 }
-
-var _ EstimationReader = (*sqliteadapter.Lifecycle)(nil)

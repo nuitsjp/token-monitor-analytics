@@ -448,6 +448,7 @@ export function DataManagementPage({
   }, [backend]);
 
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=mount synchronizes adapter-backed state; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // This initial read synchronizes the page with the external desktop adapter.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();

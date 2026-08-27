@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"time"
 
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
+	"token-monitor-analytics/internal/domain"
 )
 
 // AuditService exposes only read operations for M10. The adapter owns query
 // ordering, cursor validation, and JSON redaction; this layer translates the
 // Wails DTO and validates user-entered date boundaries.
 type AuditService struct {
-	lifecycle *sqliteadapter.Lifecycle
+	reader AuditReader
+}
+
+type AuditReader interface {
+	ListConfigurationAudits(context.Context, domain.AuditListOptions) (domain.ConfigurationAuditPage, error)
 }
 
 type AuditFilterInput struct {
@@ -43,8 +47,8 @@ type AuditPage struct {
 	HasMore    bool          `json:"hasMore"`
 }
 
-func NewAuditService(lifecycle *sqliteadapter.Lifecycle) *AuditService {
-	return &AuditService{lifecycle: lifecycle}
+func NewAuditService(reader AuditReader) *AuditService {
+	return &AuditService{reader: reader}
 }
 
 func (s *AuditService) GetAudits(ctx context.Context, input AuditFilterInput) (AuditPage, error) {
@@ -56,7 +60,7 @@ func (s *AuditService) GetAudits(ctx context.Context, input AuditFilterInput) (A
 	if err != nil {
 		return AuditPage{}, fmt.Errorf("invalid audit to date: %w", err)
 	}
-	page, err := s.lifecycle.ListConfigurationAudits(ctx, sqliteadapter.AuditListOptions{
+	page, err := s.reader.ListConfigurationAudits(ctx, domain.AuditListOptions{
 		Cursor: input.Cursor, Limit: input.Limit, From: from, To: to,
 		EntityType: input.EntityType, Action: input.Action,
 	})

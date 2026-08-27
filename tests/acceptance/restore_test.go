@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,7 +48,11 @@ func runRestoreRepresentativeDatabaseFullRoundTrip(t *testing.T) {
 	if err := lifecycle.Open(ctx, filepath.Join(dataDirectory, sqliteadapter.RestoreDatabaseName)); err != nil {
 		t.Fatal(err)
 	}
-	defer lifecycle.Close()
+	t.Cleanup(func() {
+		if err := lifecycle.Close(); err != nil {
+			t.Errorf("close lifecycle: %v", err)
+		}
+	})
 	gate := usecase.NewMaintenanceGate()
 	database, err := lifecycle.DB()
 	if err != nil {
@@ -229,28 +234,24 @@ func seedRepresentativeRestoreData(t *testing.T, ctx context.Context, lifecycle 
 	}
 }
 
-func acceptanceLogicalContents(ctx context.Context, database *sql.DB, excludedAuditID string) (map[string][][]string, error) {
+func acceptanceLogicalContents(ctx context.Context, database *sql.DB, excludedAuditID string) (result map[string][][]string, err error) {
 	tableRows, err := database.QueryContext(ctx, `SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { err = errors.Join(err, tableRows.Close()) }()
 	var tables []string
 	for tableRows.Next() {
 		var table string
 		if err := tableRows.Scan(&table); err != nil {
-			_ = tableRows.Close()
 			return nil, err
 		}
 		tables = append(tables, table)
 	}
 	if err := tableRows.Err(); err != nil {
-		_ = tableRows.Close()
 		return nil, err
 	}
-	if err := tableRows.Close(); err != nil {
-		return nil, err
-	}
-	result := make(map[string][][]string, len(tables))
+	result = make(map[string][][]string, len(tables))
 	for _, table := range tables {
 		columns, primary, err := acceptanceColumns(ctx, database, table)
 		if err != nil {
@@ -271,44 +272,45 @@ func acceptanceLogicalContents(ctx context.Context, database *sql.DB, excludedAu
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() {
-			values := make([]any, len(columns))
-			pointers := make([]any, len(columns))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			encoded := make([]string, len(values))
-			for i, value := range values {
-				if bytes, ok := value.([]byte); ok {
-					encoded[i] = "bytes:" + hex.EncodeToString(bytes)
-				} else {
-					encoded[i] = fmt.Sprintf("%T:%v", value, value)
-				}
-			}
-			result[table] = append(result[table], encoded)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
+		values, err := acceptanceScanRows(rows, columns)
+		if err != nil {
 			return nil, err
 		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
+		result[table] = values
 	}
 	return result, nil
 }
 
-func acceptanceColumns(ctx context.Context, database *sql.DB, table string) ([]string, []string, error) {
+func acceptanceScanRows(rows *sql.Rows, columns []string) (result [][]string, err error) {
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	for rows.Next() {
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			return nil, err
+		}
+		encoded := make([]string, len(values))
+		for i, value := range values {
+			if bytes, ok := value.([]byte); ok {
+				encoded[i] = "bytes:" + hex.EncodeToString(bytes)
+			} else {
+				encoded[i] = fmt.Sprintf("%T:%v", value, value)
+			}
+		}
+		result = append(result, encoded)
+	}
+	return result, rows.Err()
+}
+
+func acceptanceColumns(ctx context.Context, database *sql.DB, table string) (columns, primary []string, err error) {
 	rows, err := database.QueryContext(ctx, `PRAGMA table_info(`+acceptanceIdentifier(table)+`)`)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
-	var columns []string
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	primaryByPosition := make(map[int]string)
 	for rows.Next() {
 		var position, notNull, primary int
@@ -327,7 +329,7 @@ func acceptanceColumns(ctx context.Context, database *sql.DB, table string) ([]s
 		positions = append(positions, position)
 	}
 	sort.Ints(positions)
-	primary := make([]string, 0, len(positions))
+	primary = make([]string, 0, len(positions))
 	for _, position := range positions {
 		primary = append(primary, primaryByPosition[position])
 	}

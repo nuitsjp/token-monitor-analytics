@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
@@ -70,11 +69,11 @@ type ReviewPage struct {
 	HasMore    bool                 `json:"hasMore"`
 }
 
-func NewReviewService(lifecycle *sqliteadapter.Lifecycle) (*ReviewService, error) {
-	if lifecycle == nil {
+func NewReviewService(reader usecase.ReviewReader) (*ReviewService, error) {
+	if reader == nil {
 		return nil, errors.New("review service lifecycle is required")
 	}
-	return NewReviewServiceWithReader(lifecycle)
+	return NewReviewServiceWithReader(reader)
 }
 
 func NewReviewServiceWithReader(reader usecase.ReviewReader) (*ReviewService, error) {

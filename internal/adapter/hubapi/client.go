@@ -61,8 +61,9 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 	if err != nil {
 		return Health{}, classifyTransport("health", err)
 	}
-	body, err := readBody(response.Body)
-	response.Body.Close()
+	body, readErr := readBody(response.Body)
+	closeErr := response.Body.Close()
+	err = errors.Join(readErr, closeErr)
 	if err != nil {
 		return Health{}, classifyRead("health", err)
 	}
@@ -99,8 +100,9 @@ func (c *Client) FetchStats(ctx context.Context, secret string) (Result, error) 
 	if err != nil {
 		return Result{Health: health, Contract: contract}, classifyTransport("stats", err)
 	}
-	body, err := readBody(response.Body)
-	response.Body.Close()
+	body, readErr := readBody(response.Body)
+	closeErr := response.Body.Close()
+	err = errors.Join(readErr, closeErr)
 	if err != nil {
 		return Result{Health: health, Contract: contract}, classifyRead("stats", err)
 	}

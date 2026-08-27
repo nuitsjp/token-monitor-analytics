@@ -62,4 +62,4 @@ export function progressColor(
       throw new Error(`Unsupported remaining status: ${status.code}`);
   }
 }
-import type { StatusPresentationSnapshot } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import type { StatusPresentationSnapshot } from "./backend";

@@ -105,7 +105,7 @@ func TestReadOverviewDataReturnsOnlyRecentIncreaseWithinCurrentEstimableInterval
 
 func execOverviewSQL(t *testing.T, database *sql.DB, query string, args ...any) {
 	t.Helper()
-	if _, err := database.Exec(query, args...); err != nil {
+	if _, err := database.ExecContext(t.Context(), query, args...); err != nil {
 		t.Fatal(err)
 	}
 }

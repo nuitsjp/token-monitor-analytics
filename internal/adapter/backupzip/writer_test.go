@@ -82,7 +82,11 @@ func TestWriterCreatesExactlyTwoEntriesAndReturnsArtifactHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open artifact: %v", err)
 	}
-	defer archive.Close()
+	t.Cleanup(func() {
+		if err := archive.Close(); err != nil {
+			t.Errorf("close archive: %v", err)
+		}
+	})
 	t.Run("P1-BACKUP-02 strict two-entry ZIP and manifest", func(t *testing.T) {
 		if len(archive.File) != 2 || archive.File[0].Name != "manifest.json" || archive.File[1].Name != "data.sqlite3" {
 			t.Fatalf("archive entries = %#v", archive.File)

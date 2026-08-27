@@ -189,6 +189,7 @@ export function SettingsPage({
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=published settings replace the local editor draft; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // The backend may publish a saved value while this page is mounted.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(settings.theme);

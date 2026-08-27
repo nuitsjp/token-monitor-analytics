@@ -50,6 +50,28 @@ type randomIDs struct{}
 
 func (randomIDs) New() string { return uuid.NewString() }
 
+type hubAPITestClient struct{ client *hubapi.Client }
+
+func (c hubAPITestClient) FetchStats(ctx context.Context, secret string) (HubFetchResult, error) {
+	result, err := c.client.FetchStats(ctx, secret)
+	return HubFetchResult{Contract: HubContract{Build: HubBuildIdentity{
+		SchemaVersion:  result.Contract.Build.SchemaVersion,
+		Runtime:        result.Contract.Build.Runtime,
+		CoreBuildID:    result.Contract.Build.CoreBuildID,
+		RuntimeBuildID: result.Contract.Build.RuntimeBuildID,
+	}}}, err
+}
+
+func hubAPITestFactory(allowlist hubapi.Allowlist) HubClientFactory {
+	return func(rawURL string) (HubClient, error) {
+		client, err := hubapi.NewClient(rawURL, allowlist)
+		if err != nil {
+			return nil, err
+		}
+		return hubAPITestClient{client: client}, nil
+	}
+}
+
 func newDesktopTestMaintenanceGate() *usecase.MaintenanceGate { return usecase.NewMaintenanceGate() }
 
 func newHubTestService(t *testing.T) (*HubService, *sqliteadapter.Lifecycle, *memoryCredentials) {
@@ -60,11 +82,12 @@ func newHubTestService(t *testing.T) (*HubService, *sqliteadapter.Lifecycle, *me
 	}
 	t.Cleanup(func() { _ = lifecycle.Close() })
 	credentials := &memoryCredentials{values: make(map[string]string)}
-	service := NewHubServiceWithDependencies(
+	service := NewHubServiceWithClient(
 		lifecycle,
 		credentials,
 		fixedClock{value: time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)},
 		randomIDs{},
+		hubAPITestFactory(hubapi.DefaultAllowlist),
 		newDesktopTestMaintenanceGate(),
 	)
 	return service, lifecycle, credentials
@@ -194,7 +217,7 @@ func TestUnsupportedConnectionPersistsAttemptWithoutCallingStats(t *testing.T) {
 func TestRestorePendingNeedsNewCredentialAndSuccessfulConnection(t *testing.T) {
 	service, lifecycle, _ := newHubTestService(t)
 	build := hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "test", CoreBuildID: "core", RuntimeBuildID: "runtime"}
-	service.allowlist = hubapi.NewAllowlist(hubapi.Contract{Build: build, UsageUpdatedAt: true})
+	service.client = hubAPITestFactory(hubapi.NewAllowlist(hubapi.Contract{Build: build, UsageUpdatedAt: true}))
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/api/health" {
 			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test","coreBuildId":"core","runtimeBuildId":"runtime"}}`))

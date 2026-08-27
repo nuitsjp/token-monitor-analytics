@@ -283,13 +283,17 @@ func querySelectedSnapshotIDs(ctx context.Context, tx *sql.Tx, selection domain.
 	return queryIDs(ctx, tx, `SELECT rs.snapshot_id FROM raw_snapshots rs WHERE `+where+` ORDER BY rs.snapshot_id`, args...)
 }
 
-func queryIDs(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]string, error) {
+func queryIDs(ctx context.Context, tx *sql.Tx, query string, args ...any) (result []string, err error) {
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]string, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close purge ID rows: %w", closeErr)
+		}
+	}()
+	result = make([]string, 0)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
@@ -335,19 +339,24 @@ func queryResultIDs(ctx context.Context, tx *sql.Tx, pointIDs []string) ([]strin
 	return queryIDs(ctx, tx, `SELECT DISTINCT estimation_result_id FROM estimation_result_evidence WHERE point_id IN (`+placeholders(len(pointIDs))+`) ORDER BY estimation_result_id`, stringsToAny(pointIDs)...)
 }
 
-func queryPointIntervals(ctx context.Context, tx *sql.Tx, pointIDs []string) ([]string, []string, error) {
+func queryPointIntervals(ctx context.Context, tx *sql.Tx, pointIDs []string) (intervalIDs []string, boundaryIDs []string, err error) {
 	if len(pointIDs) == 0 {
 		return nil, nil, nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT calculation_interval_id, calculation_interval_ids_json, limit_series_calculation_interval_ids_json FROM estimation_points WHERE estimation_point_id IN (`+placeholders(len(pointIDs))+`)`, stringsToAny(pointIDs)...)
+	intervalRows, err := tx.QueryContext(ctx, `SELECT calculation_interval_id, calculation_interval_ids_json, limit_series_calculation_interval_ids_json FROM estimation_points WHERE estimation_point_id IN (`+placeholders(len(pointIDs))+`)`, stringsToAny(pointIDs)...)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer func() {
+		if closeErr := intervalRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close purge point interval rows: %w", closeErr)
+		}
+	}()
 	intervalSet := make(map[string]struct{})
 	boundarySet := make(map[string]struct{})
-	for rows.Next() {
+	for intervalRows.Next() {
 		var scalar, intervalsJSON, seriesJSON string
-		if err := rows.Scan(&scalar, &intervalsJSON, &seriesJSON); err != nil {
+		if err := intervalRows.Scan(&scalar, &intervalsJSON, &seriesJSON); err != nil {
 			return nil, nil, err
 		}
 		intervalSet[scalar] = struct{}{}
@@ -363,24 +372,25 @@ func queryPointIntervals(ctx context.Context, tx *sql.Tx, pointIDs []string) ([]
 			}
 		}
 	}
-	if err := rows.Err(); err != nil {
+	if err := intervalRows.Err(); err != nil {
 		return nil, nil, err
 	}
-	if err := rows.Close(); err != nil {
-		return nil, nil, err
-	}
-	intervalIDs := sortedKeys(intervalSet)
+	intervalIDs = sortedKeys(intervalSet)
 	if len(intervalIDs) == 0 {
 		return nil, nil, nil
 	}
-	rows, err = tx.QueryContext(ctx, `SELECT boundary_ids_json FROM calculation_intervals WHERE calculation_interval_id IN (`+placeholders(len(intervalIDs))+`)`, stringsToAny(intervalIDs)...)
+	boundaryRows, err := tx.QueryContext(ctx, `SELECT boundary_ids_json FROM calculation_intervals WHERE calculation_interval_id IN (`+placeholders(len(intervalIDs))+`)`, stringsToAny(intervalIDs)...)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
+	defer func() {
+		if closeErr := boundaryRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close purge boundary rows: %w", closeErr)
+		}
+	}()
+	for boundaryRows.Next() {
 		var encoded string
-		if err := rows.Scan(&encoded); err != nil {
+		if err := boundaryRows.Scan(&encoded); err != nil {
 			return nil, nil, err
 		}
 		var ids []string
@@ -393,7 +403,7 @@ func queryPointIntervals(ctx context.Context, tx *sql.Tx, pointIDs []string) ([]
 			}
 		}
 	}
-	if err := rows.Err(); err != nil {
+	if err := boundaryRows.Err(); err != nil {
 		return nil, nil, err
 	}
 	return intervalIDs, sortedKeys(boundarySet), nil
@@ -481,7 +491,7 @@ func purgeRecalculateIntervalTx(ctx context.Context, tx *sql.Tx, intervalID stri
 	return saveDerivedResultTx(ctx, tx, result)
 }
 
-func listEstimationPointsTx(ctx context.Context, tx *sql.Tx, intervalID string) ([]domain.EstimationPoint, error) {
+func listEstimationPointsTx(ctx context.Context, tx *sql.Tx, intervalID string) (result []domain.EstimationPoint, err error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT estimation_point_id, service_id, limit_definition_id, plan_version_id, cycle_type,
 		       calculation_interval_id, calculation_interval_ids_json, reference_at, shared_cost,
@@ -496,6 +506,11 @@ func listEstimationPointsTx(ctx context.Context, tx *sql.Tx, intervalID string) 
 	if err != nil {
 		return nil, fmt.Errorf("list purge estimation points: %w", err)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close purge estimation point rows: %w", closeErr)
+		}
+	}()
 	type pointRow struct {
 		point                                                              domain.EstimationPoint
 		planID                                                             sql.NullString
@@ -514,10 +529,7 @@ func listEstimationPointsTx(ctx context.Context, tx *sql.Tx, intervalID string) 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	result := make([]domain.EstimationPoint, 0, len(pointRows))
+	result = make([]domain.EstimationPoint, 0, len(pointRows))
 	for _, item := range pointRows {
 		point := item.point
 		point.PlanVersionID = item.planID.String
@@ -580,7 +592,7 @@ func listMatchedObservationsTx(ctx context.Context, tx *sql.Tx, pointID string) 
 	if err != nil {
 		return nil, fmt.Errorf("list purge matched observations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]domain.MatchedObservation, 0)
 	for rows.Next() {
 		var item domain.MatchedObservation
@@ -648,7 +660,7 @@ func listCalculationIntervalsTx(ctx context.Context, tx *sql.Tx, ids []string) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]domain.CalculationInterval, 0, len(ids))
 	for rows.Next() {
 		item, err := scanCalculationInterval(rows)
@@ -678,42 +690,45 @@ func loadEstimationPlansTx(ctx context.Context, tx *sql.Tx, ids []string) ([]dom
 			return nil, fmt.Errorf("read purge plan version: %w", err)
 		}
 		plan.IsBaseline = baseline != 0
-		rows, err := tx.QueryContext(ctx, `SELECT plan_limit_rule_id, plan_version_id, limit_definition_id, plan_limit, limit_multiplier, official_source_url, created_at FROM plan_limit_rules WHERE plan_version_id = ? ORDER BY limit_definition_id, plan_limit_rule_id`, id)
+		rules, err := loadEstimationPlanRulesTx(ctx, tx, id)
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() {
-			var rule domain.PlanLimitRule
-			var limit, multiplier sql.NullFloat64
-			var created string
-			if err := rows.Scan(&rule.ID, &rule.PlanVersionID, &rule.LimitDefinitionID, &limit, &multiplier, &rule.OfficialSourceURL, &created); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			if limit.Valid {
-				value := limit.Float64
-				rule.Limit = &value
-			}
-			if multiplier.Valid {
-				value := multiplier.Float64
-				rule.Multiplier = &value
-			}
-			rule.CreatedAt, err = parseUTC(created)
-			if err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			plan.LimitRules = append(plan.LimitRules, rule)
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
+		plan.LimitRules = rules
 		result = append(result, plan)
 	}
 	return result, nil
+}
+
+func loadEstimationPlanRulesTx(ctx context.Context, tx *sql.Tx, planVersionID string) ([]domain.PlanLimitRule, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT plan_limit_rule_id, plan_version_id, limit_definition_id, plan_limit, limit_multiplier, official_source_url, created_at FROM plan_limit_rules WHERE plan_version_id = ? ORDER BY limit_definition_id, plan_limit_rule_id`, planVersionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var rules []domain.PlanLimitRule
+	for rows.Next() {
+		var rule domain.PlanLimitRule
+		var limit, multiplier sql.NullFloat64
+		var created string
+		if err := rows.Scan(&rule.ID, &rule.PlanVersionID, &rule.LimitDefinitionID, &limit, &multiplier, &rule.OfficialSourceURL, &created); err != nil {
+			return nil, err
+		}
+		if limit.Valid {
+			value := limit.Float64
+			rule.Limit = &value
+		}
+		if multiplier.Valid {
+			value := multiplier.Float64
+			rule.Multiplier = &value
+		}
+		rule.CreatedAt, err = parseUTC(created)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, rows.Err()
 }
 
 func findPurgeCalculationInterval(intervals []domain.CalculationInterval, id string) (domain.CalculationInterval, error) {
@@ -844,28 +859,35 @@ func addPurgeResultEvidenceTx(ctx context.Context, tx *sql.Tx, result *domain.De
 			if index >= len(point.LimitSeriesPlanVersionIDs) || accountID == "" || point.LimitSeriesPlanVersionIDs[index] == "" {
 				continue
 			}
-			rows, err := tx.QueryContext(ctx, `SELECT plan_history_id, valid_from, valid_to FROM plan_histories WHERE logical_account_id = ? AND plan_version_id = ? AND valid_from < ? AND (valid_to IS NULL OR ? < valid_to) ORDER BY valid_from, plan_history_id`, accountID, point.LimitSeriesPlanVersionIDs[index], utcText(result.ValidTo), utcText(result.ValidFrom))
-			if err != nil {
-				return err
-			}
-			for rows.Next() {
-				var id, from string
-				var to sql.NullString
-				if err := rows.Scan(&id, &from, &to); err != nil {
-					_ = rows.Close()
-					return err
-				}
-				evidence := domain.EstimationEvidence{ID: "plan-history:" + point.ID + ":" + id, Kind: "plan_history", PointID: point.ID, PlanHistoryID: id, LogicalAccountID: accountID, PlanVersionID: point.LimitSeriesPlanVersionIDs[index], DetailsJSON: `{"validFrom":"` + from + `","validTo":"` + to.String + `"}`}
-				key := evidenceKey(evidence)
-				if _, exists := seen[key]; !exists {
-					result.Evidence = append(result.Evidence, evidence)
-					seen[key] = struct{}{}
-				}
-			}
-			if err := rows.Close(); err != nil {
+			if err := addPurgePlanHistoryEvidenceTx(ctx, tx, result, point, accountID, point.LimitSeriesPlanVersionIDs[index], seen); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func addPurgePlanHistoryEvidenceTx(ctx context.Context, tx *sql.Tx, result *domain.DerivedResult, point domain.EstimationPoint, accountID, planVersionID string, seen map[string]struct{}) error {
+	rows, err := tx.QueryContext(ctx, `SELECT plan_history_id, valid_from, valid_to FROM plan_histories WHERE logical_account_id = ? AND plan_version_id = ? AND valid_from < ? AND (valid_to IS NULL OR ? < valid_to) ORDER BY valid_from, plan_history_id`, accountID, planVersionID, utcText(result.ValidTo), utcText(result.ValidFrom))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, from string
+		var to sql.NullString
+		if err := rows.Scan(&id, &from, &to); err != nil {
+			return err
+		}
+		evidence := domain.EstimationEvidence{ID: "plan-history:" + point.ID + ":" + id, Kind: "plan_history", PointID: point.ID, PlanHistoryID: id, LogicalAccountID: accountID, PlanVersionID: planVersionID, DetailsJSON: `{"validFrom":"` + from + `","validTo":"` + to.String + `"}`}
+		key := evidenceKey(evidence)
+		if _, exists := seen[key]; !exists {
+			result.Evidence = append(result.Evidence, evidence)
+			seen[key] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read purge plan history evidence: %w", err)
 	}
 	return nil
 }

@@ -188,22 +188,22 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`UPDATE estimation_points SET utilization_json = '[0.3]' WHERE estimation_point_id = ?`, persisted[1].ID); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE estimation_points SET utilization_json = '[0.3]' WHERE estimation_point_id = ?`, persisted[1].ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := lifecycle.ListEstimationPoints(ctx, "matching-interval-0s"); err == nil {
 		t.Fatal("expected utilization length validation error")
 	}
-	if _, err := database.Exec(`UPDATE estimation_points SET utilization_json = '[0.3, 1.2]' WHERE estimation_point_id = ?`, persisted[1].ID); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE estimation_points SET utilization_json = '[0.3, 1.2]' WHERE estimation_point_id = ?`, persisted[1].ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := lifecycle.ListEstimationPoints(ctx, "matching-interval-0s"); err == nil {
 		t.Fatal("expected utilization range validation error")
 	}
-	if _, err := database.Exec(`UPDATE estimation_points SET utilization_json = ? WHERE estimation_point_id = ?`, `[0.3, 0.4]`, persisted[1].ID); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE estimation_points SET utilization_json = ? WHERE estimation_point_id = ?`, `[0.3, 0.4]`, persisted[1].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`UPDATE raw_snapshots SET api_contract = ''`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE raw_snapshots SET api_contract = ''`); err != nil {
 		t.Fatal(err)
 	}
 	inputs, err = lifecycle.ListCalculationMatchingInputs(ctx, domain.CalculationBuildRequest{ServiceID: service.ID, ValidFrom: start, ValidTo: end})
@@ -219,10 +219,10 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 			t.Fatalf("unsupported contract points = %#v", points)
 		}
 	})
-	if _, err := database.Exec(`UPDATE raw_snapshots SET api_contract = ?`, contract); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE raw_snapshots SET api_contract = ?`, contract); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`UPDATE usage_cost_observations SET dedupe_state = 'conflict'`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE usage_cost_observations SET dedupe_state = 'conflict'`); err != nil {
 		t.Fatal(err)
 	}
 	inputs, err = lifecycle.ListCalculationMatchingInputs(ctx, domain.CalculationBuildRequest{ServiceID: service.ID, ValidFrom: start, ValidTo: end})
@@ -238,10 +238,10 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 			t.Fatalf("dedupe conflict points = %#v", points)
 		}
 	})
-	if _, err := database.Exec(`UPDATE usage_cost_observations SET dedupe_state = 'canonical'`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE usage_cost_observations SET dedupe_state = 'canonical'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`UPDATE usage_cost_source_completeness SET logical_account_ids_json = ?`, `["matching-account-a"]`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE usage_cost_source_completeness SET logical_account_ids_json = ?`, `["matching-account-a"]`); err != nil {
 		t.Fatal(err)
 	}
 	inputs, err = lifecycle.ListCalculationMatchingInputs(ctx, domain.CalculationBuildRequest{ServiceID: service.ID, ValidFrom: start, ValidTo: end})
@@ -260,10 +260,10 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 			t.Fatalf("partial completeness points = %#v", points)
 		}
 	})
-	if _, err := database.Exec(`UPDATE usage_cost_source_completeness SET logical_account_ids_json = ?`, `["matching-account-a","matching-account-b"]`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE usage_cost_source_completeness SET logical_account_ids_json = ?`, `["matching-account-a","matching-account-b"]`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`UPDATE usage_cost_source_completeness SET state = 'unconfirmed'`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE usage_cost_source_completeness SET state = 'unconfirmed'`); err != nil {
 		t.Fatal(err)
 	}
 	inputs, err = lifecycle.ListCalculationMatchingInputs(ctx, domain.CalculationBuildRequest{ServiceID: service.ID, ValidFrom: start, ValidTo: end})
@@ -302,7 +302,7 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 			t.Fatalf("mixed cost account points = %#v", points)
 		}
 	})
-	if _, err := database.Exec(`UPDATE calculation_intervals SET state = 'excluded', exclusion_reason = 'completeness_unconfirmed' WHERE calculation_interval_id = ?`, "matching-interval-1ns"); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE calculation_intervals SET state = 'excluded', exclusion_reason = 'completeness_unconfirmed' WHERE calculation_interval_id = ?`, "matching-interval-1ns"); err != nil {
 		t.Fatal(err)
 	}
 	input, err = lifecycle.ListEstimationInput(ctx, "matching-interval-0s")

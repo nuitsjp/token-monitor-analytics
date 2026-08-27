@@ -146,12 +146,12 @@ type backupFileMetadataResult struct {
 	sha256 string
 }
 
-func backupFileMetadata(path string) (backupFileMetadataResult, error) {
+func backupFileMetadata(path string) (result backupFileMetadataResult, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return backupFileMetadataResult{}, err
 	}
-	defer file.Close()
+	defer func() { err = errors.Join(err, file.Close()) }()
 	info, err := file.Stat()
 	if err != nil {
 		return backupFileMetadataResult{}, err

@@ -29,7 +29,7 @@ func NewValidator() *Validator { return &Validator{availableSpace: freeSpace} }
 // ValidateAndExtract validates one artifact and extracts its database into a
 // newly-created directory below workspaceRoot. The caller owns that directory
 // after success. Failure always removes it.
-func (v *Validator) ValidateAndExtract(ctx context.Context, archivePath, workspaceRoot string, supportedSchemaVersion int64) (domain.BackupManifest, string, string, error) {
+func (v *Validator) ValidateAndExtract(ctx context.Context, archivePath, workspaceRoot string, supportedSchemaVersion int64) (manifest domain.BackupManifest, artifactSHA, directory string, err error) {
 	if err := ctx.Err(); err != nil {
 		return domain.BackupManifest{}, "", "", err
 	}
@@ -47,12 +47,12 @@ func (v *Validator) ValidateAndExtract(ctx context.Context, archivePath, workspa
 	if err != nil {
 		return domain.BackupManifest{}, "", "", validationError(domain.RestoreValidationArchive, errors.New("open restore archive"))
 	}
-	defer archive.Close()
+	defer func() { err = errors.Join(err, archive.Close()) }()
 	info, err := archive.Stat()
 	if err != nil || info.Size() <= 0 {
 		return domain.BackupManifest{}, "", "", validationError(domain.RestoreValidationArchive, errors.New("restore archive is empty"))
 	}
-	artifactSHA, err := hashReader(ctx, archive)
+	artifactSHA, err = hashReader(ctx, archive)
 	if err != nil {
 		return domain.BackupManifest{}, "", "", validationError(domain.RestoreValidationArchive, fmt.Errorf("hash restore archive: %w", err))
 	}
@@ -74,7 +74,7 @@ func (v *Validator) ValidateAndExtract(ctx context.Context, archivePath, workspa
 	if err := validateManifestKeySet(manifestBytes); err != nil {
 		return domain.BackupManifest{}, "", "", err
 	}
-	manifest, err := parseManifest(manifestBytes)
+	manifest, err = parseManifest(manifestBytes)
 	if err != nil {
 		return domain.BackupManifest{}, "", "", classifyManifestError(manifestBytes, err)
 	}
@@ -87,7 +87,7 @@ func (v *Validator) ValidateAndExtract(ctx context.Context, archivePath, workspa
 	if databaseEntry.UncompressedSize64 != uint64(manifest.Database.SizeBytes) {
 		return domain.BackupManifest{}, "", "", validationError(domain.RestoreValidationDeclaredSize, errors.New("database entry size does not match manifest"))
 	}
-	directory, err := os.MkdirTemp(workspace, "restore-validated-*")
+	directory, err = os.MkdirTemp(workspace, "restore-validated-*")
 	if err != nil {
 		return domain.BackupManifest{}, "", "", validationError(domain.RestoreValidationArchive, errors.New("create restore validation directory"))
 	}

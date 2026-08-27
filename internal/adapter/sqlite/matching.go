@@ -16,7 +16,7 @@ import (
 
 // ListCalculationMatchingInputs は推定可能な T-030 計算区間と、そこへ紐付く
 // 不変観測および確認事実だけを読み込む。
-func (l *Lifecycle) ListCalculationMatchingInputs(ctx context.Context, request domain.CalculationBuildRequest) ([]domain.CalculationMatchingInput, error) {
+func (l *Lifecycle) ListCalculationMatchingInputs(ctx context.Context, request domain.CalculationBuildRequest) (result []domain.CalculationMatchingInput, err error) {
 	if err := request.Validate(); err != nil {
 		return nil, err
 	}
@@ -35,6 +35,11 @@ func (l *Lifecycle) ListCalculationMatchingInputs(ctx context.Context, request d
 	if err != nil {
 		return nil, fmt.Errorf("list matching calculation intervals: %w", err)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close matching calculation interval rows: %w", closeErr)
+		}
+	}()
 	type matchingGroup struct {
 		key       string
 		intervals []domain.CalculationInterval
@@ -44,7 +49,6 @@ func (l *Lifecycle) ListCalculationMatchingInputs(ctx context.Context, request d
 	for rows.Next() {
 		interval, scanErr := scanCalculationInterval(rows)
 		if scanErr != nil {
-			_ = rows.Close()
 			return nil, scanErr
 		}
 		key := strings.Join([]string{interval.ServiceID, interval.LimitDefinitionID, interval.CycleType, catalogPeriodText(interval.ValidFrom), catalogPeriodText(interval.ValidTo)}, "|")
@@ -58,9 +62,6 @@ func (l *Lifecycle) ListCalculationMatchingInputs(ctx context.Context, request d
 			group.eligible = false
 		}
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close matching calculation intervals: %w", err)
-	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read matching calculation intervals: %w", err)
 	}
@@ -72,7 +73,7 @@ func (l *Lifecycle) ListCalculationMatchingInputs(ctx context.Context, request d
 		groups = append(groups, group)
 	}
 	sort.Slice(groups, func(a, b int) bool { return groups[a].key < groups[b].key })
-	result := make([]domain.CalculationMatchingInput, 0, len(groups))
+	result = make([]domain.CalculationMatchingInput, 0, len(groups))
 	for _, group := range groups {
 		inputs, loadErr := l.loadCalculationMatchingInputs(ctx, database, group.intervals, group.eligible)
 		if loadErr != nil {
@@ -162,8 +163,8 @@ func (l *Lifecycle) loadCalculationMatchingInputs(ctx context.Context, database 
 	return result, nil
 }
 
-func loadEstimationPlanVersionsByIDs(ctx context.Context, database *sql.DB, ids []string) ([]domain.EstimationPlanVersion, error) {
-	result := make([]domain.EstimationPlanVersion, 0, len(ids))
+func loadEstimationPlanVersionsByIDs(ctx context.Context, database *sql.DB, ids []string) (result []domain.EstimationPlanVersion, err error) {
+	result = make([]domain.EstimationPlanVersion, 0, len(ids))
 	for _, id := range ids {
 		var plan domain.EstimationPlanVersion
 		var baseline int
@@ -184,12 +185,16 @@ func loadEstimationPlanVersionsByIDs(ctx context.Context, database *sql.DB, ids 
 		if err != nil {
 			return nil, fmt.Errorf("list estimation plan rules: %w", err)
 		}
+		defer func() {
+			if closeErr := rows.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("close estimation plan rule rows: %w", closeErr)
+			}
+		}()
 		for rows.Next() {
 			var rule domain.PlanLimitRule
 			var limit, multiplier sql.NullFloat64
 			var created string
 			if err := rows.Scan(&rule.ID, &rule.PlanVersionID, &rule.LimitDefinitionID, &limit, &multiplier, &rule.OfficialSourceURL, &created); err != nil {
-				_ = rows.Close()
 				return nil, fmt.Errorf("scan estimation plan rule: %w", err)
 			}
 			if limit.Valid {
@@ -203,13 +208,9 @@ func loadEstimationPlanVersionsByIDs(ctx context.Context, database *sql.DB, ids 
 			var parseErr error
 			rule.CreatedAt, parseErr = parseUTC(created)
 			if parseErr != nil {
-				_ = rows.Close()
 				return nil, fmt.Errorf("parse estimation plan rule creation: %w", parseErr)
 			}
 			plan.LimitRules = append(plan.LimitRules, rule)
-		}
-		if err := rows.Close(); err != nil {
-			return nil, fmt.Errorf("close estimation plan rules: %w", err)
 		}
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("read estimation plan rules: %w", err)
@@ -295,7 +296,7 @@ func matchingComponents(series []domain.MatchingLimitSeries, links []costLinkGro
 	return result
 }
 
-func loadFullCostLinks(ctx context.Context, database *sql.DB, series []domain.MatchingLimitSeries, start, end time.Time) ([]costLinkGroup, error) {
+func loadFullCostLinks(ctx context.Context, database *sql.DB, series []domain.MatchingLimitSeries, start, end time.Time) (result []costLinkGroup, err error) {
 	accounts := make(map[string]struct{}, len(series))
 	for _, item := range series {
 		accounts[item.LogicalAccountID] = struct{}{}
@@ -304,22 +305,24 @@ func loadFullCostLinks(ctx context.Context, database *sql.DB, series []domain.Ma
 	if err != nil {
 		return nil, fmt.Errorf("list matching cost links: %w", err)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close matching cost link rows: %w", closeErr)
+		}
+	}()
 	groups := make(map[string]*costLinkGroup)
 	for rows.Next() {
 		var sourceID, associationID, accountID, from string
 		var to sql.NullString
 		if err := rows.Scan(&sourceID, &associationID, &accountID, &from, &to); err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("scan matching cost link: %w", err)
 		}
 		validFrom, err := parseUTC(from)
 		if err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("parse matching cost link start: %w", err)
 		}
 		validTo, err := parseOptionalUTC(to)
 		if err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("parse matching cost link end: %w", err)
 		}
 		group := groups[sourceID]
@@ -333,13 +336,10 @@ func loadFullCostLinks(ctx context.Context, database *sql.DB, series []domain.Ma
 			group.fullyCoveredTarget = false
 		}
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close matching cost links: %w", err)
-	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read matching cost links: %w", err)
 	}
-	result := make([]costLinkGroup, 0, len(groups))
+	result = make([]costLinkGroup, 0, len(groups))
 	for _, group := range groups {
 		intersects := false
 		for accountID := range group.accountIDs {
@@ -357,40 +357,41 @@ func loadFullCostLinks(ctx context.Context, database *sql.DB, series []domain.Ma
 	return result, nil
 }
 
-func loadFullLimitAssociationIDs(ctx context.Context, database *sql.DB, sourceID, accountID string, start, end time.Time) ([]string, error) {
+func loadFullLimitAssociationIDs(ctx context.Context, database *sql.DB, sourceID, accountID string, start, end time.Time) (result []string, err error) {
 	rows, err := database.QueryContext(ctx, `SELECT usage_limit_association_id, valid_from, valid_to FROM usage_limit_source_links WHERE usage_limit_source_id = ? AND logical_account_id = ? AND valid_from < ? AND (valid_to IS NULL OR ? < valid_to) ORDER BY usage_limit_association_id`, sourceID, accountID, catalogPeriodText(end), catalogPeriodText(start))
 	if err != nil {
 		return nil, fmt.Errorf("list matching limit links: %w", err)
 	}
-	var result []string
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close matching limit link rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var id, from string
 		var to sql.NullString
 		if err := rows.Scan(&id, &from, &to); err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("scan matching limit link: %w", err)
 		}
 		validFrom, err := parseUTC(from)
 		if err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("parse matching limit link start: %w", err)
 		}
 		validTo, err := parseOptionalUTC(to)
 		if err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("parse matching limit link end: %w", err)
 		}
 		if !validFrom.After(start) && (validTo == nil || !end.After(*validTo)) {
 			result = append(result, id)
 		}
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close matching limit links: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read matching limit links: %w", err)
 	}
-	return uniqueMatchingStrings(result), rows.Err()
+	return uniqueMatchingStrings(result), nil
 }
 
-func loadMatchingLimitObservations(ctx context.Context, database *sql.DB, sourceID string, start, end time.Time) ([]domain.MatchingLimitObservation, error) {
+func loadMatchingLimitObservations(ctx context.Context, database *sql.DB, sourceID string, start, end time.Time) (result []domain.MatchingLimitObservation, err error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT o.observation_id, o.provider_updated_at, o.used_percent, o.sync_upload_interval_ms,
 		       o.limits_refresh_ms, o.analytics_interval_seconds, o.normalization_generation,
@@ -405,13 +406,16 @@ func loadMatchingLimitObservations(ctx context.Context, database *sql.DB, source
 	if err != nil {
 		return nil, fmt.Errorf("list matching limit observations: %w", err)
 	}
-	var result []domain.MatchingLimitObservation
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close matching limit observation rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var observation domain.MatchingLimitObservation
 		var observed, syncMS, refreshMS sql.NullString
 		var used sql.NullFloat64
 		if err := rows.Scan(&observation.ID, &observed, &used, &syncMS, &refreshMS, &observation.AnalyticsIntervalSeconds, &observation.NormalizationGeneration, &observation.NormalizationRuleVersion, &observation.NormalizationLogicVersion, &observation.DedupeState); err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("scan matching limit observation: %w", err)
 		}
 		observation.ObservedAt, _ = parseUTC(observed.String)
@@ -420,13 +424,13 @@ func loadMatchingLimitObservations(ctx context.Context, database *sql.DB, source
 		observation.LimitsRefreshMS = nullableInt64Text(refreshMS)
 		result = append(result, observation)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close matching limit observations: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read matching limit observations: %w", err)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
-func loadMatchingCostObservations(ctx context.Context, database *sql.DB, sourceID string, start, end time.Time) ([]domain.MatchingCostObservation, error) {
+func loadMatchingCostObservations(ctx context.Context, database *sql.DB, sourceID string, start, end time.Time) (result []domain.MatchingCostObservation, err error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT o.observation_id, o.usage_updated_at, o.cost_usd_text,
 		       o.sync_upload_interval_ms, o.analytics_interval_seconds,
@@ -441,13 +445,16 @@ func loadMatchingCostObservations(ctx context.Context, database *sql.DB, sourceI
 	if err != nil {
 		return nil, fmt.Errorf("list matching cost observations: %w", err)
 	}
-	var result []domain.MatchingCostObservation
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close matching cost observation rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var observation domain.MatchingCostObservation
 		var observed, syncMS sql.NullString
 		var contract string
 		if err := rows.Scan(&observation.ID, &observed, &observation.ValueText, &syncMS, &observation.AnalyticsIntervalSeconds, &observation.NormalizationGeneration, &observation.NormalizationRuleVersion, &observation.NormalizationLogicVersion, &observation.DedupeState, &contract); err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("scan matching cost observation: %w", err)
 		}
 		observation.ObservedAt, _ = parseUTC(observed.String)
@@ -456,17 +463,22 @@ func loadMatchingCostObservations(ctx context.Context, database *sql.DB, sourceI
 		observation.APIContractSupported = strings.TrimSpace(contract) != ""
 		result = append(result, observation)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close matching cost observations: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read matching cost observations: %w", err)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
-func loadMatchingCompleteness(ctx context.Context, database *sql.DB, sourceID string, accounts map[string]struct{}, start, end time.Time) ([]string, bool, error) {
+func loadMatchingCompleteness(ctx context.Context, database *sql.DB, sourceID string, accounts map[string]struct{}, start, end time.Time) (ids []string, complete bool, err error) {
 	rows, err := database.QueryContext(ctx, `SELECT completeness_id, valid_from, valid_to, state, logical_account_ids_json, excluded_activity_json FROM usage_cost_source_completeness WHERE usage_cost_source_id = ? AND valid_from < ? AND (valid_to IS NULL OR ? < valid_to) ORDER BY valid_from, completeness_id`, sourceID, catalogPeriodText(end), catalogPeriodText(start))
 	if err != nil {
 		return nil, false, fmt.Errorf("list matching completeness: %w", err)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close matching completeness rows: %w", closeErr)
+		}
+	}()
 	type completenessRow struct {
 		id       string
 		from     time.Time
@@ -482,17 +494,14 @@ func loadMatchingCompleteness(ctx context.Context, database *sql.DB, sourceID st
 		var to sql.NullString
 		var state, accountsJSON, excludedJSON string
 		if err := rows.Scan(&fact.id, &from, &to, &state, &accountsJSON, &excludedJSON); err != nil {
-			_ = rows.Close()
 			return nil, false, fmt.Errorf("scan matching completeness: %w", err)
 		}
 		fact.from, err = parseUTC(from)
 		if err != nil {
-			_ = rows.Close()
 			return nil, false, fmt.Errorf("parse matching completeness start: %w", err)
 		}
 		fact.to, err = parseOptionalUTC(to)
 		if err != nil {
-			_ = rows.Close()
 			return nil, false, fmt.Errorf("parse matching completeness end: %w", err)
 		}
 		var accountIDs, excluded []string
@@ -509,13 +518,10 @@ func loadMatchingCompleteness(ctx context.Context, database *sql.DB, sourceID st
 		fact.state, fact.excluded = domain.CompletenessState(state), excluded
 		facts = append(facts, fact)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, false, fmt.Errorf("close matching completeness: %w", err)
-	}
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("read matching completeness: %w", err)
 	}
-	ids := make([]string, 0)
+	ids = make([]string, 0)
 	for accountID := range accounts {
 		cursor := start
 		for cursor.Before(end) {
@@ -716,7 +722,7 @@ func (l *Lifecycle) SaveEstimationPoints(ctx context.Context, points []domain.Es
 	return nil
 }
 
-func (l *Lifecycle) ListEstimationPoints(ctx context.Context, calculationIntervalID string) ([]domain.EstimationPoint, error) {
+func (l *Lifecycle) ListEstimationPoints(ctx context.Context, calculationIntervalID string) (result []domain.EstimationPoint, err error) {
 	if strings.TrimSpace(calculationIntervalID) == "" {
 		return nil, errors.New("calculation interval ID is required")
 	}
@@ -738,6 +744,11 @@ func (l *Lifecycle) ListEstimationPoints(ctx context.Context, calculationInterva
 	if err != nil {
 		return nil, fmt.Errorf("list estimation points: %w", err)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close estimation point rows: %w", closeErr)
+		}
+	}()
 	type pointRow struct {
 		point                                                                                                        domain.EstimationPoint
 		plan                                                                                                         sql.NullString
@@ -751,18 +762,14 @@ func (l *Lifecycle) ListEstimationPoints(ctx context.Context, calculationInterva
 			&item.point.CalculationIntervalID, &item.intervals, &item.reference, &item.point.SharedCost, &item.utilization,
 			&item.limits, &item.limitAccounts, &item.limitPlans, &item.limitIntervals, &item.costs, &item.associations, &item.completeness, &item.point.MatchingRuleVersion,
 			&item.point.CalculationLogicVersion, &item.created, &item.updated); err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("scan estimation point: %w", err)
 		}
 		pointRows = append(pointRows, item)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close estimation points: %w", err)
-	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read estimation points: %w", err)
 	}
-	result := make([]domain.EstimationPoint, 0, len(pointRows))
+	result = make([]domain.EstimationPoint, 0, len(pointRows))
 	for _, item := range pointRows {
 		point := item.point
 		if item.plan.Valid {
@@ -865,12 +872,16 @@ func (l *Lifecycle) ListEstimationInput(ctx context.Context, calculationInterval
 	return domain.EstimationInput{Points: points, Intervals: intervals, PlanVersions: plans}, nil
 }
 
-func (l *Lifecycle) listMatchedObservations(ctx context.Context, database *sql.DB, pointID string) ([]domain.MatchedObservation, error) {
+func (l *Lifecycle) listMatchedObservations(ctx context.Context, database *sql.DB, pointID string) (result []domain.MatchedObservation, err error) {
 	rows, err := database.QueryContext(ctx, `SELECT matched_observation_id, observation_role, source_id, logical_account_id, observation_id, observed_at, time_delta_ns, tolerance_ns, analytics_interval_seconds, sync_upload_interval_ms, limits_refresh_ms, normalization_generation, normalization_rule_version, normalization_logic_version FROM matched_observations WHERE estimation_point_id = ? ORDER BY observation_role, source_id, observation_id, matched_observation_id`, pointID)
 	if err != nil {
 		return nil, fmt.Errorf("list matched observations: %w", err)
 	}
-	var result []domain.MatchedObservation
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close matched observation rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var item domain.MatchedObservation
 		var account sql.NullString
@@ -878,13 +889,11 @@ func (l *Lifecycle) listMatchedObservations(ctx context.Context, database *sql.D
 		var timeDelta, tolerance int64
 		var syncMS, refreshMS sql.NullInt64
 		if err := rows.Scan(&item.ID, &item.Role, &item.SourceID, &account, &item.ObservationID, &observed, &timeDelta, &tolerance, &item.AnalyticsIntervalSeconds, &syncMS, &refreshMS, &item.NormalizationGeneration, &item.NormalizationRuleVersion, &item.NormalizationLogicVersion); err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("scan matched observation: %w", err)
 		}
 		item.LogicalAccountID = account.String
 		item.ObservedAt, err = parseUTC(observed)
 		if err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("parse matched observation time: %w", err)
 		}
 		item.TimeDelta = time.Duration(timeDelta)
@@ -893,10 +902,10 @@ func (l *Lifecycle) listMatchedObservations(ctx context.Context, database *sql.D
 		item.LimitsRefreshMS = matchingNullableSQLInt64(refreshMS)
 		result = append(result, item)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close matched observations: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read matched observations: %w", err)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func optionalInt64(value *int64) any {

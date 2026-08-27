@@ -15,7 +15,6 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useState } from "react";
-import type { StatusPresentationSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
@@ -32,6 +31,7 @@ import type {
   ServiceSnapshot,
   CreateServiceInput,
   StandardPriceInput,
+  StatusPresentationSnapshot,
 } from "../../lib/backend";
 import { cycleTypeLabel } from "../../lib/displayLabels";
 
@@ -171,6 +171,7 @@ export function CatalogPage({
     }
   }, [backend]);
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=mount synchronizes adapter-backed state; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // The initial read synchronizes this page with the external Wails adapter.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
@@ -670,6 +671,7 @@ function CandidatesTab({
     candidates.find((item) => item.id === selected) ?? candidates[0];
   useEffect(() => {
     if (!candidate) {
+      // Exception: Rule=react-hooks/set-state-in-effect; Reason=selection changes reset the candidate editor; Scope=next line; Owner=frontend; Expires=2026-12-31.
       // Candidate selection mirrors the selected evidence into the edit controls.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelected(null);
@@ -681,6 +683,7 @@ function CandidatesTab({
       rawReportedPlanName: candidate.rawReportedPlanName,
     });
     setSplitIDs([]);
+    // Exception: Rule=react-hooks/exhaustive-deps; Reason=the candidate identity alone defines when the editor resets; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidate?.id]);
   const saveCandidate = async (

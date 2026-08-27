@@ -5,16 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"token-monitor-analytics/internal/domain"
 )
 
-type WindowPlacement struct {
-	X       int
-	Y       int
-	Width   int
-	Height  int
-	DPI     int
-	Monitor string
-}
+type WindowPlacement = domain.WindowPlacement
 
 func (l *Lifecycle) GetWindowPlacement(ctx context.Context, kind string) (WindowPlacement, bool, error) {
 	database, err := l.DB()

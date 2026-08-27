@@ -937,7 +937,7 @@ func (l *Lifecycle) SplitIdentificationCandidate(ctx context.Context, candidateI
 	if err := scanCandidate(tx.QueryRowContext(ctx, `SELECT candidate_id, raw_limit_service_identifier, raw_reported_plan_name, state, service_id, plan_id, first_observed_at, last_observed_at, created_at, updated_at FROM identification_candidates WHERE candidate_id = ?`, candidateID), &before); err != nil {
 		return err
 	}
-	if err := validateObservationSelection(tx, candidateID, observationIDs); err != nil {
+	if err := validateObservationSelection(ctx, tx, candidateID, observationIDs); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO identification_candidates (candidate_id, raw_limit_service_identifier, raw_reported_plan_name, state, service_id, plan_id, first_observed_at, last_observed_at, created_at, updated_at) VALUES (?, ?, ?, 'unconfirmed', NULL, NULL, NULL, NULL, ?, ?)`,
@@ -955,11 +955,11 @@ func (l *Lifecycle) SplitIdentificationCandidate(ctx context.Context, candidateI
 			return fmt.Errorf("move split candidate observations: %w", err)
 		}
 	}
-	sourceFirst, sourceLast, err := candidateObservationBounds(tx, candidateID)
+	sourceFirst, sourceLast, err := candidateObservationBounds(ctx, tx, candidateID)
 	if err != nil {
 		return err
 	}
-	newFirst, newLast, err := candidateObservationBounds(tx, split.ID)
+	newFirst, newLast, err := candidateObservationBounds(ctx, tx, split.ID)
 	if err != nil {
 		return err
 	}
@@ -988,9 +988,9 @@ func (l *Lifecycle) SplitIdentificationCandidate(ctx context.Context, candidateI
 	return nil
 }
 
-func candidateObservationBounds(tx *sql.Tx, candidateID string) (*time.Time, *time.Time, error) {
+func candidateObservationBounds(ctx context.Context, tx *sql.Tx, candidateID string) (*time.Time, *time.Time, error) {
 	var first, last sql.NullString
-	if err := tx.QueryRow(`SELECT MIN(observed_at), MAX(observed_at) FROM identification_candidate_observations WHERE candidate_id = ?`, candidateID).Scan(&first, &last); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT MIN(observed_at), MAX(observed_at) FROM identification_candidate_observations WHERE candidate_id = ?`, candidateID).Scan(&first, &last); err != nil {
 		return nil, nil, fmt.Errorf("read candidate observation bounds: %w", err)
 	}
 	var firstTime, lastTime *time.Time
@@ -1045,7 +1045,7 @@ func setCandidateObservationMutationRange(mutation *CatalogMutation, ranges ...*
 	}
 }
 
-func validateObservationSelection(tx *sql.Tx, candidateID string, observationIDs []string) error {
+func validateObservationSelection(ctx context.Context, tx *sql.Tx, candidateID string, observationIDs []string) error {
 	if len(observationIDs) == 0 {
 		return nil
 	}
@@ -1066,7 +1066,7 @@ func validateObservationSelection(tx *sql.Tx, candidateID string, observationIDs
 		args = append(args, id)
 	}
 	var count int
-	if err := tx.QueryRow(`SELECT count(*) FROM identification_candidate_observations WHERE candidate_id = ? AND observation_id IN (`+placeholders+`)`, args...).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM identification_candidate_observations WHERE candidate_id = ? AND observation_id IN (`+placeholders+`)`, args...).Scan(&count); err != nil {
 		return fmt.Errorf("check split candidate observations: %w", err)
 	}
 	if count != len(observationIDs) {

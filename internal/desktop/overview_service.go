@@ -7,7 +7,6 @@ import (
 	"math"
 	"time"
 
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
@@ -15,8 +14,8 @@ import (
 const privacyMask = "••••"
 
 type OverviewReader interface {
-	ReadOverviewData(context.Context, time.Time) (sqliteadapter.OverviewData, error)
-	ListCredentialAuditEvents(context.Context, string) ([]sqliteadapter.CredentialAuditEvent, error)
+	ReadOverviewData(context.Context, time.Time) (domain.OverviewData, error)
+	ListCredentialAuditEvents(context.Context, string) ([]domain.CredentialAuditEvent, error)
 }
 
 type OverviewService struct {
@@ -148,12 +147,12 @@ type OverviewRecentLimitSnapshot struct {
 	Tooltip              string                     `json:"tooltip"`
 }
 
-func NewOverviewService(lifecycle *sqliteadapter.Lifecycle, recovery domain.RestoreRecoveryResult) (*OverviewService, error) {
-	return NewOverviewServiceWithDependencies(lifecycle, usecase.SystemClock{}, recovery)
+func NewOverviewService(reader OverviewReader, recovery domain.RestoreRecoveryResult) (*OverviewService, error) {
+	return NewOverviewServiceWithDependencies(reader, usecase.SystemClock{}, recovery)
 }
 
-func NewOverviewServiceWithMaintenance(lifecycle *sqliteadapter.Lifecycle, recovery domain.RestoreRecoveryResult, maintenance maintenanceStateReader) (*OverviewService, error) {
-	service, err := NewOverviewService(lifecycle, recovery)
+func NewOverviewServiceWithMaintenance(reader OverviewReader, recovery domain.RestoreRecoveryResult, maintenance maintenanceStateReader) (*OverviewService, error) {
+	service, err := NewOverviewService(reader, recovery)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +244,7 @@ func (s *OverviewService) activeDataMaintenance() *OverviewMaintenanceSnapshot {
 	}
 }
 
-func (s *OverviewService) mapHubSummary(ctx context.Context, hubs []sqliteadapter.OverviewHub) (OverviewHubSummarySnapshot, error) {
+func (s *OverviewService) mapHubSummary(ctx context.Context, hubs []domain.OverviewHub) (OverviewHubSummarySnapshot, error) {
 	result := OverviewHubSummarySnapshot{TotalCount: len(hubs)}
 	connectionCounts := make(map[string]int)
 	currentCollectionCounts := make(map[string]int)
@@ -319,7 +318,7 @@ func (s *OverviewService) mapHubSummary(ctx context.Context, hubs []sqliteadapte
 	return result, nil
 }
 
-func overviewHubAbnormal(hub sqliteadapter.OverviewHub) bool {
+func overviewHubAbnormal(hub domain.OverviewHub) bool {
 	switch hub.ConnectionState {
 	case "unreachable", "timeout", "tls_error", "authentication_failed", "unsupported_contract", "invalid_json":
 		return true
@@ -327,7 +326,7 @@ func overviewHubAbnormal(hub sqliteadapter.OverviewHub) bool {
 	return hub.LastCollectionState == "failed"
 }
 
-func mapOverviewReview(data sqliteadapter.OverviewData) (OverviewReviewSummarySnapshot, error) {
+func mapOverviewReview(data domain.OverviewData) (OverviewReviewSummarySnapshot, error) {
 	action, err := overviewStatusCount("review_action_required", data.ReviewActionCount)
 	if err != nil {
 		return OverviewReviewSummarySnapshot{}, err
@@ -390,7 +389,7 @@ func mapOverviewKindCounts(counts map[string]int) ([]OverviewKindCountSnapshot, 
 	return result, nil
 }
 
-func mapOverviewEstimation(data sqliteadapter.OverviewData) (OverviewEstimationSummarySnapshot, error) {
+func mapOverviewEstimation(data domain.OverviewData) (OverviewEstimationSummarySnapshot, error) {
 	states, err := mapOverviewStatusCounts(data.EstimationStatusCounts)
 	if err != nil {
 		return OverviewEstimationSummarySnapshot{}, err
@@ -430,7 +429,7 @@ func overviewStatusCount(code string, count int) (OverviewStatusCountSnapshot, e
 	return OverviewStatusCountSnapshot{Status: status, Count: count}, nil
 }
 
-func mapOverviewChecklist(data sqliteadapter.OverviewData, credentialReady int) ([]OverviewChecklistItemSnapshot, error) {
+func mapOverviewChecklist(data domain.OverviewData, credentialReady int) ([]OverviewChecklistItemSnapshot, error) {
 	type item struct{ title, code, route string }
 	items := []item{
 		{"表示タイムゾーンを確認", checklistCode(data.TimezoneConfirmed, false, false), "/settings"},
@@ -470,7 +469,7 @@ func checklistCode(complete, started, regressed bool) string {
 	return "not_started"
 }
 
-func overviewInitialCollectionComplete(hubs []sqliteadapter.OverviewHub) bool {
+func overviewInitialCollectionComplete(hubs []domain.OverviewHub) bool {
 	enabled := 0
 	for _, hub := range hubs {
 		if !hub.Enabled {
@@ -484,7 +483,7 @@ func overviewInitialCollectionComplete(hubs []sqliteadapter.OverviewHub) bool {
 	return enabled > 0
 }
 
-func overviewHasCollection(hubs []sqliteadapter.OverviewHub) bool {
+func overviewHasCollection(hubs []domain.OverviewHub) bool {
 	for _, hub := range hubs {
 		if hub.LastCollectionState != "" || hub.ConnectionState != "not_checked" {
 			return true
@@ -493,7 +492,7 @@ func overviewHasCollection(hubs []sqliteadapter.OverviewHub) bool {
 	return false
 }
 
-func overviewHasHubFailure(hubs []sqliteadapter.OverviewHub) bool {
+func overviewHasHubFailure(hubs []domain.OverviewHub) bool {
 	for _, hub := range hubs {
 		if hub.Enabled && overviewHubAbnormal(hub) {
 			return true
@@ -502,20 +501,20 @@ func overviewHasHubFailure(hubs []sqliteadapter.OverviewHub) bool {
 	return false
 }
 
-func overviewIdentificationActions(data sqliteadapter.OverviewData) int {
+func overviewIdentificationActions(data domain.OverviewData) int {
 	return data.ReviewActionKindCounts[string(domain.ReviewKindIdentificationCandidate)] +
 		data.ReviewActionKindCounts[string(domain.ReviewKindLabelChange)] +
 		data.ReviewActionKindCounts[string(domain.ReviewKindBillingMonthly)]
 }
 
-func overviewAssociationActions(data sqliteadapter.OverviewData) int {
+func overviewAssociationActions(data domain.OverviewData) int {
 	return data.ReviewActionKindCounts[string(domain.ReviewKindHubAccountCandidate)] +
 		data.ReviewActionKindCounts[string(domain.ReviewKindUsageCostUnassociated)] +
 		data.ReviewActionKindCounts[string(domain.ReviewKindUsageLimitUnassociated)] +
 		data.ReviewActionKindCounts[string(domain.ReviewKindPlanHistoryInconsistency)]
 }
 
-func overviewEstimationCount(data sqliteadapter.OverviewData) int {
+func overviewEstimationCount(data domain.OverviewData) int {
 	count := 0
 	for _, value := range data.EstimationStatusCounts {
 		count += value
@@ -523,16 +522,16 @@ func overviewEstimationCount(data sqliteadapter.OverviewData) int {
 	return count
 }
 
-func overviewEstimationNeedsAction(data sqliteadapter.OverviewData) bool {
+func overviewEstimationNeedsAction(data domain.OverviewData) bool {
 	return data.EstimationStatusCounts["insufficient_observations"]+data.EstimationStatusCounts["unidentifiable"]+
 		data.EstimationStatusCounts["model_mismatch"]+data.EstimationStatusCounts["uncomputed"] > 0
 }
 
-func overviewEstimationComplete(data sqliteadapter.OverviewData) bool {
+func overviewEstimationComplete(data domain.OverviewData) bool {
 	return overviewEstimationCount(data) > 0 && !overviewEstimationNeedsAction(data)
 }
 
-func mapOverviewRecentLimit(item sqliteadapter.OverviewRecentLimit, now time.Time, privacy bool) (OverviewRecentLimitSnapshot, error) {
+func mapOverviewRecentLimit(item domain.OverviewRecentLimit, now time.Time, privacy bool) (OverviewRecentLimitSnapshot, error) {
 	if math.IsNaN(item.UsedPercent) || math.IsInf(item.UsedPercent, 0) || item.UsedPercent < 0 || item.UsedPercent > 100 {
 		return OverviewRecentLimitSnapshot{}, errors.New("overview limit contains an invalid percentage")
 	}

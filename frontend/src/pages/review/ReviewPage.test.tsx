@@ -3,8 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
-import type { ReviewItemSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { createFakeBackend } from "../../lib/backend";
+import type { ReviewItemSnapshot } from "../../lib/backend";
 import { ReviewPage } from "./ReviewPage";
 
 const review = (

@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type {
   LimitSeriesDetailSnapshot,
   LimitSeriesSnapshot,
-} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+} from "../../lib/backend";
 import { createFakeBackend } from "../../lib/backend";
 import { LimitsPage } from "./LimitsPage";
 
@@ -90,6 +90,18 @@ function series(): LimitSeriesSnapshot {
       boundaries: [],
       role: "current",
       roleLabel: "カレント",
+      estimatedLimit: null,
+      estimatedLimitLabel: "",
+      monthlyEquivalentLimit: null,
+      monthlyEquivalentLimitLabel: "",
+      standardPriceUsdMonthlyPerSeat: null,
+      standardPriceSourceUrl: "",
+      standardPriceValidFrom: "",
+      standardPriceValidTo: "",
+      valueMultiplier: null,
+      valueMultiplierLabel: "",
+      valueReasonCode: "",
+      valueReason: "",
     },
     result: {
       id: "result-1",

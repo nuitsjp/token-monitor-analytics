@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"token-monitor-analytics/internal/adapter/backupzip"
@@ -12,11 +15,129 @@ import (
 	"token-monitor-analytics/internal/adapter/hubapi"
 	collectionscheduler "token-monitor-analytics/internal/adapter/scheduler"
 	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
+	timezoneadapter "token-monitor-analytics/internal/adapter/timezone"
 	"token-monitor-analytics/internal/desktop"
+	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
 
 const appVersion = "0.1.0"
+
+type applicationStorage struct {
+	dataDirectory string
+	lifecycle     *sqliteadapter.Lifecycle
+	recovery      domain.RestoreRecoveryResult
+}
+
+func openApplicationStorage(ctx context.Context) (*applicationStorage, error) {
+	configDirectory, err := os.UserConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve user configuration directory: %w", err)
+	}
+	dataDirectory := filepath.Join(configDirectory, "TokenMonitorAnalytics")
+	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
+		return nil, fmt.Errorf("create application data directory: %w", err)
+	}
+	recovery, err := sqliteadapter.RecoverPendingRestore(ctx, dataDirectory)
+	if err != nil {
+		return nil, err
+	}
+	lifecycle := &sqliteadapter.Lifecycle{}
+	if err := lifecycle.Open(ctx, filepath.Join(dataDirectory, sqliteadapter.RestoreDatabaseName)); err != nil {
+		return nil, err
+	}
+	return &applicationStorage{dataDirectory: dataDirectory, lifecycle: lifecycle, recovery: recovery}, nil
+}
+
+func (s *applicationStorage) Close() error {
+	return s.lifecycle.Close()
+}
+
+type mainHubClient struct{ client *hubapi.Client }
+
+func (c mainHubClient) FetchStats(ctx context.Context, secret string) (desktop.HubFetchResult, error) {
+	result, err := c.client.FetchStats(ctx, secret)
+	return desktop.HubFetchResult{Contract: desktop.HubContract{Build: desktop.HubBuildIdentity{
+		SchemaVersion:  result.Contract.Build.SchemaVersion,
+		Runtime:        result.Contract.Build.Runtime,
+		CoreBuildID:    result.Contract.Build.CoreBuildID,
+		RuntimeBuildID: result.Contract.Build.RuntimeBuildID,
+	}}}, err
+}
+
+func mainHubClientFactory(rawURL string) (desktop.HubClient, error) {
+	client, err := hubapi.NewClient(rawURL, hubapi.DefaultAllowlist)
+	if err != nil {
+		return nil, err
+	}
+	return mainHubClient{client: client}, nil
+}
+
+type mainCollectionClient struct{ client *hubapi.Client }
+
+func (c mainCollectionClient) FetchStats(ctx context.Context, secret string) (usecase.CollectionResult, error) {
+	result, err := c.client.FetchStats(ctx, secret)
+	return usecase.CollectionResult{
+		Health: usecase.CollectionResponse{Raw: result.Health.Raw, HTTPStatus: result.Health.HTTPStatus},
+		Stats:  usecase.CollectionResponse{Raw: result.Stats.Raw, HTTPStatus: result.Stats.HTTPStatus},
+		Contract: usecase.CollectionContract{
+			Build:          usecase.CollectionBuildIdentity{SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime, CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID},
+			UsageUpdatedAt: result.Contract.UsageUpdatedAt,
+		},
+	}, err
+}
+
+func mainCollectionClientFactory(rawURL string) (usecase.CollectionClient, error) {
+	client, err := hubapi.NewClient(rawURL, hubapi.DefaultAllowlist)
+	if err != nil {
+		return nil, err
+	}
+	return mainCollectionClient{client: client}, nil
+}
+
+func mainCollectionDependencies() usecase.CollectionDependencies {
+	return usecase.CollectionDependencies{
+		NormalizeStats: func(raw []byte) (usecase.NormalizedStats, error) {
+			result, err := hubapi.NormalizeStats(raw)
+			if err != nil {
+				return usecase.NormalizedStats{}, err
+			}
+			normalized := usecase.NormalizedStats{}
+			for _, item := range result.Costs {
+				normalized.Costs = append(normalized.Costs, usecase.NormalizedCostObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, CostUSDText: item.CostUSDText, SyncUploadIntervalMS: item.SyncUploadIntervalMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+			}
+			for _, item := range result.Usage {
+				normalized.Usage = append(normalized.Usage, usecase.NormalizedUsageObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+			}
+			for _, item := range result.Limits {
+				normalized.Limits = append(normalized.Limits, usecase.NormalizedLimitObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
+			}
+			return normalized, nil
+		},
+		ClassifyError: func(err error) string {
+			if classification := usecase.CollectionClassificationOf(err); classification != "" {
+				return classification
+			}
+			return string(hubapi.ClassificationOf(err))
+		},
+		NormalizationGeneration:   hubapi.NormalizationGeneration,
+		NormalizationRuleVersion:  hubapi.NormalizationRuleVersion,
+		NormalizationLogicVersion: hubapi.NormalizationLogicVersion,
+	}
+}
+
+type mainTimezoneProvider struct{}
+
+func (mainTimezoneProvider) CurrentWindowsID() (string, error) {
+	return timezoneadapter.CurrentWindowsID()
+}
+func (mainTimezoneProvider) WindowsIDToIANA(id string) (string, bool) {
+	return timezoneadapter.WindowsIDToIANA(id)
+}
+func (mainTimezoneProvider) IANAOptions() []string { return timezoneadapter.IANAOptions() }
+func (mainTimezoneProvider) LoadLocation(id string) (*time.Location, error) {
+	return timezoneadapter.LoadLocation(id)
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -35,9 +156,9 @@ func run() (runErr error) {
 
 	windowService, windowController := desktop.NewWindowService(storage.lifecycle)
 	maintenanceGate := usecase.NewMaintenanceGate()
-	settingsService := desktop.NewSettingsService(storage.lifecycle, maintenanceGate)
+	settingsService := desktop.NewSettingsServiceWithDependencies(storage.lifecycle, mainTimezoneProvider{}, maintenanceGate)
 	credentials := credentialadapter.Manager{}
-	hubService := desktop.NewHubService(storage.lifecycle, credentials, maintenanceGate)
+	hubService := desktop.NewHubServiceWithClient(storage.lifecycle, credentials, usecase.SystemClock{}, desktop.UUIDGenerator{}, mainHubClientFactory, maintenanceGate)
 	auditService := desktop.NewAuditService(storage.lifecycle)
 	catalogService, err := desktop.NewCatalogService(storage.lifecycle, maintenanceGate)
 	if err != nil {
@@ -55,19 +176,17 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("start estimation service: %w", err)
 	}
-	usageService, err := desktop.NewUsageService(storage.lifecycle)
+	usageService, err := desktop.NewUsageServiceWithDependencies(storage.lifecycle, usecase.SystemClock{}, mainTimezoneProvider{})
 	if err != nil {
 		return fmt.Errorf("start usage service: %w", err)
 	}
 	collector, err := usecase.NewCollectionUsecase(
 		storage.lifecycle,
 		credentials,
-		func(rawURL string, allowlist hubapi.Allowlist) (usecase.CollectionClient, error) {
-			return hubapi.NewClient(rawURL, allowlist)
-		},
+		mainCollectionClientFactory,
 		usecase.SystemClock{},
 		desktop.UUIDGenerator{},
-		hubapi.DefaultAllowlist,
+		mainCollectionDependencies(),
 		maintenanceGate,
 	)
 	if err != nil {

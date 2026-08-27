@@ -6,7 +6,7 @@ import {
   Info16Regular,
   Warning16Regular,
 } from "@fluentui/react-icons";
-import type { StatusPresentationSnapshot } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import type { StatusPresentationSnapshot } from "../lib/backend";
 
 function statusIcon(icon: string): React.ReactElement {
   switch (icon) {

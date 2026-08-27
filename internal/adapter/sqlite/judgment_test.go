@@ -27,7 +27,7 @@ func TestSaveJudgmentCommitsChangeAuditAndRequestTogether(t *testing.T) {
 	database, _ := lifecycle.DB()
 	for _, table := range []string{"judgments", "configuration_audits", "recalculation_requests"} {
 		var count int
-		if err := database.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil {
+		if err := database.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {
@@ -40,11 +40,11 @@ func TestSaveJudgmentCommitsChangeAuditAndRequestTogether(t *testing.T) {
 	if err := lifecycle.SaveJudgment(context.Background(), updated, nil); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := database.Query(`SELECT sequence, before_json, after_json FROM configuration_audits ORDER BY sequence`)
+	rows, err := database.QueryContext(context.Background(), `SELECT sequence, before_json, after_json FROM configuration_audits ORDER BY sequence`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var sequences []int
 	for rows.Next() {
 		var sequence int
@@ -57,6 +57,9 @@ func TestSaveJudgmentCommitsChangeAuditAndRequestTogether(t *testing.T) {
 		if after == "" {
 			t.Fatal("after JSON is empty")
 		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	if fmt.Sprint(sequences) != "[1 2]" {
 		t.Fatalf("audit sequences = %v", sequences)
@@ -74,7 +77,7 @@ func TestSaveJudgmentRollsBackAtEveryFailurePoint(t *testing.T) {
 			database, _ := lifecycle.DB()
 			for _, table := range []string{"judgments", "configuration_audits", "recalculation_requests"} {
 				var count int
-				if err := database.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil {
+				if err := database.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&count); err != nil {
 					t.Fatal(err)
 				}
 				if count != 0 {

@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"token-monitor-analytics/internal/adapter/hubapi"
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/domain"
 )
 
@@ -19,11 +17,11 @@ import (
 // the M07/M08 view. Keeping it as a port makes the Wails adapter testable
 // without making the DTO layer know about SQL.
 type CollectionReader interface {
-	ListCollectionAttempts(context.Context, string) ([]sqliteadapter.CollectionAttempt, error)
-	ListRawSnapshots(context.Context, string) ([]sqliteadapter.RawSnapshot, error)
-	GetRawSnapshot(context.Context, string) (sqliteadapter.RawSnapshot, error)
-	ListCostObservations(context.Context, string) ([]sqliteadapter.CostObservation, error)
-	ListLimitObservations(context.Context, string) ([]sqliteadapter.LimitObservation, error)
+	ListCollectionAttempts(context.Context, string) ([]domain.CollectionAttempt, error)
+	ListRawSnapshots(context.Context, string) ([]domain.RawSnapshot, error)
+	GetRawSnapshot(context.Context, string) (domain.RawSnapshot, error)
+	ListCostObservations(context.Context, string) ([]domain.CostObservation, error)
+	ListLimitObservations(context.Context, string) ([]domain.LimitObservation, error)
 }
 
 // CollectionScheduler is intentionally small so Start, Stop, and CollectNow
@@ -42,11 +40,11 @@ type CollectionService struct {
 
 // NewCollectionService constructs the Wails collection adapter. The returned
 // error is stable and does not expose dependency details.
-func NewCollectionService(lifecycle *sqliteadapter.Lifecycle, scheduler CollectionScheduler) (*CollectionService, error) {
-	if lifecycle == nil {
+func NewCollectionService(reader CollectionReader, scheduler CollectionScheduler) (*CollectionService, error) {
+	if reader == nil {
 		return nil, errors.New("collection service dependencies are required")
 	}
-	return NewCollectionServiceWithDependencies(lifecycle, scheduler)
+	return NewCollectionServiceWithDependencies(reader, scheduler)
 }
 
 func NewCollectionServiceWithDependencies(reader CollectionReader, scheduler CollectionScheduler) (*CollectionService, error) {
@@ -275,7 +273,7 @@ type RawSnapshotDTO = RawSnapshotSnapshot
 type CostObservationDTO = CostObservationSnapshot
 type LimitObservationDTO = LimitObservationSnapshot
 
-func collectionAttemptSnapshot(value sqliteadapter.CollectionAttempt) CollectionAttemptSnapshot {
+func collectionAttemptSnapshot(value domain.CollectionAttempt) CollectionAttemptSnapshot {
 	return CollectionAttemptSnapshot{
 		AttemptID: value.AttemptID, HubID: value.HubID, Trigger: value.Trigger, State: value.State,
 		StartedAt: formatOptional(value.StartedAt), CompletedAt: formatTimePtr(value.CompletedAt),
@@ -287,7 +285,7 @@ func collectionAttemptSnapshot(value sqliteadapter.CollectionAttempt) Collection
 	}
 }
 
-func rawSnapshotSnapshot(value sqliteadapter.RawSnapshot) RawSnapshotSnapshot {
+func rawSnapshotSnapshot(value domain.RawSnapshot) RawSnapshotSnapshot {
 	return RawSnapshotSnapshot{
 		SnapshotID: value.SnapshotID, AttemptID: value.AttemptID, HubID: value.HubID,
 		ResponseKind: value.ResponseKind, ReceivedStartedAt: formatOptional(value.ReceivedStartedAt),
@@ -296,7 +294,7 @@ func rawSnapshotSnapshot(value sqliteadapter.RawSnapshot) RawSnapshotSnapshot {
 	}
 }
 
-func costObservationSnapshot(value sqliteadapter.CostObservation) CostObservationSnapshot {
+func costObservationSnapshot(value domain.CostObservation) CostObservationSnapshot {
 	return CostObservationSnapshot{
 		ObservationID: value.ObservationID, SnapshotID: value.SnapshotID, HubID: value.HubID,
 		DeviceID: value.DeviceID, RawServiceIdentifier: value.RawServiceIdentifier,
@@ -309,7 +307,7 @@ func costObservationSnapshot(value sqliteadapter.CostObservation) CostObservatio
 	}
 }
 
-func limitObservationSnapshot(value sqliteadapter.LimitObservation) LimitObservationSnapshot {
+func limitObservationSnapshot(value domain.LimitObservation) LimitObservationSnapshot {
 	var remaining *float64
 	if value.UsedPercent != nil {
 		computed := 100 - *value.UsedPercent
@@ -373,8 +371,7 @@ func collectionOperationError(errorValue error) error {
 	if errorValue == nil {
 		return nil
 	}
-	classification := hubapi.ClassificationOf(errorValue)
-	if classification != "" {
+	if classification := collectionErrorClassification(errorValue); classification != "" {
 		return fmt.Errorf("collection operation failed: %s", classification)
 	}
 	if errors.Is(errorValue, context.Canceled) {
@@ -384,6 +381,16 @@ func collectionOperationError(errorValue error) error {
 		return context.DeadlineExceeded
 	}
 	return errors.New("collection operation failed")
+}
+
+func collectionErrorClassification(errorValue error) string {
+	message := strings.ToLower(errorValue.Error())
+	for _, classification := range []string{"auth", "tls", "timeout", "unreachable", "unsupported", "invalid_json", "body_too_large", "http"} {
+		if strings.Contains(message, classification) {
+			return classification
+		}
+	}
+	return ""
 }
 
 var safeCollectionFailureCodes = map[string]struct{}{

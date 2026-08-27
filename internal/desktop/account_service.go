@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	sqliteadapter "token-monitor-analytics/internal/adapter/sqlite"
 	"token-monitor-analytics/internal/domain"
 	"token-monitor-analytics/internal/usecase"
 )
@@ -14,10 +13,24 @@ import (
 // AccountService is the Wails boundary for M05. It exposes account evidence
 // and explicit logical-account decisions without exposing domain structs.
 type AccountService struct {
-	lifecycle *sqliteadapter.Lifecycle
-	usecase   *usecase.AccountUsecase
-	linking   *usecase.LinkingUsecase
-	gate      *usecase.MaintenanceGate
+	repository AccountRepository
+	usecase    *usecase.AccountUsecase
+	linking    *usecase.LinkingUsecase
+	gate       *usecase.MaintenanceGate
+}
+
+type AccountRepository interface {
+	usecase.AccountStore
+	usecase.LinkingStore
+	ListHubAccountCandidates(context.Context, string, domain.HubAccountCandidateState) ([]domain.HubAccountCandidate, error)
+	ListLogicalAccounts(context.Context, string, bool) ([]domain.LogicalAccount, error)
+	ListPlanHistories(context.Context, string) ([]domain.PlanHistory, error)
+	ListUsageCostSources(context.Context, string) ([]domain.UsageCostSource, error)
+	ListUsageLimitSources(context.Context, string) ([]domain.UsageLimitSource, error)
+	ListUsageCostAssociations(context.Context, string) ([]domain.UsageCostAssociation, error)
+	ListUsageLimitAssociations(context.Context, string) ([]domain.UsageLimitAssociation, error)
+	ListUsageCostSourceCompleteness(context.Context, string) ([]domain.UsageCostSourceCompleteness, error)
+	ListHubSwitches(context.Context) ([]domain.HubSwitch, error)
 }
 
 type AccountSnapshot struct {
@@ -227,23 +240,23 @@ type HubSwitchInput struct {
 	SwitchedAt         string `json:"switchedAt"`
 }
 
-func NewAccountService(lifecycle *sqliteadapter.Lifecycle, gate *usecase.MaintenanceGate) (*AccountService, error) {
-	return NewAccountServiceWithDependencies(lifecycle, usecase.SystemClock{}, UUIDGenerator{}, gate)
+func NewAccountService(repository AccountRepository, gate *usecase.MaintenanceGate) (*AccountService, error) {
+	return NewAccountServiceWithDependencies(repository, usecase.SystemClock{}, UUIDGenerator{}, gate)
 }
 
-func NewAccountServiceWithDependencies(lifecycle *sqliteadapter.Lifecycle, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) (*AccountService, error) {
-	if lifecycle == nil || gate == nil {
+func NewAccountServiceWithDependencies(repository AccountRepository, clock usecase.Clock, ids usecase.IDGenerator, gate *usecase.MaintenanceGate) (*AccountService, error) {
+	if repository == nil || gate == nil {
 		return nil, errors.New("account lifecycle and maintenance gate are required")
 	}
-	uc, err := usecase.NewAccountUsecase(lifecycle, clock, ids)
+	uc, err := usecase.NewAccountUsecase(repository, clock, ids)
 	if err != nil {
 		return nil, err
 	}
-	linking, err := usecase.NewLinkingUsecase(lifecycle, clock, ids)
+	linking, err := usecase.NewLinkingUsecase(repository, clock, ids)
 	if err != nil {
 		return nil, err
 	}
-	return &AccountService{lifecycle: lifecycle, usecase: uc, linking: linking, gate: gate}, nil
+	return &AccountService{repository: repository, usecase: uc, linking: linking, gate: gate}, nil
 }
 
 func (s *AccountService) GetAccounts(ctx context.Context) (AccountSnapshot, error) {
@@ -263,7 +276,7 @@ func (s *AccountService) GetAccounts(ctx context.Context) (AccountSnapshot, erro
 }
 
 func (s *AccountService) GetHubAccountCandidates(ctx context.Context, serviceID, state string) ([]HubAccountCandidateSnapshot, error) {
-	rows, err := s.lifecycle.ListHubAccountCandidates(ctx, serviceID, domain.HubAccountCandidateState(state))
+	rows, err := s.repository.ListHubAccountCandidates(ctx, serviceID, domain.HubAccountCandidateState(state))
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +288,7 @@ func (s *AccountService) GetHubAccountCandidates(ctx context.Context, serviceID,
 }
 
 func (s *AccountService) GetLogicalAccounts(ctx context.Context, serviceID string, includeArchived bool) ([]LogicalAccountSnapshot, error) {
-	rows, err := s.lifecycle.ListLogicalAccounts(ctx, serviceID, includeArchived)
+	rows, err := s.repository.ListLogicalAccounts(ctx, serviceID, includeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +300,7 @@ func (s *AccountService) GetLogicalAccounts(ctx context.Context, serviceID strin
 }
 
 func (s *AccountService) GetPlanHistories(ctx context.Context, logicalAccountID string) ([]PlanHistorySnapshot, error) {
-	rows, err := s.lifecycle.ListPlanHistories(ctx, logicalAccountID)
+	rows, err := s.repository.ListPlanHistories(ctx, logicalAccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -299,27 +312,27 @@ func (s *AccountService) GetPlanHistories(ctx context.Context, logicalAccountID 
 }
 
 func (s *AccountService) GetLinkingSnapshot(ctx context.Context) (LinkingSnapshot, error) {
-	costSources, err := s.lifecycle.ListUsageCostSources(ctx, "")
+	costSources, err := s.repository.ListUsageCostSources(ctx, "")
 	if err != nil {
 		return LinkingSnapshot{}, err
 	}
-	limitSources, err := s.lifecycle.ListUsageLimitSources(ctx, "")
+	limitSources, err := s.repository.ListUsageLimitSources(ctx, "")
 	if err != nil {
 		return LinkingSnapshot{}, err
 	}
-	costAssociations, err := s.lifecycle.ListUsageCostAssociations(ctx, "")
+	costAssociations, err := s.repository.ListUsageCostAssociations(ctx, "")
 	if err != nil {
 		return LinkingSnapshot{}, err
 	}
-	limitAssociations, err := s.lifecycle.ListUsageLimitAssociations(ctx, "")
+	limitAssociations, err := s.repository.ListUsageLimitAssociations(ctx, "")
 	if err != nil {
 		return LinkingSnapshot{}, err
 	}
-	completeness, err := s.lifecycle.ListUsageCostSourceCompleteness(ctx, "")
+	completeness, err := s.repository.ListUsageCostSourceCompleteness(ctx, "")
 	if err != nil {
 		return LinkingSnapshot{}, err
 	}
-	switches, err := s.lifecycle.ListHubSwitches(ctx)
+	switches, err := s.repository.ListHubSwitches(ctx)
 	if err != nil {
 		return LinkingSnapshot{}, err
 	}
@@ -652,7 +665,7 @@ func (s *AccountService) UpdatePlanHistory(ctx context.Context, input UpdatePlan
 }
 
 func (s *AccountService) logicalAccountByID(ctx context.Context, id string) (domain.LogicalAccount, error) {
-	rows, err := s.lifecycle.ListLogicalAccounts(ctx, "", true)
+	rows, err := s.repository.ListLogicalAccounts(ctx, "", true)
 	if err != nil {
 		return domain.LogicalAccount{}, err
 	}
@@ -665,7 +678,7 @@ func (s *AccountService) logicalAccountByID(ctx context.Context, id string) (dom
 }
 
 func (s *AccountService) planHistoryByID(ctx context.Context, id string) (domain.PlanHistory, error) {
-	rows, err := s.lifecycle.ListPlanHistories(ctx, "")
+	rows, err := s.repository.ListPlanHistories(ctx, "")
 	if err != nil {
 		return domain.PlanHistory{}, err
 	}
@@ -805,7 +818,7 @@ func hubSwitchFromInput(input HubSwitchInput) (domain.HubSwitch, error) {
 }
 
 func (s *AccountService) usageCostAssociationByID(ctx context.Context, id string) (domain.UsageCostAssociation, error) {
-	items, err := s.lifecycle.ListUsageCostAssociations(ctx, "")
+	items, err := s.repository.ListUsageCostAssociations(ctx, "")
 	if err != nil {
 		return domain.UsageCostAssociation{}, err
 	}
@@ -818,7 +831,7 @@ func (s *AccountService) usageCostAssociationByID(ctx context.Context, id string
 }
 
 func (s *AccountService) usageLimitAssociationByID(ctx context.Context, id string) (domain.UsageLimitAssociation, error) {
-	items, err := s.lifecycle.ListUsageLimitAssociations(ctx, "")
+	items, err := s.repository.ListUsageLimitAssociations(ctx, "")
 	if err != nil {
 		return domain.UsageLimitAssociation{}, err
 	}
@@ -831,7 +844,7 @@ func (s *AccountService) usageLimitAssociationByID(ctx context.Context, id strin
 }
 
 func (s *AccountService) completenessByID(ctx context.Context, id string) (domain.UsageCostSourceCompleteness, error) {
-	items, err := s.lifecycle.ListUsageCostSourceCompleteness(ctx, "")
+	items, err := s.repository.ListUsageCostSourceCompleteness(ctx, "")
 	if err != nil {
 		return domain.UsageCostSourceCompleteness{}, err
 	}

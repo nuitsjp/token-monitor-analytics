@@ -53,7 +53,7 @@ func TestACP124RestoreCrashRecoveryAtEverySwapStage(t *testing.T) {
 			point := point
 			t.Run("AC-P1-24/"+point, func(t *testing.T) {
 				dataDirectory, candidatePath, original, replacement := prepareRestoreCrashFixture(t)
-				command := exec.Command(os.Args[0], "-test.run=^TestACP124RestoreCrashHelper$", "-test.count=1")
+				command := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestACP124RestoreCrashHelper$", "-test.count=1")
 				command.Env = append(os.Environ(),
 					restoreCrashHelperModeEnv+"=1",
 					restoreCrashDataDirectoryEnv+"="+dataDirectory,
@@ -67,7 +67,7 @@ func TestACP124RestoreCrashRecoveryAtEverySwapStage(t *testing.T) {
 				}
 				assertRestoreCrashJournalHasNoAbsolutePath(t, dataDirectory)
 
-				recovery, err := sqliteadapter.RecoverPendingRestore(dataDirectory)
+				recovery, err := sqliteadapter.RecoverPendingRestore(t.Context(), dataDirectory)
 				if err != nil {
 					t.Fatalf("recover point %q: %v", point, err)
 				}
@@ -105,10 +105,10 @@ func TestACP124RestoreCrashRecoveryAtEverySwapStage(t *testing.T) {
 					t.Fatal("committed replacement logical contents differ after excluding the restore audit")
 				}
 				var total, restores int
-				if err := database.QueryRow(`SELECT COUNT(*) FROM configuration_audits`).Scan(&total); err != nil {
+				if err := database.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM configuration_audits`).Scan(&total); err != nil {
 					t.Fatal(err)
 				}
-				if err := database.QueryRow(`SELECT COUNT(*) FROM configuration_audits WHERE audit_id = ? AND action = 'restore_succeeded' AND entity_type = 'restore'`, restoreCrashAuditID).Scan(&restores); err != nil {
+				if err := database.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM configuration_audits WHERE audit_id = ? AND action = 'restore_succeeded' AND entity_type = 'restore'`, restoreCrashAuditID).Scan(&restores); err != nil {
 					t.Fatal(err)
 				}
 				if total != 1 || restores != 1 {
@@ -228,8 +228,10 @@ func openAcceptanceReadOnlyDatabase(t *testing.T, path string) *sql.DB {
 		t.Fatal(err)
 	}
 	database.SetMaxOpenConns(1)
-	if err := database.Ping(); err != nil {
-		_ = database.Close()
+	if err := database.PingContext(context.Background()); err != nil {
+		if closeErr := database.Close(); closeErr != nil {
+			t.Fatalf("ping database: %v (close: %v)", err, closeErr)
+		}
 		t.Fatal(err)
 	}
 	return database

@@ -211,28 +211,28 @@ func fileMetadata(path string) (fileMetadataResult, error) {
 	return fileMetadataResult{size: size, sha256: hash}, nil
 }
 
-func fileHash(path string) (string, int64, error) {
+func fileHash(path string) (hash string, size int64, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", 0, err
 	}
-	defer file.Close()
+	defer func() { err = errors.Join(err, file.Close()) }()
 	hasher := sha256.New()
-	size, err := io.Copy(hasher, file)
+	size, err = io.Copy(hasher, file)
 	if err != nil {
 		return "", 0, err
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), size, nil
 }
 
-func validateArchiveFile(path string, expected domain.BackupManifest) error {
+func validateArchiveFile(path string, expected domain.BackupManifest) (err error) {
 	const maxManifestSize = 64 * 1024
 
 	file, err := os.Open(path)
 	if err != nil {
 		return errors.New("open temporary backup ZIP for readback")
 	}
-	defer file.Close()
+	defer func() { err = errors.Join(err, file.Close()) }()
 	info, err := file.Stat()
 	if err != nil || info.Size() <= 0 {
 		return errors.New("temporary backup ZIP is empty")
@@ -280,7 +280,7 @@ func validateArchiveFile(path string, expected domain.BackupManifest) error {
 				return errors.New("backup ZIP database entry size is invalid")
 			}
 			hasher := sha256.New()
-			readSize, copyErr := io.Copy(hasher, entryReader)
+			readSize, copyErr := io.Copy(hasher, io.LimitReader(entryReader, expected.Database.SizeBytes+1))
 			closeErr := entryReader.Close()
 			if copyErr != nil || closeErr != nil {
 				return errors.New("hash backup ZIP database entry")

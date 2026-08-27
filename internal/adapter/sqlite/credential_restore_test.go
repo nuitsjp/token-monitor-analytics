@@ -10,7 +10,7 @@ import (
 
 func TestCredentialEventsMergeOneGlobalRestoreBoundaryBySequenceForEveryHub(t *testing.T) {
 	lifecycle := openTestLifecycle(t)
-	defer lifecycle.Close()
+	defer func() { _ = lifecycle.Close() }()
 	database, err := lifecycle.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,7 @@ func TestCredentialEventsMergeOneGlobalRestoreBoundaryBySequenceForEveryHub(t *t
 		{"hub-a-confirmed", "credential_reconfirmed", "hub_credential", "hub-a"},
 	}
 	for _, row := range rows {
-		if _, err := database.Exec(`INSERT INTO configuration_audits
+		if _, err := database.ExecContext(context.Background(), `INSERT INTO configuration_audits
 			(audit_id, occurred_at, actor, action, entity_type, entity_id)
 			VALUES (?, ?, 'test', ?, ?, ?)`, row.auditID, now, row.action, row.entityType, row.entityID); err != nil {
 			t.Fatal(err)
@@ -45,7 +45,7 @@ func TestCredentialEventsMergeOneGlobalRestoreBoundaryBySequenceForEveryHub(t *t
 		}
 		domainEvents := make([]domain.CredentialEvent, len(events))
 		for i, event := range events {
-			domainEvents[i] = domain.CredentialEvent{Sequence: event.Sequence, Action: event.Action}
+			domainEvents[i] = domain.CredentialEvent(event)
 			if i > 0 && events[i-1].Sequence >= event.Sequence {
 				t.Fatal("credential events are not ordered by audit sequence")
 			}
@@ -55,7 +55,7 @@ func TestCredentialEventsMergeOneGlobalRestoreBoundaryBySequenceForEveryHub(t *t
 		}
 	}
 	var restoreCount int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM configuration_audits WHERE action = 'restore_succeeded'`).Scan(&restoreCount); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM configuration_audits WHERE action = 'restore_succeeded'`).Scan(&restoreCount); err != nil {
 		t.Fatal(err)
 	}
 	if restoreCount != 1 {

@@ -10,7 +10,7 @@ import (
 	"token-monitor-analytics/internal/domain"
 )
 
-func RecoverPendingRestore(dataDirectory string) (domain.RestoreRecoveryResult, error) {
+func RecoverPendingRestore(ctx context.Context, dataDirectory string) (domain.RestoreRecoveryResult, error) {
 	paths, err := newRestorePaths(dataDirectory)
 	if err != nil {
 		return domain.RestoreRecoveryResult{}, safeRestoreRecoveryError("unsafe_data_directory", "", false, false, false)
@@ -39,7 +39,7 @@ func RecoverPendingRestore(dataDirectory string) (domain.RestoreRecoveryResult, 
 		if !current || incoming {
 			return domain.RestoreRecoveryResult{}, safeRestoreRecoveryError("indeterminate_committed_files", string(journal.Stage), current, original, incoming)
 		}
-		if err := validateCommittedRestore(context.Background(), paths.current, journal); err != nil {
+		if err := validateCommittedRestore(ctx, paths.current, journal); err != nil {
 			return domain.RestoreRecoveryResult{}, safeRestoreRecoveryError("committed_restore_unproven", string(journal.Stage), current, original, incoming)
 		}
 		if err := cleanupCommittedRestore(paths); err != nil {
@@ -177,7 +177,7 @@ func validateCommittedRestore(ctx context.Context, path string, journal restoreJ
 		return err
 	}
 	database.SetMaxOpenConns(1)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 	var integrity string
 	if err := database.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity); err != nil || integrity != "ok" {
 		return errors.New("committed restore database failed integrity validation")

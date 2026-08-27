@@ -1,0 +1,4 @@
+title = "token-monitor-analytics gitleaks configuration"
+
+[extend]
+useDefault = true

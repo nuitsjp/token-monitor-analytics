@@ -18,6 +18,10 @@ import {
   type SettingsSnapshot,
   type ThemePreference,
 } from "../lib/backend";
+import {
+  designTokenCssVariables,
+  designTokens,
+} from "../components/designTokens";
 
 interface SettingsContextValue {
   settings: SettingsSnapshot;
@@ -42,6 +46,7 @@ function systemPrefersDark(): boolean {
   );
 }
 
+// Exception: Rule=react-refresh/only-export-components; Reason=the provider hook must share its private context; Scope=next line; Owner=frontend; Expires=2026-12-31.
 // eslint-disable-next-line react-refresh/only-export-components
 export function useSettings(): SettingsContextValue {
   const value = useContext(settingsContext);
@@ -111,7 +116,17 @@ export function AppProviders({
   );
 
   useEffect(() => {
-    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    const root = document.documentElement;
+    root.dataset.theme = dark ? "dark" : "light";
+    const semanticTokens = designTokens[dark ? "dark" : "light"];
+    root.style.setProperty(
+      designTokenCssVariables.errorCounterBackground,
+      semanticTokens.errorCounterBackground,
+    );
+    root.style.setProperty(
+      designTokenCssVariables.errorCounterForeground,
+      semanticTokens.errorCounterForeground,
+    );
   }, [dark]);
 
   return (

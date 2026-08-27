@@ -53,6 +53,11 @@ func (l *Lifecycle) ListCalculationSeries(ctx context.Context, request Calculati
 	if err != nil {
 		return nil, fmt.Errorf("list calculation source relations: %w", err)
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close calculation source relation rows: %w", closeErr)
+		}
+	}()
 	type calculationSeriesSeed struct {
 		series                      CalculationSeries
 		sourceHubID, sourceDeviceID string
@@ -84,9 +89,6 @@ func (l *Lifecycle) ListCalculationSeries(ctx context.Context, request Calculati
 		}
 		seeds = append(seeds, seed)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close calculation source relations: %w", err)
-	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read calculation source relations: %w", err)
 	}
@@ -101,7 +103,7 @@ func (l *Lifecycle) ListCalculationSeries(ctx context.Context, request Calculati
 	return result, nil
 }
 
-func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *CalculationSeries, hubID, deviceID, accountKey, rawIdentifier, windowKey string, request CalculationBuildRequest) error {
+func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *CalculationSeries, hubID, deviceID, accountKey, rawIdentifier, windowKey string, request CalculationBuildRequest) (err error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT o.observation_id, o.provider_updated_at, o.resets_at, COALESCE(rs.api_contract, '')
 		FROM usage_limit_observations o
@@ -116,36 +118,36 @@ func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *Ca
 	if err != nil {
 		return fmt.Errorf("list calculation limit observations: %w", err)
 	}
-	for rows.Next() {
+	limitRows := rows
+	defer func() {
+		if closeErr := limitRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close calculation limit observation rows: %w", closeErr)
+		}
+	}()
+	for limitRows.Next() {
 		var observation CalculationObservation
 		var observed, reset sql.NullString
-		if err := rows.Scan(&observation.ID, &observed, &reset, &observation.APIContract); err != nil {
-			_ = rows.Close()
+		if err := limitRows.Scan(&observation.ID, &observed, &reset, &observation.APIContract); err != nil {
 			return fmt.Errorf("scan calculation limit observation: %w", err)
 		}
 		observation.ObservedAt, err = parseUTC(observed.String)
 		if err != nil {
-			_ = rows.Close()
 			return fmt.Errorf("parse calculation limit observation time: %w", err)
 		}
 		if reset.Valid {
 			value, parseErr := parseUTC(reset.String)
 			if parseErr != nil {
-				_ = rows.Close()
 				return fmt.Errorf("parse calculation reset time: %w", parseErr)
 			}
 			observation.ResetAt = &value
 		}
 		series.Observations = append(series.Observations, observation)
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close calculation limit observations: %w", err)
-	}
-	if err := rows.Err(); err != nil {
+	if err := limitRows.Err(); err != nil {
 		return fmt.Errorf("read calculation limit observations: %w", err)
 	}
 
-	rows, err = database.QueryContext(ctx, `
+	historyRows, err := database.QueryContext(ctx, `
 		SELECT plan_history_id, logical_account_id, plan_version_id, valid_from, valid_to, created_at, updated_at
 		FROM plan_histories WHERE logical_account_id = ?
 		  AND (valid_to IS NULL OR valid_to > ?) AND valid_from < ?
@@ -153,19 +155,23 @@ func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *Ca
 	if err != nil {
 		return fmt.Errorf("list calculation plan histories: %w", err)
 	}
-	for rows.Next() {
+	defer func() {
+		if closeErr := historyRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close calculation plan history rows: %w", closeErr)
+		}
+	}()
+	for historyRows.Next() {
 		var history PlanHistory
-		if err := scanPlanHistory(rows, &history); err != nil {
-			_ = rows.Close()
+		if err := scanPlanHistory(historyRows, &history); err != nil {
 			return err
 		}
 		series.PlanHistories = append(series.PlanHistories, history)
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close calculation plan histories: %w", err)
+	if err := historyRows.Err(); err != nil {
+		return fmt.Errorf("read calculation plan histories: %w", err)
 	}
 
-	rows, err = database.QueryContext(ctx, `
+	associationRows, err := database.QueryContext(ctx, `
 		SELECT cs.usage_cost_source_id, ca.usage_cost_association_id, ca.valid_from, ca.valid_to
 		FROM usage_cost_source_account_links ca
 		JOIN usage_cost_sources cs ON cs.usage_cost_source_id = ca.usage_cost_source_id
@@ -176,24 +182,26 @@ func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *Ca
 	if err != nil {
 		return fmt.Errorf("list calculation cost associations: %w", err)
 	}
+	defer func() {
+		if closeErr := associationRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close calculation cost association rows: %w", closeErr)
+		}
+	}()
 	costSources := make(map[string]*CalculationCostSource)
-	for rows.Next() {
+	for associationRows.Next() {
 		var sourceID, periodID, from string
 		var to sql.NullString
-		if err := rows.Scan(&sourceID, &periodID, &from, &to); err != nil {
-			_ = rows.Close()
+		if err := associationRows.Scan(&sourceID, &periodID, &from, &to); err != nil {
 			return fmt.Errorf("scan calculation cost association: %w", err)
 		}
 		start, parseErr := parseUTC(from)
 		if parseErr != nil {
-			_ = rows.Close()
 			return fmt.Errorf("parse calculation cost association start: %w", parseErr)
 		}
 		period := CalculationPeriod{ID: periodID, ValidFrom: start}
 		if to.Valid {
 			end, parseErr := parseUTC(to.String)
 			if parseErr != nil {
-				_ = rows.Close()
 				return fmt.Errorf("parse calculation cost association end: %w", parseErr)
 			}
 			period.ValidTo = &end
@@ -203,12 +211,12 @@ func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *Ca
 		}
 		costSources[sourceID].AssociationPeriods = append(costSources[sourceID].AssociationPeriods, period)
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close calculation cost associations: %w", err)
+	if err := associationRows.Err(); err != nil {
+		return fmt.Errorf("read calculation cost associations: %w", err)
 	}
 
 	for sourceID, source := range costSources {
-		rows, err = database.QueryContext(ctx, `
+		completenessRows, err := database.QueryContext(ctx, `
 			SELECT completeness_id, valid_from, valid_to, state, logical_account_ids_json, excluded_activity_json
 			FROM usage_cost_source_completeness
 			WHERE usage_cost_source_id = ? AND (valid_to IS NULL OR valid_to > ?) AND valid_from < ?
@@ -216,43 +224,43 @@ func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *Ca
 		if err != nil {
 			return fmt.Errorf("list calculation completeness: %w", err)
 		}
-		for rows.Next() {
+		defer func() {
+			if closeErr := completenessRows.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("close calculation completeness rows: %w", closeErr)
+			}
+		}()
+		for completenessRows.Next() {
 			var completeness CalculationCompleteness
 			var from string
 			var to sql.NullString
 			var state, accountsJSON, excludedJSON string
-			if err := rows.Scan(&completeness.ID, &from, &to, &state, &accountsJSON, &excludedJSON); err != nil {
-				_ = rows.Close()
+			if err := completenessRows.Scan(&completeness.ID, &from, &to, &state, &accountsJSON, &excludedJSON); err != nil {
 				return fmt.Errorf("scan calculation completeness: %w", err)
 			}
 			completeness.ValidFrom, err = parseUTC(from)
 			if err != nil {
-				_ = rows.Close()
 				return fmt.Errorf("parse calculation completeness start: %w", err)
 			}
 			if to.Valid {
 				value, parseErr := parseUTC(to.String)
 				if parseErr != nil {
-					_ = rows.Close()
 					return fmt.Errorf("parse calculation completeness end: %w", parseErr)
 				}
 				completeness.ValidTo = &value
 			}
 			completeness.State = domain.CompletenessState(state)
 			if err := json.Unmarshal([]byte(accountsJSON), &completeness.LogicalAccountIDs); err != nil {
-				_ = rows.Close()
 				return fmt.Errorf("decode calculation completeness accounts: %w", err)
 			}
 			if err := json.Unmarshal([]byte(excludedJSON), &completeness.ExcludedActivity); err != nil {
-				_ = rows.Close()
 				return fmt.Errorf("decode calculation completeness exclusions: %w", err)
 			}
 			source.Completeness = append(source.Completeness, completeness)
 		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close calculation completeness: %w", err)
+		if err := completenessRows.Err(); err != nil {
+			return fmt.Errorf("read calculation completeness: %w", err)
 		}
-		rows, err = database.QueryContext(ctx, `
+		costObservationRows, err := database.QueryContext(ctx, `
 			SELECT o.observation_id, o.usage_updated_at, o.cost_usd_text
 			FROM usage_cost_observations o
 			JOIN usage_cost_sources cs ON cs.hub_id = o.hub_id AND cs.device_id = o.device_id
@@ -266,55 +274,57 @@ func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *Ca
 		if err != nil {
 			return fmt.Errorf("list calculation cost observations: %w", err)
 		}
-		for rows.Next() {
+		defer func() {
+			if closeErr := costObservationRows.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("close calculation cost observation rows: %w", closeErr)
+			}
+		}()
+		for costObservationRows.Next() {
 			var observation CalculationCostObservation
 			var observed string
-			if err := rows.Scan(&observation.ID, &observed, &observation.ValueText); err != nil {
-				_ = rows.Close()
+			if err := costObservationRows.Scan(&observation.ID, &observed, &observation.ValueText); err != nil {
 				return fmt.Errorf("scan calculation cost observation: %w", err)
 			}
 			observation.ObservedAt, err = parseUTC(observed)
 			if err != nil {
-				_ = rows.Close()
 				return fmt.Errorf("parse calculation cost observation time: %w", err)
 			}
 			source.Observations = append(source.Observations, observation)
 		}
-		if err := rows.Close(); err != nil {
-			return fmt.Errorf("close calculation cost observations: %w", err)
-		}
-		if err := rows.Err(); err != nil {
+		if err := costObservationRows.Err(); err != nil {
 			return fmt.Errorf("read calculation cost observations: %w", err)
 		}
 		series.CostSources = append(series.CostSources, *source)
 	}
 	sort.Slice(series.CostSources, func(a, b int) bool { return series.CostSources[a].ID < series.CostSources[b].ID })
 
-	rows, err = database.QueryContext(ctx, `SELECT hub_switch_id, old_hub_id, old_device_id, new_hub_id, new_device_id, collection_device_id, switched_at, created_at FROM hub_switches WHERE switched_at >= ? AND switched_at <= ? ORDER BY switched_at, hub_switch_id`, utcText(request.ValidFrom), utcText(request.ValidTo))
+	switchRows, err := database.QueryContext(ctx, `SELECT hub_switch_id, old_hub_id, old_device_id, new_hub_id, new_device_id, collection_device_id, switched_at, created_at FROM hub_switches WHERE switched_at >= ? AND switched_at <= ? ORDER BY switched_at, hub_switch_id`, utcText(request.ValidFrom), utcText(request.ValidTo))
 	if err != nil {
 		return fmt.Errorf("list calculation Hub switches: %w", err)
 	}
-	for rows.Next() {
+	defer func() {
+		if closeErr := switchRows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close calculation Hub switch rows: %w", closeErr)
+		}
+	}()
+	for switchRows.Next() {
 		var switchRecord HubSwitch
 		var switched, created string
-		if err := rows.Scan(&switchRecord.ID, &switchRecord.OldHubID, &switchRecord.OldDeviceID, &switchRecord.NewHubID, &switchRecord.NewDeviceID, &switchRecord.CollectionDeviceID, &switched, &created); err != nil {
-			_ = rows.Close()
+		if err := switchRows.Scan(&switchRecord.ID, &switchRecord.OldHubID, &switchRecord.OldDeviceID, &switchRecord.NewHubID, &switchRecord.NewDeviceID, &switchRecord.CollectionDeviceID, &switched, &created); err != nil {
 			return fmt.Errorf("scan calculation Hub switch: %w", err)
 		}
 		switchRecord.SwitchedAt, err = parseUTC(switched)
 		if err != nil {
-			_ = rows.Close()
 			return fmt.Errorf("parse calculation Hub switch time: %w", err)
 		}
 		switchRecord.CreatedAt, err = parseUTC(created)
 		if err != nil {
-			_ = rows.Close()
 			return fmt.Errorf("parse calculation Hub switch creation time: %w", err)
 		}
 		series.HubSwitches = append(series.HubSwitches, switchRecord)
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close calculation Hub switches: %w", err)
+	if err := switchRows.Err(); err != nil {
+		return fmt.Errorf("read calculation Hub switches: %w", err)
 	}
 	return nil
 }
@@ -405,7 +415,7 @@ func (l *Lifecycle) SaveCalculationIntervals(ctx context.Context, intervals []Ca
 	return nil
 }
 
-func (l *Lifecycle) ListCalculationIntervals(ctx context.Context, sourceID string) ([]CalculationInterval, error) {
+func (l *Lifecycle) ListCalculationIntervals(ctx context.Context, sourceID string) (result []CalculationInterval, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -421,8 +431,12 @@ func (l *Lifecycle) ListCalculationIntervals(ctx context.Context, sourceID strin
 	if err != nil {
 		return nil, fmt.Errorf("list calculation intervals: %w", err)
 	}
-	defer rows.Close()
-	result := make([]CalculationInterval, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close calculation interval rows: %w", closeErr)
+		}
+	}()
+	result = make([]CalculationInterval, 0)
 	for rows.Next() {
 		interval, err := scanCalculationInterval(rows)
 		if err != nil {
@@ -436,7 +450,7 @@ func (l *Lifecycle) ListCalculationIntervals(ctx context.Context, sourceID strin
 	return result, nil
 }
 
-func (l *Lifecycle) ListCalculationBoundaries(ctx context.Context, sourceID string) ([]CalculationBoundary, error) {
+func (l *Lifecycle) ListCalculationBoundaries(ctx context.Context, sourceID string) (result []CalculationBoundary, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -452,8 +466,12 @@ func (l *Lifecycle) ListCalculationBoundaries(ctx context.Context, sourceID stri
 	if err != nil {
 		return nil, fmt.Errorf("list calculation boundaries: %w", err)
 	}
-	defer rows.Close()
-	result := make([]CalculationBoundary, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close calculation boundary rows: %w", closeErr)
+		}
+	}()
+	result = make([]CalculationBoundary, 0)
 	for rows.Next() {
 		var boundary CalculationBoundary
 		var at, created string
@@ -483,7 +501,7 @@ func scanCalculationInterval(row rowScanner) (CalculationInterval, error) {
 	var planID, from, to, state, exclusion, boundaryJSON, created, updated sql.NullString
 	if err := row.Scan(&interval.ID, &interval.ServiceID, &interval.LogicalAccountID, &interval.UsageLimitSourceID, &interval.LimitDefinitionID, &planID, &interval.CycleType, &from, &to, &state, &exclusion, &boundaryJSON, &created, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return CalculationInterval{}, fmt.Errorf("%w: %v", ErrCalculationIntervalNotFound, err)
+			return CalculationInterval{}, fmt.Errorf("%w: %w", ErrCalculationIntervalNotFound, err)
 		}
 		return CalculationInterval{}, fmt.Errorf("scan calculation interval: %w", err)
 	}

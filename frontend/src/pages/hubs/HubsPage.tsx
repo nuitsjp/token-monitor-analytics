@@ -13,15 +13,15 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useSearchParams } from "react-router";
+import { StatusBadge } from "../../components/StatusBadge";
 import type {
   CollectionAttemptSnapshot,
   CreateHubInput,
+  FrontendAdapter,
   HubSnapshot,
   StatusPresentationSnapshot,
   UpdateHubInput,
-} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
-import { StatusBadge } from "../../components/StatusBadge";
-import type { FrontendAdapter } from "../../lib/backend";
+} from "../../lib/backend";
 import { formatOverviewInstant } from "../../lib/overviewDisplay";
 
 const useStyles = makeStyles({
@@ -162,6 +162,7 @@ export function HubsPage({
     }
   }, [backend, targetHubID]);
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=mount synchronizes adapter-backed state; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
@@ -329,7 +330,6 @@ export function HubsPage({
           <Subtitle1 as="h2">{editing ? "Hub を編集" : "Hub を登録"}</Subtitle1>
           <Field label="表示名" validationMessage={errors.displayName?.message}>
             <Input
-              autoFocus
               {...register("displayName", {
                 required: "表示名を入力してください",
               })}

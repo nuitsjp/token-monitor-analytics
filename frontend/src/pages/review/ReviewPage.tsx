@@ -16,7 +16,6 @@ import {
 } from "@fluentui/react-components";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import type { StatusPresentationSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatOverviewInstant } from "../../lib/overviewDisplay";
 import type {
@@ -25,6 +24,7 @@ import type {
   ReviewFilterInput,
   ReviewItemSnapshot,
   ReviewPage as ReviewPageResult,
+  StatusPresentationSnapshot,
 } from "../../lib/backend";
 
 const useStyles = makeStyles({
@@ -253,6 +253,7 @@ export function ReviewPage({
   );
 
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=mount synchronizes adapter-backed state; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // The initial read synchronizes this page with the external Wails adapter.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadPage("", emptyFilters);
@@ -311,7 +312,7 @@ export function ReviewPage({
 
   const openDestination = (item: ReviewItemSnapshot) => {
     const path = destinationFor(item);
-    navigate(path, {
+    void navigate(path, {
       state: {
         reviewReturn: {
           path: "/review",

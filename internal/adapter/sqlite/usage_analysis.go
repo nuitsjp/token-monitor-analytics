@@ -13,13 +13,7 @@ import (
 
 type UsageAnalysisObservation = domain.UsageObservation
 
-type UsageNativeAmount struct {
-	ObservationID, SnapshotID, HubID, HubName, DeviceID string
-	RawServiceIdentifier, WindowKey, Label, Metric      string
-	ObservedAt                                          time.Time
-	UsedText, LimitText, RemainingText, Currency        string
-	JSONPath                                            string
-}
+type UsageNativeAmount = domain.UsageNativeAmount
 
 func (l *Lifecycle) ListUsageAnalysisObservations(ctx context.Context) ([]UsageAnalysisObservation, error) {
 	accounts, err := l.ListLogicalAccounts(ctx, "", true)
@@ -104,7 +98,7 @@ func (l *Lifecycle) ListUsageAnalysisObservations(ctx context.Context) ([]UsageA
 	if err != nil {
 		return nil, fmt.Errorf("list usage analysis observations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]UsageAnalysisObservation, 0)
 	for rows.Next() {
 		var item UsageAnalysisObservation
@@ -248,7 +242,7 @@ func (l *Lifecycle) ListUsageNativeAmounts(ctx context.Context) ([]UsageNativeAm
 	if err != nil {
 		return nil, fmt.Errorf("list native usage amounts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]UsageNativeAmount, 0)
 	for rows.Next() {
 		var item UsageNativeAmount

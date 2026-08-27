@@ -145,7 +145,7 @@ func (l *Lifecycle) validateRestoreDatabase(ctx context.Context, path string, ma
 		return restoreError(domain.RestoreValidationIntegrity, errors.New("open restore database read-only"))
 	}
 	database.SetMaxOpenConns(1)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 	if err := database.PingContext(ctx); err != nil {
 		return restoreError(domain.RestoreValidationIntegrity, fmt.Errorf("open restore database read-only: %w", err))
 	}
@@ -249,7 +249,7 @@ func manifestForRestoreDatabase(ctx context.Context, path string, template domai
 	if err != nil {
 		return domain.BackupManifest{}, restoreError(domain.RestoreValidationIntegrity, errors.New("open isolated restore database"))
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil || info.Size() <= 0 {
 		return domain.BackupManifest{}, restoreError(domain.RestoreValidationIntegrity, errors.New("inspect isolated restore database"))
@@ -281,7 +281,7 @@ func validateRestoreDatabaseFile(ctx context.Context, path string, manifest doma
 	if err != nil {
 		return restoreError(domain.RestoreValidationIntegrity, errors.New("open restore database file"))
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return restoreError(domain.RestoreValidationIntegrity, errors.New("inspect restore database file"))
@@ -367,7 +367,7 @@ func validateRestoreIntegrity(ctx context.Context, database *sql.DB) (error, err
 	if err != nil {
 		return nil, restoreError(domain.RestoreValidationIntegrity, fmt.Errorf("run restore integrity_check: %w", err))
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var failures []string
 	for rows.Next() {
 		var result string
@@ -459,7 +459,7 @@ func referenceSchema(ctx context.Context, temporaryRoot string) (map[string][]sc
 		_ = reference.Close()
 		return nil, err
 	}
-	if err := migrate(reference); err != nil {
+	if err := migrate(ctx, reference); err != nil {
 		_ = reference.Close()
 		return nil, err
 	}
@@ -481,28 +481,32 @@ func schemaShape(ctx context.Context, database *sql.DB) (map[string][]schemaColu
 	}
 	result := make(map[string][]schemaColumn, len(tables))
 	for _, table := range tables {
-		rows, err := database.QueryContext(ctx, `PRAGMA table_info(`+quoteIdentifier(table)+`)`)
+		columns, err := restoreTableShape(ctx, database, table)
 		if err != nil {
-			return nil, fmt.Errorf("inspect restore table %q: %w", table, err)
-		}
-		for rows.Next() {
-			var position int
-			var column schemaColumn
-			var defaultValue any
-			if err := rows.Scan(&position, &column.Name, &column.Type, &column.NotNull, &defaultValue, &column.Primary); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("read restore table %q columns: %w", table, err)
-			}
-			result[table] = append(result[table], column)
-		}
-		if err := rows.Close(); err != nil {
 			return nil, err
 		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
+		result[table] = columns
 	}
 	return result, nil
+}
+
+func restoreTableShape(ctx context.Context, database *sql.DB, table string) ([]schemaColumn, error) {
+	rows, err := database.QueryContext(ctx, `PRAGMA table_info(`+quoteIdentifier(table)+`)`)
+	if err != nil {
+		return nil, fmt.Errorf("inspect restore table %q: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var columns []schemaColumn
+	for rows.Next() {
+		var position int
+		var column schemaColumn
+		var defaultValue any
+		if err := rows.Scan(&position, &column.Name, &column.Type, &column.NotNull, &defaultValue, &column.Primary); err != nil {
+			return nil, fmt.Errorf("read restore table %q columns: %w", table, err)
+		}
+		columns = append(columns, column)
+	}
+	return columns, rows.Err()
 }
 
 func userTables(ctx context.Context, database *sql.DB) ([]string, error) {
@@ -510,7 +514,7 @@ func userTables(ctx context.Context, database *sql.DB) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var tables []string
 	for rows.Next() {
 		var table string
@@ -555,29 +559,32 @@ func validateRestoreDatetimes(ctx context.Context, database *sql.DB) error {
 				continue
 			}
 			query := `SELECT ` + quoteIdentifier(column.Name) + ` FROM ` + quoteIdentifier(table) + ` WHERE ` + quoteIdentifier(column.Name) + ` IS NOT NULL`
-			rows, err := database.QueryContext(ctx, query)
-			if err != nil {
-				return restoreError(domain.RestoreValidationDatetime, fmt.Errorf("read restore datetime %s.%s: %w", table, column.Name, err))
-			}
-			for rows.Next() {
-				var value any
-				if err := rows.Scan(&value); err != nil {
-					_ = rows.Close()
-					return restoreError(domain.RestoreValidationDatetime, fmt.Errorf("read restore datetime %s.%s", table, column.Name))
-				}
-				text, ok := value.(string)
-				if !ok || !validRestoreUTC(text) {
-					_ = rows.Close()
-					return restoreError(domain.RestoreValidationDatetime, fmt.Errorf("restore database contains an invalid UTC datetime in %s.%s", table, column.Name))
-				}
-			}
-			if err := rows.Close(); err != nil {
-				return restoreError(domain.RestoreValidationDatetime, err)
-			}
-			if err := rows.Err(); err != nil {
-				return restoreError(domain.RestoreValidationDatetime, err)
+			if err := validateRestoreDatetimeColumn(ctx, database, query, table, column.Name); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateRestoreDatetimeColumn(ctx context.Context, database *sql.DB, query, table, column string) error {
+	rows, err := database.QueryContext(ctx, query)
+	if err != nil {
+		return restoreError(domain.RestoreValidationDatetime, fmt.Errorf("read restore datetime %s.%s: %w", table, column, err))
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var value any
+		if err := rows.Scan(&value); err != nil {
+			return restoreError(domain.RestoreValidationDatetime, fmt.Errorf("read restore datetime %s.%s", table, column))
+		}
+		text, ok := value.(string)
+		if !ok || !validRestoreUTC(text) {
+			return restoreError(domain.RestoreValidationDatetime, fmt.Errorf("restore database contains an invalid UTC datetime in %s.%s", table, column))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return restoreError(domain.RestoreValidationDatetime, err)
 	}
 	return nil
 }
@@ -600,7 +607,7 @@ func validateRestoreForeignKeys(ctx context.Context, database *sql.DB) error {
 	if err != nil {
 		return restoreError(domain.RestoreValidationForeignKey, fmt.Errorf("run restore foreign_key_check: %w", err))
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if rows.Next() {
 		return restoreError(domain.RestoreValidationForeignKey, errors.New("restore database contains a foreign key violation"))
 	}
@@ -638,26 +645,8 @@ func validateRestoreIntervals(ctx context.Context, database *sql.DB) error {
 }
 
 func validateRestoreSecrets(ctx context.Context, database *sql.DB) error {
-	rows, err := database.QueryContext(ctx, `SELECT name, COALESCE(sql, '') FROM sqlite_master WHERE type IN ('table', 'view', 'trigger')`)
-	if err != nil {
-		return restoreError(domain.RestoreValidationSecret, errors.New("inspect restore database for secret fields"))
-	}
-	for rows.Next() {
-		var name, definition string
-		if err := rows.Scan(&name, &definition); err != nil {
-			_ = rows.Close()
-			return restoreError(domain.RestoreValidationSecret, errors.New("read restore schema for secret fields"))
-		}
-		if domain.IsRawSecretField(name) || containsForbiddenIdentifier(definition) {
-			_ = rows.Close()
-			return restoreError(domain.RestoreValidationSecret, errors.New("restore database schema contains a prohibited secret field"))
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return restoreError(domain.RestoreValidationSecret, err)
-	}
-	if err := rows.Err(); err != nil {
-		return restoreError(domain.RestoreValidationSecret, err)
+	if err := validateRestoreSchemaSecrets(ctx, database); err != nil {
+		return err
 	}
 	if err := validateRawSnapshots(ctx, database); err != nil {
 		return restoreError(domain.RestoreValidationSecret, err)
@@ -665,46 +654,37 @@ func validateRestoreSecrets(ctx context.Context, database *sql.DB) error {
 	return nil
 }
 
+func validateRestoreSchemaSecrets(ctx context.Context, database *sql.DB) error {
+	rows, err := database.QueryContext(ctx, `SELECT name, COALESCE(sql, '') FROM sqlite_master WHERE type IN ('table', 'view', 'trigger')`)
+	if err != nil {
+		return restoreError(domain.RestoreValidationSecret, errors.New("inspect restore database for secret fields"))
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name, definition string
+		if err := rows.Scan(&name, &definition); err != nil {
+			return restoreError(domain.RestoreValidationSecret, errors.New("read restore schema for secret fields"))
+		}
+		if domain.IsRawSecretField(name) || containsForbiddenIdentifier(definition) {
+			return restoreError(domain.RestoreValidationSecret, errors.New("restore database schema contains a prohibited secret field"))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return restoreError(domain.RestoreValidationSecret, err)
+	}
+	return nil
+}
+
 func validateRestoreRecalculation(ctx context.Context, database *sql.DB, path string) error {
 	reader := &Lifecycle{database: database, databasePath: path}
-	resultRows, err := database.QueryContext(ctx, `SELECT result_set_key FROM estimation_results ORDER BY result_set_key`)
+	resultKeys, err := queryDatabaseStringColumn(ctx, database, `SELECT result_set_key FROM estimation_results ORDER BY result_set_key`)
 	if err != nil {
 		return restoreError(domain.RestoreValidationRecalculation, fmt.Errorf("read restore estimation results: %w", err))
 	}
-	var resultKeys []string
-	for resultRows.Next() {
-		var key string
-		if err := resultRows.Scan(&key); err != nil {
-			_ = resultRows.Close()
-			return restoreError(domain.RestoreValidationRecalculation, err)
-		}
-		resultKeys = append(resultKeys, key)
-	}
-	if err := resultRows.Close(); err != nil {
-		return restoreError(domain.RestoreValidationRecalculation, err)
-	}
-	if err := resultRows.Err(); err != nil {
-		return restoreError(domain.RestoreValidationRecalculation, err)
-	}
 	if len(resultKeys) == 0 {
-		rows, err := database.QueryContext(ctx, `SELECT calculation_interval_id FROM calculation_intervals ORDER BY calculation_interval_id`)
+		intervalIDs, err := queryDatabaseStringColumn(ctx, database, `SELECT calculation_interval_id FROM calculation_intervals ORDER BY calculation_interval_id`)
 		if err != nil {
 			return restoreError(domain.RestoreValidationRecalculation, fmt.Errorf("read restore calculation intervals: %w", err))
-		}
-		var intervalIDs []string
-		for rows.Next() {
-			var intervalID string
-			if err := rows.Scan(&intervalID); err != nil {
-				_ = rows.Close()
-				return restoreError(domain.RestoreValidationRecalculation, err)
-			}
-			intervalIDs = append(intervalIDs, intervalID)
-		}
-		if err := rows.Close(); err != nil {
-			return restoreError(domain.RestoreValidationRecalculation, err)
-		}
-		if err := rows.Err(); err != nil {
-			return restoreError(domain.RestoreValidationRecalculation, err)
 		}
 		for _, intervalID := range intervalIDs {
 			input, err := reader.ListEstimationInput(ctx, intervalID)
@@ -748,6 +728,23 @@ func validateRestoreRecalculation(ctx context.Context, database *sql.DB, path st
 	return nil
 }
 
+func queryDatabaseStringColumn(ctx context.Context, database *sql.DB, query string) ([]string, error) {
+	rows, err := database.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var values []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, rows.Err()
+}
+
 func equalFloats(left, right []float64) bool {
 	if len(left) != len(right) {
 		return false
@@ -766,12 +763,12 @@ func copyDatabaseForRestoreTrial(ctx context.Context, sourcePath, targetPath str
 		return restoreError(domain.RestoreValidationComparison, errors.New("open validated database for isolated restore"))
 	}
 	source.SetMaxOpenConns(1)
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 	connection, err := source.Conn(ctx)
 	if err != nil {
 		return restoreError(domain.RestoreValidationComparison, errors.New("acquire isolated restore source connection"))
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	err = connection.Raw(func(raw any) error {
 		backuper, ok := raw.(interface {
 			NewBackup(string) (*modernsqlite.Backup, error)
@@ -820,7 +817,7 @@ func logicalSnapshot(ctx context.Context, path string) (map[string]logicalTableS
 		return nil, err
 	}
 	database.SetMaxOpenConns(1)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 	return logicalSnapshotDatabase(ctx, database, "")
 }
 
@@ -854,41 +851,45 @@ func logicalSnapshotDatabase(ctx context.Context, database *sql.DB, excludedAudi
 			arguments = append(arguments, excludedAuditID)
 		}
 		query += ` ORDER BY ` + strings.Join(quotedOrder, `, `)
-		rows, err := database.QueryContext(ctx, query, arguments...)
+		snapshot, err := hashLogicalQuery(ctx, database, query, len(columns), arguments...)
 		if err != nil {
 			return nil, err
 		}
-		hasher := sha256.New()
-		var count int64
-		for rows.Next() {
-			values := make([]any, len(columns))
-			pointers := make([]any, len(columns))
-			for index := range values {
-				pointers[index] = &values[index]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			for _, value := range values {
-				if err := hashLogicalValue(hasher, value); err != nil {
-					_ = rows.Close()
-					return nil, err
-				}
-			}
-			count++
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-		var digest [sha256.Size]byte
-		copy(digest[:], hasher.Sum(nil))
-		result[table] = logicalTableSnapshot{Rows: count, Hash: digest}
+		result[table] = snapshot
 	}
 	return result, nil
+}
+
+func hashLogicalQuery(ctx context.Context, database *sql.DB, query string, columnCount int, arguments ...any) (logicalTableSnapshot, error) {
+	rows, err := database.QueryContext(ctx, query, arguments...)
+	if err != nil {
+		return logicalTableSnapshot{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	hasher := sha256.New()
+	var count int64
+	for rows.Next() {
+		values := make([]any, columnCount)
+		pointers := make([]any, columnCount)
+		for index := range values {
+			pointers[index] = &values[index]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			return logicalTableSnapshot{}, err
+		}
+		for _, value := range values {
+			if err := hashLogicalValue(hasher, value); err != nil {
+				return logicalTableSnapshot{}, err
+			}
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return logicalTableSnapshot{}, err
+	}
+	var digest [sha256.Size]byte
+	copy(digest[:], hasher.Sum(nil))
+	return logicalTableSnapshot{Rows: count, Hash: digest}, nil
 }
 
 func snapshotColumns(ctx context.Context, database *sql.DB, table string) ([]string, []string, error) {
@@ -896,7 +897,7 @@ func snapshotColumns(ctx context.Context, database *sql.DB, table string) ([]str
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var columns []string
 	primaryByPosition := make(map[int]string)
 	for rows.Next() {

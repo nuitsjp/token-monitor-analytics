@@ -11,117 +11,15 @@ import (
 	"token-monitor-analytics/internal/domain"
 )
 
-type CollectionAttempt struct {
-	AttemptID                string
-	HubID                    string
-	Trigger                  string
-	State                    string
-	StartedAt                time.Time
-	CompletedAt              *time.Time
-	AnalyticsIntervalSeconds int64
-	HealthHTTPStatus         *int
-	StatsHTTPStatus          *int
-	APIContract              string
-	HealthSnapshotID         string
-	StatsSnapshotID          string
-	FailureCode              string
-	FailureDetail            string
-	NormalizationErrorPath   string
-}
+type CollectionAttempt = domain.CollectionAttempt
 
-type RawSnapshot struct {
-	SnapshotID          string
-	AttemptID           string
-	HubID               string
-	ResponseKind        string
-	ReceivedStartedAt   time.Time
-	ReceivedCompletedAt time.Time
-	HTTPStatus          int
-	APIContract         string
-	Body                []byte
-}
+type RawSnapshot = domain.RawSnapshot
 
-type CostObservation struct {
-	ObservationID             string
-	UsageCostSourceID         string
-	SnapshotID                string
-	HubID                     string
-	DeviceID                  string
-	RawServiceIdentifier      string
-	UsageUpdatedAt            time.Time
-	CostUSDText               string
-	SyncUploadIntervalMS      *int64
-	AnalyticsIntervalSeconds  int64
-	SourceTimezone            string
-	SourceLocalDate           string
-	NormalizationGeneration   int64
-	NormalizationRuleVersion  string
-	NormalizationLogicVersion string
-	JSONPath                  string
-	DedupeState               string
-	DedupeKey                 string
-	ValueFingerprint          string
-}
+type CostObservation = domain.CostObservation
 
-type UsageObservation struct {
-	ObservationID             string
-	UsageCostSourceID         string
-	SnapshotID                string
-	HubID                     string
-	DeviceID                  string
-	RawServiceIdentifier      string
-	UsageUpdatedAt            time.Time
-	TokenCount                int64
-	APICostUSDText            string
-	ModelTokens               map[string]int64
-	ModelCosts                map[string]string
-	SourceTimezone            string
-	SourceLocalDate           string
-	NormalizationGeneration   int64
-	NormalizationRuleVersion  string
-	NormalizationLogicVersion string
-	JSONPath                  string
-	DedupeState               string
-	DedupeKey                 string
-	ValueFingerprint          string
-}
+type UsageObservation = domain.CollectionUsageObservation
 
-type LimitObservation struct {
-	ObservationID             string
-	UsageLimitSourceID        string
-	HubAccountCandidateID     string
-	IdentificationCandidateID string
-	SnapshotID                string
-	HubID                     string
-	DeviceID                  string
-	RawServiceIdentifier      string
-	AccountKey                string
-	ProviderUpdatedAt         time.Time
-	WindowKey                 string
-	NormalizedKind            string
-	NormalizedMetric          string
-	NormalizedLabel           string
-	PlanLabel                 string
-	UsedPercent               *float64
-	AbsoluteUsedText          string
-	AbsoluteLimitText         string
-	AbsoluteRemainingText     string
-	Currency                  string
-	ResetsAt                  *time.Time
-	SyncUploadIntervalMS      *int64
-	LimitsRefreshMS           *int64
-	AnalyticsIntervalSeconds  int64
-	SourceTimezone            string
-	SourceLocalDate           string
-	NormalizationGeneration   int64
-	NormalizationRuleVersion  string
-	NormalizationLogicVersion string
-	JSONPath                  string
-	DedupeState               string
-	DedupeKey                 string
-	ValueFingerprint          string
-	WindowKeyConflict         bool
-}
+type LimitObservation = domain.LimitObservation
 
 func (l *Lifecycle) CreateCollectionAttempt(ctx context.Context, attempt CollectionAttempt) error {
 	if attempt.AttemptID == "" || attempt.HubID == "" || attempt.Trigger == "" || attempt.State == "" || attempt.StartedAt.IsZero() || attempt.AnalyticsIntervalSeconds <= 0 {
@@ -472,7 +370,7 @@ func maxTimePtr(a, b *time.Time) *time.Time {
 	return normalizedTimePtr(a)
 }
 
-func (l *Lifecycle) ListCollectionAttempts(ctx context.Context, hubID string) ([]CollectionAttempt, error) {
+func (l *Lifecycle) ListCollectionAttempts(ctx context.Context, hubID string) (result []CollectionAttempt, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -483,8 +381,11 @@ func (l *Lifecycle) ListCollectionAttempts(ctx context.Context, hubID string) ([
 	if err != nil {
 		return nil, fmt.Errorf("list collection attempts: %w", err)
 	}
-	defer rows.Close()
-	var result []CollectionAttempt
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close collection attempt rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		item, err := scanCollectionAttempt(rows)
 		if err != nil {
@@ -507,7 +408,7 @@ func (l *Lifecycle) GetRawSnapshot(ctx context.Context, snapshotID string) (RawS
 		received_started_at, received_completed_at, http_status, api_contract, body FROM raw_snapshots WHERE snapshot_id = ?`, snapshotID))
 }
 
-func (l *Lifecycle) ListRawSnapshots(ctx context.Context, hubID string) ([]RawSnapshot, error) {
+func (l *Lifecycle) ListRawSnapshots(ctx context.Context, hubID string) (result []RawSnapshot, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -518,8 +419,11 @@ func (l *Lifecycle) ListRawSnapshots(ctx context.Context, hubID string) ([]RawSn
 	if err != nil {
 		return nil, fmt.Errorf("list raw snapshots: %w", err)
 	}
-	defer rows.Close()
-	var result []RawSnapshot
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close raw snapshot rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		item, err := scanRawSnapshot(rows)
 		if err != nil {
@@ -533,7 +437,7 @@ func (l *Lifecycle) ListRawSnapshots(ctx context.Context, hubID string) ([]RawSn
 	return result, nil
 }
 
-func (l *Lifecycle) ListCostObservations(ctx context.Context, hubID string) ([]CostObservation, error) {
+func (l *Lifecycle) ListCostObservations(ctx context.Context, hubID string) (result []CostObservation, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -545,8 +449,11 @@ func (l *Lifecycle) ListCostObservations(ctx context.Context, hubID string) ([]C
 	if err != nil {
 		return nil, fmt.Errorf("list cost observations: %w", err)
 	}
-	defer rows.Close()
-	var result []CostObservation
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close cost observation rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var item CostObservation
 		var usage, timezone, localDate, sync sql.NullString
@@ -571,7 +478,7 @@ func (l *Lifecycle) ListCostObservations(ctx context.Context, hubID string) ([]C
 	return result, nil
 }
 
-func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) ([]LimitObservation, error) {
+func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) (result []LimitObservation, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -585,8 +492,11 @@ func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("list limit observations: %w", err)
 	}
-	defer rows.Close()
-	var result []LimitObservation
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close limit observation rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var item LimitObservation
 		var updated, reset, sourceTimezone, sourceDate sql.NullString

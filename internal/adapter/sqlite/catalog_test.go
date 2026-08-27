@@ -52,10 +52,10 @@ func TestCatalogPersistsServicesMappingsAndCandidatesInFileDatabase(t *testing.T
 	}
 	t.Run("DM-ID-02 cost and limit identifiers map separately", func(t *testing.T) {
 		var cost, limit int
-		if err := database.QueryRow(`SELECT count(*) FROM service_identifier_mappings WHERE identifier_kind = 'usage_cost'`).Scan(&cost); err != nil {
+		if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM service_identifier_mappings WHERE identifier_kind = 'usage_cost'`).Scan(&cost); err != nil {
 			t.Fatal(err)
 		}
-		if err := database.QueryRow(`SELECT count(*) FROM service_identifier_mappings WHERE identifier_kind = 'usage_limit'`).Scan(&limit); err != nil {
+		if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM service_identifier_mappings WHERE identifier_kind = 'usage_limit'`).Scan(&limit); err != nil {
 			t.Fatal(err)
 		}
 		if cost != 2 || limit != 1 {
@@ -77,7 +77,7 @@ func TestCatalogPersistsServicesMappingsAndCandidatesInFileDatabase(t *testing.T
 	})
 	t.Run("P1-CAT-04 registered service has a stable official key", func(t *testing.T) {
 		var officialKey string
-		if err := database.QueryRow(`SELECT official_key FROM services WHERE service_id = ?`, service.ID).Scan(&officialKey); err != nil {
+		if err := database.QueryRowContext(context.Background(), `SELECT official_key FROM services WHERE service_id = ?`, service.ID).Scan(&officialKey); err != nil {
 			t.Fatal(err)
 		}
 		if service.ID == "" || officialKey != "official.service" {
@@ -199,10 +199,10 @@ func TestCatalogUpdatesStandardPriceWithAuditAndRecalculationScope(t *testing.T)
 		t.Fatal(err)
 	}
 	var audits, requests int
-	if err := database.QueryRow(`SELECT count(*) FROM configuration_audits WHERE entity_type = 'catalog_standard_price' AND action = 'update' AND entity_id = ?`, price.ID).Scan(&audits); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM configuration_audits WHERE entity_type = 'catalog_standard_price' AND action = 'update' AND entity_id = ?`, price.ID).Scan(&audits); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.QueryRow(`SELECT count(*) FROM recalculation_requests WHERE audit_id IN (SELECT audit_id FROM configuration_audits WHERE entity_type = 'catalog_standard_price' AND action = 'update' AND entity_id = ?)`, price.ID).Scan(&requests); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM recalculation_requests WHERE audit_id IN (SELECT audit_id FROM configuration_audits WHERE entity_type = 'catalog_standard_price' AND action = 'update' AND entity_id = ?)`, price.ID).Scan(&requests); err != nil {
 		t.Fatal(err)
 	}
 	if audits != 1 || requests != 1 {
@@ -298,10 +298,10 @@ func TestCatalogSupportsCandidateReleaseCorrectionSplitAndLabelChangeEvidence(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO hubs (hub_id, display_name, url, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES (?, 'Hub', 'https://hub.example', 1, 300, ?, ?)`, hubID, utcText(now), utcText(now)); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO hubs (hub_id, display_name, url, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES (?, 'Hub', 'https://hub.example', 1, 300, ?, ?)`, hubID, utcText(now), utcText(now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO hub_connection_statuses (hub_id, state) VALUES (?, 'not_checked')`, hubID); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO hub_connection_statuses (hub_id, state) VALUES (?, 'not_checked')`, hubID); err != nil {
 		t.Fatal(err)
 	}
 	service := testCatalogService(now, "service-1")
@@ -389,10 +389,10 @@ func TestCatalogSupportsCandidateReleaseCorrectionSplitAndLabelChangeEvidence(t 
 	}
 
 	var audits, requests int
-	if err := database.QueryRow(`SELECT count(*) FROM configuration_audits WHERE entity_type IN ('catalog_identification_candidate', 'catalog_limit_label_change_candidate')`).Scan(&audits); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM configuration_audits WHERE entity_type IN ('catalog_identification_candidate', 'catalog_limit_label_change_candidate')`).Scan(&audits); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.QueryRow(`SELECT count(*) FROM recalculation_requests`).Scan(&requests); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM recalculation_requests`).Scan(&requests); err != nil {
 		t.Fatal(err)
 	}
 	t.Run("DM-REL-03 catalog changes append audit and recalculation records", func(t *testing.T) {
@@ -400,7 +400,7 @@ func TestCatalogSupportsCandidateReleaseCorrectionSplitAndLabelChangeEvidence(t 
 			t.Fatalf("catalog audits=%d requests=%d", audits, requests)
 		}
 		var actor, occurred, before, after string
-		if err := database.QueryRow(`SELECT actor, occurred_at, COALESCE(before_json, ''), COALESCE(after_json, '') FROM configuration_audits WHERE entity_type = 'catalog_identification_candidate' ORDER BY sequence DESC LIMIT 1`).Scan(&actor, &occurred, &before, &after); err != nil {
+		if err := database.QueryRowContext(context.Background(), `SELECT actor, occurred_at, COALESCE(before_json, ''), COALESCE(after_json, '') FROM configuration_audits WHERE entity_type = 'catalog_identification_candidate' ORDER BY sequence DESC LIMIT 1`).Scan(&actor, &occurred, &before, &after); err != nil {
 			t.Fatal(err)
 		}
 		if actor == "" || occurred == "" || before == "" || after == "" {
@@ -418,10 +418,10 @@ func TestSplitRecomputesBothObservationRangesAndRollsBackInvalidSelection(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO hubs (hub_id, display_name, url, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES (?, 'Hub', 'https://hub.example', 1, 300, ?, ?)`, hubID, utcText(now), utcText(now)); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO hubs (hub_id, display_name, url, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES (?, 'Hub', 'https://hub.example', 1, 300, ?, ?)`, hubID, utcText(now), utcText(now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO hub_connection_statuses (hub_id, state) VALUES (?, 'not_checked')`, hubID); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO hub_connection_statuses (hub_id, state) VALUES (?, 'not_checked')`, hubID); err != nil {
 		t.Fatal(err)
 	}
 	createCandidate := func(id string) {
@@ -479,7 +479,7 @@ func TestSplitRecomputesBothObservationRangesAndRollsBackInvalidSelection(t *tes
 	}
 	for _, observationID := range []string{"source-observation-0", "source-observation-1"} {
 		var owner string
-		if err := database.QueryRow(`SELECT candidate_id FROM identification_candidate_observations WHERE observation_id = ?`, observationID).Scan(&owner); err != nil {
+		if err := database.QueryRowContext(context.Background(), `SELECT candidate_id FROM identification_candidate_observations WHERE observation_id = ?`, observationID).Scan(&owner); err != nil {
 			t.Fatal(err)
 		}
 		if owner != "split" {
@@ -495,7 +495,7 @@ func TestSplitRecomputesBothObservationRangesAndRollsBackInvalidSelection(t *tes
 		t.Fatal("split accepted an observation from another candidate")
 	}
 	var count int
-	if err := database.QueryRow(`SELECT count(*) FROM identification_candidates WHERE candidate_id = 'invalid-split'`).Scan(&count); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM identification_candidates WHERE candidate_id = 'invalid-split'`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	t.Run("P1-CAT-03 invalid split selection rolls back", func(t *testing.T) {
@@ -504,7 +504,7 @@ func TestSplitRecomputesBothObservationRangesAndRollsBackInvalidSelection(t *tes
 		}
 	})
 	var owner string
-	if err := database.QueryRow(`SELECT candidate_id FROM identification_candidate_observations WHERE observation_id = 'other-observation'`).Scan(&owner); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT candidate_id FROM identification_candidate_observations WHERE observation_id = 'other-observation'`).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
 	if owner != "other" {

@@ -13,7 +13,7 @@ import (
 
 func TestRecoverPendingRestoreAllowsNoJournal(t *testing.T) {
 	t.Parallel()
-	if _, err := RecoverPendingRestore(t.TempDir()); err != nil {
+	if _, err := RecoverPendingRestore(t.Context(), t.TempDir()); err != nil {
 		t.Fatalf("recover without journal: %v", err)
 	}
 }
@@ -24,7 +24,7 @@ func TestRecoverPendingRestoreStopsBeforeUnknownJournal(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, RestoreJournalName), []byte(`{"stage":"unknown"}`), 0o600); err != nil {
 		t.Fatalf("write journal: %v", err)
 	}
-	if _, err := RecoverPendingRestore(directory); err == nil {
+	if _, err := RecoverPendingRestore(t.Context(), directory); err == nil {
 		t.Fatal("expected unknown journal to stop startup")
 	}
 }
@@ -39,7 +39,7 @@ func TestRecoverPendingRestoreCleansSimulatedCrashBeforeJournalCreation(t *testi
 	if err := os.WriteFile(incoming, []byte("incoming"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := RecoverPendingRestore(directory)
+	result, err := RecoverPendingRestore(t.Context(), directory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestRecoverPendingRestoreDoesNotModifyCandidatesForInvalidJournal(t *testin
 			t.Fatal(err)
 		}
 	}
-	if _, err := RecoverPendingRestore(directory); err == nil {
+	if _, err := RecoverPendingRestore(t.Context(), directory); err == nil {
 		t.Fatal("invalid journal was accepted")
 	}
 	for path, want := range files {
@@ -137,7 +137,7 @@ func TestRecoverPendingRestoreRollsBackSimulatedCrashAtOriginalMovedStage(t *tes
 	if err := writeRestoreJournal(paths, journal); err != nil {
 		t.Fatal(err)
 	}
-	result, err := RecoverPendingRestore(dataDirectory)
+	result, err := RecoverPendingRestore(t.Context(), dataDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,9 +148,9 @@ func TestRecoverPendingRestoreRollsBackSimulatedCrashAtOriginalMovedStage(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restored.Close()
+	defer func() { _ = restored.Close() }()
 	var theme string
-	if err := restored.QueryRow(`SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+	if err := restored.QueryRowContext(t.Context(), `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
 		t.Fatal(err)
 	}
 	if theme != "system" {

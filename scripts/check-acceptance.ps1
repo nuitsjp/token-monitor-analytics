@@ -5,6 +5,7 @@
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+. (Join-Path $PSScriptRoot 'traceability-ids.ps1')
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
     $ReportPath = Join-Path $repositoryRoot 'docs/acceptance/report.json'
 }
@@ -72,18 +73,7 @@ function Get-ObjectProperty($object, [string]$name) {
     return $property.Value
 }
 
-function Get-RequiredIds([string]$document) {
-    # Keep this extraction contract aligned with check-requirements.ps1. The
-    # acceptance gate includes Phase 1 and Phase 2 identifiers.
-    $pattern = '[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+-[0-9]{2}'
-    $ids = @()
-    foreach ($match in [regex]::Matches($document, $pattern)) {
-        $ids += $match.Value
-    }
-    return @($ids | Sort-Object -Unique)
-}
-
-function Get-AutomaticEvidence([string[]]$ids) {
+function Get-AutomaticEvidence([string[]]$ids, [ref]$errors) {
     $result = @{}
     $testFiles = @()
     $testFiles = @(Get-ChildItem -LiteralPath $repositoryRoot -Recurse -File | Where-Object {
@@ -99,6 +89,14 @@ function Get-AutomaticEvidence([string[]]$ids) {
     }
     foreach ($file in $testFiles) {
         $text = Read-Utf8 $file.FullName
+        $testNamePattern = '(?:t\.Run|(?:it|test|describe))\s*\(\s*["''](?<name>[^"'']*)["'']'
+        foreach ($testMatch in [regex]::Matches($text, $testNamePattern)) {
+            foreach ($testId in (Get-TraceabilityIds $testMatch.Groups['name'].Value)) {
+                if ($testId -notin $ids) {
+                    $errors.Value += (Get-RelativePath $file.FullName) + ': unknown traceability id in test name ' + $testId
+                }
+            }
+        }
         foreach ($id in $ids) {
             $pattern = '(?:t\.Run|(?:it|test|describe))\s*\(\s*["''](?<name>' + [regex]::Escape($id) + '(?![A-Z0-9])[^"'']*)["'']'
             $match = [regex]::Match($text, $pattern)
@@ -146,6 +144,12 @@ function Get-ManualEvidence([string[]]$knownIds, [string[]]$knownKeys, [string[]
                 $errors.Value += (Get-RelativePath $file.FullName) + ': testName/result is invalid'
                 continue
             }
+            $knownTraceabilityIds = @($knownIds + $knownKeys + $knownDesignKeys)
+            foreach ($testId in (Get-TraceabilityIds $testName)) {
+                if ($testId -notin $knownTraceabilityIds) {
+                    $errors.Value += (Get-RelativePath $file.FullName) + ': unknown traceability id in evidence testName ' + $testId
+                }
+            }
             if ($result.ContainsKey($id)) {
                 $errors.Value += (Get-RelativePath $file.FullName) + ': duplicate id ' + $id
                 continue
@@ -186,7 +190,7 @@ function Get-ManualEvidence([string[]]$knownIds, [string[]]$knownKeys, [string[]
 
 $requirementsPath = Join-Path $repositoryRoot 'docs/requirements.md'
 $designSystemPath = Join-Path $repositoryRoot 'docs/design-system.md'
-$requiredIds = @(Get-RequiredIds (Read-Utf8 $requirementsPath))
+$requiredIds = @(Get-RequirementIds (Read-Utf8 $requirementsPath))
 $screenKeys = @(
     'SCREEN-COMMON', 'SCREEN-T01', 'SCREEN-M00', 'SCREEN-M01', 'SCREEN-M02', 'SCREEN-M03',
     'SCREEN-M04', 'SCREEN-M05', 'SCREEN-M06', 'SCREEN-M07', 'SCREEN-M08',
@@ -217,9 +221,9 @@ if ($goPath) {
     $fixtureExitCode = Invoke-Quiet $goPath @('test', './tests/traceability', '-count=1')
 }
 
-$allEvidenceIds = @($requiredIds + $screenKeys + $designKeys | Sort-Object -Unique)
-$automaticEvidence = Get-AutomaticEvidence $allEvidenceIds
 $traceabilityErrors = @()
+$allEvidenceIds = @($requiredIds + $screenKeys + $designKeys | Sort-Object -Unique)
+$automaticEvidence = Get-AutomaticEvidence $allEvidenceIds ([ref]$traceabilityErrors)
 $manualEvidence = Get-ManualEvidence $requiredIds $screenKeys $designKeys ([ref]$traceabilityErrors)
 $designSystemDocument = Read-Utf8 $designSystemPath
 for ($section = 2; $section -le 9; $section++) {

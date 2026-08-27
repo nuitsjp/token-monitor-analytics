@@ -2,7 +2,7 @@ import { Caption1, mergeClasses, tokens } from "@fluentui/react-components";
 import { ChevronRight16Regular } from "@fluentui/react-icons";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
-import type { StatusPresentationSnapshot } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import type { StatusPresentationSnapshot } from "../lib/backend";
 import {
   type StatusTone,
   gaugeFillColor,

@@ -136,7 +136,7 @@ func (l *Lifecycle) DecideLimitLabelChangeCandidate(ctx context.Context, candida
 	return nil
 }
 
-func (l *Lifecycle) ListLimitLabelChangeCandidates(ctx context.Context, state domain.LabelChangeState) ([]LimitLabelChangeCandidate, error) {
+func (l *Lifecycle) ListLimitLabelChangeCandidates(ctx context.Context, state domain.LabelChangeState) (result []LimitLabelChangeCandidate, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -152,8 +152,11 @@ func (l *Lifecycle) ListLimitLabelChangeCandidates(ctx context.Context, state do
 	if err != nil {
 		return nil, fmt.Errorf("list label change candidates: %w", err)
 	}
-	defer rows.Close()
-	var result []LimitLabelChangeCandidate
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close label change candidate rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var candidate LimitLabelChangeCandidate
 		if err := scanLimitLabelChangeCandidate(rows, &candidate); err != nil {
@@ -167,7 +170,7 @@ func (l *Lifecycle) ListLimitLabelChangeCandidates(ctx context.Context, state do
 	return result, nil
 }
 
-func (l *Lifecycle) ListLimitLabelChangeWindows(ctx context.Context, candidateID string) ([]LimitLabelChangeWindow, error) {
+func (l *Lifecycle) ListLimitLabelChangeWindows(ctx context.Context, candidateID string) (result []LimitLabelChangeWindow, err error) {
 	database, err := l.DB()
 	if err != nil {
 		return nil, err
@@ -176,8 +179,11 @@ func (l *Lifecycle) ListLimitLabelChangeWindows(ctx context.Context, candidateID
 	if err != nil {
 		return nil, fmt.Errorf("list label change windows: %w", err)
 	}
-	defer rows.Close()
-	var result []LimitLabelChangeWindow
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close label change window rows: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var window LimitLabelChangeWindow
 		var observed string

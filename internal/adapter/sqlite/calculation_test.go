@@ -138,7 +138,7 @@ func TestT030SQLiteCalculationFixtureUsesConfirmedFactsAndPersistsBoundaries(t *
 		t.Fatalf("persisted intervals=%#v boundaries=%#v", persisted, boundaries)
 	}
 	var requests int
-	if err := database.QueryRow(`SELECT count(*) FROM recalculation_requests WHERE interval_start = ? AND interval_end = ?`, catalogPeriodText(now), catalogPeriodText(end)).Scan(&requests); err != nil {
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM recalculation_requests WHERE interval_start = ? AND interval_end = ?`, catalogPeriodText(now), catalogPeriodText(end)).Scan(&requests); err != nil {
 		t.Fatal(err)
 	}
 	if requests == 0 {

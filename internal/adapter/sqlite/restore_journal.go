@@ -113,7 +113,7 @@ func readRestoreJournal(path string) (restoreJournal, error) {
 	if err != nil {
 		return restoreJournal{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	contents, err := io.ReadAll(io.LimitReader(file, 64*1024+1))
 	if err != nil || len(contents) > 64*1024 {
 		return restoreJournal{}, errors.New("restore journal is unreadable")

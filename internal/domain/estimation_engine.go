@@ -71,9 +71,7 @@ func EstimateFromPoints(input EstimationInput) (EstimationResult, error) {
 	seriesCount := len(points[0].LimitSeriesIDs)
 	multipliers, ruleIDs, err := estimationMultipliers(points[0], input.PlanVersions)
 	if err != nil {
-		result.Status = EstimationUncomputed
-		result.Reasons = []string{EstimationReasonMultiplierMissing}
-		return result, nil
+		return markMultiplierMissing(result)
 	}
 	coefficients, costs, err := AdjacentDifferences(points)
 	if err != nil {
@@ -138,6 +136,12 @@ func EstimateFromPoints(input EstimationInput) (EstimationResult, error) {
 			result.SeriesLimits[index] = result.Limits[0] * multiplier
 		}
 	}
+	return result, nil
+}
+
+func markMultiplierMissing(result EstimationResult) (EstimationResult, error) {
+	result.Status = EstimationUncomputed
+	result.Reasons = []string{EstimationReasonMultiplierMissing}
 	return result, nil
 }
 

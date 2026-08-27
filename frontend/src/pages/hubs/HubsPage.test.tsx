@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { HubSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import type { HubSnapshot } from "../../lib/backend";
 import { createFakeBackend } from "../../lib/backend";
 import { HubsPage } from "./HubsPage";
 

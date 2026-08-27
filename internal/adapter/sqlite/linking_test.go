@@ -369,7 +369,7 @@ func TestT023CollectionObservationCreatesCandidatesInOneTransaction(t *testing.T
 		t.Fatal(err)
 	}
 	var evidence int
-	if err := database.QueryRow(`SELECT count(*) FROM identification_candidate_observations`).Scan(&evidence); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM identification_candidate_observations`).Scan(&evidence); err != nil {
 		t.Fatal(err)
 	}
 	if evidence != 5 {

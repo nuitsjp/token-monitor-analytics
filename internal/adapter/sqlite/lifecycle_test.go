@@ -24,7 +24,7 @@ func TestLifecycleMigratesAndReopensFileDatabase(t *testing.T) {
 	assertPragma(t, database, "foreign_keys", "1")
 	assertPragma(t, database, "busy_timeout", "5000")
 
-	if _, err := database.Exec(`UPDATE display_settings SET theme = 'dark' WHERE singleton = 1`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE display_settings SET theme = 'dark' WHERE singleton = 1`); err != nil {
 		t.Fatalf("update settings: %v", err)
 	}
 	if err := lifecycle.Close(); err != nil {
@@ -38,7 +38,7 @@ func TestLifecycleMigratesAndReopensFileDatabase(t *testing.T) {
 		t.Fatalf("get reopened database: %v", err)
 	}
 	var theme string
-	if err := database.QueryRow(`SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
 		t.Fatalf("read persisted setting: %v", err)
 	}
 	if theme != "dark" {
@@ -61,7 +61,7 @@ func TestMigrationVersionMatchesSchemaVersion(t *testing.T) {
 		t.Fatalf("get database: %v", err)
 	}
 	var schemaVersion int64
-	if err := database.QueryRow(`SELECT schema_version FROM schema_metadata WHERE singleton = 1`).Scan(&schemaVersion); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT schema_version FROM schema_metadata WHERE singleton = 1`).Scan(&schemaVersion); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
 	if schemaVersion != CurrentSchemaVersion {
@@ -72,7 +72,7 @@ func TestMigrationVersionMatchesSchemaVersion(t *testing.T) {
 func assertPragma(t *testing.T, database *sql.DB, name, want string) {
 	t.Helper()
 	var got string
-	if err := database.QueryRow("PRAGMA " + name).Scan(&got); err != nil {
+	if err := database.QueryRowContext(t.Context(), "PRAGMA "+name).Scan(&got); err != nil {
 		t.Fatalf("read PRAGMA %s: %v", name, err)
 	}
 	if got != want {

@@ -7,7 +7,7 @@ import { createFakeBackend } from "../../lib/backend";
 import type {
   LimitSeriesDetailSnapshot,
   LimitSeriesSnapshot,
-} from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
+} from "../../lib/backend";
 import { EvidencePage } from "./EvidencePage";
 
 const series: LimitSeriesSnapshot = {
@@ -69,6 +69,18 @@ const series: LimitSeriesSnapshot = {
     boundaries: [],
     role: "current",
     roleLabel: "現在区間",
+    estimatedLimit: null,
+    estimatedLimitLabel: "",
+    monthlyEquivalentLimit: null,
+    monthlyEquivalentLimitLabel: "",
+    standardPriceUsdMonthlyPerSeat: null,
+    standardPriceSourceUrl: "",
+    standardPriceValidFrom: "",
+    standardPriceValidTo: "",
+    valueMultiplier: null,
+    valueMultiplierLabel: "",
+    valueReasonCode: "",
+    valueReason: "",
   },
   result: {
     id: "result-1",

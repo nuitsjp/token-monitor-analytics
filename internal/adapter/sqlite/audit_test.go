@@ -24,7 +24,7 @@ func TestListConfigurationAuditsUsesStableCursorAndFilters(t *testing.T) {
 		{"three", "update", "account", "account-2", `{"name":"old"}`, `{"name":"new"}`,
 			time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)},
 	} {
-		_, err := database.Exec(`INSERT INTO configuration_audits
+		_, err := database.ExecContext(context.Background(), `INSERT INTO configuration_audits
 			(audit_id, occurred_at, actor, action, entity_type, entity_id, before_json, after_json)
 			VALUES (?, ?, 'user', ?, ?, ?, ?, ?)`, audit.id, utcText(audit.at), audit.action,
 			audit.entityType, audit.entityID, audit.before, audit.after)
@@ -94,7 +94,7 @@ func TestListConfigurationAuditsRedactsSensitiveJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = database.Exec(`INSERT INTO configuration_audits
+	_, err = database.ExecContext(context.Background(), `INSERT INTO configuration_audits
 		(audit_id, occurred_at, actor, action, entity_type, entity_id, before_json, after_json)
 		VALUES ('sensitive', ?, 'user', 'update', 'hub', 'hub-1', ?, ?)`,
 		utcText(time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)),

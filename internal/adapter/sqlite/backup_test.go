@@ -23,7 +23,7 @@ func TestOnlineBackupIncludesCommittedWALContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get source: %v", err)
 	}
-	if _, err := database.Exec(`UPDATE display_settings SET theme = 'dark' WHERE singleton = 1`); err != nil {
+	if _, err := database.ExecContext(context.Background(), `UPDATE display_settings SET theme = 'dark' WHERE singleton = 1`); err != nil {
 		t.Fatalf("write WAL content: %v", err)
 	}
 	if err := lifecycle.Backup(context.Background(), backupPath); err != nil {
@@ -35,7 +35,7 @@ func TestOnlineBackupIncludesCommittedWALContent(t *testing.T) {
 		t.Fatalf("open backup: %v", err)
 	}
 	var theme string
-	if err := backup.QueryRow(`SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
+	if err := backup.QueryRowContext(context.Background(), `SELECT theme FROM display_settings WHERE singleton = 1`).Scan(&theme); err != nil {
 		t.Fatalf("read backup: %v", err)
 	}
 	if theme != "dark" {

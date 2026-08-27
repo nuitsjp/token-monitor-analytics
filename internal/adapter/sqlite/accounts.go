@@ -99,7 +99,7 @@ func (l *Lifecycle) ListHubAccountCandidates(ctx context.Context, serviceID stri
 	if err != nil {
 		return nil, fmt.Errorf("list Hub account candidates: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]HubAccountCandidate, 0)
 	for rows.Next() {
 		var candidate HubAccountCandidate
@@ -236,7 +236,7 @@ func (l *Lifecycle) ListLogicalAccounts(ctx context.Context, serviceID string, i
 	if err != nil {
 		return nil, fmt.Errorf("list logical accounts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]LogicalAccount, 0)
 	for rows.Next() {
 		var account LogicalAccount
@@ -608,7 +608,7 @@ func (l *Lifecycle) ListPlanHistories(ctx context.Context, logicalAccountID stri
 	if err != nil {
 		return nil, fmt.Errorf("list plan histories: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]PlanHistory, 0)
 	for rows.Next() {
 		var history PlanHistory

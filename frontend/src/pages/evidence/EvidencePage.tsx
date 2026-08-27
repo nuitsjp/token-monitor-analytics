@@ -19,6 +19,7 @@ import type {
   CollectionAttemptSnapshot,
   CostObservationSnapshot,
   FrontendAdapter,
+  HubSnapshot,
   LimitObservationSnapshot,
   LimitSeriesDetailSnapshot,
   LimitSeriesSnapshot,
@@ -26,7 +27,6 @@ import type {
   RawSnapshotSnapshot,
   UsageSnapshot,
 } from "../../lib/backend";
-import type { HubSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatOverviewInstant } from "../../lib/overviewDisplay";
 
@@ -205,6 +205,7 @@ export function EvidencePage({
   }, [backend, displayTimeZone]);
 
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=mount synchronizes three adapter-backed datasets; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadHubs();
     void loadSeries();
@@ -243,6 +244,7 @@ export function EvidencePage({
   }, [backend, hubID]);
 
   useEffect(() => {
+    // Exception: Rule=react-hooks/set-state-in-effect; Reason=Hub selection refreshes adapter-backed evidence; Scope=next line; Owner=frontend; Expires=2026-12-31.
     // A Hub selection synchronizes the page with the external Wails adapter.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadEvidence();
@@ -627,20 +629,22 @@ function parseJSON(body: string): { ok: true; value: unknown } | { ok: false } {
 
 function jsonChildren(value: unknown, path: string): JSONChild[] {
   if (Array.isArray(value)) {
-    return value.map((item, index) => ({
+    return (value as unknown[]).map((item, index) => ({
       label: String(index),
       path: `${path}[${index}]`,
       value: item,
     }));
   }
   if (!value || typeof value !== "object") return [];
-  return Object.entries(value).map(([key, item]) => ({
-    label: key,
-    path: /^[A-Za-z_$][\w$]*$/.test(key)
-      ? `${path}.${key}`
-      : `${path}[${JSON.stringify(key)}]`,
-    value: item,
-  }));
+  return Object.entries(value as Record<string, unknown>).map(
+    ([key, item]) => ({
+      label: key,
+      path: /^[A-Za-z_$][\w$]*$/.test(key)
+        ? `${path}.${key}`
+        : `${path}[${JSON.stringify(key)}]`,
+      value: item,
+    }),
+  );
 }
 
 function jsonNodeMatches(

@@ -10,3 +10,16 @@ sql:
         emit_interface: true
         emit_json_tags: true
         emit_empty_slices: true
+    rules:
+      - no-select-star
+      - require-where-on-mutation
+
+rules:
+  - name: no-select-star
+    message: "SELECT * is not allowed; enumerate the selected columns"
+    rule: |
+      query.sql.matches('(?is)\\bselect\\s+\\*')
+  - name: require-where-on-mutation
+    message: "UPDATE and DELETE statements must include a WHERE clause"
+    rule: |
+      query.sql.matches('(?is)\\b(update|delete)\\b') && !query.sql.matches('(?is)\\bwhere\\b')

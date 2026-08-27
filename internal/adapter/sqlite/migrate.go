@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
@@ -15,7 +16,7 @@ const CurrentSchemaVersion int64 = 14
 var migrations embed.FS
 var migrationMu sync.Mutex
 
-func migrate(database *sql.DB) error {
+func migrate(ctx context.Context, database *sql.DB) error {
 	migrationMu.Lock()
 	defer migrationMu.Unlock()
 	goose.SetBaseFS(migrations)
@@ -33,7 +34,7 @@ func migrate(database *sql.DB) error {
 		return fmt.Errorf("migration version %d does not match current schema version %d", version, CurrentSchemaVersion)
 	}
 	var schemaVersion int64
-	if err := database.QueryRow(`SELECT schema_version FROM schema_metadata WHERE singleton = 1`).Scan(&schemaVersion); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT schema_version FROM schema_metadata WHERE singleton = 1`).Scan(&schemaVersion); err != nil {
 		return fmt.Errorf("read schema metadata: %w", err)
 	}
 	if schemaVersion != CurrentSchemaVersion {

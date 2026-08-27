@@ -51,7 +51,7 @@ func openLifecycleDatabase(ctx context.Context, path string) (string, *sql.DB, e
 		_ = database.Close()
 		return "", nil, fmt.Errorf("ping database: %w", err)
 	}
-	if err := migrate(database); err != nil {
+	if err := migrate(ctx, database); err != nil {
 		_ = database.Close()
 		return "", nil, err
 	}

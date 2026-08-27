@@ -36,6 +36,61 @@ type collectionTestCredentials struct{}
 
 func (collectionTestCredentials) Read(string) (string, bool, error) { return "secret", true, nil }
 
+type collectionHubAPIClient struct{ client *hubapi.Client }
+
+func (c collectionHubAPIClient) FetchStats(ctx context.Context, secret string) (CollectionResult, error) {
+	result, err := c.client.FetchStats(ctx, secret)
+	return CollectionResult{
+		Health: CollectionResponse{Raw: result.Health.Raw, HTTPStatus: result.Health.HTTPStatus},
+		Stats:  CollectionResponse{Raw: result.Stats.Raw, HTTPStatus: result.Stats.HTTPStatus},
+		Contract: CollectionContract{
+			Build:          CollectionBuildIdentity{SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime, CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID},
+			UsageUpdatedAt: result.Contract.UsageUpdatedAt,
+		},
+	}, err
+}
+
+func collectionHubAPIFactory(allowlist hubapi.Allowlist) CollectionClientFactory {
+	return func(rawURL string) (CollectionClient, error) {
+		client, err := hubapi.NewClient(rawURL, allowlist)
+		if err != nil {
+			return nil, err
+		}
+		return collectionHubAPIClient{client: client}, nil
+	}
+}
+
+func collectionHubAPIDependencies() CollectionDependencies {
+	return CollectionDependencies{
+		NormalizeStats: func(raw []byte) (NormalizedStats, error) {
+			result, err := hubapi.NormalizeStats(raw)
+			if err != nil {
+				return NormalizedStats{}, err
+			}
+			normalized := NormalizedStats{}
+			for _, item := range result.Costs {
+				normalized.Costs = append(normalized.Costs, NormalizedCostObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, CostUSDText: item.CostUSDText, SyncUploadIntervalMS: item.SyncUploadIntervalMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+			}
+			for _, item := range result.Usage {
+				normalized.Usage = append(normalized.Usage, NormalizedUsageObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+			}
+			for _, item := range result.Limits {
+				normalized.Limits = append(normalized.Limits, NormalizedLimitObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
+			}
+			return normalized, nil
+		},
+		ClassifyError: func(err error) string {
+			if classification := CollectionClassificationOf(err); classification != "" {
+				return classification
+			}
+			return string(hubapi.ClassificationOf(err))
+		},
+		NormalizationGeneration:   hubapi.NormalizationGeneration,
+		NormalizationRuleVersion:  hubapi.NormalizationRuleVersion,
+		NormalizationLogicVersion: hubapi.NormalizationLogicVersion,
+	}
+}
+
 type countingCollectionCredentials struct {
 	reads atomic.Int32
 	found bool
@@ -52,7 +107,7 @@ type blockingCollectionClient struct {
 	calls   atomic.Int32
 }
 
-func (c *blockingCollectionClient) FetchStats(context.Context, string) (hubapi.Result, error) {
+func (c *blockingCollectionClient) FetchStats(context.Context, string) (CollectionResult, error) {
 	c.calls.Add(1)
 	select {
 	case <-c.entered:
@@ -60,7 +115,7 @@ func (c *blockingCollectionClient) FetchStats(context.Context, string) (hubapi.R
 		close(c.entered)
 	}
 	<-c.release
-	return hubapi.Result{}, errors.New("blocked client")
+	return CollectionResult{}, errors.New("blocked client")
 }
 
 func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
@@ -93,9 +148,7 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 	}
 	allowlist := hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "test-hub", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true})
 	ids := &collectionTestIDs{}
-	uc, err := NewCollectionUsecase(database, collectionTestCredentials{}, func(rawURL string, allow hubapi.Allowlist) (CollectionClient, error) {
-		return hubapi.NewClient(rawURL, allow)
-	}, collectionTestClock{value: now}, ids, allowlist, NewMaintenanceGate())
+	uc, err := NewCollectionUsecase(database, collectionTestCredentials{}, collectionHubAPIFactory(allowlist), collectionTestClock{value: now}, ids, collectionHubAPIDependencies(), NewMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +405,7 @@ func TestStoppedPeriodicCollectionAllowsManualButSkipsScheduled(t *testing.T) {
 
 func TestConcurrentCollectionSkipsSecondRequest(t *testing.T) {
 	client := &blockingCollectionClient{entered: make(chan struct{}), release: make(chan struct{})}
-	factory := func(string, hubapi.Allowlist) (CollectionClient, error) { return client, nil }
+	factory := func(string) (CollectionClient, error) { return client, nil }
 	fixture := newCollectionFixture(t, true, `{"devices":[]}`, []string{"credential_saved"}, collectionTestCredentials{}, factory)
 	firstDone := make(chan error, 1)
 	go func() { firstDone <- fixture.usecase.CollectScheduled(fixture.ctx, fixture.hubID) }()
@@ -445,12 +498,9 @@ func newCollectionFixture(t *testing.T, enabled bool, statsBody string, actions 
 		credentials = collectionTestCredentials{}
 	}
 	if factory == nil {
-		factory = func(rawURL string, allow hubapi.Allowlist) (CollectionClient, error) {
-			return hubapi.NewClient(rawURL, allow)
-		}
+		factory = collectionHubAPIFactory(hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "test-hub", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true}))
 	}
-	allowlist := hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "test-hub", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true})
-	uc, err := NewCollectionUsecase(database, credentials, factory, collectionTestClock{value: now}, &collectionTestIDs{}, allowlist, NewMaintenanceGate())
+	uc, err := NewCollectionUsecase(database, credentials, factory, collectionTestClock{value: now}, &collectionTestIDs{}, collectionHubAPIDependencies(), NewMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}

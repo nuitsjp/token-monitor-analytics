@@ -12,7 +12,7 @@ import {
   type ReviewItemSnapshot,
   type UsageSnapshot,
 } from "./backend";
-import type { StatusPresentationSnapshot } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
+import type { StatusPresentationSnapshot } from "./backend";
 
 const now = "2026-08-26T00:10:00Z";
 
@@ -360,6 +360,18 @@ const limitSeries: LimitSeriesSnapshot = {
     ],
     role: "current",
     roleLabel: "カレント",
+    estimatedLimit: 123,
+    estimatedLimitLabel: "123.00 USD相当",
+    monthlyEquivalentLimit: 534.819375,
+    monthlyEquivalentLimitLabel: "$534.82 / 月",
+    standardPriceUsdMonthlyPerSeat: 20,
+    standardPriceSourceUrl: "https://openai.com/chatgpt/pricing/",
+    standardPriceValidFrom: "2026-01-01T00:00:00Z",
+    standardPriceValidTo: "",
+    valueMultiplier: 26.74096875,
+    valueMultiplierLabel: "26.74×",
+    valueReasonCode: "calculated",
+    valueReason: "有効な USD 建て標準価格と月間換算上限から算出しました。",
   },
   result: {
     id: "result-codex-weekly",

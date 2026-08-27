@@ -367,7 +367,7 @@ func readReviewSources(ctx context.Context, database *sql.DB, cost bool) ([]revi
 	if err != nil {
 		return nil, fmt.Errorf("read review sources: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]reviewSource, 0)
 	for rows.Next() {
 		var source reviewSource
@@ -396,7 +396,7 @@ func readReviewObservations(ctx context.Context, database *sql.DB, cost bool) ([
 	if err != nil {
 		return nil, fmt.Errorf("read review observations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]reviewObservation, 0)
 	for rows.Next() {
 		var observation reviewObservation
@@ -426,7 +426,7 @@ func readAssociatedReviewSources(ctx context.Context, database *sql.DB, cost boo
 	if err != nil {
 		return nil, fmt.Errorf("read associated review sources: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make(map[string]struct{})
 	for rows.Next() {
 		var id string
@@ -446,7 +446,7 @@ func readReviewIdentificationCandidates(ctx context.Context, database *sql.DB) (
 	if err != nil {
 		return nil, fmt.Errorf("read review identification candidates: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]domain.ReviewItem, 0)
 	for rows.Next() {
 		var id, rawIdentifier, rawPlan, first, last, created sql.NullString
@@ -477,7 +477,7 @@ func readReviewHubAccounts(ctx context.Context, database *sql.DB) ([]domain.Revi
 	if err != nil {
 		return nil, fmt.Errorf("read review Hub accounts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]domain.ReviewItem, 0)
 	for rows.Next() {
 		var id, hubID, accountKey, displayName, workspace, device, state, logicalAccountName string
@@ -511,7 +511,7 @@ func readReviewLabelChanges(ctx context.Context, database *sql.DB) ([]domain.Rev
 	if err != nil {
 		return nil, fmt.Errorf("read review label changes: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]domain.ReviewItem, 0)
 	for rows.Next() {
 		var id, hubID, accountKey, rawIdentifier, oldLabel, newLabel string
@@ -543,7 +543,7 @@ func readReviewBilling(ctx context.Context, database *sql.DB) ([]domain.ReviewIt
 	if err != nil {
 		return nil, fmt.Errorf("read review billing definitions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]domain.ReviewItem, 0)
 	for rows.Next() {
 		var id, meaning, created, updated string
@@ -572,7 +572,7 @@ func readReviewCompleteness(ctx context.Context, database *sql.DB, sources []rev
 	if err != nil {
 		return nil, fmt.Errorf("read review completeness: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]domain.ReviewItem, 0)
 	segments := make(map[string][]reviewCompletenessSegment)
 	for rows.Next() {
@@ -782,7 +782,7 @@ func readReviewLinks(ctx context.Context, database *sql.DB, query, kind string) 
 	if err != nil {
 		return nil, fmt.Errorf("read review %s links: %w", kind, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make(map[string][]reviewLink)
 	for rows.Next() {
 		var sourceID, accountID, limitDefinitionID, from string
@@ -815,7 +815,7 @@ func readReviewLogicalAccountNames(ctx context.Context, database *sql.DB) (map[s
 	if err != nil {
 		return nil, fmt.Errorf("read review logical account names: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make(map[string]string)
 	for rows.Next() {
 		var id, name string
@@ -835,7 +835,7 @@ func readReviewLimitMeanings(ctx context.Context, database *sql.DB) (map[string]
 	if err != nil {
 		return nil, fmt.Errorf("read review limit meanings: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make(map[string]string)
 	for rows.Next() {
 		var id, meaning string
@@ -872,6 +872,9 @@ func reviewCurrentAssociation(item domain.ReviewItem, costLinks, limitLinks map[
 		values = costLinks[item.SourceID]
 	case domain.ReviewKindUsageLimitUnassociated, domain.ReviewKindPlanHistoryInconsistency, domain.ReviewKindMissingAccountKey, domain.ReviewKindLimitDedupeConflict:
 		values = limitLinks[item.SourceID]
+	case domain.ReviewKindIdentificationCandidate, domain.ReviewKindHubAccountCandidate,
+		domain.ReviewKindLabelChange, domain.ReviewKindBillingMonthly:
+		// These review items do not have a current source association.
 	}
 	link, ok := activeReviewLink(values, item.LastObservedAt)
 	if !ok {
@@ -901,7 +904,7 @@ func readReviewPlanHistories(ctx context.Context, database *sql.DB) (map[string]
 	if err != nil {
 		return nil, fmt.Errorf("read review plan histories: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make(map[string][]reviewHistory)
 	for rows.Next() {
 		var accountID, versionID, from string
@@ -934,7 +937,7 @@ func readReviewPlanVersions(ctx context.Context, database *sql.DB) (map[string]s
 	if err != nil {
 		return nil, fmt.Errorf("read review plan versions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make(map[string]string)
 	for rows.Next() {
 		var id, name string

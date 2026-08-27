@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"token-monitor-analytics/internal/domain"
@@ -171,7 +172,7 @@ func scopeForMutation(ctx context.Context, tx *sql.Tx, mutation CatalogMutation,
 }
 
 func scopeMutationError(mutation CatalogMutation, err error) error {
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("resolve recalculation scope for %s %q: entity was not found", mutation.EntityType, mutation.EntityID)
 	}
 	return fmt.Errorf("resolve recalculation scope for %s %q: %w", mutation.EntityType, mutation.EntityID, err)
@@ -267,22 +268,23 @@ func appendPlanVersionScopeByPrice(ctx context.Context, tx *sql.Tx, scope *domai
 	return appendPlanVersionScope(ctx, tx, scope, planVersionID)
 }
 
-func appendCostSourceAccounts(ctx context.Context, tx *sql.Tx, scope *domain.RecalculationScope, sourceID string) error {
+func appendCostSourceAccounts(ctx context.Context, tx *sql.Tx, scope *domain.RecalculationScope, sourceID string) (err error) {
 	rows, err := tx.QueryContext(ctx, `SELECT logical_account_id FROM usage_cost_source_account_links WHERE usage_cost_source_id = ? ORDER BY logical_account_id`, sourceID)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 	var accountIDs []string
 	for rows.Next() {
 		var accountID string
 		if err := rows.Scan(&accountID); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		accountIDs = append(accountIDs, accountID)
-	}
-	if err := rows.Close(); err != nil {
-		return err
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -296,23 +298,24 @@ func appendCostSourceAccounts(ctx context.Context, tx *sql.Tx, scope *domain.Rec
 	return nil
 }
 
-func appendLimitSourceLinks(ctx context.Context, tx *sql.Tx, scope *domain.RecalculationScope, sourceID string) error {
+func appendLimitSourceLinks(ctx context.Context, tx *sql.Tx, scope *domain.RecalculationScope, sourceID string) (err error) {
 	rows, err := tx.QueryContext(ctx, `SELECT logical_account_id, limit_definition_id FROM usage_limit_source_links WHERE usage_limit_source_id = ? ORDER BY logical_account_id, limit_definition_id`, sourceID)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 	type sourceLink struct{ accountID, definitionID string }
 	var links []sourceLink
 	for rows.Next() {
 		var accountID, definitionID string
 		if err := rows.Scan(&accountID, &definitionID); err != nil {
-			_ = rows.Close()
 			return err
 		}
 		links = append(links, sourceLink{accountID: accountID, definitionID: definitionID})
-	}
-	if err := rows.Close(); err != nil {
-		return err
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -335,35 +338,35 @@ func appendHubSwitchSources(ctx context.Context, tx *sql.Tx, scope *domain.Recal
 	if err := tx.QueryRowContext(ctx, `SELECT old_hub_id, old_device_id, new_hub_id, new_device_id FROM hub_switches WHERE hub_switch_id = ?`, switchID).Scan(&oldHub, &oldDevice, &newHub, &newDevice); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT usage_cost_source_id FROM usage_cost_sources WHERE (hub_id = ? AND device_id = ?) OR (hub_id = ? AND device_id = ?) ORDER BY usage_cost_source_id`, oldHub, oldDevice, newHub, newDevice)
+	costSourceIDs, err := queryStringColumn(ctx, tx, `SELECT usage_cost_source_id FROM usage_cost_sources WHERE (hub_id = ? AND device_id = ?) OR (hub_id = ? AND device_id = ?) ORDER BY usage_cost_source_id`, oldHub, oldDevice, newHub, newDevice)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var sourceID string
-		if err := rows.Scan(&sourceID); err != nil {
-			return err
-		}
-		scope.CostSourceIDs = append(scope.CostSourceIDs, sourceID)
-	}
-	if err := rows.Close(); err != nil {
+	scope.CostSourceIDs = append(scope.CostSourceIDs, costSourceIDs...)
+	limitSourceIDs, err := queryStringColumn(ctx, tx, `SELECT usage_limit_source_id FROM usage_limit_sources WHERE (hub_id = ? AND device_id = ?) OR (hub_id = ? AND device_id = ?) ORDER BY usage_limit_source_id`, oldHub, oldDevice, newHub, newDevice)
+	if err != nil {
 		return err
+	}
+	scope.LimitSourceIDs = append(scope.LimitSourceIDs, limitSourceIDs...)
+	return nil
+}
+
+func queryStringColumn(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var values []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	rows, err = tx.QueryContext(ctx, `SELECT usage_limit_source_id FROM usage_limit_sources WHERE (hub_id = ? AND device_id = ?) OR (hub_id = ? AND device_id = ?) ORDER BY usage_limit_source_id`, oldHub, oldDevice, newHub, newDevice)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var sourceID string
-		if err := rows.Scan(&sourceID); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		scope.LimitSourceIDs = append(scope.LimitSourceIDs, sourceID)
-	}
-	return rows.Close()
+	return values, nil
 }

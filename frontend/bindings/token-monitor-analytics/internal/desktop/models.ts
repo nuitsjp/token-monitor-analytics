@@ -61,18 +61,18 @@ export interface CalculationIntervalSnapshot {
     "boundaries": CalculationBoundarySnapshot[] | null;
     "role": string;
     "roleLabel": string;
-    "estimatedLimit"?: number | null;
-    "estimatedLimitLabel"?: string;
-    "monthlyEquivalentLimit"?: number | null;
-    "monthlyEquivalentLimitLabel"?: string;
-    "standardPriceUsdMonthlyPerSeat"?: number | null;
-    "standardPriceSourceUrl"?: string;
-    "standardPriceValidFrom"?: string;
-    "standardPriceValidTo"?: string;
-    "valueMultiplier"?: number | null;
-    "valueMultiplierLabel"?: string;
-    "valueReasonCode"?: string;
-    "valueReason"?: string;
+    "estimatedLimit": number | null;
+    "estimatedLimitLabel": string;
+    "monthlyEquivalentLimit": number | null;
+    "monthlyEquivalentLimitLabel": string;
+    "standardPriceUsdMonthlyPerSeat": number | null;
+    "standardPriceSourceUrl": string;
+    "standardPriceValidFrom": string;
+    "standardPriceValidTo": string;
+    "valueMultiplier": number | null;
+    "valueMultiplierLabel": string;
+    "valueReasonCode": string;
+    "valueReason": string;
 }
 
 export interface CandidateCorrectionInput {

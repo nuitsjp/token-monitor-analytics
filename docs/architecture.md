@@ -159,7 +159,7 @@ flowchart LR
 - Wails CLI、github.com/wailsapp/wails/v3、@wailsio/runtime はすべて 3.0.0-beta.12
 - React と React DOM 19.2.8、React Router 8.3.0、TypeScript 6.0.3、Vite 8.2.2、@vitejs/plugin-react 6.1.0、Fluent UI React 9.74.7
 - TanStack Query 5.102.3、React Hook Form 7.86.0
-- ESLint 10.9.1、typescript-eslint 8.68.0、Prettier 3.9.6、@types/react 19.2.18、@types/react-dom 19.2.5
+- ESLint 9.39.5、typescript-eslint 8.68.0、eslint-plugin-jsx-a11y 6.10.2、Prettier 3.9.6、@types/react 19.2.18、@types/react-dom 19.2.5。ESLint 10.9.1 は eslint-plugin-jsx-a11y 6.10.2 の peer dependency 範囲外であるため、アクセシビリティ検査を再現可能な構成にする目的で ESLint 9 系の最新版へ固定する
 - modernc.org/sqlite v1.57.0 と、それに対応する modernc.org/libc v1.74.4、sqlc v1.31.1、goose v3.27.3、Gonum v0.17.0
 - google/uuid v1.6.0、golang.org/x/sys v0.47.0、staticcheck v0.8.1
 - NSIS 3.12

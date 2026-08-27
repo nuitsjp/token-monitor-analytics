@@ -10,17 +10,7 @@ import (
 	"token-monitor-analytics/internal/domain"
 )
 
-type Hub struct {
-	ID                        string
-	DisplayName               string
-	URL                       string
-	Enabled                   bool
-	CollectionEnabled         bool
-	CollectionIntervalSeconds int64
-	APIContract               *string
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
-}
+type Hub = domain.Hub
 
 func (l *Lifecycle) CreateHub(ctx context.Context, hub Hub) error {
 	if err := validateHub(&hub); err != nil {

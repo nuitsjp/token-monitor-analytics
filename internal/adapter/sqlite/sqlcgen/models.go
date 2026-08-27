@@ -433,6 +433,28 @@ type StandardPrice struct {
 	CreatedAt         string         `json:"created_at"`
 }
 
+type UsageAnalysisObservation struct {
+	UsageObservationID        string         `json:"usage_observation_id"`
+	SnapshotID                string         `json:"snapshot_id"`
+	HubID                     string         `json:"hub_id"`
+	DeviceID                  string         `json:"device_id"`
+	RawServiceIdentifier      string         `json:"raw_service_identifier"`
+	UsageUpdatedAt            string         `json:"usage_updated_at"`
+	TokenCount                int64          `json:"token_count"`
+	ApiCostUsdText            sql.NullString `json:"api_cost_usd_text"`
+	ModelTokensJson           string         `json:"model_tokens_json"`
+	ModelCostsJson            string         `json:"model_costs_json"`
+	SourceTimezone            sql.NullString `json:"source_timezone"`
+	SourceLocalDate           sql.NullString `json:"source_local_date"`
+	NormalizationGeneration   int64          `json:"normalization_generation"`
+	NormalizationRuleVersion  string         `json:"normalization_rule_version"`
+	NormalizationLogicVersion string         `json:"normalization_logic_version"`
+	JsonPath                  string         `json:"json_path"`
+	DedupeState               string         `json:"dedupe_state"`
+	DedupeKey                 string         `json:"dedupe_key"`
+	ValueFingerprint          string         `json:"value_fingerprint"`
+}
+
 type UsageCostObservation struct {
 	ObservationID             string         `json:"observation_id"`
 	SnapshotID                string         `json:"snapshot_id"`
@@ -482,6 +504,14 @@ type UsageCostSourceCompleteness struct {
 	ExcludedActivityJson  string         `json:"excluded_activity_json"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
+}
+
+type UsageLimitAmountObservation struct {
+	ObservationID string         `json:"observation_id"`
+	UsedText      sql.NullString `json:"used_text"`
+	LimitText     sql.NullString `json:"limit_text"`
+	RemainingText sql.NullString `json:"remaining_text"`
+	Currency      sql.NullString `json:"currency"`
 }
 
 type UsageLimitObservation struct {

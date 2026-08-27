@@ -2,42 +2,36 @@
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
-$plan = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'PLAN.md'), $utf8)
+. (Join-Path $PSScriptRoot 'traceability-ids.ps1')
+$requirements = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'docs/requirements.md'), $utf8)
+[void](Get-RequirementIds $requirements)
 $screenDesign = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'docs/screen-design.md'), $utf8)
 $designSystem = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'docs/design-system.md'), $utf8)
-$expected = @(
-    'SCREEN-COMMON', 'SCREEN-T01', 'SCREEN-M00', 'SCREEN-M01', 'SCREEN-M02', 'SCREEN-M03',
-    'SCREEN-M04', 'SCREEN-M05', 'SCREEN-M06', 'SCREEN-M07', 'SCREEN-M08',
-    'SCREEN-M09', 'SCREEN-M10', 'SCREEN-M11'
-)
+$expected = [ordered]@{
+    'SCREEN-COMMON' = @('3', '5', '8', '9')
+    'SCREEN-T01' = @('4.1', '6')
+    'SCREEN-M00' = @('4.2')
+    'SCREEN-M01' = @('7.1')
+    'SCREEN-M02' = @('7.2')
+    'SCREEN-M03' = @('7.3')
+    'SCREEN-M04' = @('7.4')
+    'SCREEN-M05' = @('7.5')
+    'SCREEN-M06' = @('7.6')
+    'SCREEN-M07' = @('7.7')
+    'SCREEN-M08' = @('7.8')
+    'SCREEN-M09' = @('7.9')
+    'SCREEN-M10' = @('7.10')
+    'SCREEN-M11' = @('7.11')
+}
 
 function Test-Heading([string]$document, [string]$number) {
     return [regex]::IsMatch($document, "(?m)^#{1,6}\s+$([regex]::Escape($number))(?:\s|\.)")
 }
 
-$rows = @{}
-foreach ($line in ($plan -split "`r?`n")) {
-    if ($line -match '^\|\s*(?<key>SCREEN-[A-Z0-9]+)\s*\|\s*(?<scope>.+?)\s*\|\s*(?<tasks>.+?)\s*\|\s*$') {
-        $key = $Matches['key']
-        if ($rows.ContainsKey($key)) { throw "画面受入キーが重複しています: $key" }
-        if (-not [regex]::IsMatch([string]$Matches['tasks'], 'T-[0-9]{3}')) { throw "$key に担当タスクがありません。" }
-        $rows[$key] = @{ Scope = $Matches['scope']; Tasks = $Matches['tasks'] }
-    }
-}
-
-$actual = @($rows.Keys | Sort-Object)
-$missing = @($expected | Where-Object { -not $rows.ContainsKey($_) })
-$unknown = @($actual | Where-Object { $_ -notin $expected })
-if ($missing.Count -gt 0 -or $unknown.Count -gt 0) {
-    throw "画面受入キーが不正です。未割当=[$($missing -join ', ')] 未定義=[$($unknown -join ', ')]"
-}
-
-foreach ($key in $expected) {
-    $scope = [string]$rows[$key].Scope
-    $screenScope = ($scope -split 'および')[0]
-    foreach ($match in [regex]::Matches($screenScope, '[0-9]+(?:\.[0-9]+)?')) {
-        if (-not (Test-Heading $screenDesign $match.Value)) {
-            throw "$key が参照する screen-design.md の見出し $($match.Value) がありません。"
+foreach ($key in $expected.Keys) {
+    foreach ($section in $expected[$key]) {
+        if (-not (Test-Heading $screenDesign $section)) {
+            throw "$key が参照する screen-design.md の見出し $section がありません。"
         }
     }
 }

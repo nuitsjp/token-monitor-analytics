@@ -27,6 +27,48 @@ type schedulerCredentials struct{}
 
 func (schedulerCredentials) Read(string) (string, bool, error) { return "secret", true, nil }
 
+type schedulerHubAPIClient struct{ client *hubapi.Client }
+
+func (c schedulerHubAPIClient) FetchStats(ctx context.Context, secret string) (usecase.CollectionResult, error) {
+	result, err := c.client.FetchStats(ctx, secret)
+	return usecase.CollectionResult{
+		Health: usecase.CollectionResponse{Raw: result.Health.Raw, HTTPStatus: result.Health.HTTPStatus},
+		Stats:  usecase.CollectionResponse{Raw: result.Stats.Raw, HTTPStatus: result.Stats.HTTPStatus},
+		Contract: usecase.CollectionContract{
+			Build:          usecase.CollectionBuildIdentity{SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime, CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID},
+			UsageUpdatedAt: result.Contract.UsageUpdatedAt,
+		},
+	}, err
+}
+
+func schedulerHubAPIFactory(allowlist hubapi.Allowlist) usecase.CollectionClientFactory {
+	return func(rawURL string) (usecase.CollectionClient, error) {
+		client, err := hubapi.NewClient(rawURL, allowlist)
+		if err != nil {
+			return nil, err
+		}
+		return schedulerHubAPIClient{client: client}, nil
+	}
+}
+
+func schedulerCollectionDependencies() usecase.CollectionDependencies {
+	return usecase.CollectionDependencies{
+		NormalizeStats: func(raw []byte) (usecase.NormalizedStats, error) {
+			_, err := hubapi.NormalizeStats(raw)
+			return usecase.NormalizedStats{}, err
+		},
+		ClassifyError: func(err error) string {
+			if classification := usecase.CollectionClassificationOf(err); classification != "" {
+				return classification
+			}
+			return string(hubapi.ClassificationOf(err))
+		},
+		NormalizationGeneration:   hubapi.NormalizationGeneration,
+		NormalizationRuleVersion:  hubapi.NormalizationRuleVersion,
+		NormalizationLogicVersion: hubapi.NormalizationLogicVersion,
+	}
+}
+
 func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -34,7 +76,11 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 	if err := database.Open(ctx, filepath.Join(t.TempDir(), "analytics.sqlite3")); err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close scheduler database: %v", err)
+		}
+	})
 	now := time.Now().UTC()
 	hubID := uuid.NewString()
 	var statsCalls atomic.Int32
@@ -58,9 +104,7 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowlist := hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "scheduler-test", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true})
-	collector, err := usecase.NewCollectionUsecase(database, schedulerCredentials{}, func(rawURL string, allow hubapi.Allowlist) (usecase.CollectionClient, error) {
-		return hubapi.NewClient(rawURL, allow)
-	}, schedulerClock{}, schedulerIDs{}, allowlist, usecase.NewMaintenanceGate())
+	collector, err := usecase.NewCollectionUsecase(database, schedulerCredentials{}, schedulerHubAPIFactory(allowlist), schedulerClock{}, schedulerIDs{}, schedulerCollectionDependencies(), usecase.NewMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +149,11 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 		if err := restarted.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
-		defer restarted.Close()
+		t.Cleanup(func() {
+			if err := restarted.Close(); err != nil {
+				t.Errorf("close restarted scheduler: %v", err)
+			}
+		})
 		time.Sleep(200 * time.Millisecond)
 		if statsCalls.Load() != stoppedCalls {
 			t.Fatalf("stats calls immediately after restart = %d, want %d", statsCalls.Load(), stoppedCalls)
@@ -126,7 +174,11 @@ func TestSchedulerDoesNotRestoreTimerAcrossGlobalRestoreCredentialBoundary(t *te
 	if err := database.Open(ctx, filepath.Join(t.TempDir(), "analytics.sqlite3")); err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close scheduler database: %v", err)
+		}
+	})
 	now := time.Now().UTC()
 	hubID := uuid.NewString()
 	if err := database.CreateHub(ctx, sqliteadapter.Hub{ID: hubID, DisplayName: "Hub", URL: "http://localhost:17321", CollectionEnabled: true, CollectionIntervalSeconds: 60, CreatedAt: now, UpdatedAt: now}); err != nil {
@@ -145,9 +197,7 @@ func TestSchedulerDoesNotRestoreTimerAcrossGlobalRestoreCredentialBoundary(t *te
 		t.Fatal(err)
 	}
 	gate := usecase.NewMaintenanceGate()
-	collector, err := usecase.NewCollectionUsecase(database, schedulerCredentials{}, func(rawURL string, allow hubapi.Allowlist) (usecase.CollectionClient, error) {
-		return hubapi.NewClient(rawURL, allow)
-	}, schedulerClock{}, schedulerIDs{}, hubapi.DefaultAllowlist, gate)
+	collector, err := usecase.NewCollectionUsecase(database, schedulerCredentials{}, schedulerHubAPIFactory(hubapi.DefaultAllowlist), schedulerClock{}, schedulerIDs{}, schedulerCollectionDependencies(), gate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +208,11 @@ func TestSchedulerDoesNotRestoreTimerAcrossGlobalRestoreCredentialBoundary(t *te
 	if err := scheduler.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	defer scheduler.Close()
+	t.Cleanup(func() {
+		if err := scheduler.Close(); err != nil {
+			t.Errorf("close scheduler: %v", err)
+		}
+	})
 	scheduler.mu.Lock()
 	jobs := len(scheduler.jobs)
 	scheduler.mu.Unlock()

@@ -237,7 +237,7 @@ func execRestoreMutation(t *testing.T, path, statement string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(statement); err != nil {
+	if _, err := database.ExecContext(t.Context(), statement); err != nil {
 		_ = database.Close()
 		t.Fatalf("mutate restore database: %v", err)
 	}

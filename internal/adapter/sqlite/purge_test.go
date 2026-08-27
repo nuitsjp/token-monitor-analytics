@@ -62,7 +62,7 @@ func TestPreviewAndPurgeUseSnapshotReceivedCompletionHalfOpenSelection(t *testin
 	assertPurgeCount(t, database, "raw_snapshots", 2)
 	assertPurgeCount(t, database, "collection_attempts", 3)
 	var auditCount int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM configuration_audits WHERE action = 'data_purge'`).Scan(&auditCount); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM configuration_audits WHERE action = 'data_purge'`).Scan(&auditCount); err != nil {
 		t.Fatal(err)
 	}
 	if auditCount != 1 {
@@ -80,7 +80,7 @@ func TestPurgeFailureRollsBackLogicalDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := purgeLogicalDump(database)
+	before, err := purgeLogicalDump(ctx, database)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestPurgeFailureRollsBackLogicalDatabase(t *testing.T) {
 			if err == nil {
 				t.Fatalf("purge failure injection %q succeeded", injectedPoint)
 			}
-			after, dumpErr := purgeLogicalDump(database)
+			after, dumpErr := purgeLogicalDump(ctx, database)
 			if dumpErr != nil {
 				t.Fatal(dumpErr)
 			}
@@ -142,7 +142,7 @@ func TestPurgeRemovesDependentDerivedDataAndKeepsConfiguration(t *testing.T) {
 		}
 	})
 	var resultStatus string
-	if err := database.QueryRow(`SELECT status FROM estimation_results WHERE estimation_result_id <> 'purge-result'`).Scan(&resultStatus); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT status FROM estimation_results WHERE estimation_result_id <> 'purge-result'`).Scan(&resultStatus); err != nil {
 		t.Fatal(err)
 	}
 	if resultStatus != string(domain.EstimationInsufficient) {
@@ -153,7 +153,7 @@ func TestPurgeRemovesDependentDerivedDataAndKeepsConfiguration(t *testing.T) {
 			t.Fatalf("recalculated result count = %d, want 1", result.RecalculatedResultCount)
 		}
 		var resultStatus string
-		if err := database.QueryRow(`SELECT status FROM estimation_results WHERE estimation_result_id <> 'purge-result'`).Scan(&resultStatus); err != nil {
+		if err := database.QueryRowContext(t.Context(), `SELECT status FROM estimation_results WHERE estimation_result_id <> 'purge-result'`).Scan(&resultStatus); err != nil {
 			t.Fatal(err)
 		}
 		if resultStatus != string(domain.EstimationInsufficient) {
@@ -161,7 +161,7 @@ func TestPurgeRemovesDependentDerivedDataAndKeepsConfiguration(t *testing.T) {
 		}
 		for _, table := range []string{"hubs", "collection_attempts", "services", "limit_definitions", "plans", "plan_versions", "plan_histories", "logical_accounts", "usage_cost_source_account_links", "usage_limit_source_links", "usage_cost_source_completeness", "configuration_audits"} {
 			var count int
-			if err := database.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+			if err := database.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+table).Scan(&count); err != nil {
 				t.Fatal(err)
 			}
 			if count == 0 {
@@ -184,7 +184,7 @@ func insertPurgeRetainedPointFixture(t *testing.T, database *sql.DB, observedAt 
 		{`INSERT INTO matched_observations (matched_observation_id, estimation_point_id, observation_role, source_id, logical_account_id, observation_id, observed_at, time_delta_ns, tolerance_ns, analytics_interval_seconds, sync_upload_interval_ms, limits_refresh_ms, normalization_generation, normalization_rule_version, normalization_logic_version) VALUES ('retained-matched-limit', 'retained-point', 'limit', 'purge-limit-source', 'purge-account', 'retained-limit-observation', ?, 0, 100, 300, 0, 10, 1, 'rule', 'logic')`, []any{utcText(observedAt)}},
 	}
 	for _, statement := range statements {
-		if _, err := database.Exec(statement.query, statement.args...); err != nil {
+		if _, err := database.ExecContext(t.Context(), statement.query, statement.args...); err != nil {
 			t.Fatalf("insert retained purge fixture: %v", err)
 		}
 	}
@@ -220,7 +220,7 @@ func insertPurgeDependentFixture(t *testing.T, database *sql.DB, hubID string, n
 		{`INSERT INTO configuration_audits (audit_id, occurred_at, actor, action, entity_type, entity_id) VALUES ('purge-existing-audit', ?, 'test', 'catalog_change', 'service', 'purge-service')`, []any{utcText(now)}},
 	}
 	for _, statement := range statements {
-		if _, err := database.Exec(statement.query, statement.args...); err != nil {
+		if _, err := database.ExecContext(t.Context(), statement.query, statement.args...); err != nil {
 			t.Fatalf("insert purge fixture: %v", err)
 		}
 	}
@@ -252,7 +252,7 @@ func insertPurgeSnapshot(t *testing.T, lifecycle *Lifecycle, hubID, snapshotID s
 func assertPurgeCount(t *testing.T, database *sql.DB, table string, want int) {
 	t.Helper()
 	var count int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+	if err := database.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM `+table).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != want {
@@ -260,68 +260,75 @@ func assertPurgeCount(t *testing.T, database *sql.DB, table string, want int) {
 	}
 }
 
-func purgeLogicalDump(database *sql.DB) (string, error) {
-	tables, err := database.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+func purgeLogicalDump(ctx context.Context, database *sql.DB) (string, error) {
+	tables, err := database.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {
 		return "", err
 	}
+	defer func() { _ = tables.Close() }()
 	var names []string
 	for tables.Next() {
 		var name string
 		if err := tables.Scan(&name); err != nil {
-			_ = tables.Close()
 			return "", err
 		}
 		names = append(names, name)
 	}
-	if err := tables.Close(); err != nil {
+	if err := tables.Err(); err != nil {
 		return "", err
 	}
 	var lines []string
 	for _, table := range names {
-		orderBy, err := purgePrimaryKeyOrder(database, table)
+		orderBy, err := purgePrimaryKeyOrder(ctx, database, table)
 		if err != nil {
 			return "", err
 		}
 		query := `SELECT * FROM "` + strings.ReplaceAll(table, `"`, `""`) + `"` + orderBy
-		rows, err := database.Query(query)
+		tableLines, err := purgeTableDumpLines(ctx, database, table, query)
 		if err != nil {
 			return "", err
 		}
-		columns, err := rows.Columns()
-		if err != nil {
-			_ = rows.Close()
-			return "", err
-		}
-		for rows.Next() {
-			values := make([]any, len(columns))
-			pointers := make([]any, len(values))
-			for index := range values {
-				pointers[index] = &values[index]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				_ = rows.Close()
-				return "", err
-			}
-			parts := make([]string, len(values))
-			for index, value := range values {
-				parts[index] = fmt.Sprintf("%T:%v", value, value)
-			}
-			lines = append(lines, table+"|"+strings.Join(parts, "|"))
-		}
-		if err := rows.Close(); err != nil {
-			return "", err
-		}
+		lines = append(lines, tableLines...)
 	}
 	hash := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return hex.EncodeToString(hash[:]), nil
 }
 
-func purgePrimaryKeyOrder(database *sql.DB, table string) (string, error) {
-	rows, err := database.Query(`PRAGMA table_info("` + strings.ReplaceAll(table, `"`, `""`) + `")`)
+func purgeTableDumpLines(ctx context.Context, database *sql.DB, table, query string) ([]string, error) {
+	rows, err := database.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	var lines []string
+	for rows.Next() {
+		values := make([]any, len(columns))
+		pointers := make([]any, len(values))
+		for index := range values {
+			pointers[index] = &values[index]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			return nil, err
+		}
+		parts := make([]string, len(values))
+		for index, value := range values {
+			parts[index] = fmt.Sprintf("%T:%v", value, value)
+		}
+		lines = append(lines, table+"|"+strings.Join(parts, "|"))
+	}
+	return lines, rows.Err()
+}
+
+func purgePrimaryKeyOrder(ctx context.Context, database *sql.DB, table string) (string, error) {
+	rows, err := database.QueryContext(ctx, `PRAGMA table_info("`+strings.ReplaceAll(table, `"`, `""`)+`")`)
 	if err != nil {
 		return "", err
 	}
+	defer func() { _ = rows.Close() }()
 	type keyColumn struct {
 		name string
 		seq  int
@@ -332,14 +339,13 @@ func purgePrimaryKeyOrder(database *sql.DB, table string) (string, error) {
 		var name, columnType string
 		var defaultValue any
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			_ = rows.Close()
 			return "", err
 		}
 		if primaryKey > 0 {
 			keys = append(keys, keyColumn{name: name, seq: primaryKey})
 		}
 	}
-	if err := rows.Close(); err != nil {
+	if err := rows.Err(); err != nil {
 		return "", err
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].seq < keys[j].seq })

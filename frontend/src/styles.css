@@ -94,13 +94,13 @@ textarea {
 }
 
 [data-theme="dark"] [data-error-counter="true"] {
-  background-color: #8f1d22 !important;
-  color: #fff !important;
+  background-color: var(--tma-error-counter-background) !important;
+  color: var(--tma-error-counter-foreground) !important;
 }
 
 [data-theme="dark"] [data-error-counter="true"]:hover {
-  background-color: #74171b !important;
-  color: #fff !important;
+  background-color: var(--tma-error-counter-background) !important;
+  color: var(--tma-error-counter-foreground) !important;
 }
 
 @media (forced-colors: active) {
