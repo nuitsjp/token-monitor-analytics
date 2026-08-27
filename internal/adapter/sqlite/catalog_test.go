@@ -162,6 +162,54 @@ func TestCatalogRejectsPlanVersionAndPriceOverlapAndReversePeriods(t *testing.T)
 	}
 }
 
+func TestCatalogUpdatesStandardPriceWithAuditAndRecalculationScope(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	service := testCatalogService(now, "price-service")
+	if err := lifecycle.CreateService(ctx, service); err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{ID: "price-plan", ServiceID: service.ID, Name: "Plan", CreatedAt: now, UpdatedAt: now}
+	if err := lifecycle.CreatePlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	version := PlanVersion{ID: "price-version", PlanID: plan.ID, Name: "v1", ValidFrom: now, OfficialSourceURL: "https://vendor.example/plan", CreatedAt: now}
+	if err := lifecycle.CreatePlanVersion(ctx, version); err != nil {
+		t.Fatal(err)
+	}
+	price := StandardPrice{ID: "price-edit", PlanVersionID: version.ID, USDMonthlyPerSeat: 20, SourceURL: "https://vendor.example/old-price", ValidFrom: now, CreatedAt: now}
+	if err := lifecycle.CreateStandardPrice(ctx, price); err != nil {
+		t.Fatal(err)
+	}
+	price.USDMonthlyPerSeat = 25
+	price.SourceURL = "https://vendor.example/new-price"
+	if err := lifecycle.UpdateStandardPrice(ctx, price); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := lifecycle.ListStandardPrices(ctx, version.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].USDMonthlyPerSeat != 25 || rows[0].SourceURL != price.SourceURL || !rows[0].CreatedAt.Equal(now) {
+		t.Fatalf("updated standard price = %#v", rows)
+	}
+	database, err := lifecycle.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audits, requests int
+	if err := database.QueryRow(`SELECT count(*) FROM configuration_audits WHERE entity_type = 'catalog_standard_price' AND action = 'update' AND entity_id = ?`, price.ID).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT count(*) FROM recalculation_requests WHERE audit_id IN (SELECT audit_id FROM configuration_audits WHERE entity_type = 'catalog_standard_price' AND action = 'update' AND entity_id = ?)`, price.ID).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if audits != 1 || requests != 1 {
+		t.Fatalf("standard price update audit/request = %d/%d", audits, requests)
+	}
+}
+
 func TestCatalogEnforcesCrossServiceReferencesAndCandidateDecision(t *testing.T) {
 	lifecycle := openTestLifecycle(t)
 	ctx := context.Background()

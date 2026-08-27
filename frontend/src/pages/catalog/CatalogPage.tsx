@@ -31,6 +31,7 @@ import type {
   ServiceIdentifierMappingInput,
   ServiceSnapshot,
   CreateServiceInput,
+  StandardPriceInput,
 } from "../../lib/backend";
 import { cycleTypeLabel } from "../../lib/displayLabels";
 
@@ -93,7 +94,8 @@ const useStyles = makeStyles({
   },
 });
 
-type TabName = "services" | "candidates" | "limits" | "plans" | "versions";
+type TabName =
+  "services" | "candidates" | "limits" | "plans" | "versions" | "prices";
 type DirtyForm =
   | "service"
   | "mapping"
@@ -102,7 +104,8 @@ type DirtyForm =
   | "limit"
   | "plan"
   | "version"
-  | "rule";
+  | "rule"
+  | "price";
 const emptyCatalog: CatalogSnapshot = {
   services: [],
   serviceIdentifierMappings: [],
@@ -123,6 +126,7 @@ const emptyDirtyForms: Record<DirtyForm, boolean> = {
   plan: false,
   version: false,
   rule: false,
+  price: false,
 };
 
 export function CatalogPage({
@@ -201,6 +205,7 @@ export function CatalogPage({
   const plans = catalog.plans ?? [];
   const versions = catalog.planVersions ?? [];
   const rules = catalog.planLimitRules ?? [];
+  const prices = catalog.standardPrices ?? [];
   const labelCandidates = catalog.labelChangeCandidates ?? [];
   return (
     <div
@@ -247,6 +252,7 @@ export function CatalogPage({
             <Tab value="limits">利用枠定義</Tab>
             <Tab value="plans">プラン</Tab>
             <Tab value="versions">プラン版・倍率</Tab>
+            <Tab value="prices">標準価格</Tab>
           </TabList>
           <div className={styles.content}>
             <div hidden={tab !== "services"}>
@@ -315,6 +321,18 @@ export function CatalogPage({
                 runSave={runSave}
                 setVersionDirty={(dirty) => setFormDirty("version", dirty)}
                 setRuleDirty={(dirty) => setFormDirty("rule", dirty)}
+                saving={saving}
+              />
+            </div>
+            <div hidden={tab !== "prices"}>
+              <PricesTab
+                backend={backend}
+                plans={plans}
+                versions={versions}
+                prices={prices}
+                displayTimeZone={displayTimeZone}
+                runSave={runSave}
+                setDirty={(dirty) => setFormDirty("price", dirty)}
                 saving={saving}
               />
             </div>
@@ -1623,6 +1641,197 @@ function VersionsTab({
   );
 }
 
+function PricesTab({
+  backend,
+  plans,
+  versions,
+  prices,
+  displayTimeZone,
+  runSave,
+  setDirty,
+  saving,
+}: {
+  backend: FrontendAdapter;
+  plans: NonNullable<CatalogSnapshot["plans"]>;
+  versions: NonNullable<CatalogSnapshot["planVersions"]>;
+  prices: NonNullable<CatalogSnapshot["standardPrices"]>;
+  displayTimeZone: string;
+  runSave: (action: () => Promise<void>, message: string) => Promise<boolean>;
+  setDirty: (dirty: boolean) => void;
+  saving: boolean;
+}) {
+  const styles = useStyles();
+  const empty: StandardPriceInput = {
+    id: "",
+    planVersionId: "",
+    usdMonthlyPerSeat: 0,
+    sourceUrl: "",
+    validFrom: "",
+    validTo: "",
+  };
+  const [price, setPrice] = useState<StandardPriceInput>(empty);
+  const save = async () => {
+    const input = {
+      ...price,
+      validFrom: toUTC(price.validFrom),
+      validTo: toUTC(price.validTo),
+    };
+    if (
+      !input.planVersionId ||
+      input.usdMonthlyPerSeat <= 0 ||
+      !input.sourceUrl.trim() ||
+      !input.validFrom
+    )
+      return;
+    const saved = await runSave(
+      () =>
+        input.id
+          ? backend.updateStandardPrice(input)
+          : backend.createStandardPrice(input),
+      "USD 建て月額標準シート単価を保存しました。",
+    );
+    if (saved) {
+      setPrice(empty);
+      setDirty(false);
+    }
+  };
+  return (
+    <>
+      <form
+        className={styles.form}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <Subtitle1 as="h2">
+          {price.id ? "標準価格を編集" : "標準価格を登録"}
+        </Subtitle1>
+        <Body1>
+          USD
+          建ての月額標準シート単価だけを登録します。年払い、割引、税、実請求額、為替換算値は使用しません。
+        </Body1>
+        <Field label="プラン版">
+          <Select
+            value={price.planVersionId}
+            onChange={(event) => {
+              setPrice((current) => ({
+                ...current,
+                planVersionId: event.target.value,
+              }));
+              setDirty(true);
+            }}
+          >
+            <option value="">選択してください</option>
+            {versions.map((version) => (
+              <option key={version.id} value={version.id}>
+                {planName(plans, version.planId)} / {version.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="USD 月額 / 1シート">
+          <Input
+            type="number"
+            min={0.01}
+            step={0.01}
+            value={String(price.usdMonthlyPerSeat || "")}
+            onChange={(_, data) => {
+              setPrice((current) => ({
+                ...current,
+                usdMonthlyPerSeat: Number(data.value),
+              }));
+              setDirty(true);
+            }}
+          />
+        </Field>
+        <Field label="出典 URL">
+          <Input
+            type="url"
+            value={price.sourceUrl}
+            onChange={(_, data) => {
+              setPrice((current) => ({
+                ...current,
+                sourceUrl: data.value,
+              }));
+              setDirty(true);
+            }}
+          />
+        </Field>
+        <PeriodFields
+          from={price.validFrom}
+          to={price.validTo}
+          onChange={(validFrom, validTo) => {
+            setPrice((current) => ({ ...current, validFrom, validTo }));
+            setDirty(true);
+          }}
+        />
+        <div className={styles.actions}>
+          <Button type="submit" appearance="primary" disabled={saving}>
+            保存
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              setPrice(empty);
+              setDirty(false);
+            }}
+          >
+            クリア
+          </Button>
+        </div>
+      </form>
+      <div className={styles.list} aria-label="標準価格一覧">
+        {prices.length === 0 ? (
+          <Body1>標準価格はまだありません。</Body1>
+        ) : (
+          prices.map((item) => {
+            const version = versions.find(
+              (candidate) => candidate.id === item.planVersionId,
+            );
+            return (
+              <article className={styles.card} key={item.id}>
+                <div className={styles.sectionTitle}>
+                  <Subtitle1 as="h2">
+                    {version
+                      ? `${planName(plans, version.planId)} / ${version.name}`
+                      : "プラン版未表示"}
+                  </Subtitle1>
+                  <Button
+                    onClick={() => {
+                      setPrice({
+                        id: item.id,
+                        planVersionId: item.planVersionId,
+                        usdMonthlyPerSeat: item.usdMonthlyPerSeat,
+                        sourceUrl: item.sourceUrl,
+                        validFrom: toDateTimeInput(item.validFrom),
+                        validTo: toDateTimeInput(item.validTo),
+                      });
+                      setDirty(true);
+                    }}
+                  >
+                    編集
+                  </Button>
+                </div>
+                <Body1>
+                  ${item.usdMonthlyPerSeat.toFixed(2)} / 月 / 1シート
+                </Body1>
+                <a href={item.sourceUrl} target="_blank" rel="noreferrer">
+                  価格の出典
+                </a>
+                <div className={styles.meta}>
+                  {formatInstant(item.validFrom, displayTimeZone)} ～{" "}
+                  {formatInstant(item.validTo, displayTimeZone, "継続中")}
+                </div>
+              </article>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+}
+
 function PeriodFields({
   from,
   to,
@@ -1655,6 +1864,12 @@ function toUTC(value: string): string {
   if (!value) return "";
   const date = new Date(`${value}:00Z`);
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+function toDateTimeInput(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 16);
 }
 function serviceName(services: ServiceSnapshot[], id: string): string {
   const service = services.find((item) => item.id === id);

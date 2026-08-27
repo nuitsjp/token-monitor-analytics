@@ -14,6 +14,7 @@ type LimitSeriesView struct {
 	LimitDefinitionID   string
 	LimitDefinitionName string
 	CycleType           string
+	BillingConfirmation BillingConfirmation
 	UsageLimitSourceID  string
 	AssociationID       string
 	NormalizedKind      string

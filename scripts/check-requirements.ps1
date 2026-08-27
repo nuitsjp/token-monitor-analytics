@@ -40,17 +40,12 @@ function Add-ExpandedIds([System.Collections.Generic.HashSet[string]]$target, [s
 
 $requirements = [IO.File]::ReadAllText($requirementsPath, $utf8)
 $requiredIds = Get-Ids $requirements
-foreach ($id in @($requiredIds)) {
-    if ($id.StartsWith('P2-', [System.StringComparison]::Ordinal) -or $id.Contains('-P2-')) {
-        [void]$requiredIds.Remove($id)
-    }
-}
 
 $plan = [IO.File]::ReadAllText($planPath, $utf8)
-$mappingStart = $plan.IndexOf('### 4.10 ')
+$mappingStart = $plan.IndexOf('### 4.13 ')
 $mappingEnd = $plan.IndexOf('## 5.', $mappingStart)
 if ($mappingStart -lt 0 -or $mappingEnd -lt 0) {
-    throw 'PLAN.md の 4.10 対応表を特定できません。'
+    throw 'PLAN.md の 4.13 対応表を特定できません。'
 }
 $mapping = $plan.Substring($mappingStart, $mappingEnd - $mappingStart)
 $assignedIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
@@ -60,7 +55,7 @@ foreach ($line in ($mapping -split "`r?`n")) {
         Add-ExpandedIds $assignedIds $Matches['requirements']
         continue
     }
-    if ($line -match '^\|\s*(?<acceptance>AC-P1-[0-9]{2}(?:\s+から\s+AC-P1-[0-9]{2})?)\s*\|\s*(?<tasks>.+?)\s*\|\s*$') {
+    if ($line -match '^\|\s*(?<acceptance>AC-P[12]-[0-9]{2}(?:\s+から\s+AC-P[12]-[0-9]{2})?)\s*\|\s*(?<tasks>.+?)\s*\|\s*$') {
         $acceptance = $Matches['acceptance']
         $ownerText = [string]$Matches['tasks']
         if (-not [regex]::IsMatch($ownerText, 'T-[0-9]{3}')) {

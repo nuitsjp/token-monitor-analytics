@@ -6,7 +6,15 @@ import (
 
 func IsRawSecretField(key string) bool {
 	key = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", ""), "_", ""))
-	for _, marker := range []string{"credential", "password", "secret", "token", "cookie", "authorization", "authheader", "apikey", "accesskey", "privatekey"} {
+	for _, marker := range []string{"credential", "password", "secret", "cookie", "authorization", "authheader", "apikey", "accesskey", "privatekey"} {
+		if strings.Contains(key, marker) {
+			return true
+		}
+	}
+	if key == "token" {
+		return true
+	}
+	for _, marker := range []string{"accesstoken", "refreshtoken", "authtoken", "bearertoken", "idtoken", "sessiontoken", "oauthtoken", "tokensecret"} {
 		if strings.Contains(key, marker) {
 			return true
 		}
@@ -39,14 +47,20 @@ func IsKnownRawField(kind string, parts []string) bool {
 	case "devices", "devices.deviceId", "devices.usageUpdatedAt", "devices.syncUploadIntervalMs",
 		"devices.periodWindows", "devices.periodWindows.timeZone", "devices.periodWindows.today",
 		"devices.periodWindows.today.key", "devices.periods", "devices.periods.allTime",
-		"devices.periods.allTime.clientCosts", "devices.limits", "devices.limits.refreshMs",
+		"devices.periods.allTime.clients", "devices.periods.allTime.clientCosts",
+		"devices.periods.allTime.clientModels", "devices.periods.allTime.clientModelCosts",
+		"devices.limits", "devices.limits.refreshMs",
 		"devices.limits.providers", "devices.limits.providers.provider", "devices.limits.providers.accountKey",
 		"devices.limits.providers.updatedAt", "devices.limits.providers.planLabel", "devices.limits.providers.windows",
 		"devices.limits.providers.windows.kind", "devices.limits.providers.windows.metric",
 		"devices.limits.providers.windows.label", "devices.limits.providers.windows.usedPercent",
-		"devices.limits.providers.windows.resetsAt":
+		"devices.limits.providers.windows.resetsAt", "devices.limits.providers.windows.used",
+		"devices.limits.providers.windows.limit", "devices.limits.providers.windows.remaining",
+		"devices.limits.providers.windows.currency":
 		return true
 	}
 	return len(withoutIndexes) == 5 && withoutIndexes[0] == "devices" && withoutIndexes[1] == "periods" &&
-		withoutIndexes[2] == "allTime" && withoutIndexes[3] == "clientCosts"
+		withoutIndexes[2] == "allTime" && map[string]bool{
+		"clients": true, "clientCosts": true, "clientModels": true, "clientModelCosts": true,
+	}[withoutIndexes[3]]
 }

@@ -19,7 +19,7 @@ type CollectionStore interface {
 	CreateCollectionAttempt(context.Context, sqliteadapter.CollectionAttempt) error
 	FinishCollectionAttempt(context.Context, sqliteadapter.CollectionAttempt) error
 	SaveRawSnapshots(context.Context, []sqliteadapter.RawSnapshot) error
-	InsertObservations(context.Context, []sqliteadapter.CostObservation, []sqliteadapter.LimitObservation) error
+	InsertAllObservations(context.Context, []sqliteadapter.CostObservation, []sqliteadapter.UsageObservation, []sqliteadapter.LimitObservation) error
 }
 
 type CredentialReader interface {
@@ -223,11 +223,15 @@ func (u *CollectionUsecase) saveObservations(ctx context.Context, normalized hub
 	for _, item := range normalized.Costs {
 		costs = append(costs, sqliteadapter.CostObservation{ObservationID: u.ids.New(), UsageCostSourceID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, CostUSDText: item.CostUSDText, SyncUploadIntervalMS: item.SyncUploadIntervalMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: hubapi.NormalizationGeneration, NormalizationRuleVersion: hubapi.NormalizationRuleVersion, NormalizationLogicVersion: hubapi.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
 	}
+	usage := make([]sqliteadapter.UsageObservation, 0, len(normalized.Usage))
+	for _, item := range normalized.Usage {
+		usage = append(usage, sqliteadapter.UsageObservation{ObservationID: u.ids.New(), UsageCostSourceID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: hubapi.NormalizationGeneration, NormalizationRuleVersion: hubapi.NormalizationRuleVersion, NormalizationLogicVersion: hubapi.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+	}
 	limits := make([]sqliteadapter.LimitObservation, 0, len(normalized.Limits))
 	for _, item := range normalized.Limits {
-		limits = append(limits, sqliteadapter.LimitObservation{ObservationID: u.ids.New(), UsageLimitSourceID: u.ids.New(), HubAccountCandidateID: u.ids.New(), IdentificationCandidateID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: hubapi.NormalizationGeneration, NormalizationRuleVersion: hubapi.NormalizationRuleVersion, NormalizationLogicVersion: hubapi.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
+		limits = append(limits, sqliteadapter.LimitObservation{ObservationID: u.ids.New(), UsageLimitSourceID: u.ids.New(), HubAccountCandidateID: u.ids.New(), IdentificationCandidateID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: hubapi.NormalizationGeneration, NormalizationRuleVersion: hubapi.NormalizationRuleVersion, NormalizationLogicVersion: hubapi.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
 	}
-	return u.store.InsertObservations(ctx, costs, limits)
+	return u.store.InsertAllObservations(ctx, costs, usage, limits)
 }
 
 func (u *CollectionUsecase) acquire(hubID string) bool {

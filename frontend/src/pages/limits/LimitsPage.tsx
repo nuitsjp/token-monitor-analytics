@@ -271,6 +271,14 @@ function GroupHeader({
         <Caption1>プラン利用上限（API換算）</Caption1>
         <Body1>{item.estimatedLimitLabel || item.planLimitLabel || "—"}</Body1>
       </div>
+      <div className={styles.groupSummary}>
+        <Caption1>月間換算推定利用上限</Caption1>
+        <Body1>{item.monthlyEquivalentLimitLabel || "未算出"}</Body1>
+      </div>
+      <div className={styles.groupSummary}>
+        <Caption1>標準価格推定最大価値倍率</Caption1>
+        <Body1>{item.valueMultiplierLabel || "未算出"}</Body1>
+      </div>
       {item.result ? (
         <div>
           <Caption1>品質</Caption1>
@@ -424,6 +432,29 @@ function CurrentTab({ detail }: { detail: LimitSeriesDetailSnapshot }) {
         <Caption1>プラン利用上限</Caption1>
         <Body1>{item.estimatedLimitLabel || item.planLimitLabel || "—"}</Body1>
       </div>
+      <div className={styles.card}>
+        <Caption1>月間換算推定利用上限</Caption1>
+        <Body1>{item.monthlyEquivalentLimitLabel || "未算出"}</Body1>
+        <Caption1>{item.valueReason}</Caption1>
+      </div>
+      <div className={styles.card}>
+        <Caption1>標準価格推定最大価値倍率</Caption1>
+        <Body1>{item.valueMultiplierLabel || "未算出"}</Body1>
+        <Body1>
+          {item.standardPriceUsdMonthlyPerSeat === null
+            ? "標準価格なし"
+            : `$${item.standardPriceUsdMonthlyPerSeat.toFixed(2)} / 月 / 1シート`}
+        </Body1>
+        {item.standardPriceSourceUrl ? (
+          <a
+            href={item.standardPriceSourceUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            標準価格の出典
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -506,6 +537,10 @@ function HistoryTab({
         <tr>
           <th className={styles.th}>期間</th>
           <th className={styles.th}>役割・状態</th>
+          <th className={styles.th}>推定上限</th>
+          <th className={styles.th}>月間換算</th>
+          <th className={styles.th}>標準価格</th>
+          <th className={styles.th}>価値倍率</th>
           <th className={styles.th}>境界</th>
         </tr>
       </thead>
@@ -520,6 +555,41 @@ function HistoryTab({
               <Body1>{item.roleLabel}</Body1>
               {item.stateLabel}
               {item.exclusionReason ? `: ${item.exclusionReason}` : ""}
+            </td>
+            <td className={styles.td}>
+              {item.estimatedLimitLabel || "未算出"}
+            </td>
+            <td className={styles.td}>
+              {item.monthlyEquivalentLimitLabel || "未算出"}
+            </td>
+            <td className={styles.td}>
+              {item.standardPriceUsdMonthlyPerSeat == null
+                ? "未算出"
+                : `$${item.standardPriceUsdMonthlyPerSeat.toFixed(2)} / 月`}
+              {item.standardPriceValidFrom ? (
+                <Caption1>
+                  有効期間:{" "}
+                  {formatDate(item.standardPriceValidFrom, displayTimeZone)} ～{" "}
+                  {item.standardPriceValidTo
+                    ? formatDate(item.standardPriceValidTo, displayTimeZone)
+                    : "現在"}
+                </Caption1>
+              ) : null}
+              {item.standardPriceSourceUrl ? (
+                <a
+                  href={item.standardPriceSourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {item.standardPriceSourceUrl}
+                </a>
+              ) : null}
+            </td>
+            <td className={styles.td}>
+              <Body1>{item.valueMultiplierLabel || "未算出"}</Body1>
+              {item.valueReason ? (
+                <Caption1>{item.valueReason}</Caption1>
+              ) : null}
             </td>
             <td className={styles.td}>
               {item.boundaries
@@ -731,8 +801,7 @@ export function LimitsPage({
       <div>
         <Subtitle1 as="h1">利用上限・価値</Subtitle1>
         <Body1>
-          Phase 1: 利用上限推定と根拠を確認します。価値比較はPhase
-          2のため表示しません。
+          利用上限の推定根拠と、月間換算した上限・標準価格による価値比較を確認します。
         </Body1>
       </div>
       {error ? (

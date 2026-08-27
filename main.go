@@ -55,6 +55,10 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("start estimation service: %w", err)
 	}
+	usageService, err := desktop.NewUsageService(storage.lifecycle)
+	if err != nil {
+		return fmt.Errorf("start usage service: %w", err)
+	}
 	collector, err := usecase.NewCollectionUsecase(
 		storage.lifecycle,
 		credentials,
@@ -136,6 +140,7 @@ func run() (runErr error) {
 			application.NewService(reviewService),
 			application.NewService(overviewService),
 			application.NewService(estimationService),
+			application.NewService(usageService),
 			application.NewService(dataManagementService),
 		},
 	})

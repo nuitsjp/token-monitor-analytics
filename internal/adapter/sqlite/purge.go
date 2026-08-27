@@ -113,6 +113,10 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 	if err != nil {
 		return domain.PurgeResult{}, fmt.Errorf("find purge limit observations: %w", err)
 	}
+	usageIDs, err := queryIDs(ctx, tx, `SELECT usage_observation_id FROM usage_analysis_observations WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`) ORDER BY usage_observation_id`, stringsToAny(snapshotIDs)...)
+	if err != nil {
+		return domain.PurgeResult{}, fmt.Errorf("find purge usage analysis observations: %w", err)
+	}
 	pointIDs, err := queryMatchedPointIDs(ctx, tx, costIDs, limitIDs)
 	if err != nil {
 		return domain.PurgeResult{}, err
@@ -210,6 +214,11 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 	if len(limitIDs) > 0 {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_limit_observations WHERE observation_id IN (`+placeholders(len(limitIDs))+`)`, stringsToAny(limitIDs)...); err != nil {
 			return domain.PurgeResult{}, fmt.Errorf("delete purge limit observations: %w", err)
+		}
+	}
+	if len(usageIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_analysis_observations WHERE usage_observation_id IN (`+placeholders(len(usageIDs))+`)`, stringsToAny(usageIDs)...); err != nil {
+			return domain.PurgeResult{}, fmt.Errorf("delete purge usage analysis observations: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM raw_snapshots WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`)`, stringsToAny(snapshotIDs)...); err != nil {

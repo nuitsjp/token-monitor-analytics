@@ -14,6 +14,7 @@ import {
   Database16Regular,
   DocumentSearch16Regular,
   People16Regular,
+  DataTrending16Regular,
 } from "@fluentui/react-icons";
 import {
   MemoryRouter,
@@ -40,6 +41,7 @@ import { ReviewPage } from "../../pages/review/ReviewPage";
 import { OverviewPage } from "../../pages/overview/OverviewPage";
 import { LimitsPage } from "../../pages/limits/LimitsPage";
 import { DataManagementPage } from "../../pages/data-management/DataManagementPage";
+import { UsagePage } from "../../pages/usage/UsagePage";
 import { useSettings } from "../../app/providers";
 
 const useStyles = makeStyles({
@@ -201,6 +203,9 @@ function breadcrumbForPath(pathname: string): {
   if (pathname.startsWith("/limits")) {
     return { group: "利用状況", label: "利用上限・価値", route: "/limits" };
   }
+  if (pathname === "/usage") {
+    return { group: "利用状況", label: "利用実績", route: "/usage" };
+  }
   if (pathname === "/overview") {
     return { group: "利用状況", label: "概要", route: "/overview" };
   }
@@ -274,6 +279,12 @@ function MainRoutes({
         path="/overview"
         element={
           <OverviewPage backend={backend} displayTimeZone={displayTimeZone} />
+        }
+      />
+      <Route
+        path="/usage"
+        element={
+          <UsagePage backend={backend} displayTimeZone={displayTimeZone} />
         }
       />
       <Route
@@ -438,6 +449,21 @@ function MainWindowContents({ backend }: { backend: FrontendAdapter }) {
           >
             <Home16Regular aria-hidden="true" />
             <span>概要</span>
+          </NavLink>
+          <NavLink
+            to="/usage"
+            className={({ isActive }) =>
+              `${styles.navLink} ${isActive ? styles.navLinkActive : ""}`
+            }
+            onClick={(event) => {
+              if (dirty) {
+                event.preventDefault();
+                guardedNavigate("/usage");
+              }
+            }}
+          >
+            <DataTrending16Regular aria-hidden="true" />
+            <span>利用実績</span>
           </NavLink>
           <NavLink
             to="/limits"

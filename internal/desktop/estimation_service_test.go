@@ -12,6 +12,7 @@ type estimationServiceReader struct {
 	series  []domain.LimitSeriesView
 	results []domain.DerivedResult
 	history []domain.CalculationIntervalView
+	prices  map[string][]domain.StandardPrice
 }
 
 func (r *estimationServiceReader) ListCurrentLimitSeries(context.Context, time.Time) ([]domain.LimitSeriesView, error) {
@@ -26,6 +27,10 @@ func (r *estimationServiceReader) ListCalculationIntervalViews(context.Context, 
 	return r.history, nil
 }
 
+func (r *estimationServiceReader) ListStandardPrices(_ context.Context, planVersionID string) ([]domain.StandardPrice, error) {
+	return r.prices[planVersionID], nil
+}
+
 func TestEstimationServiceKeepsUncomputedSeriesAndUsesGoDisplayValues(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	used := 25.5
@@ -38,6 +43,7 @@ func TestEstimationServiceKeepsUncomputedSeriesAndUsesGoDisplayValues(t *testing
 			{ID: "series-2", ServiceID: "service-1", ServiceName: "Service", LogicalAccountID: "account-2", LogicalAccountName: "Account 2", LimitDefinitionID: "definition-1", LimitDefinitionName: "Weekly", CycleType: "weekly", UsageLimitSourceID: "source-2", NormalizedMetric: "percent", PlanVersionID: "plan-version-1", PlanVersionName: "Plan", PlanLimitRuleID: "rule-1", Interval: interval},
 		},
 		results: []domain.DerivedResult{{ID: "result-1", ServiceID: "service-1", LimitDefinitionID: "definition-1", CycleType: "weekly", CalculationIntervalIDs: []string{"interval-1"}, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo, EstimationResult: domain.EstimationResult{Status: domain.EstimationProvisional, Reasons: []string{"exactly_identified"}, Limits: []float64{123}}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "source-1", LogicalAccountID: "account-1", PlanVersionID: "plan-version-1", EstimatedLimit: floatPointer(123)}}}},
+		prices:  map[string][]domain.StandardPrice{"plan-version-1": {{ID: "price-1", PlanVersionID: "plan-version-1", USDMonthlyPerSeat: 10, SourceURL: "https://vendor.example/prices", ValidFrom: now.Add(-2 * time.Hour), CreatedAt: now}}},
 	}
 	service, err := NewEstimationServiceWithDependencies(reader, fixedClock{value: now})
 	if err != nil {
@@ -65,6 +71,9 @@ func TestEstimationServiceKeepsUncomputedSeriesAndUsesGoDisplayValues(t *testing
 	}
 	if computed.State.Code != "provisional" || computed.RemainingLabel != "74.5%" || computed.EstimatedLimitLabel != "123.00" {
 		t.Fatalf("computed display = %#v", computed)
+	}
+	if computed.MonthlyEquivalentLimit == nil || computed.ValueMultiplier == nil || computed.StandardPriceSourceURL != "https://vendor.example/prices" || computed.StandardPriceValidFrom == "" || computed.ValueReasonCode != string(domain.ValueReasonComputed) {
+		t.Fatalf("computed value = %#v", computed)
 	}
 	t.Run("P1-EST-17 display rounding is separate from raw values", func(t *testing.T) {
 		if computed.UsedPercent == nil || *computed.UsedPercent != used || computed.RemainingPercent == nil || *computed.RemainingPercent != remaining {
@@ -163,6 +172,79 @@ func TestEstimationServiceStatePrecedenceFallbackAndFilters(t *testing.T) {
 	if len(filtered) != 1 || filtered[0].ID != "state-series-g" {
 		t.Fatalf("filtered/sorted series = %#v", filtered)
 	}
+}
+
+func TestEstimationServiceHistoryValueSnapshots(t *testing.T) {
+	t.Run("P2-VALUE-09 exposes the latest valid interval value separately", func(t *testing.T) {
+		now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+		current := &domain.CalculationIntervalView{
+			ID: "interval-current", ServiceID: "service-1", LogicalAccountID: "account-1", UsageLimitSourceID: "source-1",
+			LimitDefinitionID: "definition-1", PlanVersionID: "plan-version-1", CycleType: domain.LimitCycleWeekly,
+			ValidFrom: now.Add(-time.Hour), ValidTo: now.Add(time.Hour), State: "estimable",
+		}
+		historical := domain.CalculationIntervalView{
+			ID: "interval-history", ServiceID: "service-1", LogicalAccountID: "account-1", UsageLimitSourceID: "source-1",
+			LimitDefinitionID: "definition-1", PlanVersionID: "plan-version-1", CycleType: domain.LimitCycleWeekly,
+			ValidFrom: now.Add(-14 * 24 * time.Hour), ValidTo: now.Add(-7 * 24 * time.Hour), State: "estimable",
+		}
+		historicalLimit := 111.0
+		reader := &estimationServiceReader{
+			series: []domain.LimitSeriesView{{
+				ID: "series-1", ServiceID: "service-1", ServiceName: "Service", LogicalAccountID: "account-1", LogicalAccountName: "Account",
+				LimitDefinitionID: "definition-1", LimitDefinitionName: "Weekly", CycleType: domain.LimitCycleWeekly,
+				BillingConfirmation: domain.BillingNotApplicable, UsageLimitSourceID: "source-1", NormalizedKind: "weekly", NormalizedMetric: "percent",
+				PlanVersionID: "plan-version-1", PlanVersionName: "Plan", PlanLimitRuleID: "rule-1", UsedPercent: floatPointer(20), RemainingPercent: floatPointer(80),
+				LatestObservationAt: timePointer(now.Add(-time.Minute)), Interval: current,
+			}},
+			results: []domain.DerivedResult{{
+				ID: "result-history", ServiceID: "service-1", LimitDefinitionID: "definition-1", CycleType: domain.LimitCycleWeekly,
+				CalculationIntervalIDs: []string{historical.ID}, ValidFrom: historical.ValidFrom, ValidTo: historical.ValidTo,
+				EstimationResult: domain.EstimationResult{Status: domain.EstimationVerified},
+				Series:           []domain.EstimationResultSeries{{UsageLimitSourceID: "source-1", LogicalAccountID: "account-1", PlanVersionID: "plan-version-1", EstimatedLimit: &historicalLimit}},
+			}},
+			history: []domain.CalculationIntervalView{historical, *current},
+			prices: map[string][]domain.StandardPrice{"plan-version-1": {{
+				ID: "price-1", PlanVersionID: "plan-version-1", USDMonthlyPerSeat: 10, SourceURL: "https://vendor.example/prices",
+				ValidFrom: now.Add(-30 * 24 * time.Hour), CreatedAt: now,
+			}}},
+		}
+		service, err := NewEstimationServiceWithDependencies(reader, fixedClock{value: now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		detail, err := service.GetLimitSeriesDetail(context.Background(), "series-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if detail.Current == nil || detail.Current.ID != current.ID || detail.Current.Role != "current" {
+			t.Fatalf("current interval = %#v", detail.Current)
+		}
+		var latest CalculationIntervalSnapshot
+		for _, interval := range detail.History {
+			if interval.ID == historical.ID {
+				latest = interval
+			}
+		}
+		if latest.Role != "latest_valid_reference" || latest.RoleLabel != "最新有効参照" {
+			t.Fatalf("historical role = %#v", latest)
+		}
+		if latest.EstimatedLimit == nil || *latest.EstimatedLimit != historicalLimit {
+			t.Fatalf("historical estimated limit = %#v", latest.EstimatedLimit)
+		}
+		wantMonthly := historicalLimit * domain.WeeklyMonthlyFactor
+		if latest.MonthlyEquivalentLimit == nil || *latest.MonthlyEquivalentLimit != wantMonthly {
+			t.Fatalf("historical monthly equivalent = %#v, want %v", latest.MonthlyEquivalentLimit, wantMonthly)
+		}
+		if latest.StandardPriceUSDMonthlyPerSeat == nil || *latest.StandardPriceUSDMonthlyPerSeat != 10 || latest.StandardPriceSourceURL != "https://vendor.example/prices" {
+			t.Fatalf("historical standard price = %#v", latest)
+		}
+		if latest.ValueMultiplier == nil || *latest.ValueMultiplier != wantMonthly/10 || latest.ValueReasonCode != string(domain.ValueReasonComputed) {
+			t.Fatalf("historical value multiplier = %#v", latest)
+		}
+		if detail.Current.EstimatedLimit != nil || detail.Current.ValueReasonCode != string(domain.ValueReasonEstimateMissing) {
+			t.Fatalf("current value was conflated with historical value = %#v", detail.Current)
+		}
+	})
 }
 
 func floatPointer(value float64) *float64 { return &value }

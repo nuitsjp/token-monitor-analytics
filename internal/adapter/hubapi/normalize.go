@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -37,31 +38,51 @@ type NormalizedCostObservation struct {
 	ValueFingerprint     string
 }
 
-type NormalizedLimitObservation struct {
+type NormalizedUsageObservation struct {
 	DeviceID             string
 	RawServiceIdentifier string
-	AccountKey           string
-	ProviderUpdatedAt    time.Time
-	WindowKey            string
-	NormalizedKind       string
-	NormalizedMetric     string
-	NormalizedLabel      string
-	PlanLabel            string
-	UsedPercent          *float64
-	ResetsAt             *time.Time
-	SyncUploadIntervalMS *int64
-	LimitsRefreshMS      *int64
-	MetadataValid        bool
+	UsageUpdatedAt       time.Time
+	TokenCount           int64
+	APICostUSDText       string
+	ModelTokens          map[string]int64
+	ModelCosts           map[string]string
 	SourceTimezone       string
 	SourceLocalDate      string
 	JSONPath             string
 	DedupeKey            string
 	ValueFingerprint     string
-	WindowKeyConflict    bool
+}
+
+type NormalizedLimitObservation struct {
+	DeviceID              string
+	RawServiceIdentifier  string
+	AccountKey            string
+	ProviderUpdatedAt     time.Time
+	WindowKey             string
+	NormalizedKind        string
+	NormalizedMetric      string
+	NormalizedLabel       string
+	PlanLabel             string
+	UsedPercent           *float64
+	AbsoluteUsedText      string
+	AbsoluteLimitText     string
+	AbsoluteRemainingText string
+	Currency              string
+	ResetsAt              *time.Time
+	SyncUploadIntervalMS  *int64
+	LimitsRefreshMS       *int64
+	MetadataValid         bool
+	SourceTimezone        string
+	SourceLocalDate       string
+	JSONPath              string
+	DedupeKey             string
+	ValueFingerprint      string
+	WindowKeyConflict     bool
 }
 
 type NormalizedStats struct {
 	Costs  []NormalizedCostObservation
+	Usage  []NormalizedUsageObservation
 	Limits []NormalizedLimitObservation
 }
 
@@ -151,6 +172,47 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 				ValueFingerprint: fingerprintCost(cost),
 			})
 		}
+		clients, err := optionalObject(allTime, "clients")
+		if err != nil {
+			return NormalizedStats{}, errors.New("stats allTime clients is invalid")
+		}
+		clientModels, err := optionalObject(allTime, "clientModels")
+		if err != nil {
+			return NormalizedStats{}, errors.New("stats allTime clientModels is invalid")
+		}
+		clientModelCosts, err := optionalObject(allTime, "clientModelCosts")
+		if err != nil {
+			return NormalizedStats{}, errors.New("stats allTime clientModelCosts is invalid")
+		}
+		if usagePresent && usageValid {
+			for _, serviceID := range sortedUnionKeys(clients, clientCosts, clientModels, clientModelCosts) {
+				tokens, err := optionalNonNegativeInt64(clients[serviceID])
+				if err != nil {
+					return NormalizedStats{}, errors.New("stats clients value is invalid")
+				}
+				cost, err := optionalNumberText(clientCosts[serviceID])
+				if err != nil {
+					return NormalizedStats{}, errors.New("stats clientCosts value is invalid")
+				}
+				models, err := modelTokenValues(clientModels[serviceID])
+				if err != nil {
+					return NormalizedStats{}, errors.New("stats clientModels value is invalid")
+				}
+				modelCosts, err := modelCostValues(clientModelCosts[serviceID])
+				if err != nil {
+					return NormalizedStats{}, errors.New("stats clientModelCosts value is invalid")
+				}
+				usageObservation := NormalizedUsageObservation{
+					DeviceID: deviceID, RawServiceIdentifier: serviceID, UsageUpdatedAt: usage,
+					TokenCount: tokens, APICostUSDText: cost, ModelTokens: models, ModelCosts: modelCosts,
+					SourceTimezone: sourceTZ, SourceLocalDate: sourceDate,
+					JSONPath:  fmt.Sprintf("$.devices[%d].periods.allTime", deviceIndex),
+					DedupeKey: fmt.Sprintf("%s\x1f%s\x1f%s", deviceID, usage.UTC().Format(time.RFC3339Nano), serviceID),
+				}
+				usageObservation.ValueFingerprint = fingerprintUsage(usageObservation)
+				result.Usage = append(result.Usage, usageObservation)
+			}
+		}
 
 		limits := map[string]any{}
 		if value, present := device["limits"]; present {
@@ -212,6 +274,16 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 				normalizedMetric := normalizeKeyPart(metric, true)
 				normalizedLabel := normalizeKeyPart(label, false)
 				used, usedPresent, usedValid := percentValue(window["usedPercent"])
+				absoluteUsed, absoluteUsedErr := optionalNumberText(window["used"])
+				absoluteLimit, absoluteLimitErr := optionalNumberText(window["limit"])
+				absoluteRemaining, absoluteRemainingErr := optionalNumberText(window["remaining"])
+				currency, currencyPresent := stringValue(window["currency"])
+				if absoluteUsedErr != nil || absoluteLimitErr != nil || absoluteRemainingErr != nil {
+					return NormalizedStats{}, errors.New("stats window absolute amount is invalid")
+				}
+				if currencyPresent && (len(currency) == 0 || len(currency) > 8 || currency != strings.ToUpper(currency)) {
+					return NormalizedStats{}, errors.New("stats window currency is invalid")
+				}
 				reset, resetPresent, resetValid := timestampValue(window["resetsAt"])
 				if usedPresent && !usedValid {
 					used = nil
@@ -228,7 +300,8 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 					DeviceID: deviceID, RawServiceIdentifier: providerID, AccountKey: accountKey,
 					ProviderUpdatedAt: providerUpdated, WindowKey: windowKey,
 					NormalizedKind: normalizedKind, NormalizedMetric: normalizedMetric, NormalizedLabel: normalizedLabel,
-					PlanLabel:   planLabel(provider),
+					PlanLabel: planLabel(provider), AbsoluteUsedText: absoluteUsed, AbsoluteLimitText: absoluteLimit,
+					AbsoluteRemainingText: absoluteRemaining, Currency: currency,
 					UsedPercent: used, ResetsAt: cloneTime(reset, resetPresent && resetValid),
 					SyncUploadIntervalMS: cloneInt64(syncMS), LimitsRefreshMS: cloneInt64(refreshMS),
 					MetadataValid: metadataValid, SourceTimezone: sourceTZ, SourceLocalDate: limitSourceDate,
@@ -255,6 +328,108 @@ func objectValue(value any) (map[string]any, bool) {
 	}
 	object, ok := value.(map[string]any)
 	return object, ok
+}
+
+func optionalObject(parent map[string]any, key string) (map[string]any, error) {
+	value, present := parent[key]
+	if !present || value == nil {
+		return map[string]any{}, nil
+	}
+	result, ok := objectValue(value)
+	if !ok {
+		return nil, errors.New("value is not an object")
+	}
+	return result, nil
+}
+
+func sortedUnionKeys(objects ...map[string]any) []string {
+	keys := make(map[string]struct{})
+	for _, object := range objects {
+		for key := range object {
+			if key != "" {
+				keys[key] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(keys))
+	for key := range keys {
+		result = append(result, key)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func optionalNonNegativeInt64(value any) (int64, error) {
+	if value == nil {
+		return 0, nil
+	}
+	text, ok := numberValue(value)
+	if !ok {
+		return 0, errors.New("value is not numeric")
+	}
+	var result int64
+	if _, err := fmt.Sscan(text, &result); err != nil || result < 0 || fmt.Sprint(result) != text {
+		return 0, errors.New("value is not a non-negative integer")
+	}
+	return result, nil
+}
+
+func optionalNumberText(value any) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	text, ok := numberValue(value)
+	if !ok {
+		return "", errors.New("value is not numeric")
+	}
+	if number, ok := new(big.Rat).SetString(text); !ok || number.Sign() < 0 {
+		return "", errors.New("value is not a non-negative finite number")
+	}
+	return text, nil
+}
+
+func modelTokenValues(value any) (map[string]int64, error) {
+	if value == nil {
+		return map[string]int64{}, nil
+	}
+	object, ok := objectValue(value)
+	if !ok {
+		return nil, errors.New("model tokens is not an object")
+	}
+	result := make(map[string]int64, len(object))
+	for model, raw := range object {
+		if model == "" {
+			return nil, errors.New("model identifier is empty")
+		}
+		count, err := optionalNonNegativeInt64(raw)
+		if err != nil {
+			return nil, err
+		}
+		result[model] = count
+	}
+	return result, nil
+}
+
+func modelCostValues(value any) (map[string]string, error) {
+	if value == nil {
+		return map[string]string{}, nil
+	}
+	object, ok := objectValue(value)
+	if !ok {
+		return nil, errors.New("model costs is not an object")
+	}
+	result := make(map[string]string, len(object))
+	for model, raw := range object {
+		if model == "" {
+			return nil, errors.New("model identifier is empty")
+		}
+		cost, err := optionalNumberText(raw)
+		if err != nil {
+			return nil, err
+		}
+		result[model] = cost
+	}
+	return result, nil
 }
 
 func stringValue(value any) (string, bool) {
@@ -398,15 +573,31 @@ func quotePath(value string) string {
 
 func fingerprintLimit(value NormalizedLimitObservation) string {
 	payload := struct {
-		Used      *float64
-		Reset     *time.Time
-		Kind      string
-		Metric    string
-		Label     string
-		PlanLabel string
-		RefreshMS *int64
-		SyncMS    *int64
-	}{value.UsedPercent, value.ResetsAt, value.NormalizedKind, value.NormalizedMetric, value.NormalizedLabel, value.PlanLabel, value.LimitsRefreshMS, value.SyncUploadIntervalMS}
+		Used       *float64
+		Reset      *time.Time
+		Kind       string
+		Metric     string
+		Label      string
+		PlanLabel  string
+		UsedText   string
+		LimitText  string
+		RemainText string
+		Currency   string
+		RefreshMS  *int64
+		SyncMS     *int64
+	}{value.UsedPercent, value.ResetsAt, value.NormalizedKind, value.NormalizedMetric, value.NormalizedLabel, value.PlanLabel, value.AbsoluteUsedText, value.AbsoluteLimitText, value.AbsoluteRemainingText, value.Currency, value.LimitsRefreshMS, value.SyncUploadIntervalMS}
+	encoded, _ := json.Marshal(payload)
+	hash := sha256.Sum256(encoded)
+	return hex.EncodeToString(hash[:])
+}
+
+func fingerprintUsage(value NormalizedUsageObservation) string {
+	payload := struct {
+		Tokens      int64
+		Cost        string
+		ModelTokens map[string]int64
+		ModelCosts  map[string]string
+	}{value.TokenCount, value.APICostUSDText, value.ModelTokens, value.ModelCosts}
 	encoded, _ := json.Marshal(payload)
 	hash := sha256.Sum256(encoded)
 	return hex.EncodeToString(hash[:])

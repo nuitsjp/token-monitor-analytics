@@ -6,7 +6,7 @@ $plan = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'PLAN.md'), $utf8)
 $screenDesign = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'docs/screen-design.md'), $utf8)
 $designSystem = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'docs/design-system.md'), $utf8)
 $expected = @(
-    'SCREEN-COMMON', 'SCREEN-T01', 'SCREEN-M00', 'SCREEN-M01', 'SCREEN-M03',
+    'SCREEN-COMMON', 'SCREEN-T01', 'SCREEN-M00', 'SCREEN-M01', 'SCREEN-M02', 'SCREEN-M03',
     'SCREEN-M04', 'SCREEN-M05', 'SCREEN-M06', 'SCREEN-M07', 'SCREEN-M08',
     'SCREEN-M09', 'SCREEN-M10', 'SCREEN-M11'
 )

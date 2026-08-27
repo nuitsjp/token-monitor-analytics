@@ -10,6 +10,7 @@ import {
   OverviewService,
   ReviewService,
   SettingsService,
+  UsageService,
   WindowService,
 } from "../../bindings/token-monitor-analytics/internal/desktop/index.js";
 import type {
@@ -62,6 +63,9 @@ import type {
   LimitSeriesFilterInput,
   LimitSeriesSnapshot,
   LimitSeriesDetailSnapshot,
+  UsageFilterInput,
+  UsageSnapshot,
+  UsageExportSnapshot,
   DataManagementBackupStateSnapshot,
   DataManagementCancellationSnapshot,
   DataManagementPurgeSelectionInput,
@@ -124,6 +128,10 @@ export type {
   LimitSeriesFilterInput,
   LimitSeriesSnapshot,
   LimitSeriesDetailSnapshot,
+  UsageFilterInput,
+  UsageSnapshot,
+  UsageExportSnapshot,
+  UsagePointSnapshot,
   EstimationEvidenceSnapshot,
   DataManagementArtifactSnapshot,
   DataManagementBackupStateSnapshot,
@@ -172,6 +180,11 @@ export type FrontendEventName =
   | "navigation:open"
   | "settings:theme-changed";
 
+export interface UsageExportTask {
+  promise: Promise<UsageExportSnapshot>;
+  cancel(): void;
+}
+
 export interface FrontendAdapter {
   readonly canOpenMain: boolean;
   readonly isShowcase: boolean;
@@ -189,6 +202,15 @@ export interface FrontendAdapter {
   getOverview(privacyMode: boolean): Promise<OverviewSnapshot>;
   getLimitSeries(input: LimitSeriesFilterInput): Promise<LimitSeriesSnapshot[]>;
   getLimitSeriesDetail(seriesID: string): Promise<LimitSeriesDetailSnapshot>;
+  getUsage(input: UsageFilterInput): Promise<UsageSnapshot>;
+  exportUsage(
+    input: UsageFilterInput,
+    format: "csv" | "json",
+  ): Promise<UsageExportSnapshot>;
+  beginUsageExport(
+    input: UsageFilterInput,
+    format: "csv" | "json",
+  ): UsageExportTask;
   getDataManagementState(): Promise<DataManagementStateSnapshot>;
   createBackup(
     destinationPath: string,
@@ -316,6 +338,7 @@ export interface FrontendAdapter {
   createPlanVersion(input: PlanVersionInput): Promise<void>;
   createPlanLimitRule(input: PlanLimitRuleInput): Promise<void>;
   createStandardPrice(input: StandardPriceInput): Promise<void>;
+  updateStandardPrice(input: StandardPriceInput): Promise<void>;
   confirmIdentificationCandidate(input: CandidateDecisionInput): Promise<void>;
   rejectIdentificationCandidate(candidateID: string): Promise<void>;
   releaseIdentificationCandidate(candidateID: string): Promise<void>;
@@ -385,6 +408,10 @@ export interface FakeBackendOptions {
   overview?: OverviewSnapshot;
   limitSeries?: LimitSeriesSnapshot[];
   limitSeriesDetails?: Record<string, LimitSeriesDetailSnapshot>;
+  usage?: UsageSnapshot;
+  onGetUsage?: (
+    input: UsageFilterInput,
+  ) => Promise<UsageSnapshot> | UsageSnapshot;
   dataManagementState?: DataManagementStateSnapshot;
   onGetOverview?: (
     privacyMode: boolean,
@@ -530,6 +557,66 @@ export const emptyDataManagementState: DataManagementStateSnapshot = {
   },
 };
 
+export const emptyUsageSnapshot: UsageSnapshot = {
+  generatedAt: "2026-08-26T00:00:00Z",
+  from: "2026-08-01T00:00:00Z",
+  to: "2026-09-01T00:00:00Z",
+  displayTimeZone: "UTC",
+  granularity: "day",
+  groupBy: "hub",
+  summary: {
+    tokens: 0,
+    sharedTokens: 0,
+    apiCostUsd: 0,
+    sharedApiCostUsd: 0,
+    apiCostUsdText: "0",
+    sharedApiCostUsdText: "0",
+    sourceCount: 0,
+    observationCount: 0,
+  },
+  series: [],
+  breakdown: [],
+  nativeAmounts: [],
+  evidence: [],
+};
+
+function fakeUsageExport(
+  usage: UsageSnapshot,
+  input: UsageFilterInput,
+  format: "csv" | "json",
+): UsageExportSnapshot {
+  const rows = (usage.series ?? []).flatMap((point) =>
+    (point.breakdown ?? []).map((row) => ({
+      periodStart: point.periodStart,
+      periodEnd: point.periodEnd,
+      ...row,
+    })),
+  );
+  const content =
+    format === "json"
+      ? JSON.stringify({
+          schemaVersion: "2",
+          metadata: {
+            from: input.from,
+            to: input.to,
+            displayTimeZone: input.displayTimeZone,
+            granularity: input.granularity,
+            groupBy: input.groupBy,
+            observationType: "observed",
+          },
+          rows,
+        })
+      : `\ufeffschemaVersion,displayTimeZone,hubId,collectionDeviceId,deviceId,serviceId,rawServiceIdentifier,logicalAccountId,planVersionId,limitDefinitionId,model,periodStart,periodEnd,categoryKey,label,tokens,apiCostUsd\r\n2,${input.displayTimeZone},${input.hubId},${input.collectionDeviceId},${input.deviceId},${input.serviceId},${input.rawServiceIdentifier},${input.logicalAccountId},${input.planVersionId},${input.limitDefinitionId},${input.model},${rows[0]?.periodStart ?? ""},${rows[0]?.periodEnd ?? ""},${rows[0]?.categoryKey ?? ""},${rows[0]?.label ?? ""},${rows[0]?.tokens ?? 0},${rows[0]?.apiCostUsdText ?? "0"}\r\n`;
+  return {
+    filename: `usage.${format}`,
+    mimeType:
+      format === "json"
+        ? "application/json;charset=utf-8"
+        : "text/csv;charset=utf-8",
+    content,
+  };
+}
+
 /** A deterministic adapter for component tests and browser development. */
 export function createFakeBackend(
   options: FakeBackendOptions = {},
@@ -651,6 +738,26 @@ export function createFakeBackend(
       const series = limitSeries.find((item) => item.id === seriesID);
       if (!series) throw new Error("limit series was not found");
       return { series, current: series.currentInterval, history: [] };
+    },
+    getUsage: async (input) =>
+      options.onGetUsage?.(input) ?? options.usage ?? emptyUsageSnapshot,
+    exportUsage: async (input, format) =>
+      fakeUsageExport(options.usage ?? emptyUsageSnapshot, input, format),
+    beginUsageExport: (input, format) => {
+      let cancelled = false;
+      return {
+        promise: Promise.resolve().then(() => {
+          if (cancelled) throw new Error("出力を取り消しました。");
+          return fakeUsageExport(
+            options.usage ?? emptyUsageSnapshot,
+            input,
+            format,
+          );
+        }),
+        cancel: () => {
+          cancelled = true;
+        },
+      };
     },
     getDataManagementState: async () => dataManagementState,
     createBackup: async () => dataManagementState.backup,
@@ -1344,6 +1451,14 @@ export function createFakeBackend(
         ],
       };
     },
+    updateStandardPrice: async (input) => {
+      catalog = {
+        ...catalog,
+        standardPrices: catalog.standardPrices.map((item) =>
+          item.id === input.id ? { ...item, ...input } : item,
+        ),
+      };
+    },
     confirmIdentificationCandidate: async (input) => {
       catalog = {
         ...catalog,
@@ -1512,6 +1627,18 @@ export function createProductionBackend(
       ),
     getLimitSeriesDetail: (seriesID) =>
       asPromise(EstimationService.GetLimitSeriesDetail(seriesID)),
+    getUsage: (input) => asPromise(UsageService.GetUsage(input)),
+    exportUsage: (input, format) =>
+      asPromise(UsageService.ExportUsage(input, format)),
+    beginUsageExport: (input, format) => {
+      const pending = UsageService.ExportUsage(input, format);
+      return {
+        promise: asPromise(pending),
+        cancel: () => {
+          void pending.cancel("user cancelled usage export");
+        },
+      };
+    },
     getDataManagementState: () => asPromise(DataManagementService.GetState()),
     createBackup: (destinationPath) =>
       asPromise(DataManagementService.CreateBackup(destinationPath)),
@@ -1661,6 +1788,8 @@ export function createProductionBackend(
       asPromise(CatalogService.CreatePlanLimitRule(input)),
     createStandardPrice: (input) =>
       asPromise(CatalogService.CreateStandardPrice(input)),
+    updateStandardPrice: (input) =>
+      asPromise(CatalogService.UpdateStandardPrice(input)),
     confirmIdentificationCandidate: (input) =>
       asPromise(CatalogService.ConfirmIdentificationCandidate(input)),
     rejectIdentificationCandidate: (candidateID) =>

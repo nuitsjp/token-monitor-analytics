@@ -40,6 +40,35 @@ func TestInsertObservationsRollsBackBothKindsTogether(t *testing.T) {
 	}
 }
 
+func TestInsertAllObservationsPersistsPhaseTwoUsageAndNativeAmounts(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	hubID := uuid.NewString()
+	if err := lifecycle.CreateHub(ctx, Hub{ID: hubID, DisplayName: "Hub", URL: "https://usage.example.test", CollectionEnabled: true, CollectionIntervalSeconds: 300, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.CreateCollectionAttempt(ctx, CollectionAttempt{AttemptID: "usage-attempt", HubID: hubID, Trigger: "manual", State: "started", StartedAt: now, AnalyticsIntervalSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.SaveRawSnapshot(ctx, RawSnapshot{SnapshotID: "usage-stats", AttemptID: "usage-attempt", HubID: hubID, ResponseKind: "stats", ReceivedStartedAt: now, ReceivedCompletedAt: now, HTTPStatus: 200, Body: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	usage := UsageObservation{ObservationID: "usage-observation", UsageCostSourceID: "usage-source", SnapshotID: "usage-stats", HubID: hubID, DeviceID: "device", RawServiceIdentifier: "codex", UsageUpdatedAt: now, TokenCount: 120, APICostUSDText: "2.75", ModelTokens: map[string]int64{"gpt-5": 120}, ModelCosts: map[string]string{"gpt-5": "2.75"}, NormalizationGeneration: 1, NormalizationRuleVersion: "rule", NormalizationLogicVersion: "logic", JSONPath: "$.periods.allTime", DedupeKey: "usage-key", ValueFingerprint: "usage-value"}
+	limit := LimitObservation{ObservationID: "native-amount", UsageLimitSourceID: "limit-source", SnapshotID: "usage-stats", HubID: hubID, DeviceID: "device", RawServiceIdentifier: "codex", ProviderUpdatedAt: now, WindowKey: "balance", NormalizedKind: "balance", NormalizedMetric: "credits", NormalizedLabel: "Credits", AbsoluteUsedText: "58", AbsoluteLimitText: "100", AbsoluteRemainingText: "42", Currency: "CREDITS", AnalyticsIntervalSeconds: 300, NormalizationGeneration: 1, NormalizationRuleVersion: "rule", NormalizationLogicVersion: "logic", JSONPath: "$.limits[0]", DedupeKey: "native-key", ValueFingerprint: "native-value"}
+	if err := lifecycle.InsertAllObservations(ctx, nil, []UsageObservation{usage}, []LimitObservation{limit}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := lifecycle.ListUsageAnalysisObservations(ctx)
+	if err != nil || len(rows) != 1 || rows[0].TokenCount != 120 || rows[0].ModelTokens["gpt-5"] != 120 {
+		t.Fatalf("P2-USAGE-01 rows=%#v err=%v", rows, err)
+	}
+	amounts, err := lifecycle.ListUsageNativeAmounts(ctx)
+	if err != nil || len(amounts) != 1 || amounts[0].RemainingText != "42" || amounts[0].Currency != "CREDITS" {
+		t.Fatalf("P2-USAGE-06 amounts=%#v err=%v", amounts, err)
+	}
+}
+
 func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 	lifecycle := openTestLifecycle(t)
 	ctx := context.Background()

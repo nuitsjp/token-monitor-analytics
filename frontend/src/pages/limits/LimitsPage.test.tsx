@@ -40,6 +40,7 @@ function series(): LimitSeriesSnapshot {
     limitDefinitionId: "definition-1",
     limitDefinitionName: "Weekly",
     cycleType: "weekly",
+    billingConfirmation: "not_applicable",
     usageLimitSourceId: "source-1",
     associationId: "association-1",
     normalizedKind: "weekly",
@@ -157,6 +158,16 @@ function series(): LimitSeriesSnapshot {
     latestValidReference: null,
     estimatedLimit: 123,
     estimatedLimitLabel: "123.00",
+    monthlyEquivalentLimit: null,
+    monthlyEquivalentLimitLabel: "",
+    standardPriceUsdMonthlyPerSeat: null,
+    standardPriceSourceUrl: "",
+    standardPriceValidFrom: "",
+    standardPriceValidTo: "",
+    valueMultiplier: null,
+    valueMultiplierLabel: "",
+    valueReasonCode: "",
+    valueReason: "",
   };
 }
 
@@ -343,6 +354,73 @@ it("P1-UI-06 distinguishes the current interval from the latest valid historical
   await user.click(screen.getByRole("tab", { name: "履歴" }));
   expect(screen.getByText(/非カレント/)).toBeVisible();
   expect(screen.getByText("カレント")).toBeVisible();
+});
+
+it("P2-VIS-02 shows current and latest valid interval values as separate history rows", async () => {
+  const current = series();
+  const currentInterval = {
+    ...current.currentInterval!,
+    estimatedLimit: 123,
+    estimatedLimitLabel: "123.00",
+    monthlyEquivalentLimit: 534.82,
+    monthlyEquivalentLimitLabel: "534.82",
+    standardPriceUsdMonthlyPerSeat: 10,
+    standardPriceSourceUrl: "https://vendor.example/current-prices",
+    standardPriceValidFrom: "2026-08-20T00:00:00Z",
+    standardPriceValidTo: "",
+    valueMultiplier: 53.48,
+    valueMultiplierLabel: "53.48×",
+    valueReasonCode: "computed",
+    valueReason: "算出済み",
+  };
+  const historical = {
+    ...currentInterval,
+    id: "interval-history",
+    validFrom: "2026-08-12T00:00:00Z",
+    validTo: "2026-08-19T00:00:00Z",
+    role: "latest_valid_reference",
+    roleLabel: "最新有効参照",
+    estimatedLimit: 77,
+    estimatedLimitLabel: "77.00",
+    monthlyEquivalentLimit: 336.94,
+    monthlyEquivalentLimitLabel: "336.94",
+    standardPriceUsdMonthlyPerSeat: 8,
+    standardPriceSourceUrl: "https://vendor.example/historical-prices",
+    standardPriceValidFrom: "2026-08-01T00:00:00Z",
+    standardPriceValidTo: "2026-08-20T00:00:00Z",
+    valueMultiplier: 42.12,
+    valueMultiplierLabel: "42.12×",
+  };
+  current.currentInterval = currentInterval;
+  const details: Record<string, LimitSeriesDetailSnapshot> = {
+    "association-1": {
+      series: current,
+      current: currentInterval,
+      history: [historical, currentInterval],
+    },
+  };
+  const user = userEvent.setup();
+  renderLimits("/limits", "UTC", backend([current], details));
+
+  await user.click(await screen.findByRole("link", { name: "詳細" }));
+  await user.click(screen.getByRole("tab", { name: "履歴" }));
+
+  expect(screen.getByText("カレント")).toBeVisible();
+  expect(screen.getByText("最新有効参照")).toBeVisible();
+  expect(screen.getByText("123.00")).toBeVisible();
+  expect(screen.getByText("77.00")).toBeVisible();
+  expect(screen.getByText("534.82")).toBeVisible();
+  expect(screen.getByText("336.94")).toBeVisible();
+  expect(screen.getByText("$10.00 / 月")).toBeVisible();
+  expect(screen.getByText("$8.00 / 月")).toBeVisible();
+  expect(screen.getByText("53.48×")).toBeVisible();
+  expect(screen.getByText("42.12×")).toBeVisible();
+  expect(
+    screen.getByRole("link", {
+      name: "https://vendor.example/historical-prices",
+    }),
+  ).toHaveAttribute("href", "https://vendor.example/historical-prices");
+  expect(screen.getByText(/有効期間: 8\/1 0:00/)).toBeVisible();
 });
 
 it("has no automatically detectable accessibility violations", async () => {

@@ -24,6 +24,7 @@ SELECT
   ula.usage_limit_association_id, s.service_id, s.name,
   la.logical_account_id, la.display_name,
   ld.limit_definition_id, ld.meaning, ld.cycle_type,
+  ld.billing_confirmation,
   uls.usage_limit_source_id, uls.normalized_kind, uls.normalized_metric,
   ph.plan_history_id, pv.plan_version_id, pv.name,
   plr.plan_limit_rule_id, plr.plan_limit, plr.limit_multiplier,
@@ -97,7 +98,7 @@ ORDER BY s.name, la.display_name, ld.meaning, ula.usage_limit_association_id`,
 	result := make([]domain.LimitSeriesView, 0)
 	for rows.Next() {
 		var item domain.LimitSeriesView
-		var planHistoryID, planVersionID, planVersionName, ruleID sql.NullString
+		var planHistoryID, planVersionID, planVersionName, ruleID, billingConfirmation sql.NullString
 		var planLimit, multiplier, used sql.NullFloat64
 		var resetsAt, observationAt sql.NullString
 		var conflict int
@@ -107,6 +108,7 @@ ORDER BY s.name, la.display_name, ld.meaning, ula.usage_limit_association_id`,
 			&item.AssociationID, &item.ServiceID, &item.ServiceName,
 			&item.LogicalAccountID, &item.LogicalAccountName,
 			&item.LimitDefinitionID, &item.LimitDefinitionName, &item.CycleType,
+			&billingConfirmation,
 			&item.UsageLimitSourceID, &item.NormalizedKind, &item.NormalizedMetric,
 			&planHistoryID, &planVersionID, &planVersionName,
 			&ruleID, &planLimit, &multiplier,
@@ -117,6 +119,7 @@ ORDER BY s.name, la.display_name, ld.meaning, ula.usage_limit_association_id`,
 			return nil, fmt.Errorf("scan current limit series: %w", err)
 		}
 		item.ID = item.AssociationID
+		item.BillingConfirmation = domain.BillingConfirmation(billingConfirmation.String)
 		item.PlanHistoryID = planHistoryID.String
 		item.PlanVersionID = planVersionID.String
 		item.PlanVersionName = planVersionName.String

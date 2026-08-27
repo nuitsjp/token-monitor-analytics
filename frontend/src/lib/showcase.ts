@@ -10,6 +10,7 @@ import {
   type LimitSeriesSnapshot,
   type OverviewSnapshot,
   type ReviewItemSnapshot,
+  type UsageSnapshot,
 } from "./backend";
 import type { StatusPresentationSnapshot } from "../../bindings/token-monitor-analytics/internal/desktop/models.js";
 
@@ -300,6 +301,7 @@ const limitSeries: LimitSeriesSnapshot = {
   limitDefinitionId: "limit-weekly",
   limitDefinitionName: "週次利用枠",
   cycleType: "weekly",
+  billingConfirmation: "not_applicable",
   usageLimitSourceId: "source-weekly",
   associationId: "association-weekly",
   normalizedKind: "weekly",
@@ -438,6 +440,16 @@ const limitSeries: LimitSeriesSnapshot = {
   latestValidReference: null,
   estimatedLimit: 123,
   estimatedLimitLabel: "123.00 USD相当",
+  monthlyEquivalentLimit: 534.819375,
+  monthlyEquivalentLimitLabel: "$534.82 / 月",
+  standardPriceUsdMonthlyPerSeat: 20,
+  standardPriceSourceUrl: "https://openai.com/chatgpt/pricing/",
+  standardPriceValidFrom: "2026-01-01T00:00:00Z",
+  standardPriceValidTo: "",
+  valueMultiplier: 26.74096875,
+  valueMultiplierLabel: "26.74×",
+  valueReasonCode: "calculated",
+  valueReason: "有効な USD 建て標準価格と月間換算上限から算出しました。",
 };
 
 const reviewItem: ReviewItemSnapshot = {
@@ -526,7 +538,7 @@ const dataManagementState: DataManagementStateSnapshot = {
         "d2d2a0c7a8ad71d45dfebcdfb8da39c16d6ed99d94c5897e58d6e3c2bf63213e",
       sizeBytes: 4_718_592,
       formatVersion: 1,
-      schemaVersion: 13,
+      schemaVersion: 14,
       appVersion: "0.1.0",
       createdAt: "2026-08-26T00:08:00Z",
       warning: "",
@@ -545,7 +557,7 @@ const dataManagementState: DataManagementStateSnapshot = {
           "d2d2a0c7a8ad71d45dfebcdfb8da39c16d6ed99d94c5897e58d6e3c2bf63213e",
         sizeBytes: 4_718_592,
         formatVersion: 1,
-        schemaVersion: 13,
+        schemaVersion: 14,
         appVersion: "0.1.0",
         createdAt: "2026-08-26T00:08:00Z",
         warning: "",
@@ -640,6 +652,17 @@ const catalog: Partial<CatalogSnapshot> = {
       limit: 1000,
       multiplier: null,
       officialSourceUrl: "https://example.invalid/plans/plus#weekly-limit",
+      createdAt: "2026-08-25T00:00:00Z",
+    },
+  ],
+  standardPrices: [
+    {
+      id: "price-plus-2026",
+      planVersionId: "plan-plus-2026",
+      usdMonthlyPerSeat: 20,
+      sourceUrl: "https://openai.com/chatgpt/pricing/",
+      validFrom: "2026-01-01T00:00:00Z",
+      validTo: "",
       createdAt: "2026-08-25T00:00:00Z",
     },
   ],
@@ -749,12 +772,323 @@ const unassignedLimitObservation: LimitObservationSnapshot = {
   valueFingerprint: "58",
 };
 
+const usage: UsageSnapshot = {
+  generatedAt: now,
+  from: "2026-08-01T00:00:00Z",
+  to: "2026-08-27T00:00:00Z",
+  displayTimeZone: "Asia/Tokyo",
+  granularity: "day",
+  groupBy: "hub",
+  summary: {
+    tokens: 18_742_680,
+    sharedTokens: 4_216_400,
+    apiCostUsd: 31.365,
+    sharedApiCostUsd: 7.64,
+    apiCostUsdText: "31.365",
+    sharedApiCostUsdText: "7.64",
+    sourceCount: 3,
+    observationCount: 72,
+  },
+  series: Array.from({ length: 14 }, (_, index) => {
+    const tokens =
+      [
+        620, 910, 840, 1280, 990, 1610, 1350, 1720, 1190, 1840, 1560, 2010,
+        1730, 2210,
+      ][index] * 1000;
+    const costs = [
+      1.02, 1.49, 1.34, 2.16, 1.67, 2.72, 2.24, 2.89, 1.93, 3.02, 2.61, 3.37,
+      2.83, 3.98,
+    ][index];
+    const day = String(index + 13).padStart(2, "0");
+    const nextDay = String(index + 14).padStart(2, "0");
+    return {
+      periodStart: `2026-08-${day}T00:00:00+09:00`,
+      periodEnd: `2026-08-${nextDay}T00:00:00+09:00`,
+      tokens,
+      sharedTokens: index % 3 === 1 ? Math.round(tokens * 0.28) : 0,
+      apiCostUsd: costs,
+      sharedApiCostUsd: index % 3 === 1 ? Number((costs * 0.28).toFixed(3)) : 0,
+      apiCostUsdText: String(costs),
+      sharedApiCostUsdText:
+        index % 3 === 1 ? String(Number((costs * 0.28).toFixed(3))) : "0",
+      observationCount: 5,
+      breakdown: [
+        {
+          key: "hub-evaluation",
+          categoryKey: "hub-evaluation",
+          label: "評価 Hub（192.168.0.16）",
+          attribution: "単一アカウントに帰属する利用実績",
+          tokens: tokens - (index % 3 === 1 ? Math.round(tokens * 0.28) : 0),
+          apiCostUsd:
+            costs - (index % 3 === 1 ? Number((costs * 0.28).toFixed(3)) : 0),
+          apiCostUsdText: String(
+            costs - (index % 3 === 1 ? Number((costs * 0.28).toFixed(3)) : 0),
+          ),
+          observationCount: index % 3 === 1 ? 4 : 5,
+          evidenceRoute: "/evidence?usageObservationId=usage-codex-current",
+        },
+        ...(index % 3 === 1
+          ? [
+              {
+                key: "hub-evaluation:shared",
+                categoryKey: "hub-evaluation",
+                label: "評価 Hub（192.168.0.16）",
+                attribution: "共有利用実績",
+                tokens: Math.round(tokens * 0.28),
+                apiCostUsd: Number((costs * 0.28).toFixed(3)),
+                apiCostUsdText: String(Number((costs * 0.28).toFixed(3))),
+                observationCount: 1,
+                evidenceRoute:
+                  "/evidence?usageObservationId=usage-shared-current",
+              },
+            ]
+          : []),
+      ],
+    };
+  }),
+  breakdown: [
+    {
+      key: "hub-evaluation",
+      categoryKey: "hub-evaluation",
+      label: "評価 Hub（192.168.0.16）",
+      attribution: "単一アカウントに帰属する利用実績",
+      tokens: 14_526_280,
+      apiCostUsd: 23.725,
+      apiCostUsdText: "23.725",
+      observationCount: 54,
+      evidenceRoute: "/evidence?usageObservationId=usage-codex-current",
+    },
+    {
+      key: "hub-evaluation:shared",
+      categoryKey: "hub-evaluation",
+      label: "評価 Hub（192.168.0.16）",
+      attribution: "共有利用実績",
+      tokens: 4_216_400,
+      apiCostUsd: 7.64,
+      apiCostUsdText: "7.64",
+      observationCount: 18,
+      evidenceRoute: "/evidence?usageObservationId=usage-shared-current",
+    },
+  ],
+  nativeAmounts: [
+    {
+      observationId: "native-credits-current",
+      hubName: "評価 Hub（192.168.0.16）",
+      deviceId: "device-evaluation",
+      serviceIdentifier: "claude",
+      label: "Extra usage credits",
+      metric: "credits",
+      used: "58",
+      limit: "100",
+      remaining: "42",
+      currency: "CREDITS",
+      observedAt: "2026-08-26T00:05:00Z",
+      m08Route: "/evidence?snapshotId=stats-snapshot-24",
+    },
+  ],
+  evidence: [
+    {
+      sourceId: "source-cost-codex",
+      startObservationId: "usage-codex-start",
+      endObservationId: "usage-codex-current",
+      startSnapshotId: "stats-snapshot-01",
+      endSnapshotId: "stats-snapshot-24",
+      hubName: "評価 Hub（192.168.0.16）",
+      collectionDeviceId: "device-evaluation",
+      deviceId: "device-evaluation",
+      rawServiceIdentifier: "codex",
+      startAt: "2026-08-25T00:05:00Z",
+      endAt: "2026-08-26T00:05:00Z",
+      jsonPath: "$.devices[0].periods.allTime.clients.codex",
+      m08Route: "/evidence?usageObservationId=usage-codex-current",
+    },
+    {
+      sourceId: "source-cost-shared",
+      startObservationId: "usage-shared-start",
+      endObservationId: "usage-shared-current",
+      startSnapshotId: "stats-snapshot-01",
+      endSnapshotId: "stats-snapshot-24",
+      hubName: "評価 Hub（192.168.0.16）",
+      collectionDeviceId: "device-evaluation",
+      deviceId: "device-evaluation",
+      rawServiceIdentifier: "claude",
+      startAt: "2026-08-25T00:05:00Z",
+      endAt: "2026-08-26T00:05:00Z",
+      jsonPath: "$.devices[0].periods.allTime.clients.claude",
+      m08Route: "/evidence?usageObservationId=usage-shared-current",
+    },
+  ],
+};
+
+type ShowcaseUsageCategory = {
+  key: string;
+  label: string;
+  tokenShare: number;
+  costShare: number;
+};
+
+function showcaseUsageCategories(groupBy: string): ShowcaseUsageCategory[] {
+  switch (groupBy) {
+    case "model":
+      return [
+        { key: "gpt-5", label: "GPT-5", tokenShare: 0.36, costShare: 0.32 },
+        {
+          key: "claude-sonnet",
+          label: "Claude Sonnet",
+          tokenShare: 0.24,
+          costShare: 0.3,
+        },
+        {
+          key: "gpt-5-mini",
+          label: "GPT-5 mini",
+          tokenShare: 0.15,
+          costShare: 0.1,
+        },
+        {
+          key: "gemini-pro",
+          label: "Gemini Pro",
+          tokenShare: 0.1,
+          costShare: 0.08,
+        },
+        {
+          key: "claude-opus",
+          label: "Claude Opus",
+          tokenShare: 0.08,
+          costShare: 0.12,
+        },
+        {
+          key: "other",
+          label: "それ以外",
+          tokenShare: 0.07,
+          costShare: 0.08,
+        },
+      ];
+    case "contract":
+      return [
+        {
+          key: "plan-plus-2026",
+          label: "Plus 2026",
+          tokenShare: 0.58,
+          costShare: 0.5,
+        },
+        {
+          key: "plan-team-2026",
+          label: "Team 2026",
+          tokenShare: 0.29,
+          costShare: 0.37,
+        },
+        {
+          key: "unidentified-contract",
+          label: "契約未同定",
+          tokenShare: 0.13,
+          costShare: 0.13,
+        },
+      ];
+    case "agent":
+      return [
+        { key: "codex", label: "codex", tokenShare: 0.61, costShare: 0.55 },
+        {
+          key: "claude",
+          label: "claude",
+          tokenShare: 0.31,
+          costShare: 0.37,
+        },
+        { key: "gemini", label: "gemini", tokenShare: 0.08, costShare: 0.08 },
+      ];
+    default:
+      return [];
+  }
+}
+
+function roundedUsageCost(value: number): number {
+  return Number(value.toFixed(6));
+}
+
+function showcaseUsageByGroup(groupBy: string): UsageSnapshot {
+  const categories = showcaseUsageCategories(groupBy);
+  if (categories.length === 0) return { ...usage, groupBy };
+  const series = (usage.series ?? []).map((point) => {
+    let remainingTokens = point.tokens;
+    let remainingCost = point.apiCostUsd;
+    const values = categories.map((category, index) => {
+      const last = index === categories.length - 1;
+      const tokens = last
+        ? remainingTokens
+        : Math.round(point.tokens * category.tokenShare);
+      const cost = last
+        ? roundedUsageCost(remainingCost)
+        : roundedUsageCost(point.apiCostUsd * category.costShare);
+      remainingTokens -= tokens;
+      remainingCost = roundedUsageCost(remainingCost - cost);
+      return { category, tokens, cost };
+    });
+    const breakdown: NonNullable<UsageSnapshot["breakdown"]> = [];
+    for (const [index, value] of values.entries()) {
+      const sharedTokens =
+        index === 0 ? Math.min(value.tokens, point.sharedTokens) : 0;
+      const sharedCost =
+        index === 0 ? Math.min(value.cost, point.sharedApiCostUsd) : 0;
+      const ownedTokens = value.tokens - sharedTokens;
+      const ownedCost = roundedUsageCost(value.cost - sharedCost);
+      if (ownedTokens > 0 || ownedCost > 0) {
+        breakdown.push({
+          key: value.category.key,
+          categoryKey: value.category.key,
+          label: value.category.label,
+          attribution: "単一アカウントに帰属する利用実績",
+          tokens: ownedTokens,
+          apiCostUsd: ownedCost,
+          apiCostUsdText: String(ownedCost),
+          observationCount: 4,
+          evidenceRoute: "/evidence?usageObservationId=usage-codex-current",
+        });
+      }
+      if (sharedTokens > 0 || sharedCost > 0) {
+        breakdown.push({
+          key: `${value.category.key}:shared`,
+          categoryKey: value.category.key,
+          label: value.category.label,
+          attribution: "共有利用実績",
+          tokens: sharedTokens,
+          apiCostUsd: sharedCost,
+          apiCostUsdText: String(sharedCost),
+          observationCount: 1,
+          evidenceRoute: "/evidence?usageObservationId=usage-shared-current",
+        });
+      }
+    }
+    return { ...point, breakdown };
+  });
+  const byKey = new Map<
+    string,
+    NonNullable<UsageSnapshot["breakdown"]>[number]
+  >();
+  for (const point of series) {
+    for (const row of point.breakdown ?? []) {
+      const current = byKey.get(row.key);
+      if (!current) {
+        byKey.set(row.key, { ...row });
+        continue;
+      }
+      current.tokens += row.tokens;
+      current.apiCostUsd = roundedUsageCost(
+        current.apiCostUsd + row.apiCostUsd,
+      );
+      current.apiCostUsdText = String(current.apiCostUsd);
+      current.observationCount += row.observationCount;
+    }
+  }
+  return { ...usage, groupBy, series, breakdown: [...byKey.values()] };
+}
+
 export function createShowcaseBackend() {
   return createFakeBackend({
     canOpenMain: true,
     isShowcase: true,
     settings: { displayTimeZone: "Asia/Tokyo", timezoneConfirmed: true },
     overview,
+    usage,
+    onGetUsage: (input) => showcaseUsageByGroup(input.groupBy),
     onGetOverview: (privacyMode) => (privacyMode ? privacyOverview : overview),
     hubs: [hub],
     limitSeries: [limitSeries],

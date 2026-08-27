@@ -85,6 +85,9 @@ var restoreEnumContracts = map[string]map[string][]string{
 	"usage_limit_observations": {
 		"dedupe_state": {"canonical", "duplicate", "conflict"},
 	},
+	"usage_analysis_observations": {
+		"dedupe_state": {"canonical", "duplicate", "conflict"},
+	},
 	"hub_account_candidates": {
 		"state": {"unconfirmed", "associated", "rejected", "archived_reconfirmation"},
 	},

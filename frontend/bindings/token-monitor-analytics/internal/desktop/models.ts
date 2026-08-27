@@ -61,6 +61,18 @@ export interface CalculationIntervalSnapshot {
     "boundaries": CalculationBoundarySnapshot[] | null;
     "role": string;
     "roleLabel": string;
+    "estimatedLimit"?: number | null;
+    "estimatedLimitLabel"?: string;
+    "monthlyEquivalentLimit"?: number | null;
+    "monthlyEquivalentLimitLabel"?: string;
+    "standardPriceUsdMonthlyPerSeat"?: number | null;
+    "standardPriceSourceUrl"?: string;
+    "standardPriceValidFrom"?: string;
+    "standardPriceValidTo"?: string;
+    "valueMultiplier"?: number | null;
+    "valueMultiplierLabel"?: string;
+    "valueReasonCode"?: string;
+    "valueReason"?: string;
 }
 
 export interface CandidateCorrectionInput {
@@ -586,6 +598,7 @@ export interface LimitSeriesSnapshot {
     "limitDefinitionId": string;
     "limitDefinitionName": string;
     "cycleType": string;
+    "billingConfirmation": string;
     "usageLimitSourceId": string;
     "associationId": string;
     "normalizedKind": string;
@@ -614,6 +627,16 @@ export interface LimitSeriesSnapshot {
     "latestValidReference": EstimationReferenceSnapshot | null;
     "estimatedLimit": number | null;
     "estimatedLimitLabel": string;
+    "monthlyEquivalentLimit": number | null;
+    "monthlyEquivalentLimitLabel": string;
+    "standardPriceUsdMonthlyPerSeat": number | null;
+    "standardPriceSourceUrl": string;
+    "standardPriceValidFrom": string;
+    "standardPriceValidTo": string;
+    "valueMultiplier": number | null;
+    "valueMultiplierLabel": string;
+    "valueReasonCode": string;
+    "valueReason": string;
 }
 
 export interface LinkingSnapshot {
@@ -1011,6 +1034,18 @@ export interface UpdateServiceInput {
     "archived": boolean;
 }
 
+export interface UsageBreakdownSnapshot {
+    "key": string;
+    "categoryKey": string;
+    "label": string;
+    "attribution": string;
+    "tokens": number;
+    "apiCostUsd": number;
+    "apiCostUsdText": string;
+    "observationCount": number;
+    "evidenceRoute": string;
+}
+
 export interface UsageCostAssociationInput {
     "id": string;
     "usageCostSourceId": string;
@@ -1059,6 +1094,45 @@ export interface UsageCostSourceSnapshot {
     "createdAt": string;
 }
 
+export interface UsageEvidenceSnapshot {
+    "sourceId": string;
+    "startObservationId": string;
+    "endObservationId": string;
+    "startSnapshotId": string;
+    "endSnapshotId": string;
+    "hubName": string;
+    "collectionDeviceId": string;
+    "deviceId": string;
+    "rawServiceIdentifier": string;
+    "startAt": string;
+    "endAt": string;
+    "jsonPath": string;
+    "m08Route": string;
+}
+
+export interface UsageExportSnapshot {
+    "filename": string;
+    "mimeType": string;
+    "content": string;
+}
+
+export interface UsageFilterInput {
+    "from": string;
+    "to": string;
+    "displayTimeZone": string;
+    "granularity": string;
+    "groupBy": string;
+    "hubId": string;
+    "collectionDeviceId": string;
+    "deviceId": string;
+    "serviceId": string;
+    "rawServiceIdentifier": string;
+    "logicalAccountId": string;
+    "planVersionId": string;
+    "limitDefinitionId": string;
+    "model": string;
+}
+
 export interface UsageLimitAssociationInput {
     "id": string;
     "usageLimitSourceId": string;
@@ -1090,4 +1164,57 @@ export interface UsageLimitSourceSnapshot {
     "normalizedMetric": string;
     "normalizedLabel": string;
     "createdAt": string;
+}
+
+export interface UsageNativeAmountSnapshot {
+    "observationId": string;
+    "hubName": string;
+    "deviceId": string;
+    "serviceIdentifier": string;
+    "label": string;
+    "metric": string;
+    "used": string;
+    "limit": string;
+    "remaining": string;
+    "currency": string;
+    "observedAt": string;
+    "m08Route": string;
+}
+
+export interface UsagePointSnapshot {
+    "periodStart": string;
+    "periodEnd": string;
+    "tokens": number;
+    "sharedTokens": number;
+    "apiCostUsd": number;
+    "sharedApiCostUsd": number;
+    "apiCostUsdText": string;
+    "sharedApiCostUsdText": string;
+    "observationCount": number;
+    "breakdown": UsageBreakdownSnapshot[] | null;
+}
+
+export interface UsageSnapshot {
+    "generatedAt": string;
+    "from": string;
+    "to": string;
+    "displayTimeZone": string;
+    "granularity": string;
+    "groupBy": string;
+    "summary": UsageSummarySnapshot;
+    "series": UsagePointSnapshot[] | null;
+    "breakdown": UsageBreakdownSnapshot[] | null;
+    "nativeAmounts": UsageNativeAmountSnapshot[] | null;
+    "evidence": UsageEvidenceSnapshot[] | null;
+}
+
+export interface UsageSummarySnapshot {
+    "tokens": number;
+    "sharedTokens": number;
+    "apiCostUsd": number;
+    "sharedApiCostUsd": number;
+    "apiCostUsdText": string;
+    "sharedApiCostUsdText": string;
+    "sourceCount": number;
+    "observationCount": number;
 }

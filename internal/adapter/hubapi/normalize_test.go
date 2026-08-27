@@ -203,8 +203,26 @@ func TestNormalizeStatsUnknownFieldsDoNotChangeExtraction(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("QL-REP-03 unknown fields preserve the existing extraction meaning", func(t *testing.T) {
-		if !reflect.DeepEqual(base.Costs, withUnknown.Costs) || !reflect.DeepEqual(base.Limits, withUnknown.Limits) {
+		if !reflect.DeepEqual(base.Costs, withUnknown.Costs) || !reflect.DeepEqual(base.Usage, withUnknown.Usage) || !reflect.DeepEqual(base.Limits, withUnknown.Limits) {
 			t.Fatalf("unknown fields changed normalized output: base=%+v extended=%+v", base, withUnknown)
+		}
+	})
+}
+
+func TestNormalizeStatsExtractsPhaseTwoUsageAndNativeAmounts(t *testing.T) {
+	raw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clients":{"codex":120},"clientCosts":{"codex":2.75},"clientModels":{"codex":{"gpt-5":100,"gpt-5-mini":20}},"clientModelCosts":{"codex":{"gpt-5":2.5,"gpt-5-mini":0.25}}}},"limits":{"providers":[{"provider":"codex","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"balance","metric":"credits","label":"Credits","used":58,"limit":100,"remaining":42,"currency":"CREDITS"}]}]}}]}`
+	result, err := NormalizeStats([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("P2-USAGE-01 extracts cumulative totals and model breakdown", func(t *testing.T) {
+		if len(result.Usage) != 1 || result.Usage[0].TokenCount != 120 || result.Usage[0].APICostUSDText != "2.75" || result.Usage[0].ModelTokens["gpt-5"] != 100 || result.Usage[0].ModelCosts["gpt-5-mini"] != "0.25" {
+			t.Fatalf("usage = %#v", result.Usage)
+		}
+	})
+	t.Run("P2-USAGE-06 keeps native amount and currency", func(t *testing.T) {
+		if len(result.Limits) != 1 || result.Limits[0].AbsoluteUsedText != "58" || result.Limits[0].AbsoluteLimitText != "100" || result.Limits[0].AbsoluteRemainingText != "42" || result.Limits[0].Currency != "CREDITS" {
+			t.Fatalf("limit amount = %#v", result.Limits)
 		}
 	})
 }

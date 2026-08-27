@@ -23,6 +23,7 @@ type CatalogStore interface {
 	CreatePlanVersion(context.Context, domain.PlanVersion) error
 	CreatePlanLimitRule(context.Context, domain.PlanLimitRule) error
 	CreateStandardPrice(context.Context, domain.StandardPrice) error
+	UpdateStandardPrice(context.Context, domain.StandardPrice) error
 	CreateIdentificationCandidate(context.Context, domain.IdentificationCandidate) error
 	ConfirmIdentificationCandidate(context.Context, string, string, string, time.Time) error
 	RejectIdentificationCandidate(context.Context, string, time.Time) error
@@ -213,6 +214,16 @@ func (u *CatalogUsecase) RegisterStandardPrice(ctx context.Context, price domain
 	}
 	if err := u.store.CreateStandardPrice(ctx, price); err != nil {
 		return fmt.Errorf("register standard price: %w", err)
+	}
+	return nil
+}
+
+func (u *CatalogUsecase) EditStandardPrice(ctx context.Context, price domain.StandardPrice) error {
+	if err := price.Validate(); err != nil {
+		return err
+	}
+	if err := u.store.UpdateStandardPrice(ctx, price); err != nil {
+		return fmt.Errorf("edit standard price: %w", err)
 	}
 	return nil
 }

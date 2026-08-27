@@ -19,6 +19,7 @@ const series: LimitSeriesSnapshot = {
   limitDefinitionId: "definition-1",
   limitDefinitionName: "Weekly",
   cycleType: "weekly",
+  billingConfirmation: "not_applicable",
   usageLimitSourceId: "source-1",
   associationId: "association-1",
   normalizedKind: "weekly",
@@ -136,6 +137,16 @@ const series: LimitSeriesSnapshot = {
   latestValidReference: null,
   estimatedLimit: 100,
   estimatedLimitLabel: "100",
+  monthlyEquivalentLimit: null,
+  monthlyEquivalentLimitLabel: "",
+  standardPriceUsdMonthlyPerSeat: null,
+  standardPriceSourceUrl: "",
+  standardPriceValidFrom: "",
+  standardPriceValidTo: "",
+  valueMultiplier: null,
+  valueMultiplierLabel: "",
+  valueReasonCode: "",
+  valueReason: "",
 };
 
 const seriesDetail: LimitSeriesDetailSnapshot = {

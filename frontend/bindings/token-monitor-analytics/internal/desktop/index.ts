@@ -11,6 +11,7 @@ import * as HubService from "./hubservice.js";
 import * as OverviewService from "./overviewservice.js";
 import * as ReviewService from "./reviewservice.js";
 import * as SettingsService from "./settingsservice.js";
+import * as UsageService from "./usageservice.js";
 import * as WindowService from "./windowservice.js";
 export {
     AccountService,
@@ -23,6 +24,7 @@ export {
     OverviewService,
     ReviewService,
     SettingsService,
+    UsageService,
     WindowService
 };
 
@@ -125,12 +127,20 @@ export type {
     UpdateLogicalAccountInput,
     UpdatePlanHistoryInput,
     UpdateServiceInput,
+    UsageBreakdownSnapshot,
     UsageCostAssociationInput,
     UsageCostAssociationSnapshot,
     UsageCostSourceCompletenessInput,
     UsageCostSourceCompletenessSnapshot,
     UsageCostSourceSnapshot,
+    UsageEvidenceSnapshot,
+    UsageExportSnapshot,
+    UsageFilterInput,
     UsageLimitAssociationInput,
     UsageLimitAssociationSnapshot,
-    UsageLimitSourceSnapshot
+    UsageLimitSourceSnapshot,
+    UsageNativeAmountSnapshot,
+    UsagePointSnapshot,
+    UsageSnapshot,
+    UsageSummarySnapshot
 } from "./models.js";

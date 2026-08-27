@@ -634,6 +634,63 @@ func (l *Lifecycle) CreateStandardPrice(ctx context.Context, price StandardPrice
 	return nil
 }
 
+func (l *Lifecycle) UpdateStandardPrice(ctx context.Context, price StandardPrice) error {
+	if err := price.Validate(); err != nil {
+		return err
+	}
+	database, err := l.DB()
+	if err != nil {
+		return err
+	}
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin standard price update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var before StandardPrice
+	var from, created string
+	var to sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT standard_price_id, plan_version_id, usd_monthly_per_seat, source_url, valid_from, valid_to, created_at FROM standard_prices WHERE standard_price_id = ?`, price.ID).
+		Scan(&before.ID, &before.PlanVersionID, &before.USDMonthlyPerSeat, &before.SourceURL, &from, &to, &created); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("standard price was not found")
+		}
+		return fmt.Errorf("read standard price before update: %w", err)
+	}
+	before.ValidFrom, err = parseUTC(from)
+	if err != nil {
+		return fmt.Errorf("parse standard price start: %w", err)
+	}
+	if to.Valid {
+		value, parseErr := parseUTC(to.String)
+		if parseErr != nil {
+			return fmt.Errorf("parse standard price end: %w", parseErr)
+		}
+		before.ValidTo = &value
+	}
+	before.CreatedAt, err = parseUTC(created)
+	if err != nil {
+		return fmt.Errorf("parse standard price creation time: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE standard_prices SET plan_version_id = ?, usd_monthly_per_seat = ?, source_url = ?, valid_from = ?, valid_to = ? WHERE standard_price_id = ?`,
+		price.PlanVersionID, price.USDMonthlyPerSeat, price.SourceURL, catalogPeriodText(price.ValidFrom), optionalCatalogPeriodText(price.ValidTo), price.ID)
+	if err != nil {
+		return fmt.Errorf("update standard price: %w", err)
+	}
+	if err := requireOneCatalog(result, "standard price"); err != nil {
+		return err
+	}
+	mutation := catalogMutationForPeriod("update", "standard_price", price.ID, price.CreatedAt, price.ValidFrom, price.ValidTo)
+	if err := appendCatalogAuditAndRequest(ctx, tx, mutation, before, price); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit standard price update: %w", err)
+	}
+	return nil
+}
+
 func (l *Lifecycle) CreateIdentificationCandidate(ctx context.Context, candidate IdentificationCandidate) error {
 	if candidate.State == "" {
 		candidate.State = domain.CandidateUnconfirmed

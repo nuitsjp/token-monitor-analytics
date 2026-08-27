@@ -74,16 +74,11 @@ function Get-ObjectProperty($object, [string]$name) {
 
 function Get-RequiredIds([string]$document) {
     # Keep this extraction contract aligned with check-requirements.ps1. The
-    # phase gate excludes only P2 identifiers; API/DM/CALC and other Phase 1
-    # namespaces remain in scope.
+    # acceptance gate includes Phase 1 and Phase 2 identifiers.
     $pattern = '[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+-[0-9]{2}'
     $ids = @()
     foreach ($match in [regex]::Matches($document, $pattern)) {
-        $id = $match.Value
-        if ($id.StartsWith('P2-', [System.StringComparison]::Ordinal) -or $id.Contains('-P2-')) {
-            continue
-        }
-        $ids += $id
+        $ids += $match.Value
     }
     return @($ids | Sort-Object -Unique)
 }
@@ -193,7 +188,7 @@ $requirementsPath = Join-Path $repositoryRoot 'docs/requirements.md'
 $designSystemPath = Join-Path $repositoryRoot 'docs/design-system.md'
 $requiredIds = @(Get-RequiredIds (Read-Utf8 $requirementsPath))
 $screenKeys = @(
-    'SCREEN-COMMON', 'SCREEN-T01', 'SCREEN-M00', 'SCREEN-M01', 'SCREEN-M03',
+    'SCREEN-COMMON', 'SCREEN-T01', 'SCREEN-M00', 'SCREEN-M01', 'SCREEN-M02', 'SCREEN-M03',
     'SCREEN-M04', 'SCREEN-M05', 'SCREEN-M06', 'SCREEN-M07', 'SCREEN-M08',
     'SCREEN-M09', 'SCREEN-M10', 'SCREEN-M11'
 )

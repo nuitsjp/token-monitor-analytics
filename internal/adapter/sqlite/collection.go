@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -62,6 +63,29 @@ type CostObservation struct {
 	ValueFingerprint          string
 }
 
+type UsageObservation struct {
+	ObservationID             string
+	UsageCostSourceID         string
+	SnapshotID                string
+	HubID                     string
+	DeviceID                  string
+	RawServiceIdentifier      string
+	UsageUpdatedAt            time.Time
+	TokenCount                int64
+	APICostUSDText            string
+	ModelTokens               map[string]int64
+	ModelCosts                map[string]string
+	SourceTimezone            string
+	SourceLocalDate           string
+	NormalizationGeneration   int64
+	NormalizationRuleVersion  string
+	NormalizationLogicVersion string
+	JSONPath                  string
+	DedupeState               string
+	DedupeKey                 string
+	ValueFingerprint          string
+}
+
 type LimitObservation struct {
 	ObservationID             string
 	UsageLimitSourceID        string
@@ -79,6 +103,10 @@ type LimitObservation struct {
 	NormalizedLabel           string
 	PlanLabel                 string
 	UsedPercent               *float64
+	AbsoluteUsedText          string
+	AbsoluteLimitText         string
+	AbsoluteRemainingText     string
+	Currency                  string
 	ResetsAt                  *time.Time
 	SyncUploadIntervalMS      *int64
 	LimitsRefreshMS           *int64
@@ -282,6 +310,11 @@ func (l *Lifecycle) insertLimitObservationsTx(ctx context.Context, tx *sql.Tx, o
 			observation.JSONPath, state, observation.DedupeKey, observation.ValueFingerprint); err != nil {
 			return fmt.Errorf("insert limit observation: %w", err)
 		}
+		if observation.AbsoluteUsedText != "" || observation.AbsoluteLimitText != "" || observation.AbsoluteRemainingText != "" || observation.Currency != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO usage_limit_amount_observations (observation_id, used_text, limit_text, remaining_text, currency) VALUES (?, ?, ?, ?, ?)`, observation.ObservationID, nullText(observation.AbsoluteUsedText), nullText(observation.AbsoluteLimitText), nullText(observation.AbsoluteRemainingText), nullText(observation.Currency)); err != nil {
+				return fmt.Errorf("insert limit amount observation: %w", err)
+			}
+		}
 	}
 	return nil
 }
@@ -290,7 +323,13 @@ func (l *Lifecycle) insertLimitObservationsTx(ctx context.Context, tx *sql.Tx, o
 // side fails, no normalized row is committed and the raw snapshot remains the
 // evidence of the attempted collection.
 func (l *Lifecycle) InsertObservations(ctx context.Context, costs []CostObservation, limits []LimitObservation) error {
-	if len(costs) == 0 && len(limits) == 0 {
+	return l.InsertAllObservations(ctx, costs, nil, limits)
+}
+
+// InsertAllObservations commits every normalized observation derived from one
+// raw snapshot in one transaction.
+func (l *Lifecycle) InsertAllObservations(ctx context.Context, costs []CostObservation, usage []UsageObservation, limits []LimitObservation) error {
+	if len(costs) == 0 && len(usage) == 0 && len(limits) == 0 {
 		return nil
 	}
 	database, err := l.DB()
@@ -305,11 +344,58 @@ func (l *Lifecycle) InsertObservations(ctx context.Context, costs []CostObservat
 	if err := l.insertCostObservationsTx(ctx, tx, costs); err != nil {
 		return err
 	}
+	if err := l.insertUsageObservationsTx(ctx, tx, usage); err != nil {
+		return err
+	}
 	if err := l.insertLimitObservationsTx(ctx, tx, limits); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit observations: %w", err)
+	}
+	return nil
+}
+
+func (l *Lifecycle) insertUsageObservationsTx(ctx context.Context, tx *sql.Tx, observations []UsageObservation) error {
+	for _, observation := range observations {
+		if err := validateUsageObservation(observation); err != nil {
+			return err
+		}
+		if observation.UsageCostSourceID != "" {
+			if err := ensureUsageCostSourceTx(ctx, tx, UsageCostSource{ID: observation.UsageCostSourceID, HubID: observation.HubID, DeviceID: observation.DeviceID, RawServiceIdentifier: observation.RawServiceIdentifier, CreatedAt: observation.UsageUpdatedAt}); err != nil {
+				return err
+			}
+		}
+		state, err := usageDedupeState(ctx, tx, observation)
+		if err != nil {
+			return err
+		}
+		if state == "conflict" {
+			if _, err := tx.ExecContext(ctx, `UPDATE usage_analysis_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ? AND value_fingerprint <> ?`, observation.HubID, observation.DedupeKey, observation.ValueFingerprint); err != nil {
+				return fmt.Errorf("mark usage conflict: %w", err)
+			}
+		}
+		modelTokens, err := json.Marshal(observation.ModelTokens)
+		if err != nil {
+			return fmt.Errorf("encode usage model tokens: %w", err)
+		}
+		modelCosts, err := json.Marshal(observation.ModelCosts)
+		if err != nil {
+			return fmt.Errorf("encode usage model costs: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO usage_analysis_observations
+			(usage_observation_id, snapshot_id, hub_id, device_id, raw_service_identifier, usage_updated_at,
+			token_count, api_cost_usd_text, model_tokens_json, model_costs_json, source_timezone, source_local_date,
+			normalization_generation, normalization_rule_version, normalization_logic_version, json_path,
+			dedupe_state, dedupe_key, value_fingerprint)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			observation.ObservationID, observation.SnapshotID, observation.HubID, observation.DeviceID,
+			observation.RawServiceIdentifier, utcText(observation.UsageUpdatedAt), observation.TokenCount,
+			nullText(observation.APICostUSDText), string(modelTokens), string(modelCosts), nullText(observation.SourceTimezone),
+			nullText(observation.SourceLocalDate), observation.NormalizationGeneration, observation.NormalizationRuleVersion,
+			observation.NormalizationLogicVersion, observation.JSONPath, state, observation.DedupeKey, observation.ValueFingerprint); err != nil {
+			return fmt.Errorf("insert usage observation: %w", err)
+		}
 	}
 	return nil
 }
@@ -563,6 +649,13 @@ func validateCostObservation(value CostObservation) error {
 	return nil
 }
 
+func validateUsageObservation(value UsageObservation) error {
+	if value.ObservationID == "" || value.SnapshotID == "" || value.HubID == "" || value.DeviceID == "" || value.RawServiceIdentifier == "" || value.UsageUpdatedAt.IsZero() || value.TokenCount < 0 || value.NormalizationGeneration <= 0 || value.JSONPath == "" || value.DedupeKey == "" || value.ValueFingerprint == "" {
+		return errors.New("usage observation has an empty or invalid required field")
+	}
+	return nil
+}
+
 func validateLimitObservation(value LimitObservation) error {
 	if value.ObservationID == "" || value.SnapshotID == "" || value.HubID == "" || value.DeviceID == "" || value.RawServiceIdentifier == "" || value.ProviderUpdatedAt.IsZero() || value.JSONPath == "" || value.DedupeKey == "" || value.ValueFingerprint == "" || value.AnalyticsIntervalSeconds <= 0 {
 		return errors.New("limit observation has an empty required field")
@@ -581,6 +674,21 @@ func costDedupeState(ctx context.Context, tx *sql.Tx, value CostObservation) (st
 		return "", fmt.Errorf("check cost duplicate: %w", err)
 	}
 	if amount == value.ValueFingerprint && existing != "conflict" {
+		return "duplicate", nil
+	}
+	return "conflict", nil
+}
+
+func usageDedupeState(ctx context.Context, tx *sql.Tx, value UsageObservation) (string, error) {
+	var existing, fingerprint string
+	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_analysis_observations WHERE hub_id = ? AND dedupe_key = ? LIMIT 1`, value.HubID, value.DedupeKey).Scan(&existing, &fingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "canonical", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("check usage duplicate: %w", err)
+	}
+	if fingerprint == value.ValueFingerprint && existing != "conflict" {
 		return "duplicate", nil
 	}
 	return "conflict", nil

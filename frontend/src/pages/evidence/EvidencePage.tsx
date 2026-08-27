@@ -24,6 +24,7 @@ import type {
   LimitSeriesSnapshot,
   RawSnapshotDetail,
   RawSnapshotSnapshot,
+  UsageSnapshot,
 } from "../../lib/backend";
 import type { HubSnapshot } from "../../../bindings/token-monitor-analytics/internal/desktop/models.js";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -94,7 +95,12 @@ const useStyles = makeStyles({
 });
 
 type EvidenceTab =
-  "attempts" | "raw" | "observations" | "series" | "calculation";
+  | "attempts"
+  | "raw"
+  | "observations"
+  | "series"
+  | "calculation"
+  | "aggregation";
 
 export function EvidencePage({
   backend,
@@ -108,6 +114,7 @@ export function EvidencePage({
   const targetObservationID = searchParams.get("observationId") ?? "";
   const targetSnapshotID = searchParams.get("snapshotId") ?? "";
   const targetSeriesID = searchParams.get("seriesId") ?? "";
+  const targetUsageObservationID = searchParams.get("usageObservationId") ?? "";
   const [hubs, setHubs] = useState<HubSnapshot[]>([]);
   const [hubID, setHubID] = useState("");
   const [tab, setTab] = useState<EvidenceTab>(
@@ -123,6 +130,7 @@ export function EvidencePage({
   const [selectedSeriesID, setSelectedSeriesID] = useState(targetSeriesID);
   const [seriesDetail, setSeriesDetail] =
     useState<LimitSeriesDetailSnapshot | null>(null);
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const [rawDetail, setRawDetail] = useState<RawSnapshotDetail | null>(null);
   const [rawMode, setRawMode] = useState<"tree" | "text">("tree");
   const [rawQuery, setRawQuery] = useState("");
@@ -130,11 +138,13 @@ export function EvidencePage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [seriesError, setSeriesError] = useState("");
-  const activeTab = targetObservationID
-    ? "observations"
-    : targetSnapshotID
-      ? "raw"
-      : tab;
+  const activeTab = targetUsageObservationID
+    ? "aggregation"
+    : targetObservationID
+      ? "observations"
+      : targetSnapshotID
+        ? "raw"
+        : tab;
   const activeQuery = targetObservationID || targetSnapshotID || query;
 
   const loadHubs = useCallback(async () => {
@@ -169,11 +179,37 @@ export function EvidencePage({
     }
   }, [backend]);
 
+  const loadUsage = useCallback(async () => {
+    try {
+      setUsage(
+        await backend.getUsage({
+          from: "2000-01-01T00:00:00Z",
+          to: "2100-01-01T00:00:00Z",
+          displayTimeZone,
+          granularity: "day",
+          groupBy: "hub",
+          hubId: "",
+          collectionDeviceId: "",
+          deviceId: "",
+          serviceId: "",
+          rawServiceIdentifier: "",
+          logicalAccountId: "",
+          planVersionId: "",
+          limitDefinitionId: "",
+          model: "",
+        }),
+      );
+    } catch (cause) {
+      setSeriesError(errorMessage(cause));
+    }
+  }, [backend, displayTimeZone]);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadHubs();
     void loadSeries();
-  }, [loadHubs, loadSeries]);
+    void loadUsage();
+  }, [loadHubs, loadSeries, loadUsage]);
 
   useEffect(() => {
     if (!selectedSeriesID) return;
@@ -336,6 +372,7 @@ export function EvidencePage({
         <Tab value="observations">元観測</Tab>
         <Tab value="series">利用枠系列</Tab>
         <Tab value="calculation">計算根拠</Tab>
+        <Tab value="aggregation">集計根拠</Tab>
       </TabList>
       {error && (
         <MessageBar intent="error">
@@ -467,9 +504,15 @@ export function EvidencePage({
           displayTimeZone={displayTimeZone}
           onSelect={setSelectedSeriesID}
         />
-      ) : (
+      ) : activeTab === "calculation" ? (
         <CalculationTrace
           detail={seriesDetail}
+          displayTimeZone={displayTimeZone}
+        />
+      ) : (
+        <AggregationTrace
+          usage={usage}
+          targetObservationID={targetUsageObservationID}
           displayTimeZone={displayTimeZone}
         />
       )}
@@ -840,6 +883,69 @@ function SeriesDetail({
             </div>
           ))}
         </div>
+      )}
+    </section>
+  );
+}
+
+function AggregationTrace({
+  usage,
+  targetObservationID,
+  displayTimeZone,
+}: {
+  usage: UsageSnapshot | null;
+  targetObservationID: string;
+  displayTimeZone: string;
+}) {
+  const styles = useStyles();
+  if (!usage) return <Body1>集計根拠を読み込み中です。</Body1>;
+  const evidence = usage.evidence ?? [];
+  return (
+    <section className={styles.list} aria-label="集計根拠">
+      <article className={styles.row}>
+        <Subtitle1 as="h2">集計条件</Subtitle1>
+        <Body1>
+          {formatInstant(usage.from, displayTimeZone)} ～{" "}
+          {formatInstant(usage.to, displayTimeZone)} / {usage.granularity} /{" "}
+          {usage.groupBy}
+        </Body1>
+        <Body1>
+          累積観測の隣接差分 {usage.summary.observationCount} 件、利用額ソース{" "}
+          {usage.summary.sourceCount} 件を使用しました。
+        </Body1>
+      </article>
+      {evidence.length === 0 ? (
+        <Body1>対象期間の集計根拠はありません。</Body1>
+      ) : (
+        evidence.map((item) => (
+          <article
+            className={`${styles.row} ${item.endObservationId === targetObservationID ? styles.targetRow : ""}`}
+            key={`${item.sourceId}-${item.endObservationId}`}
+          >
+            <Subtitle1 as="h2">
+              {item.hubName} / {item.rawServiceIdentifier}
+            </Subtitle1>
+            <Body1>
+              隣接観測: {item.startObservationId} → {item.endObservationId}
+            </Body1>
+            <div className={styles.meta}>
+              {formatInstant(item.startAt, displayTimeZone)} ～{" "}
+              {formatInstant(item.endAt, displayTimeZone)}
+            </div>
+            <div className={styles.meta}>
+              利用額ソース: {item.sourceId} / Hub 端末レコード: {item.deviceId}
+            </div>
+            <div className={styles.meta}>
+              原 JSON: {item.startSnapshotId} → {item.endSnapshotId} / JSON
+              パス: {item.jsonPath}
+            </div>
+            <Link
+              to={`/evidence?snapshotId=${encodeURIComponent(item.endSnapshotId)}`}
+            >
+              終点の原 JSON を表示
+            </Link>
+          </article>
+        ))
       )}
     </section>
   );

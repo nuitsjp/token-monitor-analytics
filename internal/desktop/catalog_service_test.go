@@ -37,6 +37,15 @@ func TestCatalogServiceUpdatesPreserveImmutableFieldsAndUseInjectedClock(t *test
 	if err := service.SetBaselinePlan(ctx, created.ID, "plan-1"); err != nil {
 		t.Fatal(err)
 	}
+	if err := service.CreatePlanVersion(ctx, PlanVersionInput{ID: "version-1", PlanID: "plan-1", Name: "v1", ValidFrom: "2026-08-01T00:00:00Z", OfficialSourceURL: "https://vendor.example/plan"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CreateStandardPrice(ctx, StandardPriceInput{ID: "price-1", PlanVersionID: "version-1", USDMonthlyPerSeat: 20, SourceURL: "https://vendor.example/old-price", ValidFrom: "2026-08-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateStandardPrice(ctx, StandardPriceInput{ID: "price-1", PlanVersionID: "version-1", USDMonthlyPerSeat: 25, SourceURL: "https://vendor.example/new-price", ValidFrom: "2026-08-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := service.UpdateServiceIdentifierMapping(ctx, ServiceIdentifierMappingInput{ID: "mapping-1", Kind: "usage_limit", RawIdentifier: "raw-limit-renamed", ServiceID: created.ID, ValidFrom: "2026-08-01T00:00:00Z"}); err != nil {
 		t.Fatal(err)
@@ -60,6 +69,15 @@ func TestCatalogServiceUpdatesPreserveImmutableFieldsAndUseInjectedClock(t *test
 	if err != nil || len(plans) != 1 || plans[0].CreatedAt.IsZero() || plans[0].Name != "Plan-updated" || !plans[0].IsBaseline {
 		t.Fatalf("updated plan = %#v, err = %v", plans, err)
 	}
+	prices, err := lifecycle.ListStandardPrices(ctx, "version-1")
+	if err != nil || len(prices) != 1 || prices[0].USDMonthlyPerSeat != 25 || prices[0].SourceURL != "https://vendor.example/new-price" || prices[0].CreatedAt.IsZero() {
+		t.Fatalf("updated standard price = %#v, err = %v", prices, err)
+	}
+	t.Run("P2-VALUE-00 standard price is registered and edited with source metadata", func(t *testing.T) {
+		if len(prices) != 1 || prices[0].PlanVersionID != "version-1" || prices[0].USDMonthlyPerSeat != 25 || prices[0].SourceURL != "https://vendor.example/new-price" || prices[0].ValidFrom.IsZero() {
+			t.Fatalf("standard price metadata = %#v", prices)
+		}
+	})
 	database, err := lifecycle.DB()
 	if err != nil {
 		t.Fatal(err)

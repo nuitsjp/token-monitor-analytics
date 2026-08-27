@@ -193,7 +193,7 @@ describe("OverviewPage", () => {
     await user.keyboard("{Enter}");
   });
 
-  it("shows zero-valued Phase 1 summaries without Phase 2 cards", async () => {
+  it("shows zero-valued summaries including the Phase 2 usage card", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "概要" })).toBeVisible();
     expect(screen.getByText("推定状態")).toBeVisible();
@@ -206,7 +206,8 @@ describe("OverviewPage", () => {
     expect(
       screen.queryByText("利用増加を最近確認した利用枠"),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText(/当日.*トークン/)).not.toBeInTheDocument();
+    expect(screen.getByText("当日トークン")).toBeInTheDocument();
+    expect(screen.getByText("当月トークン")).toBeInTheDocument();
   });
 
   it("shows restore maintenance instead of operational values", async () => {

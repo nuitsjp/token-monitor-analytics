@@ -139,3 +139,7 @@ export function UpdateService(input: $models.UpdateServiceInput): $CancellablePr
 export function UpdateServiceIdentifierMapping(input: $models.ServiceIdentifierMappingInput): $CancellablePromise<void> {
     return $Call.ByID(483690134, input);
 }
+
+export function UpdateStandardPrice(input: $models.StandardPriceInput): $CancellablePromise<void> {
+    return $Call.ByID(1867047818, input);
+}

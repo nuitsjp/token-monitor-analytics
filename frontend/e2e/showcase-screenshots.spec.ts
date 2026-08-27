@@ -47,7 +47,17 @@ async function captureCurrent(page: Page, file: string) {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
     );
   });
-  await page.screenshot({ path: output(file) });
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await page.screenshot({ path: output(file) });
+      return;
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(100 * (attempt + 1));
+    }
+  }
+  throw lastError;
 }
 
 async function captureTab(page: Page, name: string, file: string) {
@@ -67,9 +77,7 @@ test("captures populated showcase screens at their intended window sizes", async
   await captureCurrent(page, "T01-compact.png");
 
   await page.getByRole("button", { name: "利用枠を展開" }).click();
-  await expect(
-    page.getByRole("button", { name: "要確認 1 件" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "要確認 1 件" })).toBeVisible();
   await page.setViewportSize({ width: 420, height: 600 });
   await captureCurrent(page, "T01-compact-expanded.png");
   await page.getByRole("button", { name: "プライバシーモード" }).click();
@@ -83,6 +91,40 @@ test("captures populated showcase screens at their intended window sizes", async
     "M00-M01-overview.png",
     "取得成功",
   );
+  await captureMain(
+    page,
+    "/usage",
+    "利用状況分析",
+    "M02-usage.png",
+    "18,742,680",
+  );
+  const usageAnalysis = page.getByRole("article", {
+    name: "利用量と利用金額の時系列分析",
+  });
+  await expect(usageAnalysis).toBeVisible();
+  await usageAnalysis.screenshot({ path: output("M02-usage-analysis.png") });
+  const usageChart = page.getByRole("group", {
+    name: "利用量とAPI換算利用金額の分類別積み上げ棒グラフ",
+  });
+  await usageChart.getByRole("button").last().click();
+  await expect(page.getByText("選択中の期間")).toBeVisible();
+  await usageAnalysis.screenshot({
+    path: output("M02-usage-analysis-period.png"),
+  });
+  await page.getByRole("button", { name: "期間合計へ戻す" }).click();
+  await page
+    .getByRole("button", { name: "詳細フィルター", exact: true })
+    .click();
+  await expect(page.getByLabel("プラン版")).toBeVisible();
+  await captureCurrent(page, "M02-usage-filters.png");
+  await page
+    .getByRole("button", { name: "詳細フィルター", exact: true })
+    .click();
+  await page.getByRole("button", { name: "CSV", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "利用実績の出力確認" }),
+  ).toBeVisible();
+  await captureCurrent(page, "M02-usage-export.png");
   await captureMain(
     page,
     "/limits",
@@ -146,6 +188,8 @@ test("captures populated showcase screens at their intended window sizes", async
   await captureTab(page, "利用枠定義", "M06-catalog-limit-definitions.png");
   await captureTab(page, "プラン", "M06-catalog-plans.png");
   await captureTab(page, "プラン版・倍率", "M06-catalog-plan-versions.png");
+  await captureTab(page, "標準価格", "M06-catalog-standard-prices.png");
+  await expect(page.getByText("$20.00 / 月 / 1シート")).toBeVisible();
   await captureMain(
     page,
     "/hubs",
@@ -182,6 +226,10 @@ test("captures populated showcase screens at their intended window sizes", async
   await captureTab(page, "元観測", "M08-evidence-observations.png");
   await captureTab(page, "利用枠系列", "M08-evidence-limit-series.png");
   await captureTab(page, "計算根拠", "M08-evidence-calculation.png");
+  await captureTab(page, "集計根拠", "M08-evidence-aggregation.png");
+  await expect(
+    page.getByText("usage-codex-start → usage-codex-current"),
+  ).toBeVisible();
   await captureMain(
     page,
     "/data",

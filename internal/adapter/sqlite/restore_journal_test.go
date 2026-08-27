@@ -38,7 +38,7 @@ func TestRestoreJournalRoundTripUsesOnlyFixedMetadata(t *testing.T) {
 	want := restoreJournal{
 		JournalVersion: restoreJournalVersion, Stage: restoreStageReplacementMoved,
 		OperationID: "operation-one", ArtifactSHA256: repeatHex("e"),
-		BackupFormatVersion: 1, SchemaVersion: 13,
+		BackupFormatVersion: 1, SchemaVersion: CurrentSchemaVersion,
 		RestoredAt: time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano), AuditID: "audit-one",
 		OriginalWAL: true, OriginalSHM: true,
 	}

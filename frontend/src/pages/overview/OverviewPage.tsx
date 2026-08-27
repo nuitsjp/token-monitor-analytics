@@ -30,11 +30,18 @@ import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
 import type {
   DataManagementStateSnapshot,
   FrontendAdapter,
+  UsageSnapshot,
 } from "../../lib/backend";
 import {
   formatOverviewBytes,
   formatOverviewInstant,
 } from "../../lib/overviewDisplay";
+import {
+  addLocalDays,
+  currentDateInZone,
+  firstDateOfMonth,
+  zonedMidnight,
+} from "../../lib/usageTime";
 
 const useStyles = makeStyles({
   setup: {
@@ -88,6 +95,7 @@ export function OverviewPage({
   const [latestValidReferenceCount, setLatestValidReferenceCount] = useState<
     number | null
   >(null);
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [auxiliaryError, setAuxiliaryError] = useState("");
@@ -96,19 +104,40 @@ export function OverviewPage({
     setError("");
     setAuxiliaryError("");
     try {
-      const [overviewResult, dataManagementResult, limitSeriesResult] =
-        await Promise.allSettled([
-          backend.getOverview(false),
-          backend.getDataManagementState(),
-          backend.getLimitSeries({
-            serviceId: "",
-            status: "",
-            planVersionId: "",
-            limitDefinitionId: "",
-            sortBy: "status",
-            descending: false,
-          }),
-        ]);
+      const currentDate = currentDateInZone(displayTimeZone);
+      const [
+        overviewResult,
+        dataManagementResult,
+        limitSeriesResult,
+        usageResult,
+      ] = await Promise.allSettled([
+        backend.getOverview(false),
+        backend.getDataManagementState(),
+        backend.getLimitSeries({
+          serviceId: "",
+          status: "",
+          planVersionId: "",
+          limitDefinitionId: "",
+          sortBy: "status",
+          descending: false,
+        }),
+        backend.getUsage({
+          from: zonedMidnight(firstDateOfMonth(currentDate), displayTimeZone),
+          to: zonedMidnight(addLocalDays(currentDate, 1), displayTimeZone),
+          displayTimeZone,
+          granularity: "day",
+          groupBy: "hub",
+          hubId: "",
+          collectionDeviceId: "",
+          deviceId: "",
+          serviceId: "",
+          rawServiceIdentifier: "",
+          logicalAccountId: "",
+          planVersionId: "",
+          limitDefinitionId: "",
+          model: "",
+        }),
+      ]);
       if (overviewResult.status === "rejected") {
         throw overviewResult.reason;
       }
@@ -127,9 +156,11 @@ export function OverviewPage({
       } else {
         setLatestValidReferenceCount(null);
       }
+      setUsage(usageResult.status === "fulfilled" ? usageResult.value : null);
       const unavailable = [
         dataManagementResult.status === "rejected" ? "データ管理状態" : "",
         limitSeriesResult.status === "rejected" ? "推定参照数" : "",
+        usageResult.status === "rejected" ? "利用実績" : "",
       ].filter(Boolean);
       if (unavailable.length > 0) {
         setAuxiliaryError(
@@ -141,10 +172,11 @@ export function OverviewPage({
       setSnapshot(null);
       setDataManagement(null);
       setLatestValidReferenceCount(null);
+      setUsage(null);
     } finally {
       setLoading(false);
     }
-  }, [backend]);
+  }, [backend, displayTimeZone]);
   useEffect(() => {
     // The initial read synchronizes this page with the external Wails adapter.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -225,6 +257,12 @@ export function OverviewPage({
   const backup = dataManagement?.backup;
   const restoreTrial = dataManagement?.restore.trial;
   const abnormalHubs = snapshot.hubs.abnormalCount;
+  const currentUsageDate = currentDateInZone(displayTimeZone);
+  const todayUsage = usage?.series?.find(
+    (item) =>
+      currentDateInZone(displayTimeZone, new Date(item.periodStart)) ===
+      currentUsageDate,
+  );
   return (
     <div className={design.page}>
       <header className={design.pageHeader}>
@@ -369,6 +407,48 @@ export function OverviewPage({
             )}
           </KeyValue>
         </NavigationCard>
+
+        {usage ? (
+          <NavigationCard
+            title="当日・当月の利用実績"
+            to="/usage"
+            ariaLabel="利用実績を開く"
+            wide
+          >
+            <div className={design.metricRow}>
+              <div className={design.metricCell}>
+                <Caption1 className={design.metricLabel}>当日トークン</Caption1>
+                <span className={design.metric}>
+                  {formatUsageTokens(todayUsage?.tokens ?? 0)}
+                </span>
+                <Caption1
+                  className={design.muted}
+                  title="API 単価による換算値。実際の請求額ではありません"
+                >
+                  API 換算 {formatUsageCost(todayUsage?.apiCostUsd ?? 0)}*
+                </Caption1>
+              </div>
+              <div className={design.metricCell}>
+                <Caption1 className={design.metricLabel}>当月トークン</Caption1>
+                <span className={design.metric}>
+                  {formatUsageTokens(usage.summary.tokens)}
+                </span>
+                <Caption1
+                  className={design.muted}
+                  title="API 単価による換算値。実際の請求額ではありません"
+                >
+                  API 換算 {formatUsageCost(usage.summary.apiCostUsd)}*
+                </Caption1>
+              </div>
+            </div>
+            {usage.summary.sharedTokens > 0 ? (
+              <Caption1 className={design.warning}>
+                共有利用実績 {formatUsageTokens(usage.summary.sharedTokens)}
+                （按分なし）
+              </Caption1>
+            ) : null}
+          </NavigationCard>
+        ) : null}
 
         {recentLimits.length > 0 ? (
           <NavigationCard title="利用枠" to="/limits" ariaLabel="利用枠を開く">
@@ -516,6 +596,19 @@ export function OverviewPage({
       </div>
     </div>
   );
+}
+
+function formatUsageTokens(value: number): string {
+  return new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 0 }).format(
+    value,
+  );
+}
+
+function formatUsageCost(value: number): string {
+  return `$${new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 3,
+  }).format(value)}`;
 }
 
 function operationStatusLabel(status: string): string {

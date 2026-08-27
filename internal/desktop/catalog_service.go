@@ -652,6 +652,29 @@ func (s *CatalogService) CreateStandardPrice(ctx context.Context, input Standard
 	return s.usecase.RegisterStandardPrice(ctx, price)
 }
 
+func (s *CatalogService) UpdateStandardPrice(ctx context.Context, input StandardPriceInput) error {
+	release, err := acquireEdit(ctx, s.gate)
+	if err != nil {
+		return err
+	}
+	defer release()
+	price, err := parseStandardPriceInput(input)
+	if err != nil {
+		return err
+	}
+	rows, err := s.lifecycle.ListStandardPrices(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, existing := range rows {
+		if existing.ID == price.ID {
+			price.CreatedAt = existing.CreatedAt
+			return s.usecase.EditStandardPrice(ctx, price)
+		}
+	}
+	return errors.New("standard price was not found")
+}
+
 func (s *CatalogService) ConfirmIdentificationCandidate(ctx context.Context, input CandidateDecisionInput) error {
 	release, err := acquireEdit(ctx, s.gate)
 	if err != nil {

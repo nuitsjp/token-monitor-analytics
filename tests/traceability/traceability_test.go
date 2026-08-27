@@ -13,7 +13,7 @@ import (
 // scanner deliberately excludes this package from evidence discovery so these
 // examples cannot make an unfinished product appear accepted.
 func TestTraceabilityFixtureRequiresCompleteIdentifiers(t *testing.T) {
-	pattern := regexp.MustCompile(`\[(?:P1|QL)-[A-Z0-9]+-[0-9]{2}\]|\[AC-P1-[0-9]{2}\]`)
+	pattern := regexp.MustCompile(`\[(?:P1|P2|QL)-[A-Z0-9]+-[0-9]{2}\]|\[AC-P[12]-[0-9]{2}\]`)
 	for _, test := range []struct {
 		name  string
 		input string
@@ -24,7 +24,7 @@ func TestTraceabilityFixtureRequiresCompleteIdentifiers(t *testing.T) {
 		{name: "acceptance", input: "[AC-P1-26]", want: true},
 		{name: "partial prefix", input: "P1-HUB-*", want: false},
 		{name: "missing number", input: "[P1-HUB]", want: false},
-		{name: "phase two", input: "[P2-VALUE-01]", want: false},
+		{name: "phase two", input: "[P2-VALUE-01]", want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := pattern.MatchString(test.input); got != test.want {
@@ -49,35 +49,26 @@ func TestTraceabilityFixtureReportFieldsAreStable(t *testing.T) {
 	}
 }
 
-func TestTraceabilityFixtureExtractsPhaseOneNamespacesAndExcludesP2(t *testing.T) {
+func TestTraceabilityFixtureExtractsPhaseOneAndPhaseTwoNamespaces(t *testing.T) {
 	pattern := regexp.MustCompile(`[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+-[0-9]{2}`)
 	input := "[API-COST-01] [DM-ID-01] [CALC-RULE-01] [P1-HUB-01] [QL-SEC-01] [AC-P1-01] [P2-VALUE-01] [API-P2-01]"
 	got := make(map[string]bool)
 	for _, id := range pattern.FindAllString(input, -1) {
-		if strings.HasPrefix(id, "P2-") || strings.Contains(id, "-P2-") {
-			continue
-		}
 		got[id] = true
 	}
-	for _, id := range []string{"API-COST-01", "DM-ID-01", "CALC-RULE-01", "P1-HUB-01", "QL-SEC-01", "AC-P1-01"} {
+	for _, id := range []string{"API-COST-01", "DM-ID-01", "CALC-RULE-01", "P1-HUB-01", "QL-SEC-01", "AC-P1-01", "P2-VALUE-01", "API-P2-01"} {
 		if !got[id] {
-			t.Fatalf("phase-one identifier %q was not extracted", id)
+			t.Fatalf("identifier %q was not extracted", id)
 		}
-	}
-	if got["P2-VALUE-01"] || got["API-P2-01"] {
-		t.Fatal("P2 identifiers must be excluded")
 	}
 
 	requirements := readRepositoryFile(t, filepath.Join("docs", "requirements.md"))
 	ids := make(map[string]bool)
 	for _, id := range pattern.FindAllString(string(requirements), -1) {
-		if strings.HasPrefix(id, "P2-") || strings.Contains(id, "-P2-") {
-			continue
-		}
 		ids[id] = true
 	}
-	if len(ids) != 193 {
-		t.Fatalf("requirements phase-one ID count = %d, want 193", len(ids))
+	if len(ids) != 224 {
+		t.Fatalf("requirements ID count = %d, want 224", len(ids))
 	}
 }
 

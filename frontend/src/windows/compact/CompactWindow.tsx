@@ -36,13 +36,26 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { Gauge } from "../../components/design";
 import type { DesignStyles } from "../../components/designStyles";
 import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
-import type { FrontendAdapter } from "../../lib/backend";
+import type { FrontendAdapter, UsageSnapshot } from "../../lib/backend";
 import {
   formatOverviewInstant,
   splitOverviewInstant,
 } from "../../lib/overviewDisplay";
+import {
+  addLocalDays,
+  currentDateInZone,
+  firstDateOfMonth,
+  zonedMidnight,
+} from "../../lib/usageTime";
 
 export const compactRefreshMilliseconds = 30_000;
+
+function compactTokens(value: number): string {
+  return new Intl.NumberFormat("ja-JP", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
 
 const useStyles = makeStyles({
   window: {
@@ -103,6 +116,20 @@ const useStyles = makeStyles({
     display: "grid",
     gap: tokens.spacingVerticalXXS,
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+  },
+  usageSummary: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    cursor: "pointer",
+  },
+  usageMetric: {
+    display: "grid",
+    gap: "1px",
+    fontVariantNumeric: "tabular-nums",
   },
   scrollableLimits: {
     maxHeight: "50vh",
@@ -181,6 +208,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
   );
   const [privacyMode, setPrivacyMode] = useState(false);
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null);
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const hasSnapshot = useRef(false);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -230,10 +258,36 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
       if (hasSnapshot.current) setUpdating(true);
       else setLoading(true);
       try {
-        const value = await backend.getOverview(privacyMode);
+        const currentDate = currentDateInZone(settings.displayTimeZone);
+        const [value, usageValue] = await Promise.all([
+          backend.getOverview(privacyMode),
+          backend.getUsage({
+            from: zonedMidnight(
+              firstDateOfMonth(currentDate),
+              settings.displayTimeZone,
+            ),
+            to: zonedMidnight(
+              addLocalDays(currentDate, 1),
+              settings.displayTimeZone,
+            ),
+            displayTimeZone: settings.displayTimeZone,
+            granularity: "day",
+            groupBy: "hub",
+            hubId: "",
+            collectionDeviceId: "",
+            deviceId: "",
+            serviceId: "",
+            rawServiceIdentifier: "",
+            logicalAccountId: "",
+            planVersionId: "",
+            limitDefinitionId: "",
+            model: "",
+          }),
+        ]);
         if (!active) return;
         hasSnapshot.current = true;
         setSnapshot(value);
+        setUsage(usageValue);
         setOverviewError("");
       } catch {
         if (active) setOverviewError("最新状態を読み込めませんでした。");
@@ -254,7 +308,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
       active = false;
       window.clearInterval(interval);
     };
-  }, [backend, privacyMode, reloadKey]);
+  }, [backend, privacyMode, reloadKey, settings.displayTimeZone]);
 
   const openMainRoute = useCallback(
     (route: string) => void backend.OpenMainRoute(route),
@@ -423,6 +477,40 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                 </div>
               ) : null}
               <div hidden={Boolean(snapshot.maintenance)}>
+                {usage ? (
+                  <button
+                    type="button"
+                    className={styles.usageSummary}
+                    onClick={() => openMainRoute("/usage")}
+                    aria-label="当日・当月の利用実績を開く"
+                  >
+                    <span className={styles.usageMetric}>
+                      <Caption1>当日トークン</Caption1>
+                      <Body1 className={styles.value}>
+                        {privacyMode
+                          ? "••••"
+                          : compactTokens(
+                              usage.series?.find(
+                                (item) =>
+                                  currentDateInZone(
+                                    settings.displayTimeZone,
+                                    new Date(item.periodStart),
+                                  ) ===
+                                  currentDateInZone(settings.displayTimeZone),
+                              )?.tokens ?? 0,
+                            )}
+                      </Body1>
+                    </span>
+                    <span className={styles.usageMetric}>
+                      <Caption1>当月トークン</Caption1>
+                      <Body1 className={styles.value}>
+                        {privacyMode
+                          ? "••••"
+                          : compactTokens(usage.summary.tokens)}
+                      </Body1>
+                    </span>
+                  </button>
+                ) : null}
                 {expanded ? (
                   <div
                     className={mergeClasses(

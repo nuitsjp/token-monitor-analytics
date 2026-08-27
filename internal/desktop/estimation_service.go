@@ -18,6 +18,7 @@ type EstimationReader interface {
 	ListCurrentLimitSeries(context.Context, time.Time) ([]domain.LimitSeriesView, error)
 	ListEstimationResults(context.Context, string) ([]domain.DerivedResult, error)
 	ListCalculationIntervalViews(context.Context, string, string, string, string) ([]domain.CalculationIntervalView, error)
+	ListStandardPrices(context.Context, string) ([]domain.StandardPrice, error)
 }
 
 type EstimationService struct {
@@ -35,62 +36,85 @@ type LimitSeriesFilterInput struct {
 }
 
 type LimitSeriesSnapshot struct {
-	ID                     string                       `json:"id"`
-	ServiceID              string                       `json:"serviceId"`
-	ServiceName            string                       `json:"serviceName"`
-	LogicalAccountID       string                       `json:"logicalAccountId"`
-	LogicalAccountName     string                       `json:"logicalAccountName"`
-	LimitDefinitionID      string                       `json:"limitDefinitionId"`
-	LimitDefinitionName    string                       `json:"limitDefinitionName"`
-	CycleType              string                       `json:"cycleType"`
-	UsageLimitSourceID     string                       `json:"usageLimitSourceId"`
-	AssociationID          string                       `json:"associationId"`
-	NormalizedKind         string                       `json:"normalizedKind"`
-	NormalizedMetric       string                       `json:"normalizedMetric"`
-	PlanHistoryID          string                       `json:"planHistoryId"`
-	PlanVersionID          string                       `json:"planVersionId"`
-	PlanVersionName        string                       `json:"planVersionName"`
-	PlanLimitRuleID        string                       `json:"planLimitRuleId"`
-	PlanLimit              *float64                     `json:"planLimit"`
-	PlanLimitLabel         string                       `json:"planLimitLabel"`
-	Multiplier             *float64                     `json:"multiplier"`
-	UsedPercent            *float64                     `json:"usedPercent"`
-	UsedPercentLabel       string                       `json:"usedPercentLabel"`
-	UsedPercentDetailLabel string                       `json:"usedPercentDetailLabel"`
-	RemainingPercent       *float64                     `json:"remainingPercent"`
-	RemainingLabel         string                       `json:"remainingLabel"`
-	RemainingDetailLabel   string                       `json:"remainingDetailLabel"`
-	ResetAt                string                       `json:"resetAt"`
-	LatestObservationAt    string                       `json:"latestObservationAt"`
-	SeriesState            string                       `json:"seriesState"`
-	State                  StatusPresentationSnapshot   `json:"state"`
-	StateReasonCode        string                       `json:"stateReasonCode"`
-	StateReason            string                       `json:"stateReason"`
-	CurrentInterval        *CalculationIntervalSnapshot `json:"currentInterval"`
-	Result                 *EstimationResultSnapshot    `json:"result"`
-	LatestValidReference   *EstimationReferenceSnapshot `json:"latestValidReference"`
-	EstimatedLimit         *float64                     `json:"estimatedLimit"`
-	EstimatedLimitLabel    string                       `json:"estimatedLimitLabel"`
+	ID                             string                       `json:"id"`
+	ServiceID                      string                       `json:"serviceId"`
+	ServiceName                    string                       `json:"serviceName"`
+	LogicalAccountID               string                       `json:"logicalAccountId"`
+	LogicalAccountName             string                       `json:"logicalAccountName"`
+	LimitDefinitionID              string                       `json:"limitDefinitionId"`
+	LimitDefinitionName            string                       `json:"limitDefinitionName"`
+	CycleType                      string                       `json:"cycleType"`
+	BillingConfirmation            string                       `json:"billingConfirmation"`
+	UsageLimitSourceID             string                       `json:"usageLimitSourceId"`
+	AssociationID                  string                       `json:"associationId"`
+	NormalizedKind                 string                       `json:"normalizedKind"`
+	NormalizedMetric               string                       `json:"normalizedMetric"`
+	PlanHistoryID                  string                       `json:"planHistoryId"`
+	PlanVersionID                  string                       `json:"planVersionId"`
+	PlanVersionName                string                       `json:"planVersionName"`
+	PlanLimitRuleID                string                       `json:"planLimitRuleId"`
+	PlanLimit                      *float64                     `json:"planLimit"`
+	PlanLimitLabel                 string                       `json:"planLimitLabel"`
+	Multiplier                     *float64                     `json:"multiplier"`
+	UsedPercent                    *float64                     `json:"usedPercent"`
+	UsedPercentLabel               string                       `json:"usedPercentLabel"`
+	UsedPercentDetailLabel         string                       `json:"usedPercentDetailLabel"`
+	RemainingPercent               *float64                     `json:"remainingPercent"`
+	RemainingLabel                 string                       `json:"remainingLabel"`
+	RemainingDetailLabel           string                       `json:"remainingDetailLabel"`
+	ResetAt                        string                       `json:"resetAt"`
+	LatestObservationAt            string                       `json:"latestObservationAt"`
+	SeriesState                    string                       `json:"seriesState"`
+	State                          StatusPresentationSnapshot   `json:"state"`
+	StateReasonCode                string                       `json:"stateReasonCode"`
+	StateReason                    string                       `json:"stateReason"`
+	CurrentInterval                *CalculationIntervalSnapshot `json:"currentInterval"`
+	Result                         *EstimationResultSnapshot    `json:"result"`
+	LatestValidReference           *EstimationReferenceSnapshot `json:"latestValidReference"`
+	EstimatedLimit                 *float64                     `json:"estimatedLimit"`
+	EstimatedLimitLabel            string                       `json:"estimatedLimitLabel"`
+	MonthlyEquivalentLimit         *float64                     `json:"monthlyEquivalentLimit"`
+	MonthlyEquivalentLimitLabel    string                       `json:"monthlyEquivalentLimitLabel"`
+	StandardPriceUSDMonthlyPerSeat *float64                     `json:"standardPriceUsdMonthlyPerSeat"`
+	StandardPriceSourceURL         string                       `json:"standardPriceSourceUrl"`
+	StandardPriceValidFrom         string                       `json:"standardPriceValidFrom"`
+	StandardPriceValidTo           string                       `json:"standardPriceValidTo"`
+	ValueMultiplier                *float64                     `json:"valueMultiplier"`
+	ValueMultiplierLabel           string                       `json:"valueMultiplierLabel"`
+	ValueReasonCode                string                       `json:"valueReasonCode"`
+	ValueReason                    string                       `json:"valueReason"`
 }
 
 type CalculationIntervalSnapshot struct {
-	ID                  string                        `json:"id"`
-	ServiceID           string                        `json:"serviceId"`
-	LogicalAccountID    string                        `json:"logicalAccountId"`
-	UsageLimitSourceID  string                        `json:"usageLimitSourceId"`
-	LimitDefinitionID   string                        `json:"limitDefinitionId"`
-	PlanVersionID       string                        `json:"planVersionId"`
-	CycleType           string                        `json:"cycleType"`
-	ValidFrom           string                        `json:"validFrom"`
-	ValidTo             string                        `json:"validTo"`
-	State               string                        `json:"state"`
-	StateLabel          string                        `json:"stateLabel"`
-	ExclusionReasonCode string                        `json:"exclusionReasonCode"`
-	ExclusionReason     string                        `json:"exclusionReason"`
-	BoundaryIDs         []string                      `json:"boundaryIds"`
-	Boundaries          []CalculationBoundarySnapshot `json:"boundaries"`
-	Role                string                        `json:"role"`
-	RoleLabel           string                        `json:"roleLabel"`
+	ID                             string                        `json:"id"`
+	ServiceID                      string                        `json:"serviceId"`
+	LogicalAccountID               string                        `json:"logicalAccountId"`
+	UsageLimitSourceID             string                        `json:"usageLimitSourceId"`
+	LimitDefinitionID              string                        `json:"limitDefinitionId"`
+	PlanVersionID                  string                        `json:"planVersionId"`
+	CycleType                      string                        `json:"cycleType"`
+	ValidFrom                      string                        `json:"validFrom"`
+	ValidTo                        string                        `json:"validTo"`
+	State                          string                        `json:"state"`
+	StateLabel                     string                        `json:"stateLabel"`
+	ExclusionReasonCode            string                        `json:"exclusionReasonCode"`
+	ExclusionReason                string                        `json:"exclusionReason"`
+	BoundaryIDs                    []string                      `json:"boundaryIds"`
+	Boundaries                     []CalculationBoundarySnapshot `json:"boundaries"`
+	Role                           string                        `json:"role"`
+	RoleLabel                      string                        `json:"roleLabel"`
+	EstimatedLimit                 *float64                      `json:"estimatedLimit"`
+	EstimatedLimitLabel            string                        `json:"estimatedLimitLabel"`
+	MonthlyEquivalentLimit         *float64                      `json:"monthlyEquivalentLimit"`
+	MonthlyEquivalentLimitLabel    string                        `json:"monthlyEquivalentLimitLabel"`
+	StandardPriceUSDMonthlyPerSeat *float64                      `json:"standardPriceUsdMonthlyPerSeat"`
+	StandardPriceSourceURL         string                        `json:"standardPriceSourceUrl"`
+	StandardPriceValidFrom         string                        `json:"standardPriceValidFrom"`
+	StandardPriceValidTo           string                        `json:"standardPriceValidTo"`
+	ValueMultiplier                *float64                      `json:"valueMultiplier"`
+	ValueMultiplierLabel           string                        `json:"valueMultiplierLabel"`
+	ValueReasonCode                string                        `json:"valueReasonCode"`
+	ValueReason                    string                        `json:"valueReason"`
 }
 
 type CalculationBoundarySnapshot struct {
@@ -201,6 +225,10 @@ func (s *EstimationService) GetLimitSeries(ctx context.Context, input LimitSerie
 	if err != nil {
 		return nil, err
 	}
+	prices, err := s.standardPricesByPlanVersion(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]LimitSeriesSnapshot, 0, len(rows))
 	for _, row := range rows {
 		result := resultForSeries(row, results[row.ServiceID])
@@ -209,10 +237,28 @@ func (s *EstimationService) GetLimitSeries(ctx context.Context, input LimitSerie
 		if input.ServiceID != "" && row.ServiceID != input.ServiceID || input.PlanVersionID != "" && row.PlanVersionID != input.PlanVersionID || input.LimitDefinitionID != "" && row.LimitDefinitionID != input.LimitDefinitionID || input.Status != "" && string(state) != input.Status {
 			continue
 		}
-		items = append(items, limitSeriesSnapshot(row, state, reason, result, reference))
+		items = append(items, limitSeriesSnapshot(row, state, reason, result, reference, prices[row.PlanVersionID], now))
 	}
 	sortLimitSeries(items, input.SortBy, input.Descending)
 	return items, nil
+}
+
+func (s *EstimationService) standardPricesByPlanVersion(ctx context.Context, rows []domain.LimitSeriesView) (map[string][]domain.StandardPrice, error) {
+	prices := make(map[string][]domain.StandardPrice)
+	for _, row := range rows {
+		if row.PlanVersionID == "" {
+			continue
+		}
+		if _, ok := prices[row.PlanVersionID]; ok {
+			continue
+		}
+		items, err := s.reader.ListStandardPrices(ctx, row.PlanVersionID)
+		if err != nil {
+			return nil, err
+		}
+		prices[row.PlanVersionID] = items
+	}
+	return prices, nil
 }
 
 func (s *EstimationService) GetLimitSeriesDetail(ctx context.Context, seriesID string) (LimitSeriesDetailSnapshot, error) {
@@ -231,15 +277,46 @@ func (s *EstimationService) GetLimitSeriesDetail(ctx context.Context, seriesID s
 		if err != nil {
 			return LimitSeriesDetailSnapshot{}, err
 		}
+		results, err := s.reader.ListEstimationResults(ctx, item.ServiceID)
+		if err != nil {
+			return LimitSeriesDetailSnapshot{}, err
+		}
+		prices, err := s.standardPricesByIntervals(ctx, history)
+		if err != nil {
+			return LimitSeriesDetailSnapshot{}, err
+		}
 		detail := LimitSeriesDetailSnapshot{Series: item, Current: item.CurrentInterval, History: make([]CalculationIntervalSnapshot, 0, len(history))}
 		for _, interval := range history {
 			snapshot := calculationIntervalSnapshot(interval)
+			applyIntervalValue(&snapshot, interval, item, results, prices[interval.PlanVersionID])
 			snapshot.Role, snapshot.RoleLabel = intervalRole(interval, item)
 			detail.History = append(detail.History, snapshot)
+			if item.CurrentInterval != nil && item.CurrentInterval.ID == interval.ID {
+				current := snapshot
+				detail.Current = &current
+			}
 		}
 		return detail, nil
 	}
 	return LimitSeriesDetailSnapshot{}, errors.New("limit series was not found")
+}
+
+func (s *EstimationService) standardPricesByIntervals(ctx context.Context, intervals []domain.CalculationIntervalView) (map[string][]domain.StandardPrice, error) {
+	prices := make(map[string][]domain.StandardPrice)
+	for _, interval := range intervals {
+		if interval.PlanVersionID == "" {
+			continue
+		}
+		if _, ok := prices[interval.PlanVersionID]; ok {
+			continue
+		}
+		items, err := s.reader.ListStandardPrices(ctx, interval.PlanVersionID)
+		if err != nil {
+			return nil, err
+		}
+		prices[interval.PlanVersionID] = items
+	}
+	return prices, nil
 }
 
 func intervalRole(interval domain.CalculationIntervalView, item LimitSeriesSnapshot) (string, string) {
@@ -254,6 +331,66 @@ func intervalRole(interval domain.CalculationIntervalView, item LimitSeriesSnaps
 		}
 	}
 	return "noncurrent", "非カレント"
+}
+
+func applyIntervalValue(snapshot *CalculationIntervalSnapshot, interval domain.CalculationIntervalView, item LimitSeriesSnapshot, results []domain.DerivedResult, prices []domain.StandardPrice) {
+	if snapshot == nil {
+		return
+	}
+	var estimatedLimit *float64
+	for resultIndex := range results {
+		result := &results[resultIndex]
+		if result.Status != domain.EstimationProvisional && result.Status != domain.EstimationVerified {
+			continue
+		}
+		containsInterval := false
+		for _, intervalID := range result.CalculationIntervalIDs {
+			if intervalID == interval.ID {
+				containsInterval = true
+				break
+			}
+		}
+		if !containsInterval {
+			continue
+		}
+		for seriesIndex := range result.Series {
+			series := &result.Series[seriesIndex]
+			if series.UsageLimitSourceID == item.UsageLimitSourceID && series.LogicalAccountID == item.LogicalAccountID && series.PlanVersionID == interval.PlanVersionID && series.EstimatedLimit != nil {
+				value := *series.EstimatedLimit
+				estimatedLimit = &value
+				break
+			}
+		}
+		if estimatedLimit != nil {
+			break
+		}
+	}
+	calculation := domain.CalculateValue(domain.ValueCalculationInput{
+		CycleType: interval.CycleType, BillingConfirmation: domain.BillingConfirmation(item.BillingConfirmation), Metric: item.NormalizedMetric,
+		EstimatedLimit: estimatedLimit, At: interval.ValidFrom, StandardPrice: standardPriceAt(prices, interval.ValidFrom),
+	})
+	if estimatedLimit != nil {
+		snapshot.EstimatedLimit = estimatedLimit
+		snapshot.EstimatedLimitLabel = formatNumber(estimatedLimit, 2)
+	}
+	if calculation.MonthlyEquivalent != nil {
+		snapshot.MonthlyEquivalentLimit = calculation.MonthlyEquivalent
+		snapshot.MonthlyEquivalentLimitLabel = formatNumber(calculation.MonthlyEquivalent, 2)
+	}
+	if calculation.StandardPrice != nil {
+		snapshot.StandardPriceUSDMonthlyPerSeat = &calculation.StandardPrice.USDMonthlyPerSeat
+		snapshot.StandardPriceSourceURL = calculation.StandardPrice.SourceURL
+		snapshot.StandardPriceValidFrom = calculation.StandardPrice.ValidFrom.UTC().Format(time.RFC3339Nano)
+		if calculation.StandardPrice.ValidTo != nil {
+			snapshot.StandardPriceValidTo = calculation.StandardPrice.ValidTo.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	if calculation.ValueMultiplier != nil {
+		snapshot.ValueMultiplier = calculation.ValueMultiplier
+		snapshot.ValueMultiplierLabel = formatNumber(calculation.ValueMultiplier, 2) + "×"
+	}
+	snapshot.ValueReasonCode = string(calculation.Reason)
+	snapshot.ValueReason = valueReasonLabel(calculation.Reason)
 }
 
 func (s *EstimationService) resultsByService(ctx context.Context, rows []domain.LimitSeriesView) (map[string][]domain.DerivedResult, error) {
@@ -315,12 +452,12 @@ func deriveLimitState(row domain.LimitSeriesView, result *domain.DerivedResult) 
 	return result.Status, reason
 }
 
-func limitSeriesSnapshot(row domain.LimitSeriesView, state domain.EstimationStatus, reason string, result *domain.DerivedResult, reference *EstimationReferenceSnapshot) LimitSeriesSnapshot {
+func limitSeriesSnapshot(row domain.LimitSeriesView, state domain.EstimationStatus, reason string, result *domain.DerivedResult, reference *EstimationReferenceSnapshot, prices []domain.StandardPrice, at time.Time) LimitSeriesSnapshot {
 	item := LimitSeriesSnapshot{
 		ID: row.ID, ServiceID: row.ServiceID, ServiceName: row.ServiceName,
 		LogicalAccountID: row.LogicalAccountID, LogicalAccountName: row.LogicalAccountName,
 		LimitDefinitionID: row.LimitDefinitionID, LimitDefinitionName: row.LimitDefinitionName,
-		CycleType: row.CycleType, UsageLimitSourceID: row.UsageLimitSourceID, AssociationID: row.AssociationID,
+		CycleType: row.CycleType, BillingConfirmation: string(row.BillingConfirmation), UsageLimitSourceID: row.UsageLimitSourceID, AssociationID: row.AssociationID,
 		NormalizedKind: row.NormalizedKind, NormalizedMetric: row.NormalizedMetric,
 		PlanHistoryID: row.PlanHistoryID, PlanVersionID: row.PlanVersionID, PlanVersionName: row.PlanVersionName,
 		PlanLimitRuleID: row.PlanLimitRuleID, PlanLimit: row.PlanLimit, Multiplier: row.Multiplier,
@@ -342,7 +479,70 @@ func limitSeriesSnapshot(row domain.LimitSeriesView, state domain.EstimationStat
 			}
 		}
 	}
+	var estimatedLimit *float64
+	if item.EstimatedLimit != nil {
+		value := *item.EstimatedLimit
+		estimatedLimit = &value
+	}
+	price := standardPriceAt(prices, at)
+	calculation := domain.CalculateValue(domain.ValueCalculationInput{
+		CycleType: row.CycleType, BillingConfirmation: row.BillingConfirmation, Metric: row.NormalizedMetric,
+		EstimatedLimit: estimatedLimit, At: at, StandardPrice: price,
+	})
+	if calculation.MonthlyEquivalent != nil {
+		item.MonthlyEquivalentLimit = calculation.MonthlyEquivalent
+		item.MonthlyEquivalentLimitLabel = formatNumber(calculation.MonthlyEquivalent, 2)
+	}
+	if calculation.StandardPrice != nil {
+		item.StandardPriceUSDMonthlyPerSeat = &calculation.StandardPrice.USDMonthlyPerSeat
+		item.StandardPriceSourceURL = calculation.StandardPrice.SourceURL
+		item.StandardPriceValidFrom = calculation.StandardPrice.ValidFrom.UTC().Format(time.RFC3339Nano)
+		if calculation.StandardPrice.ValidTo != nil {
+			item.StandardPriceValidTo = calculation.StandardPrice.ValidTo.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	if calculation.ValueMultiplier != nil {
+		item.ValueMultiplier = calculation.ValueMultiplier
+		item.ValueMultiplierLabel = formatNumber(calculation.ValueMultiplier, 2) + "×"
+	}
+	item.ValueReasonCode = string(calculation.Reason)
+	item.ValueReason = valueReasonLabel(calculation.Reason)
 	return item
+}
+
+func standardPriceAt(prices []domain.StandardPrice, at time.Time) *domain.StandardPrice {
+	instant := at.UTC()
+	for index := range prices {
+		price := prices[index]
+		if instant.Before(price.ValidFrom.UTC()) || price.ValidTo != nil && !instant.Before(price.ValidTo.UTC()) {
+			continue
+		}
+		return &price
+	}
+	return nil
+}
+
+func valueReasonLabel(reason domain.ValueReason) string {
+	switch reason {
+	case domain.ValueReasonComputed:
+		return "算出済み"
+	case domain.ValueReasonEstimateMissing:
+		return "一周期当たりの推定利用上限がありません。"
+	case domain.ValueReasonBillingUnconfirmed:
+		return "月次 billing であることが未確認です。"
+	case domain.ValueReasonMetricUnsupported:
+		return "credits または spend は価値計算の対象外です。"
+	case domain.ValueReasonCycleUnsupported:
+		return "この利用周期は価値計算の対象外です。"
+	case domain.ValueReasonInvalidEstimate:
+		return "推定利用上限が不正です。"
+	case domain.ValueReasonStandardPriceMissing:
+		return "有効な標準価格がありません。"
+	case domain.ValueReasonStandardPriceInvalid:
+		return "標準価格が不正または有効期間外です。"
+	default:
+		return "価値倍率を算出できません。"
+	}
 }
 
 func estimationReasonLabel(code string) string {
