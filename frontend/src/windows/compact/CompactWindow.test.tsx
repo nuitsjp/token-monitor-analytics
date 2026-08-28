@@ -132,7 +132,7 @@ function overview(masked = false): OverviewSnapshot {
       oldestSnapshotAt: "2026-08-26T00:00:00Z",
       latestSnapshotAt: "2026-08-26T00:05:00Z",
     },
-    recentLimits: [1, 2, 3, 4].map((index) => recentLimit(index, masked)),
+    recentLimits: [1, 2, 3, 4, 5, 6].map((index) => recentLimit(index, masked)),
     review: {
       ...emptyOverviewSnapshot.review,
       recalculationFailures: {
@@ -181,7 +181,7 @@ describe("CompactWindow", () => {
     );
 
     expect(
-      await screen.findByText("サンプルデータ（モック Hub）"),
+      await screen.findByLabelText("サンプルデータ（モック Hub）"),
     ).toBeVisible();
   });
 
@@ -206,7 +206,7 @@ describe("CompactWindow", () => {
       contrastRatio([209, 52, 56], [255, 255, 255]),
     ).toBeGreaterThanOrEqual(4.5);
   });
-  it("shows two real limits collapsed and four after native expansion", async () => {
+  it("shows five real limits collapsed and all limits after expansion", async () => {
     const user = userEvent.setup();
     const expandedStates: boolean[] = [];
     const backend = createFakeBackend({
@@ -220,8 +220,8 @@ describe("CompactWindow", () => {
     expect(root).toHaveAttribute("data-compact-expanded", "false");
     expect(await screen.findByText(/Weekly 1$/)).toBeVisible();
     expect(screen.getByText(/Weekly 2$/)).toBeVisible();
-    expect(screen.getAllByText("Reset")).toHaveLength(2);
-    expect(screen.getAllByText("8/27")).toHaveLength(2);
+    expect(screen.getAllByText("Reset")).toHaveLength(5);
+    expect(screen.getAllByText("8/27")).toHaveLength(5);
     expect(screen.getByText("1/1")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /^実行中/ }),
@@ -229,12 +229,12 @@ describe("CompactWindow", () => {
     expect(
       screen.queryByRole("button", { name: /異常 Hub/ }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText("Weekly 3")).not.toBeInTheDocument();
+    expect(screen.getByText(/Weekly 5$/)).toBeVisible();
+    expect(screen.queryByText("Weekly 6")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "利用枠を展開" }));
 
     expect(root).toHaveAttribute("data-compact-expanded", "true");
-    expect(screen.getByText(/Weekly 4$/)).toBeVisible();
-    expect(screen.getByText("待機中")).toBeVisible();
+    expect(screen.getByText(/Weekly 6$/)).toBeVisible();
     expect(expandedStates).toEqual([true]);
     expect(root.querySelector('[data-region="limit-list"]')).not.toBeNull();
   });

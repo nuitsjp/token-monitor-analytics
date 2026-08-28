@@ -41,8 +41,8 @@ type WindowPlacementStore interface {
 
 const (
 	compactCollapsedWidth = 360
-	compactExpandedWidth  = 420
-	compactDefaultHeight  = 360
+	compactExpandedWidth  = 360
+	compactDefaultHeight  = 600
 	compactMinWidth       = 320
 	compactMinHeight      = 160
 	compactSnapDistance   = 16
@@ -380,7 +380,7 @@ func compactHeightLimit(workArea application.Rect) int {
 	if workArea.Height <= 0 {
 		return compactDefaultHeight
 	}
-	return max(1, workArea.Height/2)
+	return max(1, min(compactDefaultHeight, workArea.Height))
 }
 
 func setCompactWindowConstraints(window *application.WebviewWindow, workArea application.Rect, expanded bool) {

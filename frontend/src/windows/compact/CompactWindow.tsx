@@ -52,17 +52,21 @@ import {
 
 export const compactRefreshMilliseconds = 30_000;
 
-function compactTokens(value: number): string {
-  return new Intl.NumberFormat("ja-JP", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
-}
+const integerFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 0,
+});
+
+const usdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 const useStyles = makeStyles({
   window: {
     minHeight: "100vh",
-    maxWidth: "420px",
+    maxWidth: "360px",
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground2,
     color: tokens.colorNeutralForeground1,
@@ -74,7 +78,7 @@ const useStyles = makeStyles({
   header: {
     display: "flex",
     alignItems: "center",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     gap: tokens.spacingHorizontalXS,
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS} ${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -83,14 +87,19 @@ const useStyles = makeStyles({
   title: {
     minWidth: 0,
     flexGrow: 1,
+    fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground3,
+    whiteSpace: "nowrap",
   },
   showcaseBadge: {
     color: tokens.colorPaletteDarkOrangeForeground1,
     border: `1px solid ${tokens.colorPaletteDarkOrangeBorderActive}`,
     borderRadius: tokens.borderRadiusMedium,
     padding: `0 ${tokens.spacingHorizontalXXS}`,
+    maxWidth: "138px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
   visuallyHidden: {
@@ -111,8 +120,11 @@ const useStyles = makeStyles({
     padding: `0 ${tokens.spacingHorizontalXXS}`,
     fontSize: tokens.fontSizeBase200,
   },
-  iconActions: { display: "flex", gap: tokens.spacingHorizontalXXS },
-  value: { fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" },
+  iconActions: {
+    display: "flex",
+    flexShrink: 0,
+    gap: tokens.spacingHorizontalXXS,
+  },
   limits: {
     minWidth: 0,
     display: "grid",
@@ -121,20 +133,72 @@ const useStyles = makeStyles({
   },
   usageSummary: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
-    cursor: "pointer",
   },
-  usageMetric: {
+  usageRow: {
     display: "grid",
-    gap: "1px",
+    gridTemplateColumns: "66px minmax(0, 1fr) auto",
+    alignItems: "baseline",
+    columnGap: tokens.spacingHorizontalS,
+    width: "100%",
+    padding: `9px ${tokens.spacingHorizontalM}`,
+    color: "inherit",
+    backgroundColor: "transparent",
+    border: 0,
+    textAlign: "left",
+    cursor: "pointer",
+    ":hover": { backgroundColor: tokens.colorNeutralBackground1Hover },
+  },
+  usageRowDivider: {
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  usageLabel: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+    fontWeight: tokens.fontWeightSemibold,
+    letterSpacing: ".04em",
+    textTransform: "uppercase",
+  },
+  usageValue: {
+    minWidth: 0,
+    overflow: "hidden",
+    fontSize: tokens.fontSizeBase400,
+    fontWeight: tokens.fontWeightSemibold,
     fontVariantNumeric: "tabular-nums",
+    letterSpacing: "-.02em",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  usageUnit: {
+    marginLeft: tokens.spacingHorizontalXXS,
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+    fontWeight: tokens.fontWeightRegular,
+  },
+  usageCost: {
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase300,
+    fontWeight: tokens.fontWeightSemibold,
+    fontVariantNumeric: "tabular-nums",
+    whiteSpace: "nowrap",
+  },
+  meta: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    padding: `5px ${tokens.spacingHorizontalM}`,
+    color: tokens.colorNeutralForeground3,
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  metaFailure: {
+    color: tokens.colorPaletteDarkOrangeForeground1,
+    fontWeight: tokens.fontWeightSemibold,
   },
   scrollableLimits: {
-    maxHeight: "50vh",
+    minHeight: 0,
     overflowY: "auto",
     scrollbarGutter: "stable",
   },
@@ -147,19 +211,26 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     "@media (forced-colors: active)": { border: "1px solid CanvasText" },
   },
-  limitHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalS,
+  limitName: {
+    minWidth: 0,
+    overflow: "hidden",
+    fontSize: tokens.fontSizeBase300,
+    fontWeight: tokens.fontWeightSemibold,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
-  stateLine: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: tokens.spacingHorizontalXS,
+  limitContext: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightRegular,
   },
+  limitPercent: {
+    flexShrink: 0,
+    fontSize: tokens.fontSizeBase300,
+    fontWeight: tokens.fontWeightBold,
+    fontVariantNumeric: "tabular-nums",
+  },
+  more: { display: "flex", justifyContent: "center" },
   footer: {
     display: "flex",
     alignItems: "center",
@@ -346,7 +417,22 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
     }
   };
 
-  const limits = (snapshot?.recentLimits ?? []).slice(0, expanded ? 4 : 2);
+  const allLimits = snapshot?.recentLimits ?? [];
+  const limits = allLimits.slice(0, expanded ? allLimits.length : 5);
+  const usageForCurrentDate = usage?.series?.find(
+    (item) =>
+      currentDateInZone(
+        settings.displayTimeZone,
+        new Date(item.periodStart),
+      ) === currentDateInZone(settings.displayTimeZone),
+  );
+  const todayUsage =
+    usageForCurrentDate ??
+    (backend.isShowcase && usage?.series?.length
+      ? usage.series[usage.series.length - 1]
+      : undefined);
+  const failedCollectionCount =
+    snapshot?.hubs.items?.filter((hub) => hub.lastFailureAt).length ?? 0;
   return (
     <>
       <main
@@ -359,8 +445,12 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
           <header className={styles.header}>
             <div className={styles.title}>Token Monitor</div>
             {backend.isShowcase ? (
-              <Caption1 className={styles.showcaseBadge}>
-                サンプルデータ（モック Hub）
+              <Caption1
+                className={styles.showcaseBadge}
+                aria-label="サンプルデータ（モック Hub）"
+                title="サンプルデータ（モック Hub）"
+              >
+                モック
               </Caption1>
             ) : null}
             <Subtitle1
@@ -478,91 +568,54 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   </Button>
                 </div>
               ) : null}
-              <div hidden={Boolean(snapshot.maintenance)}>
+              <div
+                className={styles.layout}
+                hidden={Boolean(snapshot.maintenance)}
+              >
                 {usage ? (
-                  <button
-                    type="button"
-                    className={styles.usageSummary}
-                    onClick={() => openMainRoute("/usage")}
-                    aria-label="当日・当月の利用実績を開く"
-                  >
-                    <span className={styles.usageMetric}>
-                      <Caption1>当日トークン</Caption1>
-                      <Body1 className={styles.value}>
-                        {privacyMode
-                          ? "••••"
-                          : compactTokens(
-                              usage.series?.find(
-                                (item) =>
-                                  currentDateInZone(
-                                    settings.displayTimeZone,
-                                    new Date(item.periodStart),
-                                  ) ===
-                                  currentDateInZone(settings.displayTimeZone),
-                              )?.tokens ?? 0,
-                            )}
-                      </Body1>
-                    </span>
-                    <span className={styles.usageMetric}>
-                      <Caption1>当月トークン</Caption1>
-                      <Body1 className={styles.value}>
-                        {privacyMode
-                          ? "••••"
-                          : compactTokens(usage.summary.tokens)}
-                      </Body1>
-                    </span>
-                  </button>
-                ) : null}
-                {expanded ? (
-                  <div
-                    className={mergeClasses(
-                      styles.limits,
-                      styles.scrollableLimits,
-                    )}
-                    aria-label="Hub 別状態"
-                  >
-                    {(snapshot.hubs.items ?? []).map((hub) => (
-                      <div className={styles.limit} key={hub.id}>
-                        <div className={design.gaugeHeader}>
-                          <Body1 className={design.gaugeName}>
-                            {hub.displayName}
-                          </Body1>
-                          {hub.enabled && hub.collectionEnabled ? null : (
-                            <Caption1 className={design.metaLabel}>
-                              停止中
-                            </Caption1>
-                          )}
-                        </div>
-                        <div className={styles.stateLine}>
-                          <StatusBadge status={hub.connection} />
-                          <StatusBadge status={hub.currentCollection} />
-                          <StatusBadge status={hub.lastCollection} />
-                        </div>
-                        <HubTimeLine
-                          label="OK"
-                          accessibleLabel="最終成功"
-                          value={hub.lastSuccessAt}
-                          design={design}
-                          displayTimeZone={settings.displayTimeZone}
-                        />
-                        <HubTimeLine
-                          label="NG"
-                          accessibleLabel="最終失敗"
-                          value={hub.lastFailureAt}
-                          design={design}
-                          displayTimeZone={settings.displayTimeZone}
-                        />
-                        <HubTimeLine
-                          label="SKIP"
-                          accessibleLabel="最終スキップ"
-                          value={hub.lastSkippedAt}
-                          design={design}
-                          displayTimeZone={settings.displayTimeZone}
-                        />
-                      </div>
-                    ))}
+                  <div className={styles.usageSummary}>
+                    <UsageRow
+                      label="Today"
+                      tokens={todayUsage?.tokens ?? 0}
+                      cost={todayUsage?.apiCostUsd ?? 0}
+                      privacyMode={privacyMode}
+                      className={styles.usageRowDivider}
+                      styles={styles}
+                      onClick={() => openMainRoute("/usage")}
+                    />
+                    <UsageRow
+                      label="This month"
+                      tokens={usage.summary.tokens}
+                      cost={usage.summary.apiCostUsd}
+                      privacyMode={privacyMode}
+                      styles={styles}
+                      onClick={() => openMainRoute("/usage")}
+                    />
                   </div>
                 ) : null}
+                <div className={styles.meta}>
+                  {failedCollectionCount > 0 ? (
+                    <Button
+                      appearance="subtle"
+                      size="small"
+                      className={styles.metaFailure}
+                      icon={<Warning16Regular />}
+                      onClick={() => openMainRoute("/hubs")}
+                      aria-label={`対象期間に取得失敗 ${failedCollectionCount} 件。取得履歴を開く`}
+                    >
+                      取得失敗 {failedCollectionCount}
+                    </Button>
+                  ) : (
+                    <span />
+                  )}
+                  <Caption1 className={styles.update}>
+                    {formatOverviewInstant(
+                      snapshot.generatedAt,
+                      settings.displayTimeZone,
+                    )}{" "}
+                    更新
+                  </Caption1>
+                </div>
 
                 {snapshot.hubs.totalCount === 0 ? (
                   <div>
@@ -601,15 +654,15 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                         aria-label={item.accessibleLabel}
                       >
                         <div className={design.gaugeHeader}>
-                          <Body1 className={design.gaugeName}>
+                          <Body1 className={styles.limitName}>
                             <strong>{item.serviceName}</strong>{" "}
-                            <span className={design.gaugeContext}>
+                            <span className={styles.limitContext}>
                               {item.accountName}・{item.limitName}
                             </span>
                           </Body1>
                           <Body1
                             className={mergeClasses(
-                              design.gaugePercent,
+                              styles.limitPercent,
                               gaugeTextClass(design, item.remaining),
                             )}
                             title={item.tooltip}
@@ -632,6 +685,25 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                         />
                       </article>
                     ))}
+                    {allLimits.length > 5 ? (
+                      <div className={styles.more}>
+                        <Button
+                          appearance="subtle"
+                          icon={
+                            expanded ? (
+                              <ChevronUp16Regular />
+                            ) : (
+                              <ChevronDown16Regular />
+                            )
+                          }
+                          aria-expanded={expanded}
+                          aria-label={
+                            expanded ? "利用枠を折りたたむ" : "利用枠を展開"
+                          }
+                          onClick={toggleExpanded}
+                        />
+                      </div>
+                    ) : null}
                   </section>
                 )}
 
@@ -683,21 +755,6 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                       処理失敗 {snapshot.review.recalculationFailures.count}
                     </Button>
                   ) : null}
-                  <Button
-                    appearance="subtle"
-                    icon={
-                      expanded ? (
-                        <ChevronUp16Regular />
-                      ) : (
-                        <ChevronDown16Regular />
-                      )
-                    }
-                    aria-expanded={expanded}
-                    aria-label={
-                      expanded ? "利用枠を折りたたむ" : "利用枠を展開"
-                    }
-                    onClick={toggleExpanded}
-                  />
                   <Caption1
                     className={styles.update}
                     role="status"
@@ -747,6 +804,42 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
   );
 }
 
+function UsageRow({
+  label,
+  tokens: tokenCount,
+  cost,
+  privacyMode,
+  className,
+  styles,
+  onClick,
+}: {
+  label: string;
+  tokens: number;
+  cost: number;
+  privacyMode: boolean;
+  className?: string;
+  styles: ReturnType<typeof useStyles>;
+  onClick: () => void;
+}) {
+  const value = privacyMode ? "••••" : integerFormatter.format(tokenCount);
+  const costValue = privacyMode ? "••••" : usdFormatter.format(cost);
+  return (
+    <button
+      type="button"
+      className={mergeClasses(styles.usageRow, className)}
+      onClick={onClick}
+      aria-label={`${label} の利用トークン ${value}、API換算利用金額 ${costValue}。利用実績を開く`}
+    >
+      <span className={styles.usageLabel}>{label}</span>
+      <span className={styles.usageValue}>
+        {value}
+        <span className={styles.usageUnit}>tokens</span>
+      </span>
+      <span className={styles.usageCost}>{costValue}</span>
+    </button>
+  );
+}
+
 /**
  * Reset date and time in fixed columns so every row lines up, with the
  * freshness warning reduced to an icon (`docs/design-system.md` §5.5, §7.1).
@@ -787,35 +880,6 @@ function LimitResetLine({
           {item.freshness.ageLabel}
         </span>
       ) : null}
-    </div>
-  );
-}
-
-/** Hub timestamps as `LABEL  M/D  H:MM`, aligned across rows. */
-function HubTimeLine({
-  label,
-  accessibleLabel,
-  value,
-  design,
-  displayTimeZone,
-}: {
-  label: string;
-  accessibleLabel: string;
-  value: string;
-  design: DesignStyles;
-  displayTimeZone: string;
-}) {
-  if (!value) return null;
-  const instant = splitOverviewInstant(value, displayTimeZone);
-  return (
-    <div
-      className={design.resetRow}
-      title={value}
-      aria-label={`${accessibleLabel} ${instant.date} ${instant.time}`}
-    >
-      <span className={design.metaLabel}>{label}</span>
-      <span className={design.resetValue}>{instant.date}</span>
-      <span className={design.resetValue}>{instant.time}</span>
     </div>
   );
 }

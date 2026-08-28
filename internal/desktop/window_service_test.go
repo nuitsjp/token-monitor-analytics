@@ -27,28 +27,28 @@ func TestFitWindowBoundsKeepsWindowInsideWorkArea(t *testing.T) {
 	}
 }
 
-func TestCompactWindowBoundsUsesCollapsedAndExpandedWidths(t *testing.T) {
+func TestCompactWindowBoundsUsesAdoptedWidthAndHeight(t *testing.T) {
 	workArea := application.Rect{X: 0, Y: 0, Width: 1920, Height: 1040}
 
-	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 900, Height: 500}, workArea, false); got != (application.Rect{X: 100, Y: 100, Width: 360, Height: 360}) {
+	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 900, Height: 500}, workArea, false); got != (application.Rect{X: 100, Y: 100, Width: 360, Height: 600}) {
 		t.Fatalf("collapsed bounds = %#v", got)
 	}
-	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 360, Height: 500}, workArea, true); got != (application.Rect{X: 100, Y: 100, Width: 420, Height: 500}) {
+	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 360, Height: 500}, workArea, true); got != (application.Rect{X: 100, Y: 100, Width: 360, Height: 500}) {
 		t.Fatalf("expanded bounds = %#v", got)
 	}
-	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 360, Height: 900}, workArea, true); got.Height != 520 {
-		t.Fatalf("expanded height = %d, want 520", got.Height)
+	if got := compactWindowBounds(application.Rect{X: 100, Y: 100, Width: 360, Height: 900}, workArea, true); got.Height != 600 {
+		t.Fatalf("expanded height = %d, want 600", got.Height)
 	}
 }
 
 func TestCompactWindowConstraintsFollowTinyWorkArea(t *testing.T) {
 	workArea := application.Rect{X: 0, Y: 0, Width: 300, Height: 100}
 	minWidth, minHeight, maxWidth, maxHeight := compactConstraintBounds(workArea, true)
-	if minWidth != 300 || maxWidth != 300 || minHeight != 50 || maxHeight != 50 {
+	if minWidth != 300 || maxWidth != 300 || minHeight != 100 || maxHeight != 100 {
 		t.Fatalf("tiny work area constraints = %d,%d,%d,%d", minWidth, minHeight, maxWidth, maxHeight)
 	}
 	bounds := compactWindowBounds(application.Rect{X: 0, Y: 0, Width: 420, Height: 180}, workArea, true)
-	if bounds.Width != 300 || bounds.Height != 50 {
+	if bounds.Width != 300 || bounds.Height != 100 {
 		t.Fatalf("tiny work area bounds = %#v", bounds)
 	}
 }
