@@ -231,9 +231,9 @@ const useStyles = makeStyles({
   },
   resetLine: {
     display: "grid",
-    gridTemplateColumns: "36px 32px 36px auto minmax(0, 1fr)",
+    gridTemplateColumns: "5ch 4ch 5ch auto minmax(0, 1fr)",
     alignItems: "baseline",
-    columnGap: tokens.spacingHorizontalXXS,
+    columnGap: "1ch",
     minWidth: 0,
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase100,
