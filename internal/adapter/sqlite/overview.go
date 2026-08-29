@@ -241,7 +241,17 @@ func readOverviewRecentLimits(ctx context.Context, database *sql.DB, result *Ove
 		  FROM valid
 		)
 		SELECT i.logical_account_id, i.limit_definition_id, i.service_name, i.account_name,
-		       i.limit_name, i.cycle_type, l.latest_used_percent, l.latest_resets_at, i.provider_updated_at,
+		       i.limit_name, i.cycle_type, l.latest_used_percent,
+		       (SELECT ers.estimated_limit
+		          FROM estimation_result_series ers
+		          JOIN estimation_results er ON er.estimation_result_id = ers.estimation_result_id
+		         WHERE ers.calculation_interval_id = i.calculation_interval_id
+		           AND ers.usage_limit_source_id = i.usage_limit_source_id
+		           AND ers.logical_account_id = i.logical_account_id
+		           AND er.status IN ('provisional', 'verified')
+		         ORDER BY er.updated_at DESC, er.estimation_result_id DESC
+		         LIMIT 1) AS estimated_limit,
+		       l.latest_resets_at, i.provider_updated_at,
 		       l.latest_observation_at, l.latest_expected_seconds
 		FROM increases i JOIN latest_ranked l USING (usage_limit_source_id)
 		WHERE i.increase_rank = 1 AND l.observation_rank = 1
@@ -258,12 +268,17 @@ func readOverviewRecentLimits(ctx context.Context, database *sql.DB, result *Ove
 	for rows.Next() {
 		var item OverviewRecentLimit
 		var reset sql.NullString
+		var estimatedLimit sql.NullFloat64
 		var increase, latest string
 		var expectedSeconds int64
 		if err := rows.Scan(&item.LogicalAccountID, &item.LimitDefinitionID, &item.ServiceName,
-			&item.AccountName, &item.LimitName, &item.CycleType, &item.UsedPercent, &reset,
+			&item.AccountName, &item.LimitName, &item.CycleType, &item.UsedPercent, &estimatedLimit, &reset,
 			&increase, &latest, &expectedSeconds); err != nil {
 			return fmt.Errorf("scan overview recent limit: %w", err)
+		}
+		if estimatedLimit.Valid {
+			value := estimatedLimit.Float64
+			item.EstimatedLimit = &value
 		}
 		var err error
 		if item.ResetsAt, err = parseOverviewTime(reset); err != nil {

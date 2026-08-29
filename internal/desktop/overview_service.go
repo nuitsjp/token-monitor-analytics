@@ -138,6 +138,8 @@ type OverviewRecentLimitSnapshot struct {
 	RemainingLabel       string                     `json:"remainingLabel"`
 	RemainingDetailLabel string                     `json:"remainingDetailLabel"`
 	Remaining            StatusPresentationSnapshot `json:"remaining"`
+	EstimatedUsageLabel  string                     `json:"estimatedUsageLabel"`
+	EstimatedLimitLabel  string                     `json:"estimatedLimitLabel"`
 	ResetAt              string                     `json:"resetAt"`
 	Reset                StatusPresentationSnapshot `json:"reset"`
 	LastIncrease         OverviewTimeSnapshot       `json:"lastIncrease"`
@@ -570,6 +572,13 @@ func mapOverviewRecentLimit(item domain.OverviewRecentLimit, now time.Time, priv
 		RemainingPercent: &remaining, RemainingLabel: fmt.Sprintf("%.1f%%", remaining), RemainingDetailLabel: fmt.Sprintf("%.2f%%", remaining), Remaining: remainingStatus,
 		ResetAt: resetAt, Reset: reset, LastIncrease: lastIncrease, Freshness: freshness,
 	}
+	if item.EstimatedLimit != nil {
+		if math.IsNaN(*item.EstimatedLimit) || math.IsInf(*item.EstimatedLimit, 0) || *item.EstimatedLimit < 0 {
+			return OverviewRecentLimitSnapshot{}, errors.New("overview limit contains an invalid estimated limit")
+		}
+		result.EstimatedUsageLabel = fmt.Sprintf("$%.2f", *item.EstimatedLimit*item.UsedPercent/100)
+		result.EstimatedLimitLabel = fmt.Sprintf("$%.2f", *item.EstimatedLimit)
+	}
 	if privacy {
 		hidden, err := statusPresentation("privacy_hidden")
 		if err != nil {
@@ -580,6 +589,10 @@ func mapOverviewRecentLimit(item domain.OverviewRecentLimit, now time.Time, priv
 		result.RemainingLabel = privacyMask
 		result.RemainingDetailLabel = privacyMask
 		result.Remaining = hidden
+		if result.EstimatedLimitLabel != "" {
+			result.EstimatedUsageLabel = privacyMask
+			result.EstimatedLimitLabel = privacyMask
+		}
 		result.ResetAt = ""
 		result.Reset = hidden
 		result.PrivacyMasked = true
@@ -592,6 +605,9 @@ func mapOverviewRecentLimit(item domain.OverviewRecentLimit, now time.Time, priv
 		result.Freshness.AgeLabel, result.Freshness.ObservationAt)
 	if result.ResetAt != "" {
 		result.Tooltip += "・リセット UTC " + result.ResetAt
+	}
+	if result.EstimatedLimitLabel != "" {
+		result.Tooltip += "・推定利用料 " + result.EstimatedUsageLabel + " / 推定上限 " + result.EstimatedLimitLabel
 	}
 	return result, nil
 }

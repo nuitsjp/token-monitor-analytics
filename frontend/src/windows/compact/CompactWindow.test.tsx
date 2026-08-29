@@ -70,6 +70,8 @@ function recentLimit(
     remaining: masked
       ? status("privacy_hidden", "非表示", "subtle")
       : status("remaining_high", "残量良好", "success", "checkmark"),
+    estimatedUsageLabel: masked ? "••••" : `$${29 + index}.00`,
+    estimatedLimitLabel: masked ? "••••" : "$100.00",
     resetAt: masked ? "" : "2026-08-27T00:00:00Z",
     reset: masked
       ? status("privacy_hidden", "非表示", "subtle")
@@ -222,6 +224,10 @@ describe("CompactWindow", () => {
     expect(screen.getByText(/Weekly 2$/)).toBeVisible();
     expect(screen.getAllByText("Reset")).toHaveLength(5);
     expect(screen.getAllByText("8/27")).toHaveLength(5);
+    expect(screen.getByText("$30.00 / $100.00")).toBeVisible();
+    expect(
+      screen.getByLabelText("推定利用料 $30.00、推定上限 $100.00"),
+    ).toBeVisible();
     expect(screen.getByText("1/1")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /^実行中/ }),
@@ -257,6 +263,7 @@ describe("CompactWindow", () => {
     expect(await screen.findAllByText(/••••/)).not.toHaveLength(0);
     expect(calls.slice(0, 2)).toEqual([false, true]);
     expect(document.body.textContent).not.toContain("71.0%");
+    expect(document.body.textContent).not.toContain("$30.00");
   });
 
   it("periodically refreshes without moving keyboard focus", async () => {

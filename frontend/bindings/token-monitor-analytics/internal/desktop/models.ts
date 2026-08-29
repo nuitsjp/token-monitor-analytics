@@ -734,6 +734,8 @@ export interface OverviewRecentLimitSnapshot {
     "remainingLabel": string;
     "remainingDetailLabel": string;
     "remaining": StatusPresentationSnapshot;
+    "estimatedUsageLabel": string;
+    "estimatedLimitLabel": string;
     "resetAt": string;
     "reset": StatusPresentationSnapshot;
     "lastIncrease": OverviewTimeSnapshot;

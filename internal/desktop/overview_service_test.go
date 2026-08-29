@@ -145,9 +145,10 @@ func TestOverviewChecklistRequiresCredentialReconfirmationAfterRestore(t *testin
 func TestOverviewServicePrivacyModeDoesNotSerializeUnmaskedSensitiveValues(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	reset := now.Add(7 * time.Hour)
+	estimatedLimit := 123.0
 	reader := &overviewServiceReader{data: sqliteadapter.OverviewData{
 		ReviewActionKindCounts: map[string]int{}, ReviewWarningKindCounts: map[string]int{}, EstimationStatusCounts: map[string]int{},
-		RecentLimits: []sqliteadapter.OverviewRecentLimit{{ServiceName: "Service", AccountName: "Account Secret", LimitName: "Daily", UsedPercent: 25.5, ResetsAt: &reset, LastIncreaseAt: now.Add(-time.Minute), LatestObservationAt: now.Add(-time.Minute), ExpectedInterval: 5 * time.Minute}},
+		RecentLimits: []sqliteadapter.OverviewRecentLimit{{ServiceName: "Service", AccountName: "Account Secret", LimitName: "Daily", UsedPercent: 25.5, EstimatedLimit: &estimatedLimit, ResetsAt: &reset, LastIncreaseAt: now.Add(-time.Minute), LatestObservationAt: now.Add(-time.Minute), ExpectedInterval: 5 * time.Minute}},
 	}, events: map[string][]sqliteadapter.CredentialAuditEvent{}}
 	service, err := NewOverviewServiceWithDependencies(reader, fixedClock{value: now}, domain.RestoreRecoveryResult{Status: domain.RestoreRecoveryNone})
 	if err != nil {
@@ -162,14 +163,29 @@ func TestOverviewServicePrivacyModeDoesNotSerializeUnmaskedSensitiveValues(t *te
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	for _, forbidden := range []string{"Account Secret", "74.5", "74.50", reset.Format(time.RFC3339Nano)} {
+	for _, forbidden := range []string{"Account Secret", "74.5", "74.50", "$31.37", "$123.00", reset.Format(time.RFC3339Nano)} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("privacy DTO contains %q: %s", forbidden, text)
 		}
 	}
 	limit := snapshot.RecentLimits[0]
-	if !limit.PrivacyMasked || limit.AccountName != privacyMask || limit.RemainingPercent != nil || limit.RemainingLabel != privacyMask || !strings.Contains(limit.AccessibleLabel, privacyMask) || !strings.Contains(limit.Tooltip, privacyMask) {
+	if !limit.PrivacyMasked || limit.AccountName != privacyMask || limit.RemainingPercent != nil || limit.RemainingLabel != privacyMask || limit.EstimatedUsageLabel != privacyMask || limit.EstimatedLimitLabel != privacyMask || !strings.Contains(limit.AccessibleLabel, privacyMask) || !strings.Contains(limit.Tooltip, privacyMask) {
 		t.Fatalf("privacy DTO = %#v", limit)
+	}
+}
+
+func TestOverviewRecentLimitMapsEstimatedUsageAndLimitLabels(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	estimatedLimit := 123.0
+	mapped, err := mapOverviewRecentLimit(sqliteadapter.OverviewRecentLimit{
+		ServiceName: "Service", AccountName: "Account", LimitName: "Weekly",
+		UsedPercent: 25.5, EstimatedLimit: &estimatedLimit, LastIncreaseAt: now.Add(-time.Minute), LatestObservationAt: now.Add(-time.Minute), ExpectedInterval: 5 * time.Minute,
+	}, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mapped.EstimatedUsageLabel != "$31.36" || mapped.EstimatedLimitLabel != "$123.00" {
+		t.Fatalf("estimated usage / limit = %q / %q", mapped.EstimatedUsageLabel, mapped.EstimatedLimitLabel)
 	}
 }
 

@@ -211,6 +211,7 @@ type OverviewRecentLimit struct {
 	LimitName           string
 	CycleType           string
 	UsedPercent         float64
+	EstimatedLimit      *float64
 	ResetsAt            *time.Time
 	LastIncreaseAt      time.Time
 	LatestObservationAt time.Time

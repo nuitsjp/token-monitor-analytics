@@ -31,7 +31,6 @@ import { useSettings } from "../../app/providers";
 import { StatusBadge } from "../../components/StatusBadge";
 import { Gauge } from "../../components/design";
 import { designTokens } from "../../components/designTokens";
-import type { DesignStyles } from "../../components/designStyles";
 import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
 import type {
   FrontendAdapter,
@@ -229,6 +228,30 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase300,
     fontWeight: tokens.fontWeightBold,
     fontVariantNumeric: "tabular-nums",
+  },
+  resetLine: {
+    display: "grid",
+    gridTemplateColumns: "36px 32px 36px auto minmax(0, 1fr)",
+    alignItems: "baseline",
+    columnGap: tokens.spacingHorizontalXXS,
+    minWidth: 0,
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+    lineHeight: tokens.lineHeightBase200,
+  },
+  resetLabel: {
+    fontWeight: tokens.fontWeightSemibold,
+    letterSpacing: ".04em",
+    textTransform: "uppercase",
+  },
+  resetValue: { fontVariantNumeric: "tabular-nums", textAlign: "end" },
+  usageLimit: {
+    gridColumn: "5",
+    justifySelf: "end",
+    overflow: "hidden",
+    fontVariantNumeric: "tabular-nums",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   more: { display: "flex", justifyContent: "center" },
   footer: {
@@ -679,7 +702,6 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                         )}
                         <LimitResetLine
                           item={item}
-                          design={design}
                           styles={styles}
                           displayTimeZone={settings.displayTimeZone}
                         />
@@ -846,12 +868,10 @@ function UsageRow({
  */
 function LimitResetLine({
   item,
-  design,
   styles,
   displayTimeZone,
 }: {
   item: OverviewRecentLimitSnapshot;
-  design: DesignStyles;
   styles: ReturnType<typeof useStyles>;
   displayTimeZone: string;
 }) {
@@ -860,15 +880,15 @@ function LimitResetLine({
     : null;
   const staleFreshness = item.freshness.status.intent !== "success";
   return (
-    <div className={design.resetRow} title={item.tooltip}>
-      <span className={design.metaLabel}>Reset</span>
+    <div className={styles.resetLine} title={item.tooltip}>
+      <span className={styles.resetLabel}>Reset</span>
       {reset ? (
         <>
-          <span className={design.resetValue}>{reset.date}</span>
-          <span className={design.resetValue}>{reset.time}</span>
+          <span className={styles.resetValue}>{reset.date}</span>
+          <span className={styles.resetValue}>{reset.time}</span>
         </>
       ) : (
-        <span className={design.resetValue}>{item.reset.label}</span>
+        <span className={styles.resetValue}>{item.reset.label}</span>
       )}
       {staleFreshness ? (
         <span
@@ -878,6 +898,14 @@ function LimitResetLine({
         >
           <Warning16Regular aria-hidden="true" />
           {item.freshness.ageLabel}
+        </span>
+      ) : null}
+      {item.estimatedLimitLabel ? (
+        <span
+          className={styles.usageLimit}
+          aria-label={`推定利用料 ${item.estimatedUsageLabel}、推定上限 ${item.estimatedLimitLabel}`}
+        >
+          {item.estimatedUsageLabel} / {item.estimatedLimitLabel}
         </span>
       ) : null}
     </div>
