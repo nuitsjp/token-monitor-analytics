@@ -250,6 +250,20 @@ const useStyles = makeStyles({
     textTransform: "uppercase",
   },
   resetValue: { fontVariantNumeric: "tabular-nums" },
+  resetDateColumn: {
+    display: "inline-grid",
+    gridTemplateAreas: '"date"',
+    fontVariantNumeric: "tabular-nums",
+    "::before": {
+      content: "attr(data-column-sample)",
+      gridArea: "date",
+      visibility: "hidden",
+    },
+  },
+  resetDateValue: {
+    gridArea: "date",
+    justifySelf: "end",
+  },
   usageLimit: {
     marginLeft: "auto",
     overflow: "hidden",
@@ -447,6 +461,14 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
 
   const allLimits = snapshot?.recentLimits ?? [];
   const limits = allLimits.slice(0, expanded ? allLimits.length : 5);
+  const resetDateColumnSample = limits.reduce((widest, item) => {
+    if (!item.resetAt) return widest;
+    const date = splitOverviewInstant(
+      item.resetAt,
+      settings.displayTimeZone,
+    ).date;
+    return date.length > widest.length ? date : widest;
+  }, "");
   const usageForCurrentDate = usage?.series?.find(
     (item) =>
       currentDateInZone(
@@ -709,6 +731,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                           item={item}
                           styles={styles}
                           displayTimeZone={settings.displayTimeZone}
+                          resetDateColumnSample={resetDateColumnSample}
                         />
                       </article>
                     ))}
@@ -868,17 +891,19 @@ function UsageRow({
 }
 
 /**
- * Reset date and time use a one-character visual gap, with the freshness
- * warning reduced to an icon (`docs/design-system.md` §5.5, §7.1).
+ * Reset dates share the widest visible date column. The widest value keeps a
+ * one-character visual gap before the time, while every service stays aligned.
  */
 function LimitResetLine({
   item,
   styles,
   displayTimeZone,
+  resetDateColumnSample,
 }: {
   item: OverviewRecentLimitSnapshot;
   styles: ReturnType<typeof useStyles>;
   displayTimeZone: string;
+  resetDateColumnSample: string;
 }) {
   const reset = item.resetAt
     ? splitOverviewInstant(item.resetAt, displayTimeZone)
@@ -890,7 +915,12 @@ function LimitResetLine({
         <span className={styles.resetLabel}>Reset</span>
         {reset ? (
           <>
-            <span className={styles.resetValue}>{reset.date}</span>
+            <span
+              className={styles.resetDateColumn}
+              data-column-sample={resetDateColumnSample}
+            >
+              <span className={styles.resetDateValue}>{reset.date}</span>
+            </span>
             <span className={styles.resetValue}>{reset.time}</span>
           </>
         ) : (
