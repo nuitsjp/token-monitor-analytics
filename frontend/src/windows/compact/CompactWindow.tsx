@@ -230,26 +230,31 @@ const useStyles = makeStyles({
     fontVariantNumeric: "tabular-nums",
   },
   resetLine: {
-    display: "grid",
-    gridTemplateColumns: "5ch 4ch 5ch auto minmax(0, 1fr)",
+    display: "flex",
     alignItems: "baseline",
-    columnGap: "1ch",
     minWidth: 0,
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase100,
     lineHeight: tokens.lineHeightBase200,
+  },
+  resetDetails: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "1ch",
+    flexShrink: 0,
+    minWidth: 0,
   },
   resetLabel: {
     fontWeight: tokens.fontWeightSemibold,
     letterSpacing: ".04em",
     textTransform: "uppercase",
   },
-  resetValue: { fontVariantNumeric: "tabular-nums", textAlign: "end" },
+  resetValue: { fontVariantNumeric: "tabular-nums" },
   usageLimit: {
-    gridColumn: "5",
-    justifySelf: "end",
+    marginLeft: "auto",
     overflow: "hidden",
     fontVariantNumeric: "tabular-nums",
+    textAlign: "end",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
@@ -863,8 +868,8 @@ function UsageRow({
 }
 
 /**
- * Reset date and time in fixed columns so every row lines up, with the
- * freshness warning reduced to an icon (`docs/design-system.md` §5.5, §7.1).
+ * Reset date and time use a one-character visual gap, with the freshness
+ * warning reduced to an icon (`docs/design-system.md` §5.5, §7.1).
  */
 function LimitResetLine({
   item,
@@ -881,25 +886,27 @@ function LimitResetLine({
   const staleFreshness = item.freshness.status.intent !== "success";
   return (
     <div className={styles.resetLine} title={item.tooltip}>
-      <span className={styles.resetLabel}>Reset</span>
-      {reset ? (
-        <>
-          <span className={styles.resetValue}>{reset.date}</span>
-          <span className={styles.resetValue}>{reset.time}</span>
-        </>
-      ) : (
-        <span className={styles.resetValue}>{item.reset.label}</span>
-      )}
-      {staleFreshness ? (
-        <span
-          className={styles.freshness}
-          title={item.freshness.observationAt}
-          aria-label={`最新観測 ${item.freshness.ageLabel}`}
-        >
-          <Warning16Regular aria-hidden="true" />
-          {item.freshness.ageLabel}
-        </span>
-      ) : null}
+      <span className={styles.resetDetails}>
+        <span className={styles.resetLabel}>Reset</span>
+        {reset ? (
+          <>
+            <span className={styles.resetValue}>{reset.date}</span>
+            <span className={styles.resetValue}>{reset.time}</span>
+          </>
+        ) : (
+          <span className={styles.resetValue}>{item.reset.label}</span>
+        )}
+        {staleFreshness ? (
+          <span
+            className={styles.freshness}
+            title={item.freshness.observationAt}
+            aria-label={`最新観測 ${item.freshness.ageLabel}`}
+          >
+            <Warning16Regular aria-hidden="true" />
+            {item.freshness.ageLabel}
+          </span>
+        ) : null}
+      </span>
       {item.estimatedLimitLabel ? (
         <span
           className={styles.usageLimit}
