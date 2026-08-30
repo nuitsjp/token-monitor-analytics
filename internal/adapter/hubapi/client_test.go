@@ -94,6 +94,114 @@ func TestExpiredContextIsClassifiedAsTimeout(t *testing.T) {
 	}
 }
 
+func TestHealthHTTPStatusClassification(t *testing.T) {
+	tests := []struct {
+		name           string
+		status         int
+		classification Classification
+	}{
+		{name: "unauthorized", status: http.StatusUnauthorized, classification: ClassificationAuth},
+		{name: "forbidden", status: http.StatusForbidden, classification: ClassificationAuth},
+		{name: "internal server error", status: http.StatusInternalServerError, classification: ClassificationHTTP},
+		{name: "service unavailable", status: http.StatusServiceUnavailable, classification: ClassificationHTTP},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(test.status)
+				_, _ = writer.Write([]byte("status body must not be exposed"))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, testAllowlist())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Health(context.Background())
+			if ClassificationOf(err) != test.classification {
+				t.Fatalf("classification = %q, want %q", ClassificationOf(err), test.classification)
+			}
+			if strings.Contains(err.Error(), "status body must not be exposed") {
+				t.Fatal("response body leaked into error")
+			}
+		})
+	}
+}
+
+func TestFetchStatsHTTPStatusClassification(t *testing.T) {
+	tests := []struct {
+		name           string
+		status         int
+		classification Classification
+	}{
+		{name: "unauthorized", status: http.StatusUnauthorized, classification: ClassificationAuth},
+		{name: "forbidden", status: http.StatusForbidden, classification: ClassificationAuth},
+		{name: "internal server error", status: http.StatusInternalServerError, classification: ClassificationHTTP},
+		{name: "service unavailable", status: http.StatusServiceUnavailable, classification: ClassificationHTTP},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/api/health" {
+					_, _ = writer.Write([]byte(testHealth()))
+					return
+				}
+				writer.WriteHeader(test.status)
+				_, _ = writer.Write([]byte("stats status body must not be exposed"))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, testAllowlist())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.FetchStats(context.Background(), "secret")
+			if ClassificationOf(err) != test.classification {
+				t.Fatalf("classification = %q, want %q", ClassificationOf(err), test.classification)
+			}
+			if strings.Contains(err.Error(), "stats status body must not be exposed") {
+				t.Fatal("response body leaked into error")
+			}
+		})
+	}
+}
+
+func TestResponseTimeoutIsClassifiedAsTimeout(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		close(started)
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, testAllowlist())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = client.Health(ctx)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach httptest server")
+	}
+	if ClassificationOf(err) != ClassificationTimeout {
+		t.Fatalf("classification = %q, want timeout", ClassificationOf(err))
+	}
+}
+
+func TestClosedHubConnectionIsClassifiedAsUnreachable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+	serverURL := server.URL
+	server.Close()
+	client, err := NewClient(serverURL, testAllowlist())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Health(context.Background())
+	if ClassificationOf(err) != ClassificationUnreachable {
+		t.Fatalf("classification = %q, want unreachable", ClassificationOf(err))
+	}
+}
+
 func testHealth() string {
 	return `{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"sha256:test-core","runtimeBuildId":"sha256:test-runtime"}}`
 }

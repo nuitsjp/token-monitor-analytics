@@ -97,10 +97,61 @@ tasks:
     cmds:
       - go test ./tests/acceptance -run Restore
 
+  test:coverage:go:
+    summary: Runs all Go test layers and enforces the current handwritten-code coverage floor
+    cmds:
+      - powershell -NoProfile -File scripts/check-go-coverage.ps1
+
+  test:coverage:frontend:
+    summary: Runs frontend tests with line, branch, function, and statement coverage floors
+    cmds:
+      - powershell -NoProfile -File scripts/check-frontend-coverage.ps1
+
+  test:coverage:
+    summary: Runs the blocking Go and frontend coverage gates
+    cmds:
+      - task: test:coverage:go
+      - task: test:coverage:frontend
+
+  test:windows:
+    summary: Runs Windows-native adapter, restore, and race tests outside CI
+    cmds:
+      - powershell -NoProfile -Command "if ([System.Environment]::OSVersion.Platform -ne 'Win32NT') { throw 'test:windows requires Windows' }"
+      - go test -count=1 ./internal/adapter/... ./tests/acceptance
+      - go test -race -count=1 ./internal/adapter/hubapi ./internal/adapter/scheduler ./internal/usecase ./internal/desktop
+
+  test:wails:
+    summary: Runs the native Wails build and NSIS package smoke check locally on Windows
+    vars:
+      ARCH: '{{.ARCH | default "amd64"}}'
+    cmds:
+      - powershell -NoProfile -Command "if ([System.Environment]::OSVersion.Platform -ne 'Win32NT') { throw 'test:wails requires Windows' }"
+      - task: package
+        vars:
+          ARCH:
+            ref: .ARCH
+      - powershell -NoProfile -File scripts/check-windows-package.ps1 -Arch {{.ARCH}}
+
+  test:stability:
+    summary: Repeats shuffled concurrency-sensitive tests with the race detector outside CI
+    cmds:
+      - go test -race -shuffle=on -count=3 ./internal/adapter/hubapi ./internal/adapter/scheduler ./internal/usecase ./internal/desktop
+
+  test:fuzz:
+    summary: Fuzzes the backup manifest and Hub API parsers outside CI
+    cmds:
+      - go test -fuzz=FuzzValidateManifestKeySet -fuzztime=15s ./internal/adapter/backupzip
+      - go test -fuzz=FuzzHubJSONParsers -fuzztime=15s ./internal/adapter/hubapi
+
   acceptance:
     summary: Runs the normative acceptance gate and writes its report
     cmds:
       - powershell -NoProfile -File scripts/check-acceptance.ps1
+
+  acceptance:release:
+    summary: Inspects normative evidence after verify without rerunning automated tests
+    cmds:
+      - powershell -NoProfile -File scripts/check-acceptance.ps1 -ReuseVerifiedTests
 
   requirements:check:
     summary: Checks that every agreed normative requirement has an owning task
@@ -115,11 +166,8 @@ tasks:
   test:
     summary: Runs all automated test layers
     cmds:
-      - task: test:go
-      - task: test:integration
-      - task: test:frontend
+      - task: test:coverage
       - task: test:e2e
-      - task: test:restore
 
   build:
     summary: Builds the Windows desktop application
@@ -128,10 +176,14 @@ tasks:
 
   package:
     summary: Creates the Windows NSIS installer
+    vars:
+      ARCH: '{{.ARCH | default "amd64"}}'
     cmds:
       - task: windows:package
         vars:
           INSTALL_SCOPE: user
+          ARCH:
+            ref: .ARCH
 
   dev:
     summary: Runs Wails development mode
@@ -148,3 +200,10 @@ tasks:
       - task: security:check
       - task: test
       - task: build
+
+  release:verify:
+    summary: Runs the full quality suite, acceptance evidence, and local Windows package check for a release decision
+    cmds:
+      - task: verify
+      - task: acceptance:release
+      - task: test:wails

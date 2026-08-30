@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
@@ -191,26 +191,22 @@ describe("compact window", () => {
     await user.click(await screen.findByRole("radio", { name: "ダーク" }));
     await waitFor(() => expect(mainDirty).toBe(true));
     act(() => emitFakeBackendEvent(backend, "window:main-close-requested"));
-    expect(
-      await screen.findByRole("heading", { name: "メイン画面を閉じますか？" }),
-    ).toBeVisible();
-    await user.click(
-      await screen.findByRole(
-        "button",
-        { name: "キャンセル" },
-        { timeout: 5_000 },
-      ),
-    );
+    const cancelDialog = await screen.findByRole("dialog", {
+      name: "メイン画面を閉じますか？",
+    });
+    await user.click(within(cancelDialog).getByText("キャンセル"));
     expect(confirmations).toBe(0);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "メイン画面を閉じますか？" }),
+      ).not.toBeInTheDocument(),
+    );
 
     act(() => emitFakeBackendEvent(backend, "window:main-close-requested"));
-    await user.click(
-      await screen.findByRole(
-        "button",
-        { name: "破棄して続行" },
-        { timeout: 5_000 },
-      ),
-    );
+    const confirmDialog = await screen.findByRole("dialog", {
+      name: "メイン画面を閉じますか？",
+    });
+    await user.click(within(confirmDialog).getByText("破棄して続行"));
     expect(confirmations).toBe(1);
   });
 

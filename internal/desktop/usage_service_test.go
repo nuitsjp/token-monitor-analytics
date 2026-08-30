@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,6 +24,19 @@ func (r usageTestReader) ListUsageAnalysisObservations(context.Context) ([]domai
 }
 func (r usageTestReader) ListUsageNativeAmounts(context.Context) ([]sqliteadapter.UsageNativeAmount, error) {
 	return r.amounts, nil
+}
+
+type usageErrorReader struct {
+	analysisErr error
+	nativeErr   error
+}
+
+func (r usageErrorReader) ListUsageAnalysisObservations(context.Context) ([]domain.UsageObservation, error) {
+	return nil, r.analysisErr
+}
+
+func (r usageErrorReader) ListUsageNativeAmounts(context.Context) ([]sqliteadapter.UsageNativeAmount, error) {
+	return nil, r.nativeErr
 }
 
 type usageTestClock struct{ now time.Time }
@@ -276,5 +290,123 @@ func TestUsageServiceSupportsContractAndObservedAgentClassifications(t *testing.
 	}
 	if len(agent.Breakdown) != 1 || agent.Breakdown[0].CategoryKey != "codex" || agent.Breakdown[0].Label != "codex" {
 		t.Fatalf("agent breakdown = %#v", agent.Breakdown)
+	}
+}
+
+func TestUsageServiceExportPropagatesReaderErrorsAndRejectsUnknownFormat(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+	input := UsageFilterInput{From: start.Format(time.RFC3339), To: start.Add(time.Hour).Format(time.RFC3339), DisplayTimeZone: "UTC"}
+	analysisErr := errors.New("analysis reader failed")
+	service, err := NewUsageServiceWithDependencies(usageErrorReader{analysisErr: analysisErr}, usageTestClock{now: start})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ExportUsage(context.Background(), input, "csv"); !errors.Is(err, analysisErr) {
+		t.Fatalf("analysis reader error = %v, want %v", err, analysisErr)
+	}
+
+	nativeErr := errors.New("native reader failed")
+	service, err = NewUsageServiceWithDependencies(usageErrorReader{nativeErr: nativeErr}, usageTestClock{now: start})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ExportUsage(context.Background(), input, "json"); !errors.Is(err, nativeErr) {
+		t.Fatalf("native reader error = %v, want %v", err, nativeErr)
+	}
+
+	service, err = NewUsageServiceWithDependencies(usageTestReader{}, usageTestClock{now: start})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.ExportUsage(context.Background(), input, "xml")
+	if err == nil || err.Error() != "export format must be csv or json" {
+		t.Fatalf("unsupported export format error = %v", err)
+	}
+}
+
+func TestUsageServiceCSVExportPreservesQuotedLabelsAndNewlines(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+	serviceLabel := "Service, \"quoted\"\nline"
+	rawIdentifier := "raw,service\nidentifier"
+	reader := usageTestReader{observations: []domain.UsageObservation{
+		{ID: "csv-start", SnapshotID: "snapshot-start", SourceID: "csv-source", HubID: "hub", DeviceID: "device", RawServiceIdentifier: rawIdentifier, ServiceID: "service", ServiceName: serviceLabel, ObservedAt: start, TokenCount: 0, APICostUSDText: "0", AccountIDs: []string{"account"}, CompletenessConfirmed: true},
+		{ID: "csv-end", SnapshotID: "snapshot-end", SourceID: "csv-source", HubID: "hub", DeviceID: "device", RawServiceIdentifier: rawIdentifier, ServiceID: "service", ServiceName: serviceLabel, ObservedAt: start.Add(time.Hour), TokenCount: 25, APICostUSDText: "2.5", AccountIDs: []string{"account"}, CompletenessConfirmed: true},
+	}}
+	service, err := NewUsageServiceWithDependencies(reader, usageTestClock{now: start.Add(2 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := UsageFilterInput{From: start.Format(time.RFC3339), To: start.Add(2 * time.Hour).Format(time.RFC3339), DisplayTimeZone: "UTC", GroupBy: "service", RawServiceIdentifier: rawIdentifier}
+	export, err := service.ExportUsage(context.Background(), input, "csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(export.Content, "\ufeff"))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("CSV rows = %#v", rows)
+	}
+	columns := make(map[string]int, len(rows[0]))
+	for index, column := range rows[0] {
+		columns[column] = index
+	}
+	if got := rows[1][columns["label"]]; got != serviceLabel {
+		t.Fatalf("quoted service label = %q, want %q", got, serviceLabel)
+	}
+	if got := rows[1][columns["rawServiceIdentifier"]]; got != rawIdentifier {
+		t.Fatalf("quoted raw identifier = %q, want %q", got, rawIdentifier)
+	}
+	if got := rows[1][columns["tokens"]]; got != "25" {
+		t.Fatalf("CSV tokens = %q", got)
+	}
+}
+
+func TestUsageServiceUsesHalfOpenFilterAtSpringDSTBoundaries(t *testing.T) {
+	t.Parallel()
+	// In New York this local day is 23 hours: the end is midnight after the
+	// spring-forward transition. Both filtering and period construction must
+	// retain the start and exclude the end.
+	from := time.Date(2026, 3, 8, 5, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 3, 9, 4, 0, 0, 0, time.UTC)
+	reader := usageTestReader{observations: []domain.UsageObservation{
+		{ID: "dst-before", SourceID: "dst-source", HubID: "hub", DeviceID: "device", ServiceID: "service", ServiceName: "Service", ObservedAt: from.Add(-time.Hour), TokenCount: 0, APICostUSDText: "0", AccountIDs: []string{"account"}, CompletenessConfirmed: true},
+		{ID: "dst-at-start", SourceID: "dst-source", HubID: "hub", DeviceID: "device", ServiceID: "service", ServiceName: "Service", ObservedAt: from, TokenCount: 10, APICostUSDText: "1", AccountIDs: []string{"account"}, CompletenessConfirmed: true},
+		{ID: "dst-inside", SourceID: "dst-source", HubID: "hub", DeviceID: "device", ServiceID: "service", ServiceName: "Service", ObservedAt: from.Add(time.Hour), TokenCount: 15, APICostUSDText: "1.5", AccountIDs: []string{"account"}, CompletenessConfirmed: true},
+		{ID: "dst-at-end", SourceID: "dst-source", HubID: "hub", DeviceID: "device", ServiceID: "service", ServiceName: "Service", ObservedAt: to, TokenCount: 30, APICostUSDText: "3", AccountIDs: []string{"account"}, CompletenessConfirmed: true},
+	}, amounts: []sqliteadapter.UsageNativeAmount{
+		{ObservationID: "native-at-start", SnapshotID: "snapshot-start", HubID: "hub", DeviceID: "device", RawServiceIdentifier: "limit", ObservedAt: from, UsedText: "1", Currency: "TOKENS"},
+		{ObservationID: "native-at-end", SnapshotID: "snapshot-end", HubID: "hub", DeviceID: "device", RawServiceIdentifier: "limit", ObservedAt: to, UsedText: "2", Currency: "TOKENS"},
+	}}
+	service, err := NewUsageServiceWithDependencies(reader, usageTestClock{now: to.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.GetUsage(context.Background(), UsageFilterInput{From: from.Format(time.RFC3339), To: to.Format(time.RFC3339), DisplayTimeZone: "America/New_York", Granularity: "day", GroupBy: "service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary.Tokens != 15 || result.Summary.APICostUSDText != "1.5" || result.Summary.ObservationCount != 2 {
+		t.Fatalf("DST half-open summary = %#v", result.Summary)
+	}
+	if len(result.NativeAmounts) != 1 || result.NativeAmounts[0].ObservationID != "native-at-start" {
+		t.Fatalf("DST half-open native amounts = %#v", result.NativeAmounts)
+	}
+	if len(result.Series) != 1 {
+		t.Fatalf("DST series = %#v", result.Series)
+	}
+	periodStart, err := time.Parse(time.RFC3339Nano, result.Series[0].PeriodStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	periodEnd, err := time.Parse(time.RFC3339Nano, result.Series[0].PeriodEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if periodStart.Format("2006-01-02 15:04 -0700") != "2026-03-08 00:00 -0500" || periodEnd.Format("2006-01-02 15:04 -0700") != "2026-03-09 00:00 -0400" || periodEnd.Sub(periodStart) != 23*time.Hour {
+		t.Fatalf("DST local day = %s..%s duration=%s", result.Series[0].PeriodStart, result.Series[0].PeriodEnd, periodEnd.Sub(periodStart))
 	}
 }

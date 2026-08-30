@@ -69,6 +69,7 @@ jobs:
           go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.12
           npm --prefix frontend ci
       - run: wails3 task policy:check
+      - run: wails3 task generate:check
 
   lint:
     runs-on: windows-2025
@@ -95,6 +96,7 @@ jobs:
           npm --prefix frontend ci
       - run: go mod tidy -diff
       - run: go mod verify
+      - run: wails3 task fmt:check
       - run: wails3 task lint
 
   security:
@@ -154,6 +156,27 @@ jobs:
           npm --prefix frontend ci
           npx --prefix frontend playwright install chromium
       - run: wails3 task test
+        env:
+          GO_COVERAGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/token-monitor-go-coverage
+          FRONTEND_COVERAGE_OUTPUT_DIRECTORY: ${{ runner.temp }}/token-monitor-frontend-coverage
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: test-coverage-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/token-monitor-go-coverage
+            ${{ runner.temp }}/token-monitor-frontend-coverage
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload browser diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: test-browser-diagnostics-${{ github.run_id }}
+          path: frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
   build:
     runs-on: windows-2025

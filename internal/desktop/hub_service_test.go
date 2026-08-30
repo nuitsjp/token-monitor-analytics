@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -259,5 +260,106 @@ func TestRestorePendingNeedsNewCredentialAndSuccessfulConnection(t *testing.T) {
 	}
 	if checked.CredentialState != "registered" || checked.ConnectionState != "connected" {
 		t.Fatalf("state after reconfirmation = %q/%q", checked.CredentialState, checked.ConnectionState)
+	}
+}
+
+func TestHubConnectionFailuresPersistClassifiedStateWithoutSensitiveData(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		statsBody string
+		wantState string
+	}{
+		{name: "P1-COL-07 P1-HUB-06 401 authentication", status: http.StatusUnauthorized, wantState: "authentication_failed"},
+		{name: "P1-COL-07 P1-HUB-06 403 authentication", status: http.StatusForbidden, wantState: "authentication_failed"},
+		{name: "P1-HUB-06 503 HTTP failure", status: http.StatusServiceUnavailable, wantState: "unreachable"},
+		{name: "P1-HUB-06 invalid JSON", status: http.StatusOK, statsBody: `{"devices":`, wantState: "invalid_json"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service, lifecycle, _ := newHubTestService(t)
+			build := hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "service-test", CoreBuildID: "core", RuntimeBuildID: "runtime"}
+			service.client = hubAPITestFactory(hubapi.NewAllowlist(hubapi.Contract{Build: build, UsageUpdatedAt: true}))
+			const responseSentinel = "response-body-must-not-be-persisted"
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/api/health" {
+					_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"service-test","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
+					return
+				}
+				writer.WriteHeader(test.status)
+				if test.statsBody != "" {
+					_, _ = writer.Write([]byte(test.statsBody))
+				} else {
+					_, _ = writer.Write([]byte(responseSentinel))
+				}
+			}))
+			defer server.Close()
+
+			const secretSentinel = "credential-must-not-be-persisted"
+			hub, err := service.CreateHub(t.Context(), CreateHubInput{
+				DisplayName: "Hub", URL: server.URL, CollectionIntervalSeconds: 300,
+				CollectionEnabled: true, Secret: secretSentinel,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			checked, err := service.CheckHubConnection(t.Context(), hub.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if checked.ConnectionState != test.wantState {
+				t.Fatalf("connection state = %q, want %q", checked.ConnectionState, test.wantState)
+			}
+
+			database, err := lifecycle.DB()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state, detail string
+			if err := database.QueryRowContext(t.Context(), `SELECT state, failure_detail FROM hub_connection_attempts WHERE hub_id = ?`, hub.ID).Scan(&state, &detail); err != nil {
+				t.Fatal(err)
+			}
+			if state != test.wantState {
+				t.Fatalf("persisted state = %q, want %q", state, test.wantState)
+			}
+			for _, forbidden := range []string{secretSentinel, responseSentinel} {
+				if strings.Contains(detail, forbidden) {
+					t.Fatalf("failure detail leaked sentinel %q: %q", forbidden, detail)
+				}
+				var leaked int
+				if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM configuration_audits WHERE coalesce(before_json, '') LIKE '%' || ? || '%' OR coalesce(after_json, '') LIKE '%' || ? || '%'`, forbidden, forbidden).Scan(&leaked); err != nil {
+					t.Fatal(err)
+				}
+				if leaked != 0 {
+					t.Fatalf("configuration audit leaked sentinel %q", forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestConnectionOutcomeUsesTypedClassificationInsteadOfErrorText(t *testing.T) {
+	tests := []struct {
+		classification hubapi.Classification
+		want           string
+	}{
+		{classification: hubapi.ClassificationAuth, want: "authentication_failed"},
+		{classification: hubapi.ClassificationTLS, want: "tls_error"},
+		{classification: hubapi.ClassificationTimeout, want: "timeout"},
+		{classification: hubapi.ClassificationUnsupported, want: "unsupported_contract"},
+		{classification: hubapi.ClassificationInvalidJSON, want: "invalid_json"},
+		{classification: hubapi.ClassificationBodyTooLarge, want: "invalid_json"},
+		{classification: hubapi.ClassificationHTTP, want: "unreachable"},
+		{classification: hubapi.ClassificationUnreachable, want: "unreachable"},
+	}
+	for _, test := range tests {
+		err := &hubapi.Error{Classification: test.classification, Operation: "test", Reason: "auth tls timeout response-body-sentinel"}
+		state, detail := connectionOutcome(err)
+		if state != test.want {
+			t.Errorf("classification %q state = %q, want %q", test.classification, state, test.want)
+		}
+		if strings.Contains(detail, "response-body-sentinel") {
+			t.Fatalf("classification %q leaked error reason", test.classification)
+		}
 	}
 }

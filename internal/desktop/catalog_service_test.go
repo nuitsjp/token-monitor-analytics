@@ -96,3 +96,77 @@ func TestCatalogServiceUpdatesPreserveImmutableFieldsAndUseInjectedClock(t *test
 		t.Fatalf("audit/request counts = %d/%d, fixed clock audits = %d", auditCount, requestCount, fixedAuditCount)
 	}
 }
+
+func TestCatalogServiceRoundTripsCompleteSnapshotThroughSQLite(t *testing.T) {
+	lifecycle := &sqliteadapter.Lifecycle{}
+	if err := lifecycle.Open(t.Context(), filepath.Join(t.TempDir(), "catalog-snapshot.sqlite3")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lifecycle.Close() })
+	clock := fixedClock{value: time.Date(2026, 8, 29, 1, 2, 3, 4, time.UTC)}
+	service, err := NewCatalogServiceWithDependencies(lifecycle, clock, randomIDs{}, newDesktopTestMaintenanceGate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	created, err := service.CreateService(ctx, CreateServiceInput{Provider: "Provider", Name: "Service", OfficialKey: "provider.service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CreateServiceIdentifierMapping(ctx, ServiceIdentifierMappingInput{ID: "mapping-1", Kind: "usage_limit", RawIdentifier: "raw.limit", ServiceID: created.ID, ValidFrom: "2026-08-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CreateLimitDefinition(ctx, LimitDefinitionInput{ID: "definition-1", ServiceID: created.ID, CycleType: "billing", Meaning: "Monthly", Unit: "percent", BillingConfirmation: "unconfirmed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CreatePlan(ctx, PlanInput{ID: "plan-1", ServiceID: created.ID, Name: "Plan"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CreatePlanVersion(ctx, PlanVersionInput{ID: "version-1", PlanID: "plan-1", Name: "v1", ValidFrom: "2026-08-01T00:00:00Z", OfficialSourceURL: "https://vendor.example/plan"}); err != nil {
+		t.Fatal(err)
+	}
+	limit := 100.0
+	if err := service.CreatePlanLimitRule(ctx, PlanLimitRuleInput{ID: "rule-1", PlanVersionID: "version-1", LimitDefinitionID: "definition-1", Limit: &limit, OfficialSourceURL: "https://vendor.example/limit"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CreateStandardPrice(ctx, StandardPriceInput{ID: "price-1", PlanVersionID: "version-1", USDMonthlyPerSeat: 20, SourceURL: "https://vendor.example/price", ValidFrom: "2026-08-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := service.GetCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Services) != 1 || len(snapshot.ServiceIdentifierMappings) != 1 || len(snapshot.LimitDefinitions) != 1 || len(snapshot.Plans) != 1 || len(snapshot.PlanVersions) != 1 || len(snapshot.PlanLimitRules) != 1 || len(snapshot.StandardPrices) != 1 {
+		t.Fatalf("catalog snapshot = %#v", snapshot)
+	}
+	if snapshot.PlanLimitRules[0].Limit == nil || *snapshot.PlanLimitRules[0].Limit != limit || snapshot.StandardPrices[0].USDMonthlyPerSeat != 20 {
+		t.Fatalf("catalog value DTOs = rules %#v, prices %#v", snapshot.PlanLimitRules, snapshot.StandardPrices)
+	}
+
+	if err := service.SetBillingConfirmation(ctx, "definition-1", "confirmed"); err != nil {
+		t.Fatal(err)
+	}
+	definitions, err := service.GetLimitDefinitions(ctx, false)
+	if err != nil || len(definitions) != 1 || definitions[0].BillingConfirmation != "confirmed" {
+		t.Fatalf("billing confirmation = %#v, err = %v", definitions, err)
+	}
+	if err := service.ArchiveService(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	active, err := service.GetServices(ctx, false)
+	if err != nil || len(active) != 0 {
+		t.Fatalf("active services after archive = %#v, err = %v", active, err)
+	}
+	archived, err := service.GetServices(ctx, true)
+	if err != nil || len(archived) != 1 || archived[0].ArchivedAt == "" {
+		t.Fatalf("archived services = %#v, err = %v", archived, err)
+	}
+	if err := service.RestoreService(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := service.GetServices(ctx, false)
+	if err != nil || len(restored) != 1 || restored[0].ArchivedAt != "" {
+		t.Fatalf("restored services = %#v, err = %v", restored, err)
+	}
+}

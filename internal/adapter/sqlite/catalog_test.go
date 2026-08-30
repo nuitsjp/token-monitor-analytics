@@ -439,6 +439,16 @@ func TestSplitRecomputesBothObservationRangesAndRollsBackInvalidSelection(t *tes
 	if err := lifecycle.SplitIdentificationCandidate(ctx, "source", IdentificationCandidate{ID: "split", RawLimitServiceIdentifier: "raw", RawReportedPlanName: "Plan", CreatedAt: now, UpdatedAt: now.Add(4 * time.Hour)}, "source-observation-0", "source-observation-1"); err != nil {
 		t.Fatal(err)
 	}
+	var splitAudits, splitRequests int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM configuration_audits WHERE entity_type = 'catalog_identification_candidate' AND entity_id = 'source' AND action = 'split'`).Scan(&splitAudits); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM recalculation_requests r JOIN configuration_audits a ON a.audit_id = r.audit_id WHERE a.entity_type = 'catalog_identification_candidate' AND a.entity_id = 'source' AND a.action = 'split'`).Scan(&splitRequests); err != nil {
+		t.Fatal(err)
+	}
+	if splitAudits != 1 || splitRequests != 1 {
+		t.Fatalf("split audit/request = %d/%d, want 1/1", splitAudits, splitRequests)
+	}
 	rows, err := lifecycle.ListIdentificationCandidates(ctx, "")
 	if err != nil {
 		t.Fatal(err)
@@ -578,6 +588,151 @@ func TestCatalogEditsAndArchivesLimitDefinitionAndPlan(t *testing.T) {
 	}
 	if len(allPlans) != 1 || allPlans[0].ArchivedAt == nil || allPlans[0].Name != "Plan renamed" {
 		t.Fatalf("archived plans = %#v", allPlans)
+	}
+}
+
+func TestIdentificationCandidateStateTransitionsAppendOneAuditAndRequestEach(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	service := testCatalogService(now, "candidate-transition-service")
+	if err := lifecycle.CreateService(ctx, service); err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{ID: "candidate-transition-plan", ServiceID: service.ID, Name: "Plan", CreatedAt: now, UpdatedAt: now}
+	if err := lifecycle.CreatePlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	candidate := IdentificationCandidate{ID: "candidate-transition", RawLimitServiceIdentifier: "raw.original", RawReportedPlanName: "Plan original", CreatedAt: now, UpdatedAt: now}
+	if err := lifecycle.CreateIdentificationCandidate(ctx, candidate); err != nil {
+		t.Fatal(err)
+	}
+	database, err := lifecycle.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate := func(wantState domain.CandidateState, wantRaw, wantPlan string, wantRefs bool) {
+		t.Helper()
+		rows, err := lifecycle.ListIdentificationCandidates(ctx, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("candidate rows = %#v", rows)
+		}
+		row := rows[0]
+		if row.State != wantState || row.RawLimitServiceIdentifier != wantRaw || row.RawReportedPlanName != wantPlan {
+			t.Fatalf("candidate state = %#v, want %s %q %q", row, wantState, wantRaw, wantPlan)
+		}
+		if (row.ServiceID != nil || row.PlanID != nil) != wantRefs {
+			t.Fatalf("candidate references = service=%v plan=%v, want present=%v", row.ServiceID, row.PlanID, wantRefs)
+		}
+	}
+	assertAuditAndRequest := func(action string, wantCount int) {
+		t.Helper()
+		var audits, requests int
+		if err := database.QueryRowContext(ctx, `SELECT count(*) FROM configuration_audits WHERE entity_type = 'catalog_identification_candidate' AND entity_id = ? AND action = ?`, candidate.ID, action).Scan(&audits); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.QueryRowContext(ctx, `SELECT count(*) FROM recalculation_requests r JOIN configuration_audits a ON a.audit_id = r.audit_id WHERE a.entity_type = 'catalog_identification_candidate' AND a.entity_id = ? AND a.action = ?`, candidate.ID, action).Scan(&requests); err != nil {
+			t.Fatal(err)
+		}
+		if audits != wantCount || requests != wantCount {
+			t.Fatalf("%s audit/request = %d/%d, want %d/%d", action, audits, requests, wantCount, wantCount)
+		}
+	}
+
+	assertCandidate(domain.CandidateUnconfirmed, "raw.original", "Plan original", false)
+	assertAuditAndRequest("create", 1)
+	if err := lifecycle.ConfirmIdentificationCandidate(ctx, candidate.ID, service.ID, plan.ID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate(domain.CandidateConfirmed, "raw.original", "Plan original", true)
+	assertAuditAndRequest("confirm", 1)
+	if err := lifecycle.ReleaseIdentificationCandidate(ctx, candidate.ID, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate(domain.CandidateUnconfirmed, "raw.original", "Plan original", false)
+	assertAuditAndRequest("release", 1)
+	if err := lifecycle.ConfirmIdentificationCandidate(ctx, candidate.ID, service.ID, plan.ID, now.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.RejectIdentificationCandidate(ctx, candidate.ID, now.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate(domain.CandidateRejected, "raw.original", "Plan original", false)
+	assertAuditAndRequest("confirm", 2)
+	assertAuditAndRequest("reject", 1)
+	if err := lifecycle.UpdateIdentificationCandidate(ctx, candidate.ID, "raw.corrected", "Plan corrected", now.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate(domain.CandidateUnconfirmed, "raw.corrected", "Plan corrected", false)
+	assertAuditAndRequest("correct", 1)
+}
+
+func TestLimitLabelChangeDecisionClearsReferenceAcrossDifferentAndRejectedStates(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	if database, err := lifecycle.DB(); err != nil {
+		t.Fatal(err)
+	} else if _, err := database.ExecContext(ctx, `INSERT INTO hubs (hub_id, display_name, url, collection_enabled, collection_interval_seconds, created_at, updated_at) VALUES ('hub', 'Hub', 'https://hub.example', 1, 300, ?, ?)`, utcText(now), utcText(now)); err != nil {
+		t.Fatal(err)
+	}
+	service := testCatalogService(now, "label-transition-service")
+	if err := lifecycle.CreateService(ctx, service); err != nil {
+		t.Fatal(err)
+	}
+	limit := LimitDefinition{ID: "label-transition-limit", ServiceID: service.ID, CycleType: "weekly", Meaning: "tokens", Unit: "percent", CreatedAt: now, UpdatedAt: now}
+	if err := lifecycle.CreateLimitDefinition(ctx, limit); err != nil {
+		t.Fatal(err)
+	}
+	candidate := LimitLabelChangeCandidate{ID: "label-transition", HubID: "hub", DeviceRecordKey: "device", RawLimitServiceIdentifier: "raw", NormalizedKind: "window", NormalizedMetric: "percent", OldLabel: "old", NewLabel: "new", CreatedAt: now, UpdatedAt: now}
+	if err := lifecycle.CreateLimitLabelChangeCandidate(ctx, candidate); err != nil {
+		t.Fatal(err)
+	}
+	database, err := lifecycle.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertState := func(want domain.LabelChangeState, wantLimitID string) {
+		t.Helper()
+		rows, err := lifecycle.ListLimitLabelChangeCandidates(ctx, "")
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("label candidates = %#v, err=%v", rows, err)
+		}
+		row := rows[0]
+		gotLimitID := ""
+		if row.LimitDefinitionID != nil {
+			gotLimitID = *row.LimitDefinitionID
+		}
+		if row.State != want || gotLimitID != wantLimitID {
+			t.Fatalf("label state = %#v, want state=%s limit=%q", row, want, wantLimitID)
+		}
+	}
+	assertState(domain.LabelChangeUnconfirmed, "")
+	for _, decision := range []struct {
+		state domain.LabelChangeState
+		limit string
+	}{
+		{domain.LabelChangeSameLimit, limit.ID},
+		{domain.LabelChangeDifferentLimit, ""},
+		{domain.LabelChangeRejected, ""},
+	} {
+		if err := lifecycle.DecideLimitLabelChangeCandidate(ctx, candidate.ID, decision.state, decision.limit, now.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		assertState(decision.state, decision.limit)
+	}
+	var audits, requests int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM configuration_audits WHERE entity_type = 'catalog_limit_label_change_candidate' AND entity_id = ?`, candidate.ID).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM recalculation_requests r JOIN configuration_audits a ON a.audit_id = r.audit_id WHERE a.entity_type = 'catalog_limit_label_change_candidate' AND a.entity_id = ?`, candidate.ID).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if audits != 4 || requests != 4 {
+		t.Fatalf("label candidate audit/request = %d/%d, want 4/4", audits, requests)
 	}
 }
 

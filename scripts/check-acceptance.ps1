@@ -1,5 +1,6 @@
 ﻿param(
-    [string]$ReportPath = ''
+    [string]$ReportPath = '',
+    [switch]$ReuseVerifiedTests
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,18 +40,81 @@ function Test-RepositoryPath([string]$path) {
     return $fullPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Invoke-Quiet([string]$filePath, [string[]]$arguments) {
-    $previousErrorActionPreference = $ErrorActionPreference
+function Invoke-Captured([string]$filePath, [string[]]$arguments, [string]$workingDirectory = '') {
+    $stdoutPath = [IO.Path]::GetTempFileName()
+    $stderrPath = [IO.Path]::GetTempFileName()
+    $exitCode = 1
+    $stdout = ''
+    $stderr = ''
+    $locationPushed = $false
+    $command = $filePath + ' ' + ($arguments -join ' ')
     try {
-        # Native tools commonly write warnings to stderr. Suppress them without
-        # turning a warning stream record into a PowerShell terminating error.
+        if (-not [string]::IsNullOrWhiteSpace($workingDirectory)) {
+            Push-Location -LiteralPath $workingDirectory
+            $locationPushed = $true
+        }
+        # Keep stdout and stderr separate. The output is parsed when it is a
+        # machine-readable test report and is printed on failure for diagnosis.
+        $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        & $filePath @arguments 1> $null 2> $null
-        return [int]$LASTEXITCODE
+        try {
+            & $filePath @arguments 1> $stdoutPath 2> $stderrPath
+            $exitCode = [int]$LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        $stdout = [IO.File]::ReadAllText($stdoutPath)
+        $stderr = [IO.File]::ReadAllText($stderrPath)
     } catch {
-        return 1
+        $stderr = ($_ | Out-String).Trim()
     } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
+        if ($locationPushed) {
+            Pop-Location
+        }
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+    return [PSCustomObject]@{
+        Command = $command
+        ExitCode = $exitCode
+        Stdout = $stdout
+        Stderr = $stderr
+    }
+}
+
+function New-NotRunResult([string]$reason) {
+    return [PSCustomObject]@{
+        Command = $reason
+        ExitCode = 1
+        Stdout = ''
+        Stderr = $reason
+    }
+}
+
+function New-VerifiedResult([string]$reason) {
+    return [PSCustomObject]@{
+        Command = $reason
+        ExitCode = 0
+        Stdout = ''
+        Stderr = ''
+    }
+}
+
+function Write-InvocationDiagnostics([string]$name, $invocation) {
+    if ($null -eq $invocation) {
+        return
+    }
+    if ($invocation.ExitCode -eq 0 -and [string]::IsNullOrWhiteSpace([string]$invocation.Stderr)) {
+        return
+    }
+    Write-Output ($name + ' command: ' + [string]$invocation.Command)
+    Write-Output ($name + ' exit code: ' + [string]$invocation.ExitCode)
+    if (-not [string]::IsNullOrWhiteSpace([string]$invocation.Stdout)) {
+        Write-Output ($name + ' stdout:')
+        Write-Output ([string]$invocation.Stdout)
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$invocation.Stderr)) {
+        Write-Output ($name + ' stderr:')
+        Write-Output ([string]$invocation.Stderr)
     }
 }
 
@@ -62,6 +126,13 @@ function Get-CommandPath([string]$name) {
     return [string]$command.Source
 }
 
+function Test-ReusedAutomaticEvidence([string]$source) {
+    # verify runs all Go and Vitest tests, but its browser task intentionally
+    # runs only the normal routing suite. Screenshot evidence remains a
+    # separate manual/explicit acceptance item.
+    return $source -match '(_test\.go$|\.test\.tsx$|frontend/e2e/window-routing\.spec\.ts$)'
+}
+
 function Get-ObjectProperty($object, [string]$name) {
     if ($null -eq $object) {
         return $null
@@ -71,6 +142,168 @@ function Get-ObjectProperty($object, [string]$name) {
         return $null
     }
     return $property.Value
+}
+
+function Convert-TestResultStatus([string]$value) {
+    switch (([string]$value).ToLowerInvariant()) {
+        { $_ -in @('pass', 'passed', 'expected', 'ok') } { return 'pass' }
+        { $_ -in @('fail', 'failed', 'unexpected', 'flaky') } { return 'fail' }
+        { $_ -in @('skip', 'skipped', 'pending', 'todo', 'disabled') } { return 'skip' }
+        default { return '' }
+    }
+}
+
+function Merge-TestResultStatus([hashtable]$statuses, [string]$id, [string]$status) {
+    if ([string]::IsNullOrWhiteSpace($status)) {
+        return
+    }
+    # A failed occurrence dominates a skipped or passed occurrence. This is
+    # conservative when an identifier is used by more than one test/project.
+    $priority = @{ pass = 1; skip = 2; fail = 3 }
+    if (-not $statuses.ContainsKey($id) -or $priority[$status] -gt $priority[[string]$statuses[$id]]) {
+        $null = $statuses[$id] = $status
+    }
+}
+
+function Add-MachineTestResult([string]$testName, [string]$status, [string]$source, [string[]]$knownIds, [hashtable]$statuses, [ref]$errors) {
+    $ids = @(Get-TraceabilityIds $testName)
+    foreach ($id in $ids) {
+        if ($id -notin $knownIds) {
+            $location = if ([string]::IsNullOrWhiteSpace($source)) { 'test result' } else { $source }
+            $errors.Value += $location + ': unknown traceability id in test result ' + $id
+            continue
+        }
+        Merge-TestResultStatus $statuses $id $status
+    }
+}
+
+function Read-GoTestResults([string]$output, [string[]]$knownIds, [hashtable]$statuses, [ref]$errors) {
+    foreach ($line in ($output -split "`r?`n")) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+        try {
+            $event = $line | ConvertFrom-Json
+        } catch {
+            # go test -json can include a tool diagnostic line on failure.
+            continue
+        }
+        $action = ([string](Get-ObjectProperty $event 'Action')).ToLowerInvariant()
+        if ($action -notin @('pass', 'fail', 'skip')) {
+            continue
+        }
+        $testName = [string](Get-ObjectProperty $event 'Test')
+        if ([string]::IsNullOrWhiteSpace($testName)) {
+            continue
+        }
+        Add-MachineTestResult $testName (Convert-TestResultStatus $action) ([string](Get-ObjectProperty $event 'Package')) $knownIds $statuses $errors
+    }
+}
+
+function Convert-JsonDocument([string]$text, [string]$label, [ref]$errors) {
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        $errors.Value += $label + ': result JSON was not produced'
+        return $null
+    }
+    try {
+        return $text | ConvertFrom-Json
+    } catch {
+        # npm may write a short informational line before a JSON reporter.
+        $firstObject = $text.IndexOf('{')
+        $lastObject = $text.LastIndexOf('}')
+        if ($firstObject -ge 0 -and $lastObject -gt $firstObject) {
+            try {
+                return $text.Substring($firstObject, $lastObject - $firstObject + 1) | ConvertFrom-Json
+            } catch {
+                $null = $_
+            }
+        }
+        $errors.Value += $label + ': invalid result JSON'
+        return $null
+    }
+}
+
+function Read-VitestResults([string]$jsonPath, [string[]]$knownIds, [hashtable]$statuses, [ref]$errors) {
+    if (-not (Test-Path -LiteralPath $jsonPath -PathType Leaf)) {
+        $errors.Value += 'vitest: result JSON was not produced'
+        return
+    }
+    $document = Convert-JsonDocument (Read-Utf8 $jsonPath) 'vitest' $errors
+    if ($null -eq $document) {
+        return
+    }
+    foreach ($fileResult in @((Get-ObjectProperty $document 'testResults'))) {
+        if ($null -eq $fileResult) {
+            continue
+        }
+        $source = [string](Get-ObjectProperty $fileResult 'name')
+        foreach ($assertion in @((Get-ObjectProperty $fileResult 'assertionResults'))) {
+            if ($null -eq $assertion) {
+                continue
+            }
+            $fullName = [string](Get-ObjectProperty $assertion 'fullName')
+            if ([string]::IsNullOrWhiteSpace($fullName)) {
+                $fullName = ((@((Get-ObjectProperty $assertion 'ancestorTitles')) + [string](Get-ObjectProperty $assertion 'title')) -join ' ')
+            }
+            Add-MachineTestResult $fullName (Convert-TestResultStatus ([string](Get-ObjectProperty $assertion 'status'))) $source $knownIds $statuses $errors
+        }
+    }
+}
+
+function Read-PlaywrightSuite($suite, [string[]]$ancestors, [string[]]$knownIds, [hashtable]$statuses, [ref]$errors) {
+    $suiteTitle = [string](Get-ObjectProperty $suite 'title')
+    $suiteNames = @($ancestors)
+    if (-not [string]::IsNullOrWhiteSpace($suiteTitle)) {
+        $suiteNames += $suiteTitle
+    }
+    $source = [string](Get-ObjectProperty $suite 'file')
+    foreach ($spec in @((Get-ObjectProperty $suite 'specs'))) {
+        if ($null -eq $spec) {
+            continue
+        }
+        $specName = (@($suiteNames) + [string](Get-ObjectProperty $spec 'title')) -join ' '
+        $tests = @((Get-ObjectProperty $spec 'tests'))
+        if ($tests.Count -eq 0 -or ($tests.Count -eq 1 -and $null -eq $tests[0])) {
+            $specStatus = Convert-TestResultStatus ([string](Get-ObjectProperty $spec 'status'))
+            if ([string]::IsNullOrWhiteSpace($specStatus)) {
+                $specOk = Get-ObjectProperty $spec 'ok'
+                if ($specOk -is [bool]) {
+                    $specStatus = if ($specOk) { 'pass' } else { 'fail' }
+                }
+            }
+            Add-MachineTestResult $specName $specStatus $source $knownIds $statuses $errors
+            continue
+        }
+        foreach ($test in $tests) {
+            if ($null -eq $test) {
+                continue
+            }
+            $status = Convert-TestResultStatus ([string](Get-ObjectProperty $test 'status'))
+            if ([string]::IsNullOrWhiteSpace($status)) {
+                $status = Convert-TestResultStatus ([string](Get-ObjectProperty $test 'outcome'))
+            }
+            Add-MachineTestResult $specName $status $source $knownIds $statuses $errors
+        }
+    }
+    foreach ($child in @((Get-ObjectProperty $suite 'suites'))) {
+        if ($null -eq $child) {
+            continue
+        }
+        Read-PlaywrightSuite $child $suiteNames $knownIds $statuses $errors
+    }
+}
+
+function Read-PlaywrightResults([string]$output, [string[]]$knownIds, [hashtable]$statuses, [ref]$errors) {
+    $document = Convert-JsonDocument $output 'playwright' $errors
+    if ($null -eq $document) {
+        return
+    }
+    foreach ($suite in @((Get-ObjectProperty $document 'suites'))) {
+        if ($null -eq $suite) {
+            continue
+        }
+        Read-PlaywrightSuite $suite @() $knownIds $statuses $errors
+    }
 }
 
 function Get-AutomaticEvidence([string[]]$ids, [ref]$errors) {
@@ -202,28 +435,80 @@ for ($section = 2; $section -le 9; $section++) {
 }
 
 $powershellPath = Get-CommandPath 'powershell.exe'
-$wailsPath = Get-CommandPath 'wails3.exe'
 $goPath = Get-CommandPath 'go.exe'
+$npmPath = Get-CommandPath 'npm.cmd'
+if (-not $npmPath) {
+    $npmPath = Get-CommandPath 'npm.exe'
+}
 $requirementsScript = Join-Path $repositoryRoot 'scripts/check-requirements.ps1'
 $screensScript = Join-Path $repositoryRoot 'scripts/check-screens.ps1'
-$requirementsExitCode = 1
-$screensExitCode = 1
-$automatedExitCode = 1
-$fixtureExitCode = 1
+$requirementsResult = New-NotRunResult 'requirements check was not run'
+$screensResult = New-NotRunResult 'screens check was not run'
+$goResult = New-NotRunResult 'go tests were not run'
+$vitestResult = New-NotRunResult 'vitest was not run'
+$playwrightResult = New-NotRunResult 'playwright was not run'
+$fixtureResult = New-NotRunResult 'traceability fixture test was not run'
 if ($powershellPath -and (Test-Path -LiteralPath $requirementsScript)) {
-    $requirementsExitCode = Invoke-Quiet $powershellPath @('-NoLogo', '-NoProfile', '-File', $requirementsScript)
-    $screensExitCode = Invoke-Quiet $powershellPath @('-NoLogo', '-NoProfile', '-File', $screensScript)
+    $requirementsResult = Invoke-Captured $powershellPath @('-NoLogo', '-NoProfile', '-File', $requirementsScript) $repositoryRoot
+    $screensResult = Invoke-Captured $powershellPath @('-NoLogo', '-NoProfile', '-File', $screensScript) $repositoryRoot
 }
-if ($wailsPath) {
-    $automatedExitCode = Invoke-Quiet $wailsPath @('task', 'test')
+
+# Each runner writes a machine-readable report while its invocation output is
+# retained separately. This lets an item pass when its own test passed even if
+# an unrelated test failed, and leaves skipped tests as skip. Release
+# verification reuses the already successful `verify` run instead of executing
+# the same automated suites a second time.
+$resultDirectory = ''
+$vitestReportPath = ''
+if ($ReuseVerifiedTests) {
+    $goResult = New-VerifiedResult 'go tests passed during task verify'
+    $vitestResult = New-VerifiedResult 'vitest passed during task verify'
+    $playwrightResult = New-VerifiedResult 'playwright passed during task verify'
+    $fixtureResult = New-VerifiedResult 'traceability tests passed during task verify'
+} else {
+    $resultDirectory = Join-Path ([IO.Path]::GetTempPath()) ('token-monitor-acceptance-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $resultDirectory -Force | Out-Null
+    $vitestReportPath = Join-Path $resultDirectory 'vitest.json'
+    if ($goPath) {
+        $goResult = Invoke-Captured $goPath @(
+            'test', '-json', '-count=1', '.', './internal/desktop', './internal/domain', './internal/usecase',
+            './internal/adapter/...', './tests/acceptance'
+        ) $repositoryRoot
+    }
+    if ($npmPath) {
+        $vitestResult = Invoke-Captured $npmPath @(
+            '--silent', '--prefix', 'frontend', 'run', 'test', '--',
+            '--reporter=json', ('--outputFile=' + $vitestReportPath)
+        ) $repositoryRoot
+        $playwrightResult = Invoke-Captured $npmPath @(
+            '--silent', '--prefix', 'frontend', 'run', 'test:e2e', '--', '--reporter=json'
+        ) $repositoryRoot
+    }
+    if ($goPath) {
+        $fixtureResult = Invoke-Captured $goPath @('test', '-json', './tests/traceability', '-count=1') $repositoryRoot
+    }
 }
-if ($goPath) {
-    $fixtureExitCode = Invoke-Quiet $goPath @('test', './tests/traceability', '-count=1')
-}
+
+$requirementsExitCode = [int]$requirementsResult.ExitCode
+$screensExitCode = [int]$screensResult.ExitCode
+$goExitCode = [int]$goResult.ExitCode
+$vitestExitCode = [int]$vitestResult.ExitCode
+$playwrightExitCode = [int]$playwrightResult.ExitCode
+$automatedExitCode = if ($goExitCode -eq 0 -and $vitestExitCode -eq 0 -and $playwrightExitCode -eq 0) { 0 } else { 1 }
+$fixtureExitCode = [int]$fixtureResult.ExitCode
 
 $traceabilityErrors = @()
 $allEvidenceIds = @($requiredIds + $screenKeys + $designKeys | Sort-Object -Unique)
 $automaticEvidence = Get-AutomaticEvidence $allEvidenceIds ([ref]$traceabilityErrors)
+$automaticStatuses = @{}
+if (-not $ReuseVerifiedTests) {
+    Read-GoTestResults ([string]$goResult.Stdout) $allEvidenceIds $automaticStatuses ([ref]$traceabilityErrors)
+    if ($vitestExitCode -eq 0 -or (Test-Path -LiteralPath $vitestReportPath -PathType Leaf)) {
+        Read-VitestResults $vitestReportPath $allEvidenceIds $automaticStatuses ([ref]$traceabilityErrors)
+    }
+    Read-PlaywrightResults ([string]$playwrightResult.Stdout) $allEvidenceIds $automaticStatuses ([ref]$traceabilityErrors)
+    Remove-Item -LiteralPath $resultDirectory -Recurse -Force -ErrorAction SilentlyContinue
+}
 $manualEvidence = Get-ManualEvidence $requiredIds $screenKeys $designKeys ([ref]$traceabilityErrors)
 $designSystemDocument = Read-Utf8 $designSystemPath
 for ($section = 2; $section -le 9; $section++) {
@@ -250,10 +535,19 @@ function Add-TraceabilityItem([string]$id, [string]$kind) {
     if ($automaticEvidence.ContainsKey($id)) {
         $testName = [string]$automaticEvidence[$id].Name
         $evidencePath = [string]$automaticEvidence[$id].Source
-        if ($automatedExitCode -eq 0 -and $fixtureExitCode -eq 0) {
+        if ($automaticStatuses.ContainsKey($id)) {
+            # Use only the result for this identifier. A failed unrelated test
+            # must not rewrite a passed item, and skip must never become pass.
+            $result = [string]$automaticStatuses[$id]
+        } elseif ($ReuseVerifiedTests -and (Test-ReusedAutomaticEvidence $evidencePath)) {
+            # The release gate has already run verify successfully. Keep
+            # screenshot-only specs pending because verify does not execute
+            # the dedicated showcase-screenshot task.
             $result = 'pass'
         } else {
-            $result = 'fail'
+            # The source name exists, but no machine-readable runner result
+            # matched it. This is an unexecuted/pending item, not evidence.
+            $result = 'pending'
         }
     } elseif ($manualEvidence.ContainsKey($id)) {
         $manual = $manualEvidence[$id]
@@ -297,11 +591,26 @@ foreach ($key in $designKeys) {
 $blockingReasons = @()
 if ($requirementsExitCode -ne 0) { $blockingReasons += 'requirements:check failed' }
 if ($screensExitCode -ne 0) { $blockingReasons += 'screens:check failed' }
-if ($automatedExitCode -ne 0) { $blockingReasons += 'automated test suite failed or was not run' }
+if ($goExitCode -ne 0) { $blockingReasons += 'go test failed or was not run' }
+if ($vitestExitCode -ne 0) { $blockingReasons += 'vitest failed or was not run' }
+if ($playwrightExitCode -ne 0) { $blockingReasons += 'playwright failed or was not run' }
 if ($fixtureExitCode -ne 0) { $blockingReasons += 'traceability fixture test failed or was not run' }
 if ($sp01Unavailable) { $blockingReasons += 'SP-01 evidence is incomplete' }
 if ($items | Where-Object { $_.result -ne 'pass' }) { $blockingReasons += 'one or more traceability items are not passed' }
 if ($traceabilityErrors.Count -gt 0) { $blockingReasons += 'manual evidence contains invalid entries' }
+
+Write-InvocationDiagnostics 'requirements' $requirementsResult
+Write-InvocationDiagnostics 'screens' $screensResult
+Write-InvocationDiagnostics 'go' $goResult
+Write-InvocationDiagnostics 'vitest' $vitestResult
+Write-InvocationDiagnostics 'playwright' $playwrightResult
+Write-InvocationDiagnostics 'traceability fixture' $fixtureResult
+if ($traceabilityErrors.Count -gt 0) {
+    Write-Output 'traceability errors:'
+    foreach ($traceabilityError in $traceabilityErrors) {
+        Write-Output ('- ' + $traceabilityError)
+    }
+}
 
 $overallStatus = 'pass'
 if ($blockingReasons.Count -gt 0) {
@@ -318,6 +627,7 @@ $report = [ordered]@{
         traceabilityFixture = if ($fixtureExitCode -eq 0) { 'pass' } else { 'fail' }
         traceabilityInspection = if ($traceabilityErrors.Count -eq 0) { 'pass' } else { 'fail' }
     }
+    automatedTestsReused = [bool]$ReuseVerifiedTests
     blockingReasons = @($blockingReasons | Sort-Object -Unique)
     items = @($items)
 }

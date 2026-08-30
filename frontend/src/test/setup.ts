@@ -35,3 +35,10 @@ Object.defineProperty(window, "ResizeObserver", {
   writable: true,
   value: TestResizeObserver,
 });
+
+// axe-core probes canvas support while evaluating colour contrast. JSDOM does
+// not implement canvas rendering, but axe only needs a non-throwing probe.
+Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+  configurable: true,
+  value: vi.fn(() => null),
+});

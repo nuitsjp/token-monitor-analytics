@@ -87,7 +87,8 @@ beforeEach(() => {
 });
 
 describe("HubsPage", () => {
-  it("stores the secret as a password and leaves it blank when editing again", async () => {
+  it("stores the secret without exposing it in text, attributes, or a reopened form", async () => {
+    const secretSentinel = "QL-PRIVACY-SENTINEL-do-not-expose";
     const backend = createFakeBackend();
     const createHub = vi.spyOn(backend, "createHub");
     const user = userEvent.setup();
@@ -100,18 +101,22 @@ describe("HubsPage", () => {
     await fillForm(user, {
       displayName: "秘密付き Hub",
       url: "https://secret.example.test",
-      secret: "do-not-redisplay",
+      secret: secretSentinel,
     });
 
     expect(
       await screen.findByRole("heading", { name: "秘密付き Hub" }),
     ).toBeVisible();
     expect(createHub).toHaveBeenCalledWith(
-      expect.objectContaining({ secret: "do-not-redisplay" }),
+      expect.objectContaining({ secret: secretSentinel }),
     );
-    expect(
-      screen.queryByDisplayValue("do-not-redisplay"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue(secretSentinel)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(secretSentinel);
+    for (const element of document.body.querySelectorAll("*")) {
+      for (const attribute of element.attributes) {
+        expect(attribute.value).not.toContain(secretSentinel);
+      }
+    }
 
     await user.click(screen.getByRole("button", { name: "編集" }));
     expect(

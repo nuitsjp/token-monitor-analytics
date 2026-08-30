@@ -50,6 +50,12 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("hub API %s: %s (%s)", e.Operation, e.Classification, e.Reason)
 }
 
+// HubClassification exposes the stable classification without requiring
+// callers to inspect or persist the error text.
+func (e *Error) HubClassification() string {
+	return string(e.Classification)
+}
+
 func classify(operation string, classification Classification, reason string) error {
 	return &Error{Classification: classification, Operation: operation, Reason: reason}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -321,16 +320,21 @@ func connectionOutcome(err error) (string, string) {
 	if err == nil {
 		return "connected", ""
 	}
-	switch {
-	case strings.Contains(strings.ToLower(err.Error()), "auth"):
+	classification := ""
+	var classified interface{ HubClassification() string }
+	if errors.As(err, &classified) {
+		classification = classified.HubClassification()
+	}
+	switch classification {
+	case "auth":
 		return "authentication_failed", "認証に失敗しました"
-	case strings.Contains(strings.ToLower(err.Error()), "tls"):
+	case "tls":
 		return "tls_error", "TLS 証明書を検証できません"
-	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+	case "timeout":
 		return "timeout", "Hub への接続がタイムアウトしました"
-	case strings.Contains(strings.ToLower(err.Error()), "unsupported"):
+	case "unsupported":
 		return "unsupported_contract", "対応する API 契約ではありません"
-	case strings.Contains(strings.ToLower(err.Error()), "invalid_json") || strings.Contains(strings.ToLower(err.Error()), "body_too_large"):
+	case "invalid_json", "body_too_large":
 		return "invalid_json", "応答を安全に読み取れません"
 	default:
 		return "unreachable", "Hub に接続できません"

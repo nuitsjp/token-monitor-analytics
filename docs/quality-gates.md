@@ -5,13 +5,25 @@
 Pull Requestでは、Windows runnerからリポジトリ直下のTaskfileと同じ入口を実行する。
 
 - `policy:check`: 要件・画面・アーキテクチャ・デザイントークン・SQL・migration・依存版のrepo固有規則
+- `generate:check`: sqlc生成物とWails bindingが追跡済み内容と一致すること
+- `fmt:check`: Goとfrontendの整形が追跡済み内容と一致すること
 - `lint`: Go、TypeScript、React、アクセシビリティ、PowerShellの静的解析
 - `security:check`: Goとnpmの既知脆弱性、および秘密情報
-- `test`: Go、SQLite integration、frontend、E2E、復元受入試験
+- `test`: Go、SQLite integration、frontend、復元受入試験のカバレッジゲート、およびbrowser E2E
 - `build`: Windows production build
 - `workflow-policy`: GitHub Actions自体の`actionlint`と`zizmor`
 
 生成物検査は一時ディレクトリへ出力し、追跡済みファイルを変更しない。通常のE2Eは参照スクリーンショットを更新せず、更新は専用タスクだけで行う。
+
+Goのカバレッジは自動生成した`sqlcgen`を対象外とし、rootと`internal`の手書きコードについてstatement 71.0%以上を要求する。frontendは`src`の手書きコードについて、line 68%以上、branch 58%以上、function 57%以上、statement 66%以上を要求する。Go 72.2%、frontend line 71.27%・branch 58.81%・function 64.94%・statement 69.41%の実測を同一条件で確認し、一時的な微小差で失敗しない余白を残して段階的に設定した。除外対象や閾値を下げる変更はレビューで理由を確認する。
+
+カバレッジ検査は計測境界も検査する。Goは`go list . ./internal/...`から`/sqlcgen`を除いたパッケージだけを計測し、生成された`coverage.out`に範囲外または`sqlcgen`のファイルがあれば失敗する。frontendは`frontend/vitest.config.ts`の`src/**/*.{ts,tsx}`、テストファイル、`src/test/**`、`src/vite-env.d.ts`のinclude/exclude契約を確認し、`json-summary`と`lcov`の両レポートが`src`の範囲内にあることを確認する。各検査は`coverage-diagnostics.txt`に境界契約、総合値、領域別・ファイル別の未達を出力する。
+
+ローカルの`test:coverage:go`と`test:coverage:frontend`は既定で一意な一時ディレクトリへ出力し、終了時に削除する。調査で保存する場合は、それぞれのスクリプトに`-OutputDirectory <path>`を指定する。CIでは`GO_COVERAGE_OUTPUT_DIRECTORY`と`FRONTEND_COVERAGE_OUTPUT_DIRECTORY`をrunnerの一時領域に指定し、`coverage.out`、`coverage.func.txt`、`coverage-summary.json`、`lcov.info`、`coverage-diagnostics.txt`を`if: always()`のartifact uploadで7日間保存する。したがって通常の検査はworkspaceへカバレッジ残骸を残さない。
+
+`release:verify`は上記の全品質検査に加え、規範受入レポートを生成して全項目がpassであることを要求する。開発途中のpending・blockedを通常PRのCI失敗へ変換しないため、規範受入ゲートはリリース判断時に実行する。
+
+`test:windows`、`test:stability`、`test:fuzz`はローカル拡張試験であり、現時点のGitHub Actionsでは実行しない。Windows固有試験のCI接続はセルフホストランナー準備後にIssue #5で行う。browser E2Eは既存dev serverを再利用せず、失敗時のtrace、動画、スクリーンショットを`frontend/test-results`へ出力し、CI失敗時だけartifactとして保存する。
 
 ## 2. Advisory検査
 

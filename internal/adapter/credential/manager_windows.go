@@ -25,6 +25,11 @@ var (
 	credRead   = advapi32.NewProc("CredReadW")
 	credDelete = advapi32.NewProc("CredDeleteW")
 	credFree   = advapi32.NewProc("CredFree")
+
+	credentialWriteCall  = credWrite.Call
+	credentialReadCall   = credRead.Call
+	credentialDeleteCall = credDelete.Call
+	credentialFreeCall   = credFree.Call
 )
 
 type nativeCredential struct {
@@ -82,7 +87,7 @@ func (Manager) Write(hubID, secret string) error {
 		Persist:            credentialPersistLocalMachine,
 		UserName:           username,
 	}
-	ok, _, callErr := credWrite.Call(uintptr(unsafe.Pointer(&native)), 0)
+	ok, _, callErr := credentialWriteCall(uintptr(unsafe.Pointer(&native)), 0)
 	if ok == 0 {
 		return fmt.Errorf("write Windows credential: %w", callErr)
 	}
@@ -99,14 +104,14 @@ func (Manager) Read(hubID string) (string, bool, error) {
 		return "", false, fmt.Errorf("encode credential target: %w", err)
 	}
 	var native *nativeCredential
-	ok, _, callErr := credRead.Call(uintptr(unsafe.Pointer(target)), credentialTypeGeneric, 0, uintptr(unsafe.Pointer(&native)))
+	ok, _, callErr := credentialReadCall(uintptr(unsafe.Pointer(target)), credentialTypeGeneric, 0, uintptr(unsafe.Pointer(&native)))
 	if ok == 0 {
 		if errors.Is(callErr, windows.ERROR_NOT_FOUND) {
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("read Windows credential: %w", callErr)
 	}
-	defer func() { _, _, _ = credFree.Call(uintptr(unsafe.Pointer(native))) }()
+	defer func() { _, _, _ = credentialFreeCall(uintptr(unsafe.Pointer(native))) }()
 	if native.CredentialBlobSize == 0 {
 		return "", true, nil
 	}
@@ -130,7 +135,7 @@ func (Manager) Delete(hubID string) error {
 	if err != nil {
 		return fmt.Errorf("encode credential target: %w", err)
 	}
-	ok, _, callErr := credDelete.Call(uintptr(unsafe.Pointer(target)), credentialTypeGeneric, 0)
+	ok, _, callErr := credentialDeleteCall(uintptr(unsafe.Pointer(target)), credentialTypeGeneric, 0)
 	if ok == 0 && !errors.Is(callErr, windows.ERROR_NOT_FOUND) {
 		return fmt.Errorf("delete Windows credential: %w", callErr)
 	}

@@ -29,21 +29,47 @@ type applicationStorage struct {
 	recovery      domain.RestoreRecoveryResult
 }
 
+type applicationStorageDependencies struct {
+	userConfigDir func() (string, error)
+	mkdirAll      func(string, os.FileMode) error
+	recover       func(context.Context, string) (domain.RestoreRecoveryResult, error)
+	openLifecycle func(context.Context, string) (*sqliteadapter.Lifecycle, error)
+}
+
+func defaultApplicationStorageDependencies() applicationStorageDependencies {
+	return applicationStorageDependencies{
+		userConfigDir: os.UserConfigDir,
+		mkdirAll:      os.MkdirAll,
+		recover:       sqliteadapter.RecoverPendingRestore,
+		openLifecycle: func(ctx context.Context, path string) (*sqliteadapter.Lifecycle, error) {
+			lifecycle := &sqliteadapter.Lifecycle{}
+			if err := lifecycle.Open(ctx, path); err != nil {
+				return nil, err
+			}
+			return lifecycle, nil
+		},
+	}
+}
+
 func openApplicationStorage(ctx context.Context) (*applicationStorage, error) {
-	configDirectory, err := os.UserConfigDir()
+	return openApplicationStorageWithDependencies(ctx, defaultApplicationStorageDependencies())
+}
+
+func openApplicationStorageWithDependencies(ctx context.Context, dependencies applicationStorageDependencies) (*applicationStorage, error) {
+	configDirectory, err := dependencies.userConfigDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve user configuration directory: %w", err)
 	}
 	dataDirectory := filepath.Join(configDirectory, "TokenMonitorAnalytics")
-	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
+	if err := dependencies.mkdirAll(dataDirectory, 0o700); err != nil {
 		return nil, fmt.Errorf("create application data directory: %w", err)
 	}
-	recovery, err := sqliteadapter.RecoverPendingRestore(ctx, dataDirectory)
+	recovery, err := dependencies.recover(ctx, dataDirectory)
 	if err != nil {
 		return nil, err
 	}
-	lifecycle := &sqliteadapter.Lifecycle{}
-	if err := lifecycle.Open(ctx, filepath.Join(dataDirectory, sqliteadapter.RestoreDatabaseName)); err != nil {
+	lifecycle, err := dependencies.openLifecycle(ctx, filepath.Join(dataDirectory, sqliteadapter.RestoreDatabaseName))
+	if err != nil {
 		return nil, err
 	}
 	return &applicationStorage{dataDirectory: dataDirectory, lifecycle: lifecycle, recovery: recovery}, nil

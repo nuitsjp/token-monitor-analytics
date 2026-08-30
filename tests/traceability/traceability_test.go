@@ -183,6 +183,83 @@ func TestTraceabilityFixtureSearchesSupportedTestFilesAndExcludesFixtures(t *tes
 	}
 }
 
+func TestTraceabilityFixtureUsesIndividualMachineReadableTestResults(t *testing.T) {
+	contents := string(readRepositoryFile(t, filepath.Join("scripts", "check-acceptance.ps1")))
+	if strings.Contains(contents, "([ref]$errors)") {
+		t.Fatal("acceptance parser passes a nested PSReference instead of the existing error reference")
+	}
+	for _, fragment := range []string{
+		"go test", "-json", "--reporter=json", "--outputFile=",
+		"Read-GoTestResults", "Read-VitestResults", "Read-PlaywrightResults",
+		"automaticStatuses", "unknown traceability id in test result",
+	} {
+		if !strings.Contains(contents, fragment) {
+			t.Fatalf("acceptance gate is missing machine-readable result contract %q", fragment)
+		}
+	}
+	for _, fragment := range []string{"'skip'", "'pending'", "Convert-TestResultStatus"} {
+		if !strings.Contains(contents, fragment) {
+			t.Fatalf("acceptance gate does not preserve non-pass result %q", fragment)
+		}
+	}
+}
+
+func TestTraceabilityFixtureRetainsNativeDiagnostics(t *testing.T) {
+	contents := string(readRepositoryFile(t, filepath.Join("scripts", "check-acceptance.ps1")))
+	if strings.Contains(contents, "1> $null") || strings.Contains(contents, "2> $null") {
+		t.Fatal("acceptance gate discards native command output")
+	}
+	for _, fragment := range []string{"Stdout", "Stderr", "Write-InvocationDiagnostics"} {
+		if !strings.Contains(contents, fragment) {
+			t.Fatalf("acceptance gate does not retain native diagnostics field %q", fragment)
+		}
+	}
+}
+
+func TestTraceabilityFixtureReleaseGateDoesNotRerunAutomatedTests(t *testing.T) {
+	taskfile := string(readRepositoryFile(t, "Taskfile.yml"))
+	acceptance := string(readRepositoryFile(t, filepath.Join("scripts", "check-acceptance.ps1")))
+	for _, fragment := range []string{
+		"acceptance:release:", "-ReuseVerifiedTests", "automatedTestsReused", "New-VerifiedResult",
+	} {
+		if !strings.Contains(taskfile+acceptance, fragment) {
+			t.Fatalf("release acceptance reuse contract is missing %q", fragment)
+		}
+	}
+	releaseIndex := strings.Index(taskfile, "\n  release:verify:")
+	if releaseIndex < 0 {
+		t.Fatal("Taskfile is missing release:verify")
+	}
+	releaseBody := taskfile[releaseIndex:]
+	if strings.Contains(releaseBody, "- task: acceptance\n") {
+		t.Fatal("release:verify invokes the duplicate standalone acceptance task")
+	}
+	for _, fragment := range []string{"task: acceptance:release", "task: test:wails"} {
+		if !strings.Contains(releaseBody, fragment) {
+			t.Fatalf("release:verify is missing %q", fragment)
+		}
+	}
+}
+
+func TestTraceabilityFixtureHasLocalWindowsPackageContract(t *testing.T) {
+	taskfile := string(readRepositoryFile(t, "Taskfile.yml"))
+	script := string(readRepositoryFile(t, filepath.Join("scripts", "check-windows-package.ps1")))
+	for _, fragment := range []string{
+		"test:windows:", "test:wails:", "requires Windows", "task: package",
+	} {
+		if !strings.Contains(taskfile, fragment) {
+			t.Fatalf("local Windows test contract is missing %q", fragment)
+		}
+	}
+	for _, fragment := range []string{
+		"makensis.exe", "wails3.exe", "0x4d", "0x5a", "SHA-256", "local Windows package check passed",
+	} {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("Windows package verifier is missing %q", fragment)
+		}
+	}
+}
+
 func extractRequirementDeclarationIDs(document string) ([]string, error) {
 	document = strings.ReplaceAll(document, "\r\n", "\n")
 	ids := make([]string, 0)
