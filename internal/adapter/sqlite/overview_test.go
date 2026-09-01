@@ -22,7 +22,7 @@ func TestReadOverviewDataReturnsOnlyRecentIncreaseWithinCurrentEstimableInterval
 	execOverviewSQL(t, database, `INSERT INTO services (service_id, provider, name, official_key, created_at, updated_at) VALUES ('service-overview', 'Provider', 'Service overview', 'overview.service', ?, ?)`, utcText(now), utcText(now))
 	execOverviewSQL(t, database, `INSERT INTO limit_definitions (limit_definition_id, service_id, cycle_type, meaning, unit, billing_confirmation, created_at, updated_at) VALUES ('definition-overview', 'service-overview', 'weekly', 'Weekly input', 'percent', 'not_applicable', ?, ?)`, utcText(now), utcText(now))
 	execOverviewSQL(t, database, `INSERT INTO logical_accounts (logical_account_id, service_id, display_name, created_at, updated_at) VALUES ('account-overview', 'service-overview', 'Account overview', ?, ?)`, utcText(now), utcText(now))
-	execOverviewSQL(t, database, `INSERT INTO usage_limit_sources (usage_limit_source_id, hub_id, device_id, account_key, raw_service_identifier, window_key, normalized_kind, normalized_metric, normalized_label, created_at) VALUES ('source-overview', 'hub-overview', 'device-overview', 'account-key', 'provider.overview', 'window-overview', 'window', 'percent', 'Weekly input', ?)`, utcText(now))
+	execOverviewSQL(t, database, `INSERT INTO usage_limit_sources (usage_limit_source_id, hub_id, device_id, account_key, raw_service_identifier, window_key, normalized_kind, normalized_metric, normalized_label, created_at) VALUES ('source-overview', 'hub-overview', 'device-overview', 'account-key', 'provider.overview', 'window-overview', 'window', '', 'Weekly input', ?)`, utcText(now))
 	execOverviewSQL(t, database, `INSERT INTO usage_limit_source_links (usage_limit_association_id, usage_limit_source_id, logical_account_id, limit_definition_id, valid_from, created_at, updated_at) VALUES ('association-overview', 'source-overview', 'account-overview', 'definition-overview', ?, ?, ?)`, utcText(now.Add(-time.Hour)), utcText(now), utcText(now))
 	execOverviewSQL(t, database, `INSERT INTO calculation_intervals (calculation_interval_id, service_id, logical_account_id, usage_limit_source_id, limit_definition_id, cycle_type, valid_from, valid_to, state, exclusion_reason, boundary_ids_json, created_at, updated_at) VALUES ('interval-overview-old', 'service-overview', 'account-overview', 'source-overview', 'definition-overview', 'weekly', ?, ?, 'estimable', '', '[]', ?, ?)`, utcText(now.Add(-30*time.Minute)), utcText(now.Add(-15*time.Minute)), utcText(now), utcText(now))
 	execOverviewSQL(t, database, `INSERT INTO calculation_intervals (calculation_interval_id, service_id, logical_account_id, usage_limit_source_id, limit_definition_id, cycle_type, valid_from, valid_to, state, exclusion_reason, boundary_ids_json, created_at, updated_at) VALUES ('interval-overview-current', 'service-overview', 'account-overview', 'source-overview', 'definition-overview', 'weekly', ?, ?, 'estimable', '', '[]', ?, ?)`, utcText(now.Add(-15*time.Minute)), utcText(now.Add(time.Hour)), utcText(now), utcText(now))
@@ -35,8 +35,8 @@ func TestReadOverviewDataReturnsOnlyRecentIncreaseWithinCurrentEstimableInterval
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(beforeSameIntervalIncrease.RecentLimits) != 0 {
-		t.Fatalf("increase across calculation interval boundary was displayed: %#v", beforeSameIntervalIncrease.RecentLimits)
+	if len(beforeSameIntervalIncrease.RecentLimits) != 1 || !beforeSameIntervalIncrease.RecentLimits[0].ObservationOnly || beforeSameIntervalIncrease.RecentLimits[0].UsedPercent != 25.5 {
+		t.Fatalf("cross-interval change was not kept as observation-only: %#v", beforeSameIntervalIncrease.RecentLimits)
 	}
 	insertOverviewLimitObservation(t, database, "observation-overview-3", now.Add(-5*time.Minute), nil, 30)
 
@@ -103,6 +103,22 @@ func TestReadOverviewDataReturnsOnlyRecentIncreaseWithinCurrentEstimableInterval
 	if len(afterAssociationEnded.RecentLimits) != 0 {
 		t.Fatalf("ended association was displayed: %#v", afterAssociationEnded.RecentLimits)
 	}
+	// An active association can still have a useful latest percentage while
+	// its calculation interval is excluded. The overview must keep that
+	// observation visible without presenting an estimated limit or an
+	// unproven increase.
+	execOverviewSQL(t, database, `UPDATE usage_limit_source_links SET valid_to = NULL WHERE usage_limit_association_id = 'association-overview'`)
+	execOverviewSQL(t, database, `UPDATE calculation_intervals SET state = 'excluded', exclusion_reason = 'insufficient observations' WHERE calculation_interval_id = 'interval-overview-current'`)
+	fallback, err := lifecycle.ReadOverviewData(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fallback.RecentLimits) != 1 {
+		t.Fatalf("observation-only recent limits = %#v", fallback.RecentLimits)
+	}
+	if !fallback.RecentLimits[0].ObservationOnly || fallback.RecentLimits[0].UsedPercent != 30 || fallback.RecentLimits[0].EstimatedLimit != nil {
+		t.Fatalf("observation-only recent limit = %#v", fallback.RecentLimits[0])
+	}
 }
 
 func execOverviewSQL(t *testing.T, database *sql.DB, query string, args ...any) {
@@ -120,6 +136,6 @@ func insertOverviewLimitObservation(t *testing.T, database *sql.DB, id string, o
 		plan_label, used_percent, resets_at, sync_upload_interval_ms, limits_refresh_ms,
 		analytics_interval_seconds, normalization_generation, normalization_rule_version,
 		normalization_logic_version, json_path, dedupe_state, dedupe_key, value_fingerprint
-	) VALUES (?, 'snapshot-overview', 'hub-overview', 'device-overview', 'provider.overview', 'account-key', ?, 'window-overview', 'window', 'percent', 'Weekly input', 'Plan', ?, ?, 60000, 300000, 60, 1, 'rule', 'logic', '$.limits', 'canonical', ?, ?)`,
+	) VALUES (?, 'snapshot-overview', 'hub-overview', 'device-overview', 'provider.overview', 'account-key', ?, 'window-overview', 'window', '', 'Weekly input', 'Plan', ?, ?, 60000, 300000, 60, 1, 'rule', 'logic', '$.limits', 'canonical', ?, ?)`,
 		id, utcText(observed), used, optionalTimeText(reset), "dedupe-"+id, "fingerprint-"+id)
 }

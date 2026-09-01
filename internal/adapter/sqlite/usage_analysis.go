@@ -85,6 +85,7 @@ func (l *Lifecycle) ListUsageAnalysisObservations(ctx context.Context) ([]UsageA
 		       COALESCE(m.service_id, ''), COALESCE(s.name, ''), o.usage_updated_at,
 		       o.token_count, o.api_cost_usd_text, o.model_tokens_json, o.model_costs_json, o.json_path
 		FROM usage_analysis_observations o
+		LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation
 		JOIN hubs h ON h.hub_id = o.hub_id
 		JOIN usage_cost_sources src
 		  ON src.hub_id = o.hub_id AND src.device_id = o.device_id
@@ -93,7 +94,7 @@ func (l *Lifecycle) ListUsageAnalysisObservations(ctx context.Context) ([]UsageA
 		  ON m.identifier_kind = 'usage_cost' AND m.raw_identifier = o.raw_service_identifier
 		 AND m.valid_from <= o.usage_updated_at AND (m.valid_to IS NULL OR o.usage_updated_at < m.valid_to)
 		LEFT JOIN services s ON s.service_id = m.service_id
-		WHERE o.dedupe_state = 'canonical'
+		WHERE o.dedupe_state = 'canonical' AND (nr.state = 'active' OR nr.state IS NULL)
 		ORDER BY src.usage_cost_source_id, o.usage_updated_at, o.usage_observation_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list usage analysis observations: %w", err)
@@ -236,8 +237,9 @@ func (l *Lifecycle) ListUsageNativeAmounts(ctx context.Context) ([]UsageNativeAm
 		       o.provider_updated_at, a.used_text, a.limit_text, a.remaining_text, a.currency, o.json_path
 		FROM usage_limit_amount_observations a
 		JOIN usage_limit_observations o ON o.observation_id = a.observation_id
+		LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation
 		JOIN hubs h ON h.hub_id = o.hub_id
-		WHERE o.dedupe_state = 'canonical'
+		WHERE o.dedupe_state = 'canonical' AND (nr.state = 'active' OR nr.state IS NULL)
 		ORDER BY o.provider_updated_at DESC, o.observation_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list native usage amounts: %w", err)

@@ -374,6 +374,7 @@ function auditActionLabel(action: string): string {
     plan_created: "プランを登録",
     association_created: "関連付けを登録",
     association_deleted: "関連付けを削除",
+    auto_reconcile: "安全な設定を自動関連付け",
     create: "登録",
     update: "更新",
     delete: "削除",
@@ -389,6 +390,9 @@ function auditActionLabel(action: string): string {
 function auditTarget(item: AuditRecord): AuditTargetInfo {
   const type = item.entityType.toLocaleLowerCase();
   const encodedID = encodeURIComponent(item.entityId);
+  if (type.includes("automatic_reconciliation")) {
+    return { label: "自動関連付け", to: "/review" };
+  }
   if (type.includes("hub")) {
     return { label: "Hub", to: `/hubs?hubId=${encodedID}` };
   }

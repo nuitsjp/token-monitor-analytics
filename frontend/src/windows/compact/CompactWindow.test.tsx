@@ -64,6 +64,7 @@ function recentLimit(
     accountName: account,
     limitName: `Weekly ${index}`,
     cycleType: "weekly",
+    observationOnly: false,
     remainingPercent: masked ? null : 70 + index,
     remainingLabel,
     remainingDetailLabel: masked ? "••••" : `${70 + index}.00%`,
@@ -303,6 +304,41 @@ describe("CompactWindow", () => {
     expect(screen.getByText(/Weekly 6$/)).toBeVisible();
     expect(expandedStates).toEqual([true]);
     expect(root.querySelector('[data-region="limit-list"]')).not.toBeNull();
+  });
+
+  it("does not count a failure superseded by a later successful collection", async () => {
+    const snapshot = overview();
+    const item = snapshot.hubs.items?.[0];
+    if (!item) throw new Error("test overview has no Hub");
+    item.lastFailureAt = "2026-08-25T00:00:00Z";
+    item.lastCollection = status(
+      "collection_succeeded",
+      "取得成功",
+      "success",
+      "checkmark",
+    );
+    renderCompact(createFakeBackend({ overview: snapshot }));
+
+    await screen.findByText(/Weekly 1$/);
+    expect(
+      screen.queryByRole("button", { name: /取得失敗/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows latest observed limits when no estimated limit is available", async () => {
+    const snapshot = overview();
+    const observed = recentLimit(1);
+    observed.observationOnly = true;
+    observed.estimatedUsageLabel = "";
+    observed.estimatedLimitLabel = "";
+    snapshot.recentLimits = [observed];
+    renderCompact(createFakeBackend({ overview: snapshot }));
+
+    expect(
+      await screen.findByRole("region", { name: "現在観測できている利用枠" }),
+    ).toBeVisible();
+    expect(screen.getByText("Observed")).toBeVisible();
+    expect(screen.getByText(/Weekly 1$/)).toBeVisible();
   });
 
   it("requests the Go-masked DTO for shortcut privacy mode and removes raw values immediately", async () => {

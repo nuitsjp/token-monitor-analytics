@@ -486,6 +486,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
     snapshot?.hubs.items?.filter(
       (hub) => hub.enabled && hub.lastCollection.code === "collection_failed",
     ).length ?? 0;
+  const observationOnlyLimits = limits.some((item) => item.observationOnly);
   return (
     <>
       <main
@@ -698,7 +699,11 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                       expanded && styles.scrollableLimits,
                     )}
                     data-region="limit-list"
-                    aria-label="利用増加を最近確認した利用枠"
+                    aria-label={
+                      observationOnlyLimits
+                        ? "現在観測できている利用枠"
+                        : "利用増加を最近確認した利用枠"
+                    }
                   >
                     {limits.map((item) => (
                       <article
@@ -908,23 +913,26 @@ function LimitResetLine({
   displayTimeZone: string;
   resetDateColumnSample: string;
 }) {
-  const reset = item.resetAt
-    ? splitOverviewInstant(item.resetAt, displayTimeZone)
-    : null;
+  const eventAt = item.observationOnly
+    ? item.freshness.observationAt
+    : item.resetAt;
+  const event = eventAt ? splitOverviewInstant(eventAt, displayTimeZone) : null;
   const staleFreshness = item.freshness.status.intent !== "success";
   return (
     <div className={styles.resetLine} title={item.tooltip}>
       <span className={styles.resetDetails}>
-        <span className={styles.resetLabel}>Reset</span>
-        {reset ? (
+        <span className={styles.resetLabel}>
+          {item.observationOnly ? "Observed" : "Reset"}
+        </span>
+        {event ? (
           <>
             <span
               className={styles.resetDateColumn}
               data-column-sample={resetDateColumnSample}
             >
-              <span className={styles.resetDateValue}>{reset.date}</span>
+              <span className={styles.resetDateValue}>{event.date}</span>
             </span>
-            <span className={styles.resetValue}>{reset.time}</span>
+            <span className={styles.resetValue}>{event.time}</span>
           </>
         ) : (
           <span className={styles.resetValue}>{item.reset.label}</span>

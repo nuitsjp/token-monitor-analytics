@@ -193,7 +193,11 @@ describe("ReviewPage", () => {
   it("shows empty and retryable error states", async () => {
     const backend = createFakeBackend();
     renderPage(backend);
-    expect(await screen.findByText("要確認作業はありません。")).toBeVisible();
+    expect(
+      await screen.findByText(
+        "要確認作業はありません。完全一致した設定は自動的に関連付け済みです。",
+      ),
+    ).toBeVisible();
 
     const failed = createFakeBackend();
     vi.spyOn(failed, "getReviewItems").mockRejectedValue(

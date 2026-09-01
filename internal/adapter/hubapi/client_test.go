@@ -12,14 +12,6 @@ import (
 	"time"
 )
 
-var testBuild = BuildIdentity{
-	SchemaVersion:  1,
-	Runtime:        "test-hub",
-	CoreBuildID:    "sha256:test-core",
-	RuntimeBuildID: "sha256:test-runtime",
-	CoreRevision:   18,
-}
-
 func TestTLSErrorIsClassified(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte(testHealth()))
@@ -223,7 +215,7 @@ func TestFetchStatsKeepsUnknownFieldsAndJSONNumbers(t *testing.T) {
 			_, _ = writer.Write([]byte(testHealth()))
 		case "/api/stats":
 			statsCalls.Add(1)
-			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z"}],"periods":{},"unknownFutureField":{"retained":true},"number":12345678901234567890}`))
+			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z"}],"periods":{},"unknownFutureField":{"retained":true},"number":12345678901234567890}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -313,7 +305,7 @@ func TestFetchStatsUsesMinimumCoreRevision(t *testing.T) {
 					_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"sha256:changed","runtimeBuildId":"sha256:changed-runtime","coreRevision":` + fmt.Sprint(test.coreRevision) + `}}`))
 				case "/api/stats":
 					statsCalls.Add(1)
-					_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z"}]}`))
+					_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z"}]}`))
 				default:
 					http.NotFound(writer, request)
 				}
@@ -340,13 +332,13 @@ func TestFetchStatsUsesMinimumCoreRevision(t *testing.T) {
 	}
 }
 
-func TestTopLevelUsageUpdatedAtDoesNotReplaceDeviceMarker(t *testing.T) {
+func TestTopLevelUpdatedAtDoesNotReplaceDeviceMarker(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/api/health" {
 			_, _ = writer.Write([]byte(testHealth()))
 			return
 		}
-		_, _ = writer.Write([]byte(`{"usageUpdatedAt":"2026-08-25T11:36:00Z","devices":[{"deviceId":"device-1"}]}`))
+		_, _ = writer.Write([]byte(`{"updatedAt":"2026-08-25T11:36:00Z","devices":[{"deviceId":"device-1"}]}`))
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, testAllowlist())
@@ -354,7 +346,7 @@ func TestTopLevelUsageUpdatedAtDoesNotReplaceDeviceMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = client.FetchStats(context.Background(), "secret")
-	t.Run("API-03 requires device usage marker", func(t *testing.T) {
+	t.Run("API-03 requires device updatedAt", func(t *testing.T) {
 		if ClassificationOf(err) != ClassificationUnsupported {
 			t.Fatalf("classification = %q, want unsupported", ClassificationOf(err))
 		}
@@ -372,7 +364,7 @@ func TestEmptyDevicesIsUnsupportedWithoutDeviceUsageMarker(t *testing.T) {
 			_, _ = writer.Write([]byte(testHealth()))
 			return
 		}
-		_, _ = writer.Write([]byte(`{"usageUpdatedAt":"2026-08-25T11:36:00Z","devices":[]}`))
+		_, _ = writer.Write([]byte(`{"updatedAt":"2026-08-25T11:36:00Z","devices":[]}`))
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, testAllowlist())
@@ -471,7 +463,7 @@ func TestDefaultAllowlistAcceptsCoreRevision18ForCollection(t *testing.T) {
 		case "/api/health":
 			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"node-hub","coreBuildId":"sha256:4074b6e85c0cb32e3d8978fbdcfcbcba03a2c1e0b3d95bbc20177e141004a93e","runtimeBuildId":"sha256:dbdaa0b2aa2e8d627b939d6ab76a9029aa2807839fdbe4e7918edcab592fe749","coreRevision":18,"runtimeRevision":1}}`))
 		case "/api/stats":
-			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1"}]}`))
+			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z"}]}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -485,7 +477,7 @@ func TestDefaultAllowlistAcceptsCoreRevision18ForCollection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Contract.UsageUpdatedAt {
-		t.Fatal("evaluation Hub was promoted to estimation contract")
+	if !result.Contract.UsageUpdatedAt {
+		t.Fatal("supported node-hub contract was not estimation capable")
 	}
 }

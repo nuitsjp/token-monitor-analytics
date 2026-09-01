@@ -35,7 +35,11 @@ func (l *Lifecycle) Backup(ctx context.Context, destinationPath string) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect backup destination: %w", err)
 	}
-	connection, err := l.database.Conn(ctx)
+	return createOnlineBackup(ctx, l.database, absolutePath)
+}
+
+func createOnlineBackup(ctx context.Context, database *sql.DB, absolutePath string) error {
+	connection, err := database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire backup connection: %w", err)
 	}

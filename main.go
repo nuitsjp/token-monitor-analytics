@@ -188,6 +188,23 @@ func run() (runErr error) {
 
 	windowService, windowController := desktop.NewWindowService(storage.lifecycle)
 	maintenanceGate := usecase.NewMaintenanceGate()
+	reconciliation, err := usecase.NewReconciliationUsecase(storage.lifecycle, usecase.SystemClock{})
+	if err != nil {
+		return fmt.Errorf("start automatic reconciliation: %w", err)
+	}
+	if _, err := reconciliation.Reconcile(context.Background(), ""); err != nil {
+		return fmt.Errorf("apply built-in catalog: %w", err)
+	}
+	renormalization, err := usecase.NewRenormalizationUsecase(storage.lifecycle, usecase.SystemClock{}, desktop.UUIDGenerator{}, mainCollectionDependencies())
+	if err != nil {
+		return fmt.Errorf("start raw snapshot renormalization: %w", err)
+	}
+	if _, err := renormalization.Run(context.Background()); err != nil {
+		return fmt.Errorf("renormalize stored raw snapshots: %w", err)
+	}
+	if _, err := reconciliation.Reconcile(context.Background(), ""); err != nil {
+		return fmt.Errorf("reconcile renormalized observations: %w", err)
+	}
 	settingsService := desktop.NewSettingsServiceWithDependencies(storage.lifecycle, mainTimezoneProvider{}, maintenanceGate)
 	credentials := credentialadapter.Manager{}
 	hubService := desktop.NewHubServiceWithClient(storage.lifecycle, credentials, usecase.SystemClock{}, desktop.UUIDGenerator{}, mainHubClientFactory, maintenanceGate)
@@ -218,7 +235,14 @@ func run() (runErr error) {
 		mainCollectionClientFactory,
 		usecase.SystemClock{},
 		desktop.UUIDGenerator{},
-		mainCollectionDependencies(),
+		func() usecase.CollectionDependencies {
+			dependencies := mainCollectionDependencies()
+			dependencies.AfterSuccessfulCollection = func(ctx context.Context, hubID string) error {
+				_, err := reconciliation.Reconcile(ctx, hubID)
+				return err
+			}
+			return dependencies
+		}(),
 		maintenanceGate,
 	)
 	if err != nil {

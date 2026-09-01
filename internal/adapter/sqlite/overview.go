@@ -224,7 +224,7 @@ func readOverviewRecentLimits(ctx context.Context, database *sql.DB, result *Ove
 		  JOIN logical_accounts la ON la.logical_account_id = usl.logical_account_id AND la.archived_at IS NULL
 		  JOIN limit_definitions ld ON ld.limit_definition_id = usl.limit_definition_id AND ld.archived_at IS NULL
 		  JOIN services s ON s.service_id = la.service_id AND s.service_id = ld.service_id AND s.archived_at IS NULL
-		  WHERE ulo.dedupe_state = 'canonical' AND ulo.normalized_metric = 'percent'
+		  WHERE ulo.dedupe_state = 'canonical'
 		    AND ulo.used_percent BETWEEN 0 AND 100
 		), increases AS (
 		  SELECT *, ROW_NUMBER() OVER (
@@ -295,6 +295,107 @@ func readOverviewRecentLimits(ctx context.Context, database *sql.DB, result *Ove
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read overview recent limits: %w", err)
+	}
+	if len(result.RecentLimits) == 0 {
+		// A limit can have useful, current observations even while its
+		// calculation interval is excluded (for example, before enough points
+		// have accumulated). Keep the compact window useful without inventing
+		// an estimated limit or treating the latest observation as an increase.
+		return readOverviewLatestLimits(ctx, database, result, now)
+	}
+	return nil
+}
+
+// readOverviewLatestLimits provides an observation-only fallback for the
+// compact window. It deliberately requires an active source association so
+// that the account and limit names remain grounded in user-confirmed data.
+func readOverviewLatestLimits(ctx context.Context, database *sql.DB, result *OverviewData, now time.Time) (err error) {
+	nowText := utcText(now)
+	rows, err := database.QueryContext(ctx, `
+		WITH latest AS (
+		  SELECT uls.usage_limit_source_id, ulo.used_percent, ulo.resets_at,
+		         ulo.provider_updated_at,
+		         MAX(ulo.analytics_interval_seconds,
+		             COALESCE((ulo.sync_upload_interval_ms + 999) / 1000, 0),
+		             COALESCE((ulo.limits_refresh_ms + 999) / 1000, 0)) AS expected_seconds,
+		         ROW_NUMBER() OVER (
+		           PARTITION BY uls.usage_limit_source_id
+		           ORDER BY ulo.provider_updated_at DESC, ulo.observation_id DESC
+		         ) AS observation_rank
+		  FROM usage_limit_observations ulo
+		  JOIN usage_limit_sources uls
+		    ON uls.hub_id = ulo.hub_id AND uls.device_id = ulo.device_id
+		   AND uls.raw_service_identifier = ulo.raw_service_identifier
+		   AND uls.account_key = ulo.account_key AND uls.window_key = ulo.window_key
+		   AND uls.normalized_kind = ulo.normalized_kind AND uls.normalized_metric = ulo.normalized_metric
+		   AND uls.normalized_label = ulo.normalized_label
+		  LEFT JOIN normalization_runs nr
+		    ON nr.snapshot_id = ulo.snapshot_id AND nr.normalization_generation = ulo.normalization_generation
+		  WHERE ulo.dedupe_state = 'canonical'
+		    AND ulo.used_percent BETWEEN 0 AND 100
+		    AND (nr.state = 'active' OR nr.state IS NULL)
+		)
+		, associated AS (
+		  SELECT usl.logical_account_id, usl.limit_definition_id,
+		         s.name AS service_name, la.display_name AS account_name,
+		         ld.meaning AS limit_name, ld.cycle_type,
+		         l.used_percent, l.resets_at, l.provider_updated_at,
+		         l.expected_seconds,
+		         ROW_NUMBER() OVER (
+		           PARTITION BY usl.logical_account_id, usl.limit_definition_id
+		           ORDER BY l.provider_updated_at DESC, l.usage_limit_source_id
+		         ) AS series_rank
+		  FROM latest l
+		  JOIN usage_limit_source_links usl
+		    ON usl.usage_limit_source_id = l.usage_limit_source_id
+		   AND usl.valid_from <= ?
+		   AND (usl.valid_to IS NULL OR ? < usl.valid_to)
+		   AND usl.valid_from <= l.provider_updated_at
+		   AND (usl.valid_to IS NULL OR l.provider_updated_at < usl.valid_to)
+		  JOIN logical_accounts la ON la.logical_account_id = usl.logical_account_id AND la.archived_at IS NULL
+		  JOIN limit_definitions ld ON ld.limit_definition_id = usl.limit_definition_id AND ld.archived_at IS NULL
+		  JOIN services s ON s.service_id = la.service_id AND s.service_id = ld.service_id AND s.archived_at IS NULL
+		  WHERE l.observation_rank = 1
+		)
+		SELECT logical_account_id, limit_definition_id, service_name, account_name,
+		       limit_name, cycle_type, used_percent, resets_at, provider_updated_at,
+		       expected_seconds
+		FROM associated
+		WHERE series_rank = 1
+		ORDER BY provider_updated_at DESC, logical_account_id, limit_definition_id
+		LIMIT 4`, nowText, nowText)
+	if err != nil {
+		return fmt.Errorf("read overview latest limits: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close overview latest limit rows: %w", closeErr)
+		}
+	}()
+	for rows.Next() {
+		var item OverviewRecentLimit
+		var reset sql.NullString
+		var observed string
+		var expectedSeconds int64
+		if err := rows.Scan(&item.LogicalAccountID, &item.LimitDefinitionID, &item.ServiceName,
+			&item.AccountName, &item.LimitName, &item.CycleType, &item.UsedPercent,
+			&reset, &observed, &expectedSeconds); err != nil {
+			return fmt.Errorf("scan overview latest limit: %w", err)
+		}
+		var parseErr error
+		if item.ResetsAt, parseErr = parseOverviewTime(reset); parseErr != nil {
+			return overviewTimeError("latest limit reset", parseErr)
+		}
+		if item.LastIncreaseAt, parseErr = parseUTC(observed); parseErr != nil {
+			return overviewTimeError("latest limit observation", parseErr)
+		}
+		item.LatestObservationAt = item.LastIncreaseAt
+		item.ExpectedInterval = time.Duration(expectedSeconds) * time.Second
+		item.ObservationOnly = true
+		result.RecentLimits = append(result.RecentLimits, item)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read overview latest limit rows: %w", err)
 	}
 	return nil
 }

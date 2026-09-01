@@ -144,6 +144,7 @@ type OverviewRecentLimitSnapshot struct {
 	Reset                StatusPresentationSnapshot `json:"reset"`
 	LastIncrease         OverviewTimeSnapshot       `json:"lastIncrease"`
 	Freshness            OverviewFreshnessSnapshot  `json:"freshness"`
+	ObservationOnly      bool                       `json:"observationOnly"`
 	PrivacyMasked        bool                       `json:"privacyMasked"`
 	AccessibleLabel      string                     `json:"accessibleLabel"`
 	Tooltip              string                     `json:"tooltip"`
@@ -571,6 +572,7 @@ func mapOverviewRecentLimit(item domain.OverviewRecentLimit, now time.Time, priv
 		ServiceName: item.ServiceName, AccountName: item.AccountName, LimitName: item.LimitName, CycleType: item.CycleType,
 		RemainingPercent: &remaining, RemainingLabel: fmt.Sprintf("%.1f%%", remaining), RemainingDetailLabel: fmt.Sprintf("%.2f%%", remaining), Remaining: remainingStatus,
 		ResetAt: resetAt, Reset: reset, LastIncrease: lastIncrease, Freshness: freshness,
+		ObservationOnly: item.ObservationOnly,
 	}
 	if item.EstimatedLimit != nil {
 		if math.IsNaN(*item.EstimatedLimit) || math.IsInf(*item.EstimatedLimit, 0) || *item.EstimatedLimit < 0 {
@@ -597,12 +599,19 @@ func mapOverviewRecentLimit(item domain.OverviewRecentLimit, now time.Time, priv
 		result.Reset = hidden
 		result.PrivacyMasked = true
 	}
-	result.AccessibleLabel = fmt.Sprintf("%s、%s、%s、残り %s、%s、利用増加 %s、最新観測 %s",
-		result.ServiceName, result.AccountName, result.LimitName, result.RemainingLabel, result.Reset.Label,
-		result.LastIncrease.AgeLabel, result.Freshness.AgeLabel)
-	result.Tooltip = fmt.Sprintf("残り %s・利用増加 %s（UTC %s）・最新観測 %s（UTC %s）",
-		result.RemainingDetailLabel, result.LastIncrease.AgeLabel, result.LastIncrease.OccurredAt,
-		result.Freshness.AgeLabel, result.Freshness.ObservationAt)
+	if item.ObservationOnly {
+		result.AccessibleLabel = fmt.Sprintf("%s、%s、%s、残り %s、最新観測 %s",
+			result.ServiceName, result.AccountName, result.LimitName, result.RemainingLabel, result.Freshness.AgeLabel)
+		result.Tooltip = fmt.Sprintf("残り %s・最新観測 %s（UTC %s）",
+			result.RemainingDetailLabel, result.Freshness.AgeLabel, result.Freshness.ObservationAt)
+	} else {
+		result.AccessibleLabel = fmt.Sprintf("%s、%s、%s、残り %s、%s、利用増加 %s、最新観測 %s",
+			result.ServiceName, result.AccountName, result.LimitName, result.RemainingLabel, result.Reset.Label,
+			result.LastIncrease.AgeLabel, result.Freshness.AgeLabel)
+		result.Tooltip = fmt.Sprintf("残り %s・利用増加 %s（UTC %s）・最新観測 %s（UTC %s）",
+			result.RemainingDetailLabel, result.LastIncrease.AgeLabel, result.LastIncrease.OccurredAt,
+			result.Freshness.AgeLabel, result.Freshness.ObservationAt)
+	}
 	if result.ResetAt != "" {
 		result.Tooltip += "・リセット UTC " + result.ResetAt
 	}

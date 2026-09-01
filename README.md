@@ -30,7 +30,7 @@ Token Monitor は、トークン数、API 換算利用額、モデル内訳、�
 
 現行の Token Monitor API では、利用枠だけの更新時にも Hub 端末レコードの `updatedAt` が進み、以前の `periods` が引き継がれることがあります。そのため `devices[].updatedAt` は、累積 API 換算利用額の観測時刻として使用できません。
 
-目標要件では、利用実績が最後に実測更新された時刻を示す `devices[].usageUpdatedAt` 相当の専用フィールドを Hub API の対応条件とします。この時刻がない現行契約のデータは保存・全体集計できますが、利用上限推定には使用しません。基準にした現行 API 構造は、Token Monitor の固定リビジョン [`5ecc60535168f919d8ce5d6d1aaa14c87d11f52b`](https://github.com/Javis603/token-monitor/blob/5ecc60535168f919d8ce5d6d1aaa14c87d11f52b/docs/API.md) です。
+対応する node-hub 契約では、利用実績が最後に実測更新された端末単位の時刻として `devices[].updatedAt` を使用します。API 最上位の `updatedAt`、受信時刻、Analytics の取得完了時刻は利用実績時刻として使用しません。基準にした現行 API 構造は、Token Monitor の固定リビジョン [`5ecc60535168f919d8ce5d6d1aaa14c87d11f52b`](https://github.com/Javis603/token-monitor/blob/5ecc60535168f919d8ce5d6d1aaa14c87d11f52b/docs/API.md) です。
 
 本実装の収集対応条件は `schemaVersion=1`、`runtime=node-hub`、`coreRevision>=18` です。`coreBuildId` と `runtimeBuildId` は取得元ビルドの追跡情報として保存しますが、互換性判定には使用しません。将来の更新で API 契約に互換性がなくなった場合は、実装を新契約へ対応させたうえで最低 core revision を引き上げます。
 
@@ -55,6 +55,7 @@ Phase 1 と Phase 2 には別々の完了ゲートがあります。試作機能
 
 - 原 JSON スナップショット、正規化した元観測、派生計算結果、設定変更監査履歴を分離します。
 - 元観測と監査履歴を自動削除せず、物理削除は Hub と取得期間を確認する明示パージだけで行います。
+- 既存データベースのスキーマを更新する場合は、更新前に同じアプリデータディレクトリへ `元名.pre-migration-v{旧版}.sqlite3` を自動作成し、完全性を確認できなければ更新を開始しません。この退避はマイグレーション事故用であり、端末外バックアップの代替ではありません。
 - Hub 資格情報は、不変の Hub 識別子をキーとして Windows Credential Manager に保存し、データベース、ログ、バックアップへ含めません。
 - Phase 1 のバックアップは、マニフェストと SQLite データベースを含む ZIP 成果物であり、アプリ内暗号化を行いません。原 JSON、アカウント識別情報、利用履歴を含むため、端末外では保存時暗号化された場所へ保管する必要があります。
 - 同じ端末や同じ媒体にだけ残したバックアップでは、媒体故障、端末の紛失・盗難、ランサムウェアから復旧できません。端末外へのコピーは利用者が行います。

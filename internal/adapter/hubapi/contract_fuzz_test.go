@@ -11,7 +11,7 @@ func TestAPI05StatsValidationRejectsMalformedValues(t *testing.T) {
 	} {
 		t.Run("API-05 validates JSON shape types dates and finite numbers", func(t *testing.T) {
 			stats, err := parseStats([]byte(raw))
-			if err == nil && requireUsageUpdatedAt(stats.Value) == nil {
+			if err == nil && requireDeviceUpdatedAt(stats.Value) == nil {
 				t.Fatalf("malformed stats was accepted: %q", raw)
 			}
 		})

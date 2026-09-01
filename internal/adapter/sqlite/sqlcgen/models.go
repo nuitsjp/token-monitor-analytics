@@ -37,6 +37,23 @@ type CalculationInterval struct {
 	UpdatedAt             string         `json:"updated_at"`
 }
 
+type CatalogBinding struct {
+	BindingID       string `json:"binding_id"`
+	EntityType      string `json:"entity_type"`
+	CatalogKey      string `json:"catalog_key"`
+	EntityID        string `json:"entity_id"`
+	CatalogRevision string `json:"catalog_revision"`
+	ManagementMode  string `json:"management_mode"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+}
+
+type CatalogState struct {
+	Singleton       int64  `json:"singleton"`
+	CatalogRevision string `json:"catalog_revision"`
+	AppliedAt       string `json:"applied_at"`
+}
+
 type CollectionAttempt struct {
 	AttemptID                string         `json:"attempt_id"`
 	HubID                    string         `json:"hub_id"`
@@ -331,6 +348,32 @@ type MatchedObservation struct {
 	NormalizationGeneration   int64          `json:"normalization_generation"`
 	NormalizationRuleVersion  string         `json:"normalization_rule_version"`
 	NormalizationLogicVersion string         `json:"normalization_logic_version"`
+}
+
+type NormalizationRun struct {
+	SnapshotID              string         `json:"snapshot_id"`
+	NormalizationGeneration int64          `json:"normalization_generation"`
+	RuleVersion             string         `json:"rule_version"`
+	LogicVersion            string         `json:"logic_version"`
+	State                   string         `json:"state"`
+	StartedAt               string         `json:"started_at"`
+	CompletedAt             sql.NullString `json:"completed_at"`
+	ErrorDetail             sql.NullString `json:"error_detail"`
+}
+
+type ObservedEntitlement struct {
+	EntitlementID    string         `json:"entitlement_id"`
+	HubID            string         `json:"hub_id"`
+	ServiceID        string         `json:"service_id"`
+	AccountKey       string         `json:"account_key"`
+	ReportedPlanName string         `json:"reported_plan_name"`
+	EvidenceSource   string         `json:"evidence_source"`
+	State            string         `json:"state"`
+	PlanID           sql.NullString `json:"plan_id"`
+	FirstObservedAt  string         `json:"first_observed_at"`
+	LastObservedAt   string         `json:"last_observed_at"`
+	CreatedAt        string         `json:"created_at"`
+	UpdatedAt        string         `json:"updated_at"`
 }
 
 type Plan struct {
