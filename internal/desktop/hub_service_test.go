@@ -56,10 +56,12 @@ type hubAPITestClient struct{ client *hubapi.Client }
 func (c hubAPITestClient) FetchStats(ctx context.Context, secret string) (HubFetchResult, error) {
 	result, err := c.client.FetchStats(ctx, secret)
 	return HubFetchResult{Contract: HubContract{Build: HubBuildIdentity{
-		SchemaVersion:  result.Contract.Build.SchemaVersion,
-		Runtime:        result.Contract.Build.Runtime,
-		CoreBuildID:    result.Contract.Build.CoreBuildID,
-		RuntimeBuildID: result.Contract.Build.RuntimeBuildID,
+		SchemaVersion:   result.Contract.Build.SchemaVersion,
+		Runtime:         result.Contract.Build.Runtime,
+		CoreBuildID:     result.Contract.Build.CoreBuildID,
+		RuntimeBuildID:  result.Contract.Build.RuntimeBuildID,
+		CoreRevision:    result.Contract.Build.CoreRevision,
+		RuntimeRevision: result.Contract.Build.RuntimeRevision,
 	}}}, err
 }
 
@@ -182,7 +184,7 @@ func TestUnsupportedConnectionPersistsAttemptWithoutCallingStats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/health":
-			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"evaluation","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
+			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"evaluation","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}`))
 		case "/api/stats":
 			statsCalls++
 		}
@@ -217,11 +219,10 @@ func TestUnsupportedConnectionPersistsAttemptWithoutCallingStats(t *testing.T) {
 
 func TestRestorePendingNeedsNewCredentialAndSuccessfulConnection(t *testing.T) {
 	service, lifecycle, _ := newHubTestService(t)
-	build := hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "test", CoreBuildID: "core", RuntimeBuildID: "runtime"}
-	service.client = hubAPITestFactory(hubapi.NewAllowlist(hubapi.Contract{Build: build, UsageUpdatedAt: true}))
+	service.client = hubAPITestFactory(hubapi.NewAllowlist(hubapi.ContractPolicy{SchemaVersion: 1, Runtime: "test", MinimumCoreRevision: 1, UsageUpdatedAt: true}))
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/api/health" {
-			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
+			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}`))
 			return
 		}
 		_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T12:00:00Z"}]}`))
@@ -278,12 +279,11 @@ func TestHubConnectionFailuresPersistClassifiedStateWithoutSensitiveData(t *test
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			service, lifecycle, _ := newHubTestService(t)
-			build := hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "service-test", CoreBuildID: "core", RuntimeBuildID: "runtime"}
-			service.client = hubAPITestFactory(hubapi.NewAllowlist(hubapi.Contract{Build: build, UsageUpdatedAt: true}))
+			service.client = hubAPITestFactory(hubapi.NewAllowlist(hubapi.ContractPolicy{SchemaVersion: 1, Runtime: "service-test", MinimumCoreRevision: 1, UsageUpdatedAt: true}))
 			const responseSentinel = "response-body-must-not-be-persisted"
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if request.URL.Path == "/api/health" {
-					_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"service-test","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
+					_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"service-test","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}`))
 					return
 				}
 				writer.WriteHeader(test.status)

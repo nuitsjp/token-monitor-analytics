@@ -4,7 +4,7 @@
 
 状態: **収集契約合格・利用額推定契約不合格**
 
-2026-08-25 に評価用 Hub `192.168.0.16:17321` を二回連続で確認した。
+2026-08-25 に評価用 Hub `192.168.0.16:17321` を二回連続で確認した。2026-08-31 には同じ Hub が `coreRevision=18` へ更新され、build ID の完全一致を互換性条件にすると互換更新のたびに収集が停止することを確認した。
 
 - `/api/health` は HTTP 200 で、`schemaVersion=1`、`runtime=node-hub`、`coreRevision=11`、`runtimeRevision=1` を返した。二回の `hubBuild` は一致した。
 - 認証済み `/api/stats` は HTTP 200 で、応答サイズは 1,349,168 bytes と 1,349,169 bytes だった。
@@ -13,7 +13,7 @@
 
 HTTP クライアントの固定値は、接続 5 秒、応答全体 15 秒、応答本文上限 8 MiB とする。実測応答に対して約 6 倍の余裕があり、無制限読込みを避けられる。暗黙の再試行は行わない。
 
-この Hub ビルドを収集専用契約として許可リストへ固定する。原 JSONと `providers[].updatedAt` を持つ利用枠観測は収集する一方、`usageUpdatedAt` がない利用額から正規化済み利用額観測や推定観測点を作らない。取得時刻や `devices[].updatedAt` へのフォールバックは実装しない。
+収集専用契約は `schemaVersion=1`、`runtime=node-hub`、`coreRevision>=18` とする。build ID は実際に応答したビルドの追跡情報として保存し、互換性判定には使用しない。原 JSONと `providers[].updatedAt` を持つ利用枠観測は収集する一方、`usageUpdatedAt` がない利用額から正規化済み利用額観測や推定観測点を作らない。取得時刻や `devices[].updatedAt` へのフォールバックは実装しない。将来の Hub 更新で契約不一致が発生した場合は実装を新契約へ対応させ、最低 core revision を引き上げる。
 
 ## SP-02 Wails Windows 複数ウィンドウ
 

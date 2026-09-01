@@ -84,10 +84,12 @@ type mainHubClient struct{ client *hubapi.Client }
 func (c mainHubClient) FetchStats(ctx context.Context, secret string) (desktop.HubFetchResult, error) {
 	result, err := c.client.FetchStats(ctx, secret)
 	return desktop.HubFetchResult{Contract: desktop.HubContract{Build: desktop.HubBuildIdentity{
-		SchemaVersion:  result.Contract.Build.SchemaVersion,
-		Runtime:        result.Contract.Build.Runtime,
-		CoreBuildID:    result.Contract.Build.CoreBuildID,
-		RuntimeBuildID: result.Contract.Build.RuntimeBuildID,
+		SchemaVersion:   result.Contract.Build.SchemaVersion,
+		Runtime:         result.Contract.Build.Runtime,
+		CoreBuildID:     result.Contract.Build.CoreBuildID,
+		RuntimeBuildID:  result.Contract.Build.RuntimeBuildID,
+		CoreRevision:    result.Contract.Build.CoreRevision,
+		RuntimeRevision: result.Contract.Build.RuntimeRevision,
 	}}}, err
 }
 
@@ -107,7 +109,11 @@ func (c mainCollectionClient) FetchStats(ctx context.Context, secret string) (us
 		Health: usecase.CollectionResponse{Raw: result.Health.Raw, HTTPStatus: result.Health.HTTPStatus},
 		Stats:  usecase.CollectionResponse{Raw: result.Stats.Raw, HTTPStatus: result.Stats.HTTPStatus},
 		Contract: usecase.CollectionContract{
-			Build:          usecase.CollectionBuildIdentity{SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime, CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID},
+			Build: usecase.CollectionBuildIdentity{
+				SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime,
+				CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID,
+				CoreRevision: result.Contract.Build.CoreRevision, RuntimeRevision: result.Contract.Build.RuntimeRevision,
+			},
 			UsageUpdatedAt: result.Contract.UsageUpdatedAt,
 		},
 	}, err

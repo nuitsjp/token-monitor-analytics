@@ -44,7 +44,11 @@ func (c collectionHubAPIClient) FetchStats(ctx context.Context, secret string) (
 		Health: CollectionResponse{Raw: result.Health.Raw, HTTPStatus: result.Health.HTTPStatus},
 		Stats:  CollectionResponse{Raw: result.Stats.Raw, HTTPStatus: result.Stats.HTTPStatus},
 		Contract: CollectionContract{
-			Build:          CollectionBuildIdentity{SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime, CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID},
+			Build: CollectionBuildIdentity{
+				SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime,
+				CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID,
+				CoreRevision: result.Contract.Build.CoreRevision, RuntimeRevision: result.Contract.Build.RuntimeRevision,
+			},
 			UsageUpdatedAt: result.Contract.UsageUpdatedAt,
 		},
 	}, err
@@ -131,7 +135,7 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 		switch request.URL.Path {
 		case "/api/health":
 			writer.WriteHeader(http.StatusOK)
-			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
+			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}`))
 		case "/api/stats":
 			writer.WriteHeader(http.StatusOK)
 			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`))
@@ -146,7 +150,7 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 	if err := database.AppendCredentialAudit(ctx, sqliteadapter.CredentialAudit{AuditID: uuid.NewString(), OccurredAt: now, Action: "credential_saved", HubID: hubID}); err != nil {
 		t.Fatal(err)
 	}
-	allowlist := hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "test-hub", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true})
+	allowlist := hubapi.NewAllowlist(hubapi.ContractPolicy{SchemaVersion: 1, Runtime: "test-hub", MinimumCoreRevision: 1, UsageUpdatedAt: true})
 	ids := &collectionTestIDs{}
 	uc, err := NewCollectionUsecase(database, collectionTestCredentials{}, collectionHubAPIFactory(allowlist), collectionTestClock{value: now}, ids, collectionHubAPIDependencies(), NewMaintenanceGate())
 	if err != nil {
@@ -178,7 +182,7 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 		t.Fatalf("raw snapshot count = %d, want 2", len(snapshots))
 	}
 	for _, item := range snapshots {
-		if item.ResponseKind == "health" && string(item.Body) != `{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"core","runtimeBuildId":"runtime"}}` {
+		if item.ResponseKind == "health" && string(item.Body) != `{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}` {
 			t.Fatalf("health body changed: %q", item.Body)
 		}
 	}
@@ -475,7 +479,7 @@ func newCollectionFixture(t *testing.T, enabled bool, statsBody string, actions 
 	fixture := &collectionFixture{ctx: ctx, database: database, hubID: hubID}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/api/health" {
-			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
+			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}`))
 			return
 		}
 		if request.URL.Path == "/api/stats" {
@@ -498,7 +502,7 @@ func newCollectionFixture(t *testing.T, enabled bool, statsBody string, actions 
 		credentials = collectionTestCredentials{}
 	}
 	if factory == nil {
-		factory = collectionHubAPIFactory(hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "test-hub", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true}))
+		factory = collectionHubAPIFactory(hubapi.NewAllowlist(hubapi.ContractPolicy{SchemaVersion: 1, Runtime: "test-hub", MinimumCoreRevision: 1, UsageUpdatedAt: true}))
 	}
 	uc, err := NewCollectionUsecase(database, credentials, factory, collectionTestClock{value: now}, &collectionTestIDs{}, collectionHubAPIDependencies(), NewMaintenanceGate())
 	if err != nil {

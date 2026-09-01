@@ -2,6 +2,19 @@
 go = "1.26.7"
 node = "24.19.0"
 
+[tasks.build]
+description = "Windows デスクトップアプリを本番ビルドする"
+run = "wails3 task build"
+
+[tasks.run]
+description = "最新の本番ビルドを作成して起動する"
+depends = ["build"]
+run = "wails3 task windows:run"
+
+[tasks.dev]
+description = "Wails 開発モードでビルドして起動する"
+run = "wails3 task dev"
+
 [tasks.mock]
 description = "サンプルデータを返すモック Hub でフロントエンドを起動する"
 dir = "frontend"

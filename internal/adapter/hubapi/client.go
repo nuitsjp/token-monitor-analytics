@@ -79,7 +79,8 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 }
 
 // FetchStats performs the mandatory health check first. The stats request is
-// never issued unless both allowlist stages match a supported contract.
+// never issued unless the Hub family and minimum core revision match a
+// supported contract policy.
 func (c *Client) FetchStats(ctx context.Context, secret string) (Result, error) {
 	health, err := c.Health(ctx)
 	if err != nil {

@@ -143,7 +143,11 @@ func (c schedulerHubAPIClient) FetchStats(ctx context.Context, secret string) (u
 		Health: usecase.CollectionResponse{Raw: result.Health.Raw, HTTPStatus: result.Health.HTTPStatus},
 		Stats:  usecase.CollectionResponse{Raw: result.Stats.Raw, HTTPStatus: result.Stats.HTTPStatus},
 		Contract: usecase.CollectionContract{
-			Build:          usecase.CollectionBuildIdentity{SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime, CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID},
+			Build: usecase.CollectionBuildIdentity{
+				SchemaVersion: result.Contract.Build.SchemaVersion, Runtime: result.Contract.Build.Runtime,
+				CoreBuildID: result.Contract.Build.CoreBuildID, RuntimeBuildID: result.Contract.Build.RuntimeBuildID,
+				CoreRevision: result.Contract.Build.CoreRevision, RuntimeRevision: result.Contract.Build.RuntimeRevision,
+			},
 			UsageUpdatedAt: result.Contract.UsageUpdatedAt,
 		},
 	}, err
@@ -195,7 +199,7 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 	statsCollected := make(chan struct{}, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/api/health" {
-			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"scheduler-test","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
+			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"scheduler-test","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}`))
 			return
 		}
 		if request.URL.Path == "/api/stats" {
@@ -213,7 +217,7 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 	if err := database.AppendCredentialAudit(ctx, sqliteadapter.CredentialAudit{AuditID: uuid.NewString(), OccurredAt: now, Action: "credential_saved", HubID: hubID}); err != nil {
 		t.Fatal(err)
 	}
-	allowlist := hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{SchemaVersion: 1, Runtime: "scheduler-test", CoreBuildID: "core", RuntimeBuildID: "runtime"}, UsageUpdatedAt: true})
+	allowlist := hubapi.NewAllowlist(hubapi.ContractPolicy{SchemaVersion: 1, Runtime: "scheduler-test", MinimumCoreRevision: 1, UsageUpdatedAt: true})
 	collector, err := usecase.NewCollectionUsecase(database, schedulerCredentials{}, schedulerHubAPIFactory(allowlist), schedulerClock{}, schedulerIDs{}, schedulerCollectionDependencies(), usecase.NewMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)
@@ -357,7 +361,7 @@ func newSchedulerFixture(t *testing.T, status int, collectionEnabled bool) *sche
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/health":
-			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"scheduler-test","coreBuildId":"core","runtimeBuildId":"runtime"}}`))
+			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"scheduler-test","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}`))
 		case "/api/stats":
 			fixture.stats.Add(1)
 			if status != http.StatusOK {
@@ -383,9 +387,7 @@ func newSchedulerFixture(t *testing.T, status int, collectionEnabled bool) *sche
 	}); err != nil {
 		t.Fatal(err)
 	}
-	allowlist := hubapi.NewAllowlist(hubapi.Contract{Build: hubapi.BuildIdentity{
-		SchemaVersion: 1, Runtime: "scheduler-test", CoreBuildID: "core", RuntimeBuildID: "runtime",
-	}, UsageUpdatedAt: true})
+	allowlist := hubapi.NewAllowlist(hubapi.ContractPolicy{SchemaVersion: 1, Runtime: "scheduler-test", MinimumCoreRevision: 1, UsageUpdatedAt: true})
 	collector, err := usecase.NewCollectionUsecase(fixture.database, schedulerCredentials{}, schedulerHubAPIFactory(allowlist), schedulerClock{}, schedulerIDs{}, schedulerCollectionDependencies(), usecase.NewMaintenanceGate())
 	if err != nil {
 		t.Fatal(err)

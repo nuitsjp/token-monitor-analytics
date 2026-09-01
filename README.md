@@ -32,6 +32,8 @@ Token Monitor は、トークン数、API 換算利用額、モデル内訳、�
 
 目標要件では、利用実績が最後に実測更新された時刻を示す `devices[].usageUpdatedAt` 相当の専用フィールドを Hub API の対応条件とします。この時刻がない現行契約のデータは保存・全体集計できますが、利用上限推定には使用しません。基準にした現行 API 構造は、Token Monitor の固定リビジョン [`5ecc60535168f919d8ce5d6d1aaa14c87d11f52b`](https://github.com/Javis603/token-monitor/blob/5ecc60535168f919d8ce5d6d1aaa14c87d11f52b/docs/API.md) です。
 
+本実装の収集対応条件は `schemaVersion=1`、`runtime=node-hub`、`coreRevision>=18` です。`coreBuildId` と `runtimeBuildId` は取得元ビルドの追跡情報として保存しますが、互換性判定には使用しません。将来の更新で API 契約に互換性がなくなった場合は、実装を新契約へ対応させたうえで最低 core revision を引き上げます。
+
 ## 開発段階
 
 | 段階 | 範囲 | 現在の状態 |

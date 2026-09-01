@@ -54,10 +54,12 @@ type HubContract struct {
 }
 
 type HubBuildIdentity struct {
-	SchemaVersion  int
-	Runtime        string
-	CoreBuildID    string
-	RuntimeBuildID string
+	SchemaVersion   int
+	Runtime         string
+	CoreBuildID     string
+	RuntimeBuildID  string
+	CoreRevision    int
+	RuntimeRevision int
 }
 
 type UUIDGenerator struct{}
@@ -342,7 +344,7 @@ func connectionOutcome(err error) (string, string) {
 }
 
 func formatContract(build HubBuildIdentity) string {
-	return fmt.Sprintf("%d/%s/%s/%s", build.SchemaVersion, build.Runtime, build.CoreBuildID, build.RuntimeBuildID)
+	return fmt.Sprintf("schema=%d;runtime=%s;core_revision=%d;runtime_revision=%d;core=%s;runtime_build=%s", build.SchemaVersion, build.Runtime, build.CoreRevision, build.RuntimeRevision, build.CoreBuildID, build.RuntimeBuildID)
 }
 
 func (s *HubService) appendCredentialEvent(ctx context.Context, hubID, action string) error {

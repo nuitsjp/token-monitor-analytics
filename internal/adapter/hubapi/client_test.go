@@ -3,6 +3,7 @@ package hubapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,7 @@ var testBuild = BuildIdentity{
 	Runtime:        "test-hub",
 	CoreBuildID:    "sha256:test-core",
 	RuntimeBuildID: "sha256:test-runtime",
+	CoreRevision:   18,
 }
 
 func TestTLSErrorIsClassified(t *testing.T) {
@@ -203,11 +205,11 @@ func TestClosedHubConnectionIsClassifiedAsUnreachable(t *testing.T) {
 }
 
 func testHealth() string {
-	return `{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"sha256:test-core","runtimeBuildId":"sha256:test-runtime"}}`
+	return `{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"sha256:test-core","runtimeBuildId":"sha256:test-runtime","coreRevision":18}}`
 }
 
 func testAllowlist() Allowlist {
-	return NewAllowlist(Contract{Build: testBuild, UsageUpdatedAt: true})
+	return NewAllowlist(ContractPolicy{SchemaVersion: 1, Runtime: "test-hub", MinimumCoreRevision: 18, UsageUpdatedAt: true})
 }
 
 func TestFetchStatsKeepsUnknownFieldsAndJSONNumbers(t *testing.T) {
@@ -292,29 +294,50 @@ func TestUnsupportedBuildDoesNotCallStats(t *testing.T) {
 	})
 }
 
-func TestFetchStatsChecksExactAllowlistBuildIdentity(t *testing.T) {
-	var statsCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/api/health" {
-			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"sha256:changed","runtimeBuildId":"sha256:test-runtime"}}`))
-			return
-		}
-		if request.URL.Path == "/api/stats" {
-			statsCalls.Add(1)
-		}
-		http.NotFound(writer, request)
-	}))
-	defer server.Close()
-	client, err := NewClient(server.URL, testAllowlist())
-	if err != nil {
-		t.Fatal(err)
+func TestFetchStatsUsesMinimumCoreRevision(t *testing.T) {
+	tests := []struct {
+		name          string
+		coreRevision  int
+		wantSupported bool
+	}{
+		{name: "minimum revision", coreRevision: 18, wantSupported: true},
+		{name: "newer revision", coreRevision: 19, wantSupported: true},
+		{name: "older revision", coreRevision: 17, wantSupported: false},
 	}
-	_, err = client.FetchStats(context.Background(), "secret")
-	t.Run("API-02 exact changed build is rechecked", func(t *testing.T) {
-		if ClassificationOf(err) != ClassificationUnsupported || statsCalls.Load() != 0 {
-			t.Fatalf("classification=%q stats calls=%d", ClassificationOf(err), statsCalls.Load())
-		}
-	})
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var statsCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/api/health":
+					_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"sha256:changed","runtimeBuildId":"sha256:changed-runtime","coreRevision":` + fmt.Sprint(test.coreRevision) + `}}`))
+				case "/api/stats":
+					statsCalls.Add(1)
+					_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z"}]}`))
+				default:
+					http.NotFound(writer, request)
+				}
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, testAllowlist())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := client.FetchStats(context.Background(), "secret")
+			if test.wantSupported {
+				if err != nil || statsCalls.Load() != 1 {
+					t.Fatalf("error=%v stats calls=%d", err, statsCalls.Load())
+				}
+				if result.Contract.Build.CoreRevision != test.coreRevision || result.Contract.Build.CoreBuildID != "sha256:changed" {
+					t.Fatalf("recorded build = %+v", result.Contract.Build)
+				}
+				return
+			}
+			if ClassificationOf(err) != ClassificationUnsupported || statsCalls.Load() != 0 {
+				t.Fatalf("classification=%q stats calls=%d", ClassificationOf(err), statsCalls.Load())
+			}
+		})
+	}
 }
 
 func TestTopLevelUsageUpdatedAtDoesNotReplaceDeviceMarker(t *testing.T) {
@@ -442,11 +465,11 @@ func TestInvalidJSONIsClassifiedWithoutBody(t *testing.T) {
 	})
 }
 
-func TestDefaultAllowlistAcceptsEvaluationHubForCollection(t *testing.T) {
+func TestDefaultAllowlistAcceptsCoreRevision18ForCollection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/health":
-			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"node-hub","coreBuildId":"sha256:798c308d20d7f9a22aad74f6feeb5f168210fd465c6aee590b517c40e801c292","runtimeBuildId":"sha256:dbdaa0b2aa2e8d627b939d6ab76a9029aa2807839fdbe4e7918edcab592fe749"}}`))
+			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"node-hub","coreBuildId":"sha256:4074b6e85c0cb32e3d8978fbdcfcbcba03a2c1e0b3d95bbc20177e141004a93e","runtimeBuildId":"sha256:dbdaa0b2aa2e8d627b939d6ab76a9029aa2807839fdbe4e7918edcab592fe749","coreRevision":18,"runtimeRevision":1}}`))
 		case "/api/stats":
 			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1"}]}`))
 		default:

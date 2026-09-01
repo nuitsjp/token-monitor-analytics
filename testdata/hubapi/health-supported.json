@@ -6,8 +6,8 @@
   "hubBuild": {
     "schemaVersion": 1,
     "runtime": "node-hub",
-    "coreRevision": 11,
-    "coreBuildId": "sha256:798c308d20d7f9a22aad74f6feeb5f168210fd465c6aee590b517c40e801c292",
+    "coreRevision": 18,
+    "coreBuildId": "sha256:4074b6e85c0cb32e3d8978fbdcfcbcba03a2c1e0b3d95bbc20177e141004a93e",
     "runtimeRevision": 1,
     "runtimeBuildId": "sha256:dbdaa0b2aa2e8d627b939d6ab76a9029aa2807839fdbe4e7918edcab592fe749"
   }

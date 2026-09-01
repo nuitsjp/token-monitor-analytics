@@ -85,62 +85,58 @@ type Contract struct {
 	UsageUpdatedAt bool
 }
 
-type stageOneKey struct {
+type ContractPolicy struct {
+	SchemaVersion       int
+	Runtime             string
+	MinimumCoreRevision int
+	UsageUpdatedAt      bool
+}
+
+type contractFamilyKey struct {
 	SchemaVersion int
 	Runtime       string
 }
 
-type stageTwoKey struct {
-	SchemaVersion  int
-	Runtime        string
-	CoreBuildID    string
-	RuntimeBuildID string
-}
-
-// Allowlist is a two-stage allowlist. Stage one recognizes the schema/runtime
-// family; stage two recognizes the exact build identity. Collection-only
-// contracts remain explicit entries and are never promoted to estimation.
+// Allowlist recognizes a schema/runtime family from a configured minimum core
+// revision. Build hashes remain part of the recorded identity but do not gate
+// compatible Hub updates. Collection-only contracts remain explicit entries
+// and are never promoted to estimation.
 type Allowlist struct {
-	stageOne map[stageOneKey]struct{}
-	stageTwo map[stageTwoKey]Contract
+	families map[contractFamilyKey]ContractPolicy
 }
 
-func NewAllowlist(contracts ...Contract) Allowlist {
-	a := Allowlist{
-		stageOne: make(map[stageOneKey]struct{}),
-		stageTwo: make(map[stageTwoKey]Contract),
-	}
-	for _, contract := range contracts {
-		if !validBuildIdentity(contract.Build) {
+func NewAllowlist(policies ...ContractPolicy) Allowlist {
+	a := Allowlist{families: make(map[contractFamilyKey]ContractPolicy)}
+	for _, policy := range policies {
+		if !validContractPolicy(policy) {
 			continue
 		}
-		one := stageOneKey{SchemaVersion: contract.Build.SchemaVersion, Runtime: contract.Build.Runtime}
-		two := stageTwoKey{SchemaVersion: contract.Build.SchemaVersion, Runtime: contract.Build.Runtime, CoreBuildID: contract.Build.CoreBuildID, RuntimeBuildID: contract.Build.RuntimeBuildID}
-		a.stageOne[one] = struct{}{}
-		a.stageTwo[two] = contract
+		key := contractFamilyKey{SchemaVersion: policy.SchemaVersion, Runtime: policy.Runtime}
+		a.families[key] = policy
 	}
 	return a
 }
 
-// DefaultAllowlist contains the verified evaluation Hub as a collection-only
-// contract. It is intentionally not estimation-capable because its device
-// rows do not guarantee usageUpdatedAt.
-var DefaultAllowlist = NewAllowlist(Contract{
-	Build: BuildIdentity{
-		SchemaVersion:  1,
-		Runtime:        "node-hub",
-		CoreBuildID:    "sha256:798c308d20d7f9a22aad74f6feeb5f168210fd465c6aee590b517c40e801c292",
-		RuntimeBuildID: "sha256:dbdaa0b2aa2e8d627b939d6ab76a9029aa2807839fdbe4e7918edcab592fe749",
-	},
-	UsageUpdatedAt: false,
+// DefaultAllowlist accepts node-hub core revision 18 and later as a
+// collection-only contract. It is intentionally not estimation-capable
+// because its device rows do not guarantee usageUpdatedAt.
+var DefaultAllowlist = NewAllowlist(ContractPolicy{
+	SchemaVersion:       1,
+	Runtime:             "node-hub",
+	MinimumCoreRevision: 18,
+	UsageUpdatedAt:      false,
 })
 
 func (a Allowlist) match(build BuildIdentity) (Contract, bool) {
-	if _, ok := a.stageOne[stageOneKey{SchemaVersion: build.SchemaVersion, Runtime: build.Runtime}]; !ok {
+	policy, ok := a.families[contractFamilyKey{SchemaVersion: build.SchemaVersion, Runtime: build.Runtime}]
+	if !ok || build.CoreRevision < policy.MinimumCoreRevision {
 		return Contract{}, false
 	}
-	contract, ok := a.stageTwo[stageTwoKey{SchemaVersion: build.SchemaVersion, Runtime: build.Runtime, CoreBuildID: build.CoreBuildID, RuntimeBuildID: build.RuntimeBuildID}]
-	return contract, ok
+	return Contract{Build: build, UsageUpdatedAt: policy.UsageUpdatedAt}, true
+}
+
+func validContractPolicy(policy ContractPolicy) bool {
+	return policy.SchemaVersion > 0 && policy.Runtime != "" && policy.MinimumCoreRevision > 0
 }
 
 type Health struct {
@@ -196,13 +192,11 @@ func parseBuild(object map[string]any) (BuildIdentity, error) {
 	if err != nil {
 		return BuildIdentity{}, err
 	}
-	build := BuildIdentity{SchemaVersion: schemaVersion, Runtime: runtime, CoreBuildID: coreBuildID, RuntimeBuildID: runtimeBuildID}
-	if value, present := object["coreRevision"]; present {
-		build.CoreRevision, err = intValue(value)
-		if err != nil {
-			return BuildIdentity{}, errors.New("health coreRevision is invalid")
-		}
+	coreRevision, err := requiredInt(object, "coreRevision")
+	if err != nil {
+		return BuildIdentity{}, errors.New("health coreRevision is invalid")
 	}
+	build := BuildIdentity{SchemaVersion: schemaVersion, Runtime: runtime, CoreBuildID: coreBuildID, RuntimeBuildID: runtimeBuildID, CoreRevision: coreRevision}
 	if value, present := object["runtimeRevision"]; present {
 		build.RuntimeRevision, err = intValue(value)
 		if err != nil {

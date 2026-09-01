@@ -47,10 +47,12 @@ type CollectionContract struct {
 }
 
 type CollectionBuildIdentity struct {
-	SchemaVersion  int
-	Runtime        string
-	CoreBuildID    string
-	RuntimeBuildID string
+	SchemaVersion   int
+	Runtime         string
+	CoreBuildID     string
+	RuntimeBuildID  string
+	CoreRevision    int
+	RuntimeRevision int
 }
 
 type NormalizedCostObservation struct {
@@ -364,7 +366,7 @@ func contractText(contract CollectionContract) string {
 	if contract.Build.SchemaVersion <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("schema=%d;runtime=%s;core=%s;runtime_build=%s;usage_updated_at=%t", contract.Build.SchemaVersion, contract.Build.Runtime, contract.Build.CoreBuildID, contract.Build.RuntimeBuildID, contract.UsageUpdatedAt)
+	return fmt.Sprintf("schema=%d;runtime=%s;core_revision=%d;runtime_revision=%d;core=%s;runtime_build=%s;usage_updated_at=%t", contract.Build.SchemaVersion, contract.Build.Runtime, contract.Build.CoreRevision, contract.Build.RuntimeRevision, contract.Build.CoreBuildID, contract.Build.RuntimeBuildID, contract.UsageUpdatedAt)
 }
 
 func safeFailureDetail(err error, classify func(error) string) string {
