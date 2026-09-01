@@ -21,13 +21,16 @@ tasks:
     sources:
       - package.json
       - package-lock.json
+      - ../.mise.toml
     generates:
-      - node_modules
+      - node_modules/.package-lock.json
+    status:
+      - npm ls --all --include=dev --json
     preconditions:
       - sh: npm version
         msg: "Looks like npm isn't installed. Npm is part of the Node installer: https://nodejs.org/en/download/"
     cmds:
-      - npm ci
+      - npm ci --include=dev
 
   install:frontend:deps:bun:
     dir: frontend

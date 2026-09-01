@@ -57,9 +57,11 @@ export function useSettings(): SettingsContextValue {
 export function AppProviders({
   backend,
   children,
+  transparentBackground = false,
 }: {
   backend: FrontendAdapter;
   children: React.ReactNode;
+  transparentBackground?: boolean;
 }) {
   const [settings, setSettings] = useState<SettingsSnapshot>(
     backend.initialSettings ?? defaultSettings,
@@ -131,7 +133,12 @@ export function AppProviders({
 
   return (
     <settingsContext.Provider value={value}>
-      <FluentProvider theme={dark ? darkTheme : lightTheme}>
+      <FluentProvider
+        theme={dark ? darkTheme : lightTheme}
+        style={
+          transparentBackground ? { backgroundColor: "transparent" } : undefined
+        }
+      >
         {children}
       </FluentProvider>
     </settingsContext.Provider>

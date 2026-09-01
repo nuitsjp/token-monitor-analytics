@@ -306,10 +306,14 @@ func run() (runErr error) {
 		MinWidth:            320,
 		MinHeight:           160,
 		AlwaysOnTop:         true,
+		Frameless:           true,
 		MinimiseButtonState: application.ButtonDisabled,
 		MaximiseButtonState: application.ButtonDisabled,
-		BackgroundColour:    application.NewRGB(250, 250, 250),
+		BackgroundType:      application.BackgroundTypeTransparent,
 		URL:                 "/?window=compact",
+		Windows: application.WindowsWindow{
+			DisableFramelessWindowDecorations: true,
+		},
 	})
 	windowController.SetCompact(compact)
 

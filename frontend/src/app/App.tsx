@@ -17,7 +17,7 @@ export default function App({
 }: AppProps) {
   const kind = windowKind ?? identifyWindow(location);
   return (
-    <AppProviders backend={backend}>
+    <AppProviders backend={backend} transparentBackground={kind === "compact"}>
       {kind === "main" ? (
         <MainWindow backend={backend} />
       ) : (

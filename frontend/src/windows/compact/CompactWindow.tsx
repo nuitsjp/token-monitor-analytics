@@ -79,6 +79,7 @@ const useStyles = makeStyles({
     alignItems: "center",
     flexWrap: "nowrap",
     gap: tokens.spacingHorizontalXS,
+    "--wails-draggable": "drag",
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS} ${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
