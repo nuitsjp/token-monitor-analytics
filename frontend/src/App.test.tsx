@@ -14,9 +14,10 @@ describe("compact window", () => {
     expect(
       screen.getByRole("button", { name: "メイン画面を開く" }),
     ).toBeEnabled();
-    expect(screen.getByRole("main").parentElement).toHaveStyle({
-      backgroundColor: "transparent",
-    });
+    expect(screen.getByRole("main").parentElement).toHaveAttribute(
+      "style",
+      "background-color: transparent;",
+    );
   });
 
   it("has no automatically detectable accessibility violation", async () => {
