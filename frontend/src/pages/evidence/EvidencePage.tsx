@@ -764,6 +764,11 @@ function ObservationList({
           <div className={styles.meta}>
             JSON パス: {item.jsonPath} / {dedupeStateLabel(item.dedupeState)}
           </div>
+          {(item.occurrenceCount ?? 1) > 1 && (
+            <div className={styles.meta}>
+              同一値を {item.occurrenceCount} 回確認 / 初回: {item.firstSeenAt} / 最終: {item.lastSeenAt}
+            </div>
+          )}
         </article>
       ))}
       {limits.map((item) => (
@@ -791,6 +796,11 @@ function ObservationList({
           <div className={styles.meta}>
             JSON パス: {item.jsonPath} / {dedupeStateLabel(item.dedupeState)}
           </div>
+          {(item.occurrenceCount ?? 1) > 1 && (
+            <div className={styles.meta}>
+              同一値を {item.occurrenceCount} 回確認 / 初回: {item.firstSeenAt} / 最終: {item.lastSeenAt}
+            </div>
+          )}
         </article>
       ))}
     </div>

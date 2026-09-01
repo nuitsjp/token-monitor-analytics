@@ -151,6 +151,10 @@ export interface CostObservationSnapshot {
     "dedupeState": string;
     "dedupeKey": string;
     "valueFingerprint": string;
+    "occurrenceCount"?: number;
+    "firstSeenAt"?: string;
+    "lastSeenAt"?: string;
+    "lastSeenSnapshotId"?: string;
 }
 
 export interface CreateHubInput {
@@ -572,6 +576,10 @@ export interface LimitObservationSnapshot {
     "dedupeKey": string;
     "valueFingerprint": string;
     "windowKeyConflict": boolean;
+    "occurrenceCount"?: number;
+    "firstSeenAt"?: string;
+    "lastSeenAt"?: string;
+    "lastSeenSnapshotId"?: string;
 }
 
 export interface LimitSeriesDetailSnapshot {

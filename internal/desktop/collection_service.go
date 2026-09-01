@@ -233,6 +233,10 @@ type CostObservationSnapshot struct {
 	DedupeState               string `json:"dedupeState"`
 	DedupeKey                 string `json:"dedupeKey"`
 	ValueFingerprint          string `json:"valueFingerprint"`
+	OccurrenceCount           int64  `json:"occurrenceCount,omitempty"`
+	FirstSeenAt               string `json:"firstSeenAt,omitempty"`
+	LastSeenAt                string `json:"lastSeenAt,omitempty"`
+	LastSeenSnapshotID        string `json:"lastSeenSnapshotId,omitempty"`
 }
 
 type LimitObservationSnapshot struct {
@@ -264,6 +268,10 @@ type LimitObservationSnapshot struct {
 	DedupeKey                 string   `json:"dedupeKey"`
 	ValueFingerprint          string   `json:"valueFingerprint"`
 	WindowKeyConflict         bool     `json:"windowKeyConflict"`
+	OccurrenceCount           int64    `json:"occurrenceCount,omitempty"`
+	FirstSeenAt               string   `json:"firstSeenAt,omitempty"`
+	LastSeenAt                string   `json:"lastSeenAt,omitempty"`
+	LastSeenSnapshotID        string   `json:"lastSeenSnapshotId,omitempty"`
 }
 
 // Common aliases keep the DTO naming consistent with the other desktop
@@ -304,6 +312,8 @@ func costObservationSnapshot(value domain.CostObservation) CostObservationSnapsh
 		NormalizationGeneration: value.NormalizationGeneration, NormalizationRuleVersion: value.NormalizationRuleVersion,
 		NormalizationLogicVersion: value.NormalizationLogicVersion, JSONPath: safeJSONPath(value.JSONPath),
 		DedupeState: value.DedupeState, DedupeKey: value.DedupeKey, ValueFingerprint: value.ValueFingerprint,
+		OccurrenceCount: value.OccurrenceCount, FirstSeenAt: formatOptional(value.FirstSeenAt),
+		LastSeenAt: formatOptional(value.LastSeenAt), LastSeenSnapshotID: value.LastSeenSnapshotID,
 	}
 }
 
@@ -325,7 +335,9 @@ func limitObservationSnapshot(value domain.LimitObservation) LimitObservationSna
 		NormalizationGeneration: value.NormalizationGeneration, NormalizationRuleVersion: value.NormalizationRuleVersion,
 		NormalizationLogicVersion: value.NormalizationLogicVersion, JSONPath: safeJSONPath(value.JSONPath),
 		DedupeState: value.DedupeState, DedupeKey: value.DedupeKey, ValueFingerprint: value.ValueFingerprint,
-		WindowKeyConflict: value.WindowKeyConflict,
+		WindowKeyConflict: value.WindowKeyConflict, OccurrenceCount: value.OccurrenceCount,
+		FirstSeenAt: formatOptional(value.FirstSeenAt), LastSeenAt: formatOptional(value.LastSeenAt),
+		LastSeenSnapshotID: value.LastSeenSnapshotID,
 	}
 }
 

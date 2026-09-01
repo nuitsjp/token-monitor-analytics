@@ -237,6 +237,10 @@ const backend = () =>
         dedupeState: "canonical",
         dedupeKey: "cost-key",
         valueFingerprint: "31.365",
+        occurrenceCount: 3,
+        firstSeenAt: "2026-08-25T12:00:01Z",
+        lastSeenAt: "2026-08-25T12:10:01Z",
+        lastSeenSnapshotId: "stats-3",
       },
     ],
     limitObservations: [
@@ -269,6 +273,10 @@ const backend = () =>
         dedupeKey: "key",
         valueFingerprint: "fingerprint",
         windowKeyConflict: false,
+        occurrenceCount: 2,
+        firstSeenAt: "2026-08-25T12:00:01Z",
+        lastSeenAt: "2026-08-25T12:05:01Z",
+        lastSeenSnapshotId: "stats-2",
       },
     ],
     limitSeries: [series],
@@ -309,6 +317,8 @@ it("shows acquisition, masked raw evidence, and source observations", async () =
   await user.click(screen.getByRole("tab", { name: "元観測" }));
   expect(await screen.findByText(/31\.365 USD/)).toBeVisible();
   expect(await screen.findByText(/利用 25% \/ 残り 75%/)).toBeVisible();
+  expect(screen.getByText(/同一値を 3 回確認/)).toBeVisible();
+  expect(screen.getByText(/同一値を 2 回確認/)).toBeVisible();
 });
 
 it("selects and highlights an observation from an M08 query", async () => {

@@ -8,7 +8,9 @@ const search = new URLSearchParams(window.location.search);
 const useMockHub =
   import.meta.env.DEV &&
   (import.meta.env.VITE_MOCK_HUB === "1" || search.has("showcase"));
-const browserTestBackend = import.meta.env.DEV
+const browserTestEnabled =
+  import.meta.env.DEV || import.meta.env.VITE_BROWSER_TEST === "1";
+const browserTestBackend = browserTestEnabled
   ? useMockHub
     ? (await import("./lib/showcase")).createShowcaseBackend()
     : search.has("browserTest")

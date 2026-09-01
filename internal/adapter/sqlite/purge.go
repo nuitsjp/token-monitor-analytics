@@ -105,19 +105,27 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 	if err := inject(injector, "after-selection"); err != nil {
 		return domain.PurgeResult{}, err
 	}
-	costIDs, err := queryIDs(ctx, tx, `SELECT observation_id FROM usage_cost_observations WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`) ORDER BY observation_id`, stringsToAny(snapshotIDs)...)
+	costEvidenceIDs, err := queryIDs(ctx, tx, `SELECT observation_id FROM usage_cost_observations WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`) ORDER BY observation_id`, stringsToAny(snapshotIDs)...)
 	if err != nil {
 		return domain.PurgeResult{}, fmt.Errorf("find purge cost observations: %w", err)
 	}
-	limitIDs, err := queryIDs(ctx, tx, `SELECT observation_id FROM usage_limit_observations WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`) ORDER BY observation_id`, stringsToAny(snapshotIDs)...)
+	limitEvidenceIDs, err := queryIDs(ctx, tx, `SELECT observation_id FROM usage_limit_observations WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`) ORDER BY observation_id`, stringsToAny(snapshotIDs)...)
 	if err != nil {
 		return domain.PurgeResult{}, fmt.Errorf("find purge limit observations: %w", err)
 	}
-	usageIDs, err := queryIDs(ctx, tx, `SELECT usage_observation_id FROM usage_analysis_observations WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`) ORDER BY usage_observation_id`, stringsToAny(snapshotIDs)...)
+	costAffectedIDs, costDeleteIDs, err := queryOccurrencePurgeIDs(ctx, tx, "cost", snapshotIDs)
+	if err != nil {
+		return domain.PurgeResult{}, err
+	}
+	limitAffectedIDs, limitDeleteIDs, err := queryOccurrencePurgeIDs(ctx, tx, "limit", snapshotIDs)
+	if err != nil {
+		return domain.PurgeResult{}, err
+	}
+	usageAffectedIDs, usageDeleteIDs, err := queryOccurrencePurgeIDs(ctx, tx, "usage", snapshotIDs)
 	if err != nil {
 		return domain.PurgeResult{}, fmt.Errorf("find purge usage analysis observations: %w", err)
 	}
-	pointIDs, err := queryMatchedPointIDs(ctx, tx, costIDs, limitIDs)
+	pointIDs, err := queryMatchedPointIDs(ctx, tx, costEvidenceIDs, limitEvidenceIDs)
 	if err != nil {
 		return domain.PurgeResult{}, err
 	}
@@ -140,8 +148,8 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 	result := domain.PurgeResult{
 		ExecutedAt:               executedAt.UTC(),
 		RawSnapshotCount:         int64(len(snapshotIDs)),
-		CostObservationCount:     int64(len(costIDs)),
-		LimitObservationCount:    int64(len(limitIDs)),
+		CostObservationCount:     int64(len(costDeleteIDs)),
+		LimitObservationCount:    int64(len(limitDeleteIDs)),
 		MatchedObservationCount:  matchedCount,
 		EstimationPointCount:     int64(len(pointIDs)),
 		EstimationResultCount:    int64(len(resultIDs)),
@@ -206,23 +214,41 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 	}
 	result.CalculationBoundaryCount = int64(len(deleteBoundaries))
 
-	if len(costIDs) > 0 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_cost_observations WHERE observation_id IN (`+placeholders(len(costIDs))+`)`, stringsToAny(costIDs)...); err != nil {
+	if err := reanchorPurgeObservations(ctx, tx, "cost", costAffectedIDs, costDeleteIDs, snapshotIDs); err != nil {
+		return domain.PurgeResult{}, err
+	}
+	if err := reanchorPurgeObservations(ctx, tx, "limit", limitAffectedIDs, limitDeleteIDs, snapshotIDs); err != nil {
+		return domain.PurgeResult{}, err
+	}
+	if err := reanchorPurgeObservations(ctx, tx, "usage", usageAffectedIDs, usageDeleteIDs, snapshotIDs); err != nil {
+		return domain.PurgeResult{}, err
+	}
+	if len(costDeleteIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_cost_observations WHERE observation_id IN (`+placeholders(len(costDeleteIDs))+`)`, stringsToAny(costDeleteIDs)...); err != nil {
 			return domain.PurgeResult{}, fmt.Errorf("delete purge cost observations: %w", err)
 		}
 	}
-	if len(limitIDs) > 0 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_limit_observations WHERE observation_id IN (`+placeholders(len(limitIDs))+`)`, stringsToAny(limitIDs)...); err != nil {
+	if len(limitDeleteIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_limit_observations WHERE observation_id IN (`+placeholders(len(limitDeleteIDs))+`)`, stringsToAny(limitDeleteIDs)...); err != nil {
 			return domain.PurgeResult{}, fmt.Errorf("delete purge limit observations: %w", err)
 		}
 	}
-	if len(usageIDs) > 0 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_analysis_observations WHERE usage_observation_id IN (`+placeholders(len(usageIDs))+`)`, stringsToAny(usageIDs)...); err != nil {
+	if len(usageDeleteIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_analysis_observations WHERE usage_observation_id IN (`+placeholders(len(usageDeleteIDs))+`)`, stringsToAny(usageDeleteIDs)...); err != nil {
 			return domain.PurgeResult{}, fmt.Errorf("delete purge usage analysis observations: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM raw_snapshots WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`)`, stringsToAny(snapshotIDs)...); err != nil {
 		return domain.PurgeResult{}, fmt.Errorf("delete purge raw snapshots: %w", err)
+	}
+	if err := refreshPurgeOccurrenceSummaries(ctx, tx, "cost", costAffectedIDs); err != nil {
+		return domain.PurgeResult{}, err
+	}
+	if err := refreshPurgeOccurrenceSummaries(ctx, tx, "limit", limitAffectedIDs); err != nil {
+		return domain.PurgeResult{}, err
+	}
+	if err := refreshPurgeOccurrenceSummaries(ctx, tx, "usage", usageAffectedIDs); err != nil {
+		return domain.PurgeResult{}, err
 	}
 	if err := inject(injector, "after-observations"); err != nil {
 		return domain.PurgeResult{}, err
@@ -281,6 +307,130 @@ func purgeSnapshotWhere(selection domain.PurgeSelection) (string, []any) {
 func querySelectedSnapshotIDs(ctx context.Context, tx *sql.Tx, selection domain.PurgeSelection) ([]string, error) {
 	where, args := purgeSnapshotWhere(selection)
 	return queryIDs(ctx, tx, `SELECT rs.snapshot_id FROM raw_snapshots rs WHERE `+where+` ORDER BY rs.snapshot_id`, args...)
+}
+
+type occurrenceTableConfig struct {
+	observationTable string
+	occurrenceTable  string
+	idColumn         string
+	occurrenceID     string
+}
+
+func occurrenceConfig(kind string) (occurrenceTableConfig, error) {
+	switch kind {
+	case "cost":
+		return occurrenceTableConfig{"usage_cost_observations", "usage_cost_observation_occurrences", "observation_id", "observation_id"}, nil
+	case "usage":
+		return occurrenceTableConfig{"usage_analysis_observations", "usage_analysis_observation_occurrences", "usage_observation_id", "usage_observation_id"}, nil
+	case "limit":
+		return occurrenceTableConfig{"usage_limit_observations", "usage_limit_observation_occurrences", "observation_id", "observation_id"}, nil
+	default:
+		return occurrenceTableConfig{}, errors.New("observation occurrence kind is invalid")
+	}
+}
+
+func queryOccurrencePurgeIDs(ctx context.Context, tx *sql.Tx, kind string, snapshotIDs []string) ([]string, []string, error) {
+	config, err := occurrenceConfig(kind)
+	if err != nil {
+		return nil, nil, err
+	}
+	arguments := stringsToAny(snapshotIDs)
+	affected, err := queryIDs(ctx, tx, `SELECT DISTINCT `+config.occurrenceID+` FROM `+config.occurrenceTable+` WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`) ORDER BY `+config.occurrenceID, arguments...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("find purge %s observation occurrences: %w", kind, err)
+	}
+	deleteArguments := append(append([]any(nil), arguments...), arguments...)
+	deleteIDs, err := queryIDs(ctx, tx, `SELECT DISTINCT target.`+config.occurrenceID+`
+		FROM `+config.occurrenceTable+` target
+		WHERE target.snapshot_id IN (`+placeholders(len(snapshotIDs))+`)
+		  AND NOT EXISTS (
+			SELECT 1 FROM `+config.occurrenceTable+` surviving
+			WHERE surviving.`+config.occurrenceID+` = target.`+config.occurrenceID+`
+			  AND surviving.snapshot_id NOT IN (`+placeholders(len(snapshotIDs))+`)
+		  )
+		ORDER BY target.`+config.occurrenceID, deleteArguments...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("find fully purged %s observations: %w", kind, err)
+	}
+	orphanArguments := stringsToAny(snapshotIDs)
+	orphanIDs, err := queryIDs(ctx, tx, `SELECT o.`+config.idColumn+` FROM `+config.observationTable+` o
+		WHERE o.snapshot_id IN (`+placeholders(len(snapshotIDs))+`)
+		  AND NOT EXISTS (SELECT 1 FROM `+config.occurrenceTable+` oc WHERE oc.`+config.occurrenceID+` = o.`+config.idColumn+`)
+		ORDER BY o.`+config.idColumn, orphanArguments...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("find legacy %s observations without occurrences: %w", kind, err)
+	}
+	affected = appendUniqueStrings(affected, orphanIDs...)
+	deleteIDs = appendUniqueStrings(deleteIDs, orphanIDs...)
+	return affected, deleteIDs, nil
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values
+}
+
+func reanchorPurgeObservations(ctx context.Context, tx *sql.Tx, kind string, affectedIDs, deleteIDs, snapshotIDs []string) error {
+	config, err := occurrenceConfig(kind)
+	if err != nil {
+		return err
+	}
+	deleted := make(map[string]struct{}, len(deleteIDs))
+	for _, id := range deleteIDs {
+		deleted[id] = struct{}{}
+	}
+	for _, id := range affectedIDs {
+		if _, remove := deleted[id]; remove {
+			continue
+		}
+		arguments := append([]any{id}, stringsToAny(snapshotIDs)...)
+		var replacement string
+		if err := tx.QueryRowContext(ctx, `SELECT oc.snapshot_id FROM `+config.occurrenceTable+` oc
+			JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id
+			WHERE oc.`+config.occurrenceID+` = ? AND oc.snapshot_id NOT IN (`+placeholders(len(snapshotIDs))+`)
+			ORDER BY rs.received_completed_at, oc.snapshot_id LIMIT 1`, arguments...).Scan(&replacement); err != nil {
+			return fmt.Errorf("find surviving %s observation occurrence: %w", kind, err)
+		}
+		updateArguments := []any{replacement, replacement, id}
+		updateArguments = append(updateArguments, stringsToAny(snapshotIDs)...)
+		if _, err := tx.ExecContext(ctx, `UPDATE `+config.observationTable+`
+			SET snapshot_id = ?, representative_snapshot_id = ?
+			WHERE `+config.idColumn+` = ? AND snapshot_id IN (`+placeholders(len(snapshotIDs))+`)`, updateArguments...); err != nil {
+			return fmt.Errorf("reanchor %s observation: %w", kind, err)
+		}
+	}
+	return nil
+}
+
+func refreshPurgeOccurrenceSummaries(ctx context.Context, tx *sql.Tx, kind string, affectedIDs []string) error {
+	if len(affectedIDs) == 0 {
+		return nil
+	}
+	config, err := occurrenceConfig(kind)
+	if err != nil {
+		return err
+	}
+	arguments := stringsToAny(affectedIDs)
+	if _, err := tx.ExecContext(ctx, `UPDATE `+config.observationTable+` AS o SET
+		seen_count = (SELECT COUNT(*) FROM `+config.occurrenceTable+` oc WHERE oc.`+config.occurrenceID+` = o.`+config.idColumn+`),
+		first_seen_at = (SELECT MIN(rs.received_completed_at) FROM `+config.occurrenceTable+` oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.`+config.occurrenceID+` = o.`+config.idColumn+`),
+		last_seen_at = (SELECT MAX(rs.received_completed_at) FROM `+config.occurrenceTable+` oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.`+config.occurrenceID+` = o.`+config.idColumn+`),
+		latest_snapshot_id = (SELECT oc.snapshot_id FROM `+config.occurrenceTable+` oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.`+config.occurrenceID+` = o.`+config.idColumn+` ORDER BY rs.received_completed_at DESC, oc.snapshot_id DESC LIMIT 1)
+		WHERE o.`+config.idColumn+` IN (`+placeholders(len(affectedIDs))+`)`, arguments...); err != nil {
+		return fmt.Errorf("refresh surviving %s observation occurrences: %w", kind, err)
+	}
+	return nil
 }
 
 func queryIDs(ctx context.Context, tx *sql.Tx, query string, args ...any) (result []string, err error) {

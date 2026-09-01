@@ -130,8 +130,12 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 		if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'duplicate'`, duplicate.HubID, duplicate.DedupeKey).Scan(&duplicateState); err != nil {
 			t.Fatal(err)
 		}
-		if canonical != 1 || duplicateState != 1 {
-			t.Fatalf("dedupe states canonical=%d duplicate=%d", canonical, duplicateState)
+		var occurrences int
+		if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM usage_cost_observation_occurrences WHERE observation_id = ?`, costs[0].ObservationID).Scan(&occurrences); err != nil {
+			t.Fatal(err)
+		}
+		if canonical != 1 || duplicateState != 0 || occurrences != 1 {
+			t.Fatalf("dedupe states canonical=%d duplicate=%d occurrences=%d", canonical, duplicateState, occurrences)
 		}
 	})
 	conflict := costs[0]
@@ -146,8 +150,8 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 		if err := database.QueryRowContext(t.Context(), `SELECT count(*) FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND dedupe_state = 'conflict'`, conflict.HubID, conflict.DedupeKey).Scan(&states); err != nil {
 			t.Fatal(err)
 		}
-		if states != 3 {
-			t.Fatalf("conflict rows = %d, want 3", states)
+		if states != 2 {
+			t.Fatalf("conflict rows = %d, want 2 compacted values", states)
 		}
 	})
 	t.Run("DM-OBS-02 conflicting cost observations are marked conflict", func(t *testing.T) {

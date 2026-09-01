@@ -97,6 +97,10 @@ type CostObservation struct {
 	DedupeState               string
 	DedupeKey                 string
 	ValueFingerprint          string
+	OccurrenceCount           int64
+	FirstSeenAt               time.Time
+	LastSeenAt                time.Time
+	LastSeenSnapshotID        string
 }
 
 type CollectionUsageObservation struct {
@@ -120,6 +124,10 @@ type CollectionUsageObservation struct {
 	DedupeState               string
 	DedupeKey                 string
 	ValueFingerprint          string
+	OccurrenceCount           int64
+	FirstSeenAt               time.Time
+	LastSeenAt                time.Time
+	LastSeenSnapshotID        string
 }
 
 type IdentificationCandidateObservation struct {
@@ -165,6 +173,10 @@ type LimitObservation struct {
 	DedupeKey                 string
 	ValueFingerprint          string
 	WindowKeyConflict         bool
+	OccurrenceCount           int64
+	FirstSeenAt               time.Time
+	LastSeenAt                time.Time
+	LastSeenSnapshotID        string
 }
 
 type OverviewData struct {

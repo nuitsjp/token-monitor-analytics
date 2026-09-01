@@ -162,7 +162,7 @@ tasks:
 
   run:
     cmds:
-      - '{{.BIN_DIR}}/{{.APP_NAME}}.exe'
+      - powershell -NoProfile -File scripts/run-windows.ps1
 
   sign:
     summary: Signs the Windows executable

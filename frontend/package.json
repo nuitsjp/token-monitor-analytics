@@ -7,12 +7,15 @@
     "dev": "vite",
     "build:dev": "tsc && vite build --minify false --mode development",
     "build": "tsc && vite build --mode production",
+    "build:e2e": "tsc && vite build --mode browser-test --outDir test-results/production-dist",
     "lint": "eslint . --max-warnings=0 --report-unused-disable-directives",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test e2e/window-routing.spec.ts",
+    "pretest:e2e": "npm run build:e2e",
+    "test:e2e": "playwright test --config playwright.production.config.ts e2e/window-routing.spec.ts",
+    "preview:e2e": "vite preview --host 127.0.0.1 --port 9245 --strictPort --outDir test-results/production-dist",
     "test:e2e:screenshots": "playwright test e2e/showcase-screenshots.spec.ts"
   },
   "dependencies": {

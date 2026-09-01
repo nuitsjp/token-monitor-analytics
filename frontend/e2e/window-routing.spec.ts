@@ -2,6 +2,42 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
+const runtimeFailures = new WeakMap<Page, string[]>();
+
+test.beforeEach(({ page }) => {
+  const failures: string[] = [];
+  runtimeFailures.set(page, failures);
+  page.on("pageerror", (error) => failures.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      failures.push(`console: ${message.text()}`);
+    }
+  });
+  page.on("requestfailed", (request) => {
+    const resourceType = request.resourceType();
+    if (["document", "script", "stylesheet", "font"].includes(resourceType)) {
+      failures.push(
+        `request failed: ${resourceType} ${request.url()} ${request.failure()?.errorText ?? "unknown error"}`,
+      );
+    }
+  });
+  page.on("response", (response) => {
+    const resourceType = response.request().resourceType();
+    if (
+      response.status() >= 400 &&
+      ["document", "script", "stylesheet", "font"].includes(resourceType)
+    ) {
+      failures.push(
+        `response ${response.status()}: ${resourceType} ${response.url()}`,
+      );
+    }
+  });
+});
+
+test.afterEach(({ page }) => {
+  expect(runtimeFailures.get(page) ?? []).toEqual([]);
+});
+
 async function expectNoAccessibilityViolations(page: Page) {
   const results = await new AxeBuilder({ page })
     // Exception: Rule=axe/all; Reason=Fluent focus sentinels are third-party implementation nodes; Scope=[data-tabster-dummy]; Owner=frontend; Expires=2026-12-31.

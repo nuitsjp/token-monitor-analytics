@@ -120,10 +120,17 @@ func (l *Lifecycle) insertCostObservationsTx(ctx context.Context, tx *sql.Tx, ob
 				return err
 			}
 		}
-		state, err := costDedupeState(ctx, tx, observation)
+		decision, err := costDedupeDecision(ctx, tx, observation)
 		if err != nil {
 			return err
 		}
+		if decision.existingID != "" {
+			if err := insertCostOccurrence(ctx, tx, decision.existingID, observation); err != nil {
+				return err
+			}
+			continue
+		}
+		state := decision.state
 		if state == "canonical" {
 			regressed, err := costTimestampRegressed(ctx, tx, observation.HubID, observation.DeviceID, observation.RawServiceIdentifier, observation.NormalizationGeneration, observation.UsageUpdatedAt, "usage_cost_observations")
 			if err != nil {
@@ -151,6 +158,9 @@ func (l *Lifecycle) insertCostObservationsTx(ctx context.Context, tx *sql.Tx, ob
 			observation.NormalizationRuleVersion, observation.NormalizationLogicVersion, observation.JSONPath, state,
 			observation.DedupeKey, observation.ValueFingerprint); err != nil {
 			return fmt.Errorf("insert cost observation: %w", err)
+		}
+		if err := insertCostOccurrence(ctx, tx, observation.ObservationID, observation); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -181,24 +191,36 @@ func (l *Lifecycle) insertLimitObservationsTx(ctx context.Context, tx *sql.Tx, o
 				return err
 			}
 		}
+		decision, err := limitDedupeDecision(ctx, tx, observation)
+		if err != nil {
+			return err
+		}
+		candidateObservation := observation
+		if decision.existingID != "" {
+			candidateObservation.ObservationID = decision.existingID
+		}
 		if observation.HubAccountCandidateID != "" {
-			if err := upsertHubAccountCandidateFromLimitObservationTx(ctx, tx, observation); err != nil {
+			if err := upsertHubAccountCandidateFromLimitObservationTx(ctx, tx, candidateObservation); err != nil {
 				return err
 			}
 		}
 		if observation.IdentificationCandidateID != "" && observation.PlanLabel != "" {
-			if err := upsertIdentificationCandidateFromLimitObservationTx(ctx, tx, observation); err != nil {
+			if err := upsertIdentificationCandidateFromLimitObservationTx(ctx, tx, candidateObservation); err != nil {
 				return err
 			}
 		}
-		state, err := limitDedupeState(ctx, tx, observation)
-		if err != nil {
-			return err
-		}
+		state := decision.state
 		if state == "conflict" || observation.WindowKeyConflict {
 			if _, err := tx.ExecContext(ctx, `UPDATE usage_limit_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ?`, observation.HubID, observation.DedupeKey, observation.NormalizationGeneration); err != nil {
 				return fmt.Errorf("mark limit conflict: %w", err)
 			}
+			state = "conflict"
+		}
+		if decision.existingID != "" {
+			if err := insertLimitOccurrence(ctx, tx, decision.existingID, observation); err != nil {
+				return err
+			}
+			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO usage_limit_observations
@@ -216,6 +238,9 @@ func (l *Lifecycle) insertLimitObservationsTx(ctx context.Context, tx *sql.Tx, o
 			observation.NormalizationGeneration, observation.NormalizationRuleVersion, observation.NormalizationLogicVersion,
 			observation.JSONPath, state, observation.DedupeKey, observation.ValueFingerprint); err != nil {
 			return fmt.Errorf("insert limit observation: %w", err)
+		}
+		if err := insertLimitOccurrence(ctx, tx, observation.ObservationID, observation); err != nil {
+			return err
 		}
 		if observation.AbsoluteUsedText != "" || observation.AbsoluteLimitText != "" || observation.AbsoluteRemainingText != "" || observation.Currency != "" {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO usage_limit_amount_observations (observation_id, used_text, limit_text, remaining_text, currency) VALUES (?, ?, ?, ?, ?)`, observation.ObservationID, nullText(observation.AbsoluteUsedText), nullText(observation.AbsoluteLimitText), nullText(observation.AbsoluteRemainingText), nullText(observation.Currency)); err != nil {
@@ -276,10 +301,17 @@ func (l *Lifecycle) insertUsageObservationsTx(ctx context.Context, tx *sql.Tx, o
 				return err
 			}
 		}
-		state, err := usageDedupeState(ctx, tx, observation)
+		decision, err := usageDedupeDecision(ctx, tx, observation)
 		if err != nil {
 			return err
 		}
+		if decision.existingID != "" {
+			if err := insertUsageOccurrence(ctx, tx, decision.existingID, observation); err != nil {
+				return err
+			}
+			continue
+		}
+		state := decision.state
 		if state == "canonical" {
 			regressed, err := costTimestampRegressed(ctx, tx, observation.HubID, observation.DeviceID, observation.RawServiceIdentifier, observation.NormalizationGeneration, observation.UsageUpdatedAt, "usage_analysis_observations")
 			if err != nil {
@@ -314,6 +346,9 @@ func (l *Lifecycle) insertUsageObservationsTx(ctx context.Context, tx *sql.Tx, o
 			nullText(observation.SourceLocalDate), observation.NormalizationGeneration, observation.NormalizationRuleVersion,
 			observation.NormalizationLogicVersion, observation.JSONPath, state, observation.DedupeKey, observation.ValueFingerprint); err != nil {
 			return fmt.Errorf("insert usage observation: %w", err)
+		}
+		if err := insertUsageOccurrence(ctx, tx, observation.ObservationID, observation); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -463,10 +498,28 @@ func (l *Lifecycle) ListCostObservations(ctx context.Context, hubID string) (res
 	if err != nil {
 		return nil, err
 	}
-	rows, err := database.QueryContext(ctx, `SELECT observation_id, snapshot_id, hub_id, device_id, raw_service_identifier,
+	rows, err := database.QueryContext(ctx, `WITH occurrence_summary AS (
+		SELECT oc.observation_id, COUNT(*) AS occurrence_count, MIN(rs.received_completed_at) AS first_seen_at,
+		       MAX(rs.received_completed_at) AS last_seen_at
+		FROM usage_cost_observation_occurrences oc
+		JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id
+		GROUP BY oc.observation_id
+	), last_occurrence AS (
+		SELECT oc.observation_id, oc.snapshot_id,
+		       ROW_NUMBER() OVER (PARTITION BY oc.observation_id ORDER BY rs.received_completed_at DESC, oc.snapshot_id DESC) AS position
+		FROM usage_cost_observation_occurrences oc
+		JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id
+	)
+		SELECT o.observation_id, o.snapshot_id, o.hub_id, o.device_id, o.raw_service_identifier,
 		usage_updated_at, cost_usd_text, sync_upload_interval_ms, analytics_interval_seconds, source_timezone, source_local_date,
-		normalization_generation, normalization_rule_version, normalization_logic_version, json_path, dedupe_state, dedupe_key
-		FROM usage_cost_observations WHERE hub_id = ? ORDER BY usage_updated_at DESC, observation_id DESC`, hubID)
+		normalization_generation, normalization_rule_version, normalization_logic_version, json_path, dedupe_state, dedupe_key,
+		o.value_fingerprint, COALESCE(s.occurrence_count, 1), COALESCE(s.first_seen_at, representative.received_completed_at),
+		COALESCE(s.last_seen_at, representative.received_completed_at), COALESCE(lo.snapshot_id, o.snapshot_id)
+		FROM usage_cost_observations o
+		JOIN raw_snapshots representative ON representative.snapshot_id = o.snapshot_id
+		LEFT JOIN occurrence_summary s ON s.observation_id = o.observation_id
+		LEFT JOIN last_occurrence lo ON lo.observation_id = o.observation_id AND lo.position = 1
+		WHERE o.hub_id = ? ORDER BY usage_updated_at DESC, o.observation_id DESC`, hubID)
 	if err != nil {
 		return nil, fmt.Errorf("list cost observations: %w", err)
 	}
@@ -477,10 +530,11 @@ func (l *Lifecycle) ListCostObservations(ctx context.Context, hubID string) (res
 	}()
 	for rows.Next() {
 		var item CostObservation
-		var usage, timezone, localDate, sync sql.NullString
+		var usage, timezone, localDate, sync, firstSeen, lastSeen sql.NullString
 		if err := rows.Scan(&item.ObservationID, &item.SnapshotID, &item.HubID, &item.DeviceID, &item.RawServiceIdentifier,
 			&usage, &item.CostUSDText, &sync, &item.AnalyticsIntervalSeconds, &timezone, &localDate, &item.NormalizationGeneration,
-			&item.NormalizationRuleVersion, &item.NormalizationLogicVersion, &item.JSONPath, &item.DedupeState, &item.DedupeKey); err != nil {
+			&item.NormalizationRuleVersion, &item.NormalizationLogicVersion, &item.JSONPath, &item.DedupeState, &item.DedupeKey,
+			&item.ValueFingerprint, &item.OccurrenceCount, &firstSeen, &lastSeen, &item.LastSeenSnapshotID); err != nil {
 			return nil, fmt.Errorf("scan cost observation: %w", err)
 		}
 		var err error
@@ -491,6 +545,14 @@ func (l *Lifecycle) ListCostObservations(ctx context.Context, hubID string) (res
 		item.SyncUploadIntervalMS = parseNullableInt64(sync)
 		item.SourceTimezone = timezone.String
 		item.SourceLocalDate = localDate.String
+		item.FirstSeenAt, err = parseUTC(firstSeen.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse cost observation first seen time: %w", err)
+		}
+		item.LastSeenAt, err = parseUTC(lastSeen.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse cost observation last seen time: %w", err)
+		}
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -504,12 +566,30 @@ func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) (re
 	if err != nil {
 		return nil, err
 	}
-	rows, err := database.QueryContext(ctx, `SELECT observation_id, snapshot_id, hub_id, device_id, raw_service_identifier,
+	rows, err := database.QueryContext(ctx, `WITH occurrence_summary AS (
+		SELECT oc.observation_id, COUNT(*) AS occurrence_count, MIN(rs.received_completed_at) AS first_seen_at,
+		       MAX(rs.received_completed_at) AS last_seen_at
+		FROM usage_limit_observation_occurrences oc
+		JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id
+		GROUP BY oc.observation_id
+	), last_occurrence AS (
+		SELECT oc.observation_id, oc.snapshot_id,
+		       ROW_NUMBER() OVER (PARTITION BY oc.observation_id ORDER BY rs.received_completed_at DESC, oc.snapshot_id DESC) AS position
+		FROM usage_limit_observation_occurrences oc
+		JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id
+	)
+		SELECT o.observation_id, o.snapshot_id, o.hub_id, o.device_id, o.raw_service_identifier,
 		account_key, provider_updated_at, window_key, normalized_kind, normalized_metric, normalized_label, plan_label,
 		used_percent, resets_at, sync_upload_interval_ms, limits_refresh_ms, analytics_interval_seconds,
 		source_timezone, source_local_date, normalization_generation, normalization_rule_version, normalization_logic_version,
-		json_path, dedupe_state, dedupe_key, value_fingerprint
-		FROM usage_limit_observations WHERE hub_id = ? ORDER BY provider_updated_at DESC, observation_id DESC`, hubID)
+		json_path, dedupe_state, dedupe_key, value_fingerprint, COALESCE(s.occurrence_count, 1),
+		COALESCE(s.first_seen_at, representative.received_completed_at), COALESCE(s.last_seen_at, representative.received_completed_at),
+		COALESCE(lo.snapshot_id, o.snapshot_id)
+		FROM usage_limit_observations o
+		JOIN raw_snapshots representative ON representative.snapshot_id = o.snapshot_id
+		LEFT JOIN occurrence_summary s ON s.observation_id = o.observation_id
+		LEFT JOIN last_occurrence lo ON lo.observation_id = o.observation_id AND lo.position = 1
+		WHERE o.hub_id = ? ORDER BY provider_updated_at DESC, o.observation_id DESC`, hubID)
 	if err != nil {
 		return nil, fmt.Errorf("list limit observations: %w", err)
 	}
@@ -520,14 +600,15 @@ func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) (re
 	}()
 	for rows.Next() {
 		var item LimitObservation
-		var updated, reset, sourceTimezone, sourceDate sql.NullString
+		var updated, reset, sourceTimezone, sourceDate, firstSeen, lastSeen sql.NullString
 		var used sql.NullFloat64
 		var syncMS, refreshMS sql.NullInt64
 		if err := rows.Scan(&item.ObservationID, &item.SnapshotID, &item.HubID, &item.DeviceID, &item.RawServiceIdentifier,
 			&item.AccountKey, &updated, &item.WindowKey, &item.NormalizedKind, &item.NormalizedMetric, &item.NormalizedLabel,
 			&item.PlanLabel, &used, &reset, &syncMS, &refreshMS, &item.AnalyticsIntervalSeconds, &sourceTimezone, &sourceDate,
 			&item.NormalizationGeneration, &item.NormalizationRuleVersion, &item.NormalizationLogicVersion, &item.JSONPath,
-			&item.DedupeState, &item.DedupeKey, &item.ValueFingerprint); err != nil {
+			&item.DedupeState, &item.DedupeKey, &item.ValueFingerprint, &item.OccurrenceCount, &firstSeen, &lastSeen,
+			&item.LastSeenSnapshotID); err != nil {
 			return nil, fmt.Errorf("scan limit observation: %w", err)
 		}
 		item.ProviderUpdatedAt, err = parseUTC(updated.String)
@@ -554,6 +635,14 @@ func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) (re
 			item.LimitsRefreshMS = &value
 		}
 		item.SourceTimezone, item.SourceLocalDate = sourceTimezone.String, sourceDate.String
+		item.FirstSeenAt, err = parseUTC(firstSeen.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse limit observation first seen time: %w", err)
+		}
+		item.LastSeenAt, err = parseUTC(lastSeen.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse limit observation last seen time: %w", err)
+		}
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -594,50 +683,114 @@ func validateLimitObservation(value LimitObservation) error {
 	return nil
 }
 
-func costDedupeState(ctx context.Context, tx *sql.Tx, value CostObservation) (string, error) {
-	var existing string
-	var amount string
-	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existing, &amount)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "canonical", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("check cost duplicate: %w", err)
-	}
-	if amount == value.ValueFingerprint && existing != "conflict" {
-		return "duplicate", nil
-	}
-	return "conflict", nil
+type observationDedupeDecision struct {
+	state      string
+	existingID string
 }
 
-func usageDedupeState(ctx context.Context, tx *sql.Tx, value UsageObservation) (string, error) {
-	var existing, fingerprint string
-	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_analysis_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existing, &fingerprint)
+func costDedupeDecision(ctx context.Context, tx *sql.Tx, value CostObservation) (observationDedupeDecision, error) {
+	var existingID string
+	err := tx.QueryRowContext(ctx, `SELECT observation_id FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? AND value_fingerprint = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration, value.ValueFingerprint).Scan(&existingID)
+	if err == nil {
+		return observationDedupeDecision{existingID: existingID}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return observationDedupeDecision{}, fmt.Errorf("check exact cost duplicate: %w", err)
+	}
+	err = tx.QueryRowContext(ctx, `SELECT observation_id FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existingID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "canonical", nil
+		return observationDedupeDecision{state: "canonical"}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("check usage duplicate: %w", err)
+		return observationDedupeDecision{}, fmt.Errorf("check cost conflict: %w", err)
 	}
-	if fingerprint == value.ValueFingerprint && existing != "conflict" {
-		return "duplicate", nil
-	}
-	return "conflict", nil
+	return observationDedupeDecision{state: "conflict"}, nil
 }
 
-func limitDedupeState(ctx context.Context, tx *sql.Tx, value LimitObservation) (string, error) {
-	var existing, fingerprint string
-	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_limit_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existing, &fingerprint)
+func usageDedupeDecision(ctx context.Context, tx *sql.Tx, value UsageObservation) (observationDedupeDecision, error) {
+	var existingID string
+	err := tx.QueryRowContext(ctx, `SELECT usage_observation_id FROM usage_analysis_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? AND value_fingerprint = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration, value.ValueFingerprint).Scan(&existingID)
+	if err == nil {
+		return observationDedupeDecision{existingID: existingID}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return observationDedupeDecision{}, fmt.Errorf("check exact usage duplicate: %w", err)
+	}
+	err = tx.QueryRowContext(ctx, `SELECT usage_observation_id FROM usage_analysis_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existingID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "canonical", nil
+		return observationDedupeDecision{state: "canonical"}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("check limit duplicate: %w", err)
+		return observationDedupeDecision{}, fmt.Errorf("check usage conflict: %w", err)
 	}
-	if fingerprint == value.ValueFingerprint && existing != "conflict" {
-		return "duplicate", nil
+	return observationDedupeDecision{state: "conflict"}, nil
+}
+
+func limitDedupeDecision(ctx context.Context, tx *sql.Tx, value LimitObservation) (observationDedupeDecision, error) {
+	var existingID string
+	err := tx.QueryRowContext(ctx, `SELECT observation_id FROM usage_limit_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? AND value_fingerprint = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration, value.ValueFingerprint).Scan(&existingID)
+	if err == nil {
+		return observationDedupeDecision{existingID: existingID}, nil
 	}
-	return "conflict", nil
+	if !errors.Is(err, sql.ErrNoRows) {
+		return observationDedupeDecision{}, fmt.Errorf("check exact limit duplicate: %w", err)
+	}
+	err = tx.QueryRowContext(ctx, `SELECT observation_id FROM usage_limit_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return observationDedupeDecision{state: "canonical"}, nil
+	}
+	if err != nil {
+		return observationDedupeDecision{}, fmt.Errorf("check limit conflict: %w", err)
+	}
+	return observationDedupeDecision{state: "conflict"}, nil
+}
+
+func insertCostOccurrence(ctx context.Context, tx *sql.Tx, observationID string, value CostObservation) error {
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO usage_cost_observation_occurrences (observation_id, snapshot_id, json_path) VALUES (?, ?, ?)`, observationID, value.SnapshotID, value.JSONPath); err != nil {
+		return fmt.Errorf("insert cost observation occurrence: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE usage_cost_observations SET
+		seen_count = (SELECT COUNT(*) FROM usage_cost_observation_occurrences WHERE observation_id = ?),
+		first_seen_at = (SELECT MIN(rs.received_completed_at) FROM usage_cost_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.observation_id = ?),
+		last_seen_at = (SELECT MAX(rs.received_completed_at) FROM usage_cost_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.observation_id = ?),
+		representative_snapshot_id = snapshot_id,
+		latest_snapshot_id = (SELECT oc.snapshot_id FROM usage_cost_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.observation_id = ? ORDER BY rs.received_completed_at DESC, oc.snapshot_id DESC LIMIT 1)
+		WHERE observation_id = ?`, observationID, observationID, observationID, observationID, observationID); err != nil {
+		return fmt.Errorf("refresh cost observation occurrence summary: %w", err)
+	}
+	return nil
+}
+
+func insertUsageOccurrence(ctx context.Context, tx *sql.Tx, observationID string, value UsageObservation) error {
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO usage_analysis_observation_occurrences (usage_observation_id, snapshot_id, json_path) VALUES (?, ?, ?)`, observationID, value.SnapshotID, value.JSONPath); err != nil {
+		return fmt.Errorf("insert usage observation occurrence: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE usage_analysis_observations SET
+		seen_count = (SELECT COUNT(*) FROM usage_analysis_observation_occurrences WHERE usage_observation_id = ?),
+		first_seen_at = (SELECT MIN(rs.received_completed_at) FROM usage_analysis_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.usage_observation_id = ?),
+		last_seen_at = (SELECT MAX(rs.received_completed_at) FROM usage_analysis_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.usage_observation_id = ?),
+		representative_snapshot_id = snapshot_id,
+		latest_snapshot_id = (SELECT oc.snapshot_id FROM usage_analysis_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.usage_observation_id = ? ORDER BY rs.received_completed_at DESC, oc.snapshot_id DESC LIMIT 1)
+		WHERE usage_observation_id = ?`, observationID, observationID, observationID, observationID, observationID); err != nil {
+		return fmt.Errorf("refresh usage observation occurrence summary: %w", err)
+	}
+	return nil
+}
+
+func insertLimitOccurrence(ctx context.Context, tx *sql.Tx, observationID string, value LimitObservation) error {
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO usage_limit_observation_occurrences (observation_id, snapshot_id, json_path) VALUES (?, ?, ?)`, observationID, value.SnapshotID, value.JSONPath); err != nil {
+		return fmt.Errorf("insert limit observation occurrence: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE usage_limit_observations SET
+		seen_count = (SELECT COUNT(*) FROM usage_limit_observation_occurrences WHERE observation_id = ?),
+		first_seen_at = (SELECT MIN(rs.received_completed_at) FROM usage_limit_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.observation_id = ?),
+		last_seen_at = (SELECT MAX(rs.received_completed_at) FROM usage_limit_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.observation_id = ?),
+		representative_snapshot_id = snapshot_id,
+		latest_snapshot_id = (SELECT oc.snapshot_id FROM usage_limit_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.observation_id = ? ORDER BY rs.received_completed_at DESC, oc.snapshot_id DESC LIMIT 1)
+		WHERE observation_id = ?`, observationID, observationID, observationID, observationID, observationID); err != nil {
+		return fmt.Errorf("refresh limit observation occurrence summary: %w", err)
+	}
+	return nil
 }
 
 func costTimestampRegressed(ctx context.Context, tx *sql.Tx, hubID, deviceID, rawServiceIdentifier string, generation int64, observedAt time.Time, table string) (bool, error) {
