@@ -216,6 +216,11 @@ type OverviewRecentLimit struct {
 	LastIncreaseAt      time.Time
 	LatestObservationAt time.Time
 	ExpectedInterval    time.Duration
+	// ObservationOnly is true when this item is shown from the latest
+	// canonical observation because no estimable interval is available. In
+	// that case LastIncreaseAt is only a display-compatible timestamp and must
+	// not be described as an increase.
+	ObservationOnly bool
 }
 
 type AuditListOptions struct {

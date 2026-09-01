@@ -124,8 +124,17 @@ func (l *Lifecycle) insertCostObservationsTx(ctx context.Context, tx *sql.Tx, ob
 		if err != nil {
 			return err
 		}
+		if state == "canonical" {
+			regressed, err := costTimestampRegressed(ctx, tx, observation.HubID, observation.DeviceID, observation.RawServiceIdentifier, observation.NormalizationGeneration, observation.UsageUpdatedAt, "usage_cost_observations")
+			if err != nil {
+				return err
+			}
+			if regressed {
+				state = "conflict"
+			}
+		}
 		if state == "conflict" {
-			if _, err := tx.ExecContext(ctx, `UPDATE usage_cost_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ? AND value_fingerprint <> ?`, observation.HubID, observation.DedupeKey, observation.ValueFingerprint); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE usage_cost_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? AND value_fingerprint <> ?`, observation.HubID, observation.DedupeKey, observation.NormalizationGeneration, observation.ValueFingerprint); err != nil {
 				return fmt.Errorf("mark cost conflict: %w", err)
 			}
 		}
@@ -187,7 +196,7 @@ func (l *Lifecycle) insertLimitObservationsTx(ctx context.Context, tx *sql.Tx, o
 			return err
 		}
 		if state == "conflict" || observation.WindowKeyConflict {
-			if _, err := tx.ExecContext(ctx, `UPDATE usage_limit_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ?`, observation.HubID, observation.DedupeKey); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE usage_limit_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ?`, observation.HubID, observation.DedupeKey, observation.NormalizationGeneration); err != nil {
 				return fmt.Errorf("mark limit conflict: %w", err)
 			}
 		}
@@ -248,6 +257,9 @@ func (l *Lifecycle) InsertAllObservations(ctx context.Context, costs []CostObser
 	if err := l.insertLimitObservationsTx(ctx, tx, limits); err != nil {
 		return err
 	}
+	if err := recordActiveNormalizationTx(ctx, tx, costs, usage, limits); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit observations: %w", err)
 	}
@@ -268,8 +280,17 @@ func (l *Lifecycle) insertUsageObservationsTx(ctx context.Context, tx *sql.Tx, o
 		if err != nil {
 			return err
 		}
+		if state == "canonical" {
+			regressed, err := costTimestampRegressed(ctx, tx, observation.HubID, observation.DeviceID, observation.RawServiceIdentifier, observation.NormalizationGeneration, observation.UsageUpdatedAt, "usage_analysis_observations")
+			if err != nil {
+				return err
+			}
+			if regressed {
+				state = "conflict"
+			}
+		}
 		if state == "conflict" {
-			if _, err := tx.ExecContext(ctx, `UPDATE usage_analysis_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ? AND value_fingerprint <> ?`, observation.HubID, observation.DedupeKey, observation.ValueFingerprint); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE usage_analysis_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? AND value_fingerprint <> ?`, observation.HubID, observation.DedupeKey, observation.NormalizationGeneration, observation.ValueFingerprint); err != nil {
 				return fmt.Errorf("mark usage conflict: %w", err)
 			}
 		}
@@ -576,7 +597,7 @@ func validateLimitObservation(value LimitObservation) error {
 func costDedupeState(ctx context.Context, tx *sql.Tx, value CostObservation) (string, error) {
 	var existing string
 	var amount string
-	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? LIMIT 1`, value.HubID, value.DedupeKey).Scan(&existing, &amount)
+	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_cost_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existing, &amount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "canonical", nil
 	}
@@ -591,7 +612,7 @@ func costDedupeState(ctx context.Context, tx *sql.Tx, value CostObservation) (st
 
 func usageDedupeState(ctx context.Context, tx *sql.Tx, value UsageObservation) (string, error) {
 	var existing, fingerprint string
-	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_analysis_observations WHERE hub_id = ? AND dedupe_key = ? LIMIT 1`, value.HubID, value.DedupeKey).Scan(&existing, &fingerprint)
+	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_analysis_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existing, &fingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "canonical", nil
 	}
@@ -606,7 +627,7 @@ func usageDedupeState(ctx context.Context, tx *sql.Tx, value UsageObservation) (
 
 func limitDedupeState(ctx context.Context, tx *sql.Tx, value LimitObservation) (string, error) {
 	var existing, fingerprint string
-	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_limit_observations WHERE hub_id = ? AND dedupe_key = ? LIMIT 1`, value.HubID, value.DedupeKey).Scan(&existing, &fingerprint)
+	err := tx.QueryRowContext(ctx, `SELECT dedupe_state, value_fingerprint FROM usage_limit_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existing, &fingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "canonical", nil
 	}
@@ -617,6 +638,34 @@ func limitDedupeState(ctx context.Context, tx *sql.Tx, value LimitObservation) (
 		return "duplicate", nil
 	}
 	return "conflict", nil
+}
+
+func costTimestampRegressed(ctx context.Context, tx *sql.Tx, hubID, deviceID, rawServiceIdentifier string, generation int64, observedAt time.Time, table string) (bool, error) {
+	if table != "usage_cost_observations" && table != "usage_analysis_observations" {
+		return false, errors.New("usage timestamp regression table is invalid")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT usage_updated_at FROM `+table+` WHERE hub_id = ? AND device_id = ? AND raw_service_identifier = ? AND normalization_generation = ?`, hubID, deviceID, rawServiceIdentifier, generation)
+	if err != nil {
+		return false, fmt.Errorf("read prior usage timestamps: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return false, fmt.Errorf("scan prior usage timestamp: %w", err)
+		}
+		prior, err := parseUTC(text)
+		if err != nil {
+			return false, err
+		}
+		if observedAt.Before(prior) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("read prior usage timestamps: %w", err)
+	}
+	return false, nil
 }
 
 func nullableInt(value *int) any {

@@ -138,7 +138,7 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"hubBuild":{"schemaVersion":1,"runtime":"test-hub","coreBuildId":"core","runtimeBuildId":"runtime","coreRevision":1}}`))
 		case "/api/stats":
 			writer.WriteHeader(http.StatusOK)
-			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`))
+			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -170,7 +170,7 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantStats := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	wantStats := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
 	if string(snapshot.Body) != wantStats {
 		t.Fatalf("stats body changed: %q", snapshot.Body)
 	}
@@ -239,7 +239,7 @@ func TestCollectionStoresExactRawBodiesAndNormalizedObservations(t *testing.T) {
 }
 
 func TestCollectionKeepsRawWhenNormalizationFails(t *testing.T) {
-	fixture := newCollectionFixture(t, true, `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":[]}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
+	fixture := newCollectionFixture(t, true, `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":[]}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
 	if err := fixture.usecase.CollectNow(fixture.ctx, fixture.hubID); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestCollectionKeepsRawWhenNormalizationFails(t *testing.T) {
 
 func TestCollectionLineageAndRawRetentionAcrossNormalizationOutcome(t *testing.T) {
 	t.Run("P1-COL-05 observations trace to raw JSON and normalization failure preserves it", func(t *testing.T) {
-		success := newCollectionFixture(t, true, `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
+		success := newCollectionFixture(t, true, `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
 		if err := success.usecase.CollectNow(success.ctx, success.hubID); err != nil {
 			t.Fatal(err)
 		}
@@ -296,7 +296,7 @@ func TestCollectionLineageAndRawRetentionAcrossNormalizationOutcome(t *testing.T
 			t.Fatalf("observation lineage = cost=%+v limit=%+v attempt=%+v", costs[0], limits[0], successAttempts[0])
 		}
 
-		failure := newCollectionFixture(t, true, `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":[]}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
+		failure := newCollectionFixture(t, true, `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":[]}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
 		if err := failure.usecase.CollectNow(failure.ctx, failure.hubID); err != nil {
 			t.Fatal(err)
 		}
@@ -361,7 +361,7 @@ func TestDisabledHubSkipsWithoutCredentialOrHTTP(t *testing.T) {
 }
 
 func TestStoppedPeriodicCollectionAllowsManualButSkipsScheduled(t *testing.T) {
-	fixture := newCollectionFixture(t, false, `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
+	fixture := newCollectionFixture(t, false, `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0}]}`, []string{"credential_saved"}, collectionTestCredentials{}, nil)
 	t.Run("P1-COL-01 positive interval supports manual run and stopped schedule", func(t *testing.T) {
 		row, err := fixture.database.GetHubRow(fixture.ctx, fixture.hubID)
 		if err != nil {

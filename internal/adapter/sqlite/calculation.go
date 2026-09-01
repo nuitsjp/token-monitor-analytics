@@ -107,11 +107,13 @@ func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *Ca
 	rows, err := database.QueryContext(ctx, `
 		SELECT o.observation_id, o.provider_updated_at, o.resets_at, COALESCE(rs.api_contract, '')
 		FROM usage_limit_observations o
+		LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation
 		JOIN usage_limit_sources us ON us.hub_id = o.hub_id AND us.device_id = o.device_id
 		 AND us.account_key = o.account_key AND us.raw_service_identifier = o.raw_service_identifier
 		 AND us.window_key = o.window_key
 		LEFT JOIN raw_snapshots rs ON rs.snapshot_id = o.snapshot_id
 		WHERE us.usage_limit_source_id = ? AND o.dedupe_state = 'canonical'
+		  AND (nr.state = 'active' OR nr.state IS NULL)
 		  AND o.provider_updated_at >= ? AND o.provider_updated_at <= ?
 		ORDER BY o.provider_updated_at, o.observation_id`,
 		series.UsageLimitSourceID, utcText(request.ValidFrom), utcText(request.ValidTo))
@@ -263,12 +265,14 @@ func loadCalculationSeriesData(ctx context.Context, database *sql.DB, series *Ca
 		costObservationRows, err := database.QueryContext(ctx, `
 			SELECT o.observation_id, o.usage_updated_at, o.cost_usd_text
 			FROM usage_cost_observations o
+			LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation
 			JOIN usage_cost_sources cs ON cs.hub_id = o.hub_id AND cs.device_id = o.device_id
 			 AND cs.raw_service_identifier = o.raw_service_identifier
 			JOIN service_identifier_mappings m ON m.identifier_kind = 'usage_cost'
 			 AND m.raw_identifier = o.raw_service_identifier AND m.service_id = ?
 			 AND m.valid_from <= o.usage_updated_at AND (m.valid_to IS NULL OR o.usage_updated_at < m.valid_to)
 			WHERE cs.usage_cost_source_id = ? AND o.dedupe_state = 'canonical'
+			  AND (nr.state = 'active' OR nr.state IS NULL)
 			  AND o.usage_updated_at >= ? AND o.usage_updated_at <= ?
 			ORDER BY o.usage_updated_at, o.observation_id`, series.ServiceID, sourceID, utcText(request.ValidFrom), utcText(request.ValidTo))
 		if err != nil {

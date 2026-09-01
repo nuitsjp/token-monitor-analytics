@@ -18,7 +18,7 @@ func TestListReviewItemsAggregatesWarningsAndKeepsFilteredCursorStable(t *testin
 	ctx := context.Background()
 	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	insertReviewHub(t, database, "hub-1", now)
-	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_cost_sources (usage_cost_source_id, hub_id, device_id, raw_service_identifier, created_at) VALUES ('cost-1', 'hub-1', 'device-1', 'cost.raw', ?), ('cost-2', 'hub-1', 'device-2', 'cost.other', ?)`, utcText(now), utcText(now.Add(time.Minute))); err != nil {
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_cost_sources (usage_cost_source_id, hub_id, device_id, raw_service_identifier, created_at) VALUES ('cost-1', 'hub-1', 'device-1', 'limit.raw', ?), ('cost-2', 'hub-1', 'device-2', 'cost.other', ?)`, utcText(now), utcText(now.Add(time.Minute))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_limit_sources (usage_limit_source_id, hub_id, device_id, account_key, raw_service_identifier, window_key, normalized_kind, normalized_metric, normalized_label, created_at) VALUES ('limit-1', 'hub-1', 'device-1', '', 'limit.raw', 'window-1', 'window', 'percent', 'label', ?), ('limit-2', 'hub-1', 'device-2', '', 'limit.other', 'window-1', 'window', 'percent', 'label', ?)`, utcText(now), utcText(now.Add(time.Minute))); err != nil {
@@ -28,8 +28,8 @@ func TestListReviewItemsAggregatesWarningsAndKeepsFilteredCursorStable(t *testin
 	insertReviewLimitObservation(t, database, "limit-observation-1", "hub-1", "device-1", "limit.raw", now.Add(10*time.Minute), "conflict")
 	insertReviewLimitObservation(t, database, "limit-observation-2", "hub-1", "device-1", "limit.raw", now.Add(20*time.Minute), "conflict")
 	insertReviewLimitObservation(t, database, "limit-observation-3", "hub-1", "device-2", "limit.other", now.Add(30*time.Minute), "canonical")
-	insertReviewCostObservation(t, database, "cost-observation-1", "hub-1", "device-1", "cost.raw", now.Add(15*time.Minute), "conflict")
-	insertReviewCostObservation(t, database, "cost-observation-2", "hub-1", "device-1", "cost.raw", now.Add(25*time.Minute), "conflict")
+	insertReviewCostObservation(t, database, "cost-observation-1", "hub-1", "device-1", "limit.raw", now.Add(15*time.Minute), "conflict")
+	insertReviewCostObservation(t, database, "cost-observation-2", "hub-1", "device-1", "limit.raw", now.Add(25*time.Minute), "conflict")
 	insertReviewCostObservation(t, database, "cost-observation-unassociated", "hub-1", "device-2", "cost.other", now.Add(35*time.Minute), "canonical")
 
 	page, err := lifecycle.ListReviewItems(ctx, domain.ReviewFilter{Kind: domain.ReviewKindMissingAccountKey, Limit: 1})
@@ -78,17 +78,41 @@ func TestListReviewItemsAggregatesWarningsAndKeepsFilteredCursorStable(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Run("P1-REL-03 unassociated cost observations remain reviewable but are not linked", func(t *testing.T) {
+	t.Run("P1-REL-03 only an unassociated cost source with matching limit evidence remains reviewable", func(t *testing.T) {
 		found := false
 		for _, item := range unassociated.Items {
-			if item.SourceID == "cost-2" && item.Count == 1 {
+			if item.SourceID == "cost-1" && item.Count == 1 {
 				found = true
 			}
 		}
-		if len(unassociated.Items) != 2 || !found {
+		if len(unassociated.Items) != 1 || !found {
 			t.Fatalf("unassociated review items = %#v", unassociated.Items)
 		}
 	})
+}
+
+func TestListReviewItemsGroupsDependentUnassociatedLimitSourcesByRootAccount(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	database, err := lifecycle.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)
+	insertReviewHub(t, database, "hub-root-group", now)
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_limit_sources
+		(usage_limit_source_id, hub_id, device_id, account_key, raw_service_identifier, window_key, normalized_kind, normalized_metric, normalized_label, created_at)
+		VALUES ('root-limit-1', 'hub-root-group', 'device', 'account', 'cursor', 'weekly-a', 'weekly', 'percent', 'A', ?),
+		       ('root-limit-2', 'hub-root-group', 'device', 'account', 'cursor', 'weekly-b', 'weekly', 'percent', 'B', ?),
+		       ('root-limit-3', 'hub-root-group', 'device', 'account', 'cursor', 'billing', 'billing', 'percent', 'C', ?)`, utcText(now), utcText(now.Add(time.Minute)), utcText(now.Add(2*time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	page, err := lifecycle.ListReviewItems(context.Background(), domain.ReviewFilter{Kind: domain.ReviewKindUsageLimitUnassociated, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Count != 3 || page.Items[0].AccountKey != "account" || len(page.Items[0].EvidenceIDs) != 3 {
+		t.Fatalf("grouped root review = %#v", page.Items)
+	}
 }
 
 func TestListReviewItemsClassifiesCanonicalReviewRowsWithoutHubSwitchCandidates(t *testing.T) {
@@ -108,17 +132,23 @@ func TestListReviewItemsClassifiesCanonicalReviewRowsWithoutHubSwitchCandidates(
 	if _, err := database.ExecContext(t.Context(), `INSERT INTO limit_definitions (limit_definition_id, service_id, cycle_type, meaning, unit, billing_confirmation, created_at, updated_at) VALUES ('billing-review', 'service-review', 'billing', 'Monthly', 'percent', 'unconfirmed', ?, ?)`, utcText(now), utcText(now)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO limit_definitions (limit_definition_id, service_id, cycle_type, meaning, unit, billing_confirmation, created_at, updated_at) VALUES ('billing-observed', 'service-review', 'billing', 'Observed billing', 'percent', 'unconfirmed', ?, ?)`, utcText(now), utcText(now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO catalog_bindings (binding_id, entity_type, catalog_key, entity_id, catalog_revision, management_mode, created_at, updated_at) VALUES ('binding-observed', 'limit_definition', 'observed-limit:test', 'billing-observed', 'test', 'observed', ?, ?)`, utcText(now), utcText(now)); err != nil {
+		t.Fatal(err)
+	}
 	page, err := lifecycle.ListReviewItems(context.Background(), domain.ReviewFilter{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hasCandidate, hasBilling, hasHubSwitch := false, false, false
+	hasCandidate, billingCount, hasHubSwitch := false, 0, false
 	for _, item := range page.Items {
 		switch item.Kind {
 		case domain.ReviewKindIdentificationCandidate:
 			hasCandidate = item.RawLimitServiceIdentifier == "provider.raw" && item.RawReportedPlanName == "Plan A"
 		case domain.ReviewKindBillingMonthly:
-			hasBilling = true
+			billingCount++
 		case domain.ReviewKindHubAccountCandidate,
 			domain.ReviewKindUsageCostUnassociated,
 			domain.ReviewKindUsageLimitUnassociated,
@@ -133,8 +163,8 @@ func TestListReviewItemsClassifiesCanonicalReviewRowsWithoutHubSwitchCandidates(
 			hasHubSwitch = true
 		}
 	}
-	if !hasCandidate || !hasBilling || hasHubSwitch {
-		t.Fatalf("review classifications candidate=%v billing=%v hubSwitch=%v items=%#v", hasCandidate, hasBilling, hasHubSwitch, page.Items)
+	if !hasCandidate || billingCount != 1 || hasHubSwitch {
+		t.Fatalf("review classifications candidate=%v billingCount=%d hubSwitch=%v items=%#v", hasCandidate, billingCount, hasHubSwitch, page.Items)
 	}
 }
 
@@ -161,10 +191,14 @@ func TestListReviewItemsIncludesCurrentLimitAssociationAndPlanPeriod(t *testing.
 	if _, err := database.ExecContext(t.Context(), `INSERT INTO limit_definitions (limit_definition_id, service_id, cycle_type, meaning, unit, billing_confirmation, created_at, updated_at) VALUES ('limit-definition-current', 'service-current', 'window', 'Input limit', 'percent', 'not_applicable', ?, ?)`, utcText(now), utcText(now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_limit_sources (usage_limit_source_id, hub_id, device_id, account_key, raw_service_identifier, window_key, normalized_kind, normalized_metric, normalized_label, created_at) VALUES ('limit-source-current', 'hub-current', 'device-current', 'account-key', 'limit.current', 'window-current', 'window', 'percent', 'Limit', ?)`, utcText(now)); err != nil {
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_limit_sources (usage_limit_source_id, hub_id, device_id, account_key, raw_service_identifier, window_key, normalized_kind, normalized_metric, normalized_label, created_at) VALUES
+		('limit-source-current', 'hub-current', 'device-current', 'account-key', 'limit.current', 'window-current', 'window', 'percent', 'Limit', ?),
+		('limit-source-empty-plan', 'hub-current', 'device-current', 'account-key', 'limit.current', 'window-empty-plan', 'window', 'percent', 'No reported plan', ?)`, utcText(now), utcText(now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_limit_source_links (usage_limit_association_id, usage_limit_source_id, logical_account_id, limit_definition_id, valid_from, valid_to, created_at, updated_at) VALUES ('limit-association-current', 'limit-source-current', 'account-current', 'limit-definition-current', ?, ?, ?, ?)`, utcText(now.Add(-2*time.Hour)), utcText(now.Add(4*time.Hour)), utcText(now), utcText(now)); err != nil {
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_limit_source_links (usage_limit_association_id, usage_limit_source_id, logical_account_id, limit_definition_id, valid_from, valid_to, created_at, updated_at) VALUES
+		('limit-association-current', 'limit-source-current', 'account-current', 'limit-definition-current', ?, ?, ?, ?),
+		('limit-association-empty-plan', 'limit-source-empty-plan', 'account-current', 'limit-definition-current', ?, ?, ?, ?)`, utcText(now.Add(-2*time.Hour)), utcText(now.Add(4*time.Hour)), utcText(now), utcText(now), utcText(now.Add(-2*time.Hour)), utcText(now.Add(4*time.Hour)), utcText(now), utcText(now)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(t.Context(), `INSERT INTO plan_histories (plan_history_id, logical_account_id, plan_version_id, valid_from, valid_to, created_at, updated_at) VALUES ('history-current', 'account-current', 'version-current', ?, ?, ?, ?)`, utcText(now.Add(-time.Hour)), utcText(now.Add(2*time.Hour)), utcText(now), utcText(now)); err != nil {
@@ -177,6 +211,9 @@ func TestListReviewItemsIncludesCurrentLimitAssociationAndPlanPeriod(t *testing.
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_limit_observations (observation_id, snapshot_id, hub_id, device_id, raw_service_identifier, account_key, provider_updated_at, window_key, normalized_kind, normalized_metric, normalized_label, plan_label, analytics_interval_seconds, normalization_generation, normalization_rule_version, normalization_logic_version, json_path, dedupe_state, dedupe_key, value_fingerprint) VALUES ('limit-observation-current', 'review-snapshot-current', 'hub-current', 'device-current', 'limit.current', 'account-key', ?, 'window-current', 'window', 'percent', 'Limit', 'Reported plan', 300, 1, 'rule', 'logic', '$.limit', 'canonical', 'dedupe-current', 'fingerprint-current')`, utcText(now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(t.Context(), `INSERT INTO usage_limit_observations (observation_id, snapshot_id, hub_id, device_id, raw_service_identifier, account_key, provider_updated_at, window_key, normalized_kind, normalized_metric, normalized_label, plan_label, analytics_interval_seconds, normalization_generation, normalization_rule_version, normalization_logic_version, json_path, dedupe_state, dedupe_key, value_fingerprint) VALUES ('limit-observation-empty-plan', 'review-snapshot-current', 'hub-current', 'device-current', 'limit.current', 'account-key', ?, 'window-empty-plan', 'window', 'percent', 'No reported plan', '', 300, 1, 'rule', 'logic', '$.limit.empty', 'canonical', 'dedupe-empty', 'fingerprint-empty')`, utcText(now)); err != nil {
 		t.Fatal(err)
 	}
 

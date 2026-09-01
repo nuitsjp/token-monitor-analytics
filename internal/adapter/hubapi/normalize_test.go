@@ -8,7 +8,7 @@ import (
 )
 
 func TestNormalizeStatsUsesContractPathsAndMetadata(t *testing.T) {
-	raw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":" WEEKLY ","metric":"PER CENT","label":" Cafe\u0301 ","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":" WEEKLY ","metric":"PER CENT","label":" Cafe\u0301 ","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
 	result, err := NormalizeStats([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestNormalizeStatsUsesContractPathsAndMetadata(t *testing.T) {
 			t.Fatalf("cost path = %q", result.Costs[0].JSONPath)
 		}
 	})
-	t.Run("API-COST-03 uses usageUpdatedAt", func(t *testing.T) {
+	t.Run("API-COST-03 uses device updatedAt", func(t *testing.T) {
 		if !result.Costs[0].UsageUpdatedAt.Equal(time.Date(2026, 8, 25, 11, 36, 0, 0, time.UTC)) {
 			t.Fatalf("cost observed at = %s", result.Costs[0].UsageUpdatedAt)
 		}
@@ -97,8 +97,8 @@ func TestNormalizeStatsUsesContractPathsAndMetadata(t *testing.T) {
 }
 
 func TestQLTime03PreservesSourceTimezoneAndDoesNotUseDisplayTimezone(t *testing.T) {
-	validRaw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
-	unknownRaw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Unknown/Display-Replacement","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	validRaw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	unknownRaw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Unknown/Display-Replacement","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
 	valid, err := NormalizeStats([]byte(validRaw))
 	if err != nil {
 		t.Fatal(err)
@@ -123,15 +123,15 @@ func TestQLTime03PreservesSourceTimezoneAndDoesNotUseDisplayTimezone(t *testing.
 	})
 }
 
-func TestNormalizeStatsMissingSyncMetadataCannotMatch(t *testing.T) {
-	raw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periods":{"allTime":{"clientCosts":{"codex":1}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+func TestNormalizeStatsMissingSyncMetadataMeansLiveForSupportedLocalContract(t *testing.T) {
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","periods":{"allTime":{"clientCosts":{"codex":1}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
 	result, err := NormalizeStats([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Run("API-COST-05 missing usage metadata cannot match", func(t *testing.T) {
-		if result.Costs[0].MetadataValid || result.Limits[0].MetadataValid {
-			t.Fatalf("missing sync metadata was accepted: %+v %+v", result.Costs[0], result.Limits[0])
+	t.Run("API-COST-07 missing sync metadata is normalized to live zero", func(t *testing.T) {
+		if !result.Costs[0].MetadataValid || !result.Limits[0].MetadataValid || result.Costs[0].SyncUploadIntervalMS == nil || *result.Costs[0].SyncUploadIntervalMS != 0 {
+			t.Fatalf("missing sync metadata was not normalized: %+v %+v", result.Costs[0], result.Limits[0])
 		}
 	})
 }
@@ -176,11 +176,11 @@ func TestNormalizeStatsDoesNotCrossAccountWindowConflict(t *testing.T) {
 }
 
 func TestNormalizeStatsCostFingerprintUsesNumericValue(t *testing.T) {
-	one, err := NormalizeStats([]byte(`{"devices":[{"deviceId":"d","usageUpdatedAt":"2026-08-25T00:00:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1}}}}]}`))
+	one, err := NormalizeStats([]byte(`{"devices":[{"deviceId":"d","updatedAt":"2026-08-25T00:00:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1}}}}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	onePointZero, err := NormalizeStats([]byte(`{"devices":[{"deviceId":"d","usageUpdatedAt":"2026-08-25T00:00:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.0}}}}]}`))
+	onePointZero, err := NormalizeStats([]byte(`{"devices":[{"deviceId":"d","updatedAt":"2026-08-25T00:00:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.0}}}}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +192,8 @@ func TestNormalizeStatsCostFingerprintUsesNumericValue(t *testing.T) {
 }
 
 func TestNormalizeStatsUnknownFieldsDoNotChangeExtraction(t *testing.T) {
-	baseRaw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.5}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
-	withUnknownFields := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.5}},"futurePeriod":{"newMetric":99}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z","futureField":{"nested":true}}],"futureProviderField":"ignored"}],"futureLimitField":true},"futureDeviceField":[1,2,3]}],"futureRootField":{"retained":true}}`
+	baseRaw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.5}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	withUnknownFields := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","syncUploadIntervalMs":0,"periods":{"allTime":{"clientCosts":{"codex":1.5}},"futurePeriod":{"newMetric":99}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z","futureField":{"nested":true}}],"futureProviderField":"ignored"}],"futureLimitField":true},"futureDeviceField":[1,2,3]}],"futureRootField":{"retained":true}}`
 	base, err := NormalizeStats([]byte(baseRaw))
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +210,7 @@ func TestNormalizeStatsUnknownFieldsDoNotChangeExtraction(t *testing.T) {
 }
 
 func TestNormalizeStatsExtractsPhaseTwoUsageAndNativeAmounts(t *testing.T) {
-	raw := `{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clients":{"codex":120},"clientCosts":{"codex":2.75},"clientModels":{"codex":{"gpt-5":100,"gpt-5-mini":20}},"clientModelCosts":{"codex":{"gpt-5":2.5,"gpt-5-mini":0.25}}}},"limits":{"providers":[{"provider":"codex","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"balance","metric":"credits","label":"Credits","used":58,"limit":100,"remaining":42,"currency":"CREDITS"}]}]}}]}`
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clients":{"codex":120},"clientCosts":{"codex":2.75},"clientModels":{"codex":{"gpt-5":100,"gpt-5-mini":20}},"clientModelCosts":{"codex":{"gpt-5":2.5,"gpt-5-mini":0.25}}}},"limits":{"providers":[{"provider":"codex","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"balance","metric":"credits","label":"Credits","used":58,"limit":100,"remaining":42,"currency":"CREDITS"}]}]}}]}`
 	result, err := NormalizeStats([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +227,7 @@ func TestNormalizeStatsExtractsPhaseTwoUsageAndNativeAmounts(t *testing.T) {
 	})
 }
 
-func TestNormalizeStatsKeepsLimitsWithoutUsageUpdatedAt(t *testing.T) {
+func TestNormalizeStatsKeepsLimitsWithoutDeviceUpdatedAt(t *testing.T) {
 	raw := `{"devices":[{"deviceId":"device-1","periods":{"allTime":{"clientCosts":{"codex":1.5}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
 	result, err := NormalizeStats([]byte(raw))
 	if err != nil {
@@ -238,5 +238,38 @@ func TestNormalizeStatsKeepsLimitsWithoutUsageUpdatedAt(t *testing.T) {
 	}
 	if len(result.Limits) != 1 {
 		t.Fatalf("limit observations = %d, want 1", len(result.Limits))
+	}
+}
+
+func TestNormalizeStatsUsesWindowSemanticsAndProviderScopedPlanEvidence(t *testing.T) {
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-09-02T00:00:00Z","limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"codex-account","accountLabel":"Pro 5x","updatedAt":"2026-09-02T00:00:00Z","windows":[{"limitId":"weekly-spark","kind":"weekly","metric":"percent","label":"Weekly","usedPercent":10,"resetsAt":"2026-09-09T00:00:00Z"}]},{"provider":"cursor","accountKey":"cursor-account","accountLabel":"person@example.com","updatedAt":"2026-09-02T00:00:00Z","windows":[{"limitId":"weekly-models","kind":"weekly","metric":"percent","label":"Weekly","usedPercent":20,"resetsAt":"2026-09-09T00:00:00Z"}]}]}}]}`
+	result, err := NormalizeStats([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Limits) != 2 {
+		t.Fatalf("limits = %+v", result.Limits)
+	}
+	if result.Limits[0].WindowKey != "weekly\x1fpercent\x1fWeekly" || result.Limits[0].PlanLabel != "Pro 5x" {
+		t.Fatalf("Codex evidence = %+v", result.Limits[0])
+	}
+	if result.Limits[1].WindowKey != "weekly\x1fpercent\x1fWeekly" || result.Limits[1].PlanLabel != "" {
+		t.Fatalf("Cursor account label leaked into plan evidence: %+v", result.Limits[1])
+	}
+}
+
+func TestNormalizeStatsDoesNotMergeDifferentWindowsThatShareLimitID(t *testing.T) {
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-09-02T00:00:00Z","limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-09-02T00:00:00Z","windows":[{"limitId":"shared","kind":"session","metric":"percent","label":"Spark","usedPercent":10,"resetsAt":"2026-09-02T05:00:00Z"},{"limitId":"shared","kind":"weekly","metric":"percent","label":"Spark","usedPercent":20,"resetsAt":"2026-09-09T00:00:00Z"}]}]}}]}`
+	result, err := NormalizeStats([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Limits) != 2 || result.Limits[0].WindowKey == result.Limits[1].WindowKey {
+		t.Fatalf("shared limitId merged distinct windows: %+v", result.Limits)
+	}
+	for _, item := range result.Limits {
+		if item.WindowKeyConflict {
+			t.Fatalf("semantic window key conflicted: %+v", item)
+		}
 	}
 }

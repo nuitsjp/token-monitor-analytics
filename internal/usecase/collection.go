@@ -118,6 +118,7 @@ type NormalizedStats struct {
 type CollectionDependencies struct {
 	NormalizeStats            func([]byte) (NormalizedStats, error)
 	ClassifyError             func(error) string
+	AfterSuccessfulCollection func(context.Context, string) error
 	NormalizationGeneration   int64
 	NormalizationRuleVersion  string
 	NormalizationLogicVersion string
@@ -293,6 +294,13 @@ func (u *CollectionUsecase) collect(ctx context.Context, hubID, trigger string) 
 		_ = u.store.FinishCollectionAttempt(ctx, attempt)
 		return fmt.Errorf("save normalized observations: %w", err)
 	}
+	if u.dependencies.AfterSuccessfulCollection != nil {
+		if err := u.dependencies.AfterSuccessfulCollection(ctx, hubID); err != nil {
+			attempt.State, attempt.FailureCode, attempt.FailureDetail = "failed", "automatic_reconciliation_failed", "automatic configuration reconciliation failed"
+			_ = u.store.FinishCollectionAttempt(ctx, attempt)
+			return fmt.Errorf("reconcile collected observations: %w", err)
+		}
+	}
 	attempt.State = "succeeded"
 	if err := u.store.FinishCollectionAttempt(ctx, attempt); err != nil {
 		return fmt.Errorf("record collection success: %w", err)
@@ -324,19 +332,30 @@ func (u *CollectionUsecase) fetch(ctx context.Context, row domain.HubRow) (Colle
 }
 
 func (u *CollectionUsecase) saveObservations(ctx context.Context, normalized NormalizedStats, attempt domain.CollectionAttempt) error {
+	batch := buildObservationBatch(normalized, attempt.StatsSnapshotID, attempt.HubID, attempt.AnalyticsIntervalSeconds, u.ids, u.dependencies)
+	return u.store.InsertAllObservations(ctx, batch.costs, batch.usage, batch.limits)
+}
+
+type observationBatch struct {
+	costs  []domain.CostObservation
+	usage  []domain.CollectionUsageObservation
+	limits []domain.LimitObservation
+}
+
+func buildObservationBatch(normalized NormalizedStats, snapshotID, hubID string, analyticsIntervalSeconds int64, ids IDGenerator, dependencies CollectionDependencies) observationBatch {
 	costs := make([]domain.CostObservation, 0, len(normalized.Costs))
 	for _, item := range normalized.Costs {
-		costs = append(costs, domain.CostObservation{ObservationID: u.ids.New(), UsageCostSourceID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, CostUSDText: item.CostUSDText, SyncUploadIntervalMS: item.SyncUploadIntervalMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: u.dependencies.NormalizationGeneration, NormalizationRuleVersion: u.dependencies.NormalizationRuleVersion, NormalizationLogicVersion: u.dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+		costs = append(costs, domain.CostObservation{ObservationID: ids.New(), UsageCostSourceID: ids.New(), SnapshotID: snapshotID, HubID: hubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, CostUSDText: item.CostUSDText, SyncUploadIntervalMS: item.SyncUploadIntervalMS, AnalyticsIntervalSeconds: analyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: dependencies.NormalizationGeneration, NormalizationRuleVersion: dependencies.NormalizationRuleVersion, NormalizationLogicVersion: dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
 	}
 	usage := make([]domain.CollectionUsageObservation, 0, len(normalized.Usage))
 	for _, item := range normalized.Usage {
-		usage = append(usage, domain.CollectionUsageObservation{ObservationID: u.ids.New(), UsageCostSourceID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: u.dependencies.NormalizationGeneration, NormalizationRuleVersion: u.dependencies.NormalizationRuleVersion, NormalizationLogicVersion: u.dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+		usage = append(usage, domain.CollectionUsageObservation{ObservationID: ids.New(), UsageCostSourceID: ids.New(), SnapshotID: snapshotID, HubID: hubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: dependencies.NormalizationGeneration, NormalizationRuleVersion: dependencies.NormalizationRuleVersion, NormalizationLogicVersion: dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
 	}
 	limits := make([]domain.LimitObservation, 0, len(normalized.Limits))
 	for _, item := range normalized.Limits {
-		limits = append(limits, domain.LimitObservation{ObservationID: u.ids.New(), UsageLimitSourceID: u.ids.New(), HubAccountCandidateID: u.ids.New(), IdentificationCandidateID: u.ids.New(), SnapshotID: attempt.StatsSnapshotID, HubID: attempt.HubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, AnalyticsIntervalSeconds: attempt.AnalyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: u.dependencies.NormalizationGeneration, NormalizationRuleVersion: u.dependencies.NormalizationRuleVersion, NormalizationLogicVersion: u.dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
+		limits = append(limits, domain.LimitObservation{ObservationID: ids.New(), UsageLimitSourceID: ids.New(), HubAccountCandidateID: ids.New(), IdentificationCandidateID: ids.New(), SnapshotID: snapshotID, HubID: hubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, AnalyticsIntervalSeconds: analyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: dependencies.NormalizationGeneration, NormalizationRuleVersion: dependencies.NormalizationRuleVersion, NormalizationLogicVersion: dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
 	}
-	return u.store.InsertAllObservations(ctx, costs, usage, limits)
+	return observationBatch{costs: costs, usage: usage, limits: limits}
 }
 
 func (u *CollectionUsecase) acquire(hubID string) bool {
@@ -366,7 +385,7 @@ func contractText(contract CollectionContract) string {
 	if contract.Build.SchemaVersion <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("schema=%d;runtime=%s;core_revision=%d;runtime_revision=%d;core=%s;runtime_build=%s;usage_updated_at=%t", contract.Build.SchemaVersion, contract.Build.Runtime, contract.Build.CoreRevision, contract.Build.RuntimeRevision, contract.Build.CoreBuildID, contract.Build.RuntimeBuildID, contract.UsageUpdatedAt)
+	return fmt.Sprintf("schema=%d;runtime=%s;core_revision=%d;runtime_revision=%d;core=%s;runtime_build=%s;usage_observation_time=%t", contract.Build.SchemaVersion, contract.Build.Runtime, contract.Build.CoreRevision, contract.Build.RuntimeRevision, contract.Build.CoreBuildID, contract.Build.RuntimeBuildID, contract.UsageUpdatedAt)
 }
 
 func safeFailureDetail(err error, classify func(error) string) string {

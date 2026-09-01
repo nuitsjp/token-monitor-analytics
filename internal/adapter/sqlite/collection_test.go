@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -158,4 +159,38 @@ func TestObservationDedupeNeverCrossesHub(t *testing.T) {
 			t.Fatalf("conflict observation state = %q", state)
 		}
 	})
+}
+
+func TestUsageTimestampRegressionIsExcludedAsConflict(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 2, 8, 0, 0, 0, time.UTC)
+	hubID := uuid.NewString()
+	if err := lifecycle.CreateHub(ctx, Hub{ID: hubID, DisplayName: "Hub", URL: "https://regression.example.test", CollectionEnabled: true, CollectionIntervalSeconds: 300, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	for index, observedAt := range []time.Time{now, now.Add(-time.Minute)} {
+		attemptID, snapshotID := fmt.Sprintf("regression-attempt-%d", index), fmt.Sprintf("regression-snapshot-%d", index)
+		if err := lifecycle.CreateCollectionAttempt(ctx, CollectionAttempt{AttemptID: attemptID, HubID: hubID, Trigger: "manual", State: "started", StartedAt: now.Add(time.Duration(index) * time.Minute), AnalyticsIntervalSeconds: 300}); err != nil {
+			t.Fatal(err)
+		}
+		if err := lifecycle.SaveRawSnapshot(ctx, RawSnapshot{SnapshotID: snapshotID, AttemptID: attemptID, HubID: hubID, ResponseKind: "stats", ReceivedStartedAt: now, ReceivedCompletedAt: now, HTTPStatus: 200, Body: []byte(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		observation := CostObservation{ObservationID: fmt.Sprintf("regression-cost-%d", index), SnapshotID: snapshotID, HubID: hubID, DeviceID: "device", RawServiceIdentifier: "codex", UsageUpdatedAt: observedAt, CostUSDText: fmt.Sprint(index + 1), AnalyticsIntervalSeconds: 300, NormalizationGeneration: 2, NormalizationRuleVersion: "rule-v2", NormalizationLogicVersion: "logic-v2", JSONPath: "$.cost", DedupeKey: fmt.Sprintf("regression-key-%d", index), ValueFingerprint: fmt.Sprintf("regression-value-%d", index)}
+		if err := lifecycle.InsertCostObservations(ctx, []CostObservation{observation}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	database, _ := lifecycle.DB()
+	var first, second string
+	if err := database.QueryRowContext(ctx, `SELECT dedupe_state FROM usage_cost_observations WHERE observation_id = 'regression-cost-0'`).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, `SELECT dedupe_state FROM usage_cost_observations WHERE observation_id = 'regression-cost-1'`).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if first != "canonical" || second != "conflict" {
+		t.Fatalf("states first=%s second=%s", first, second)
+	}
 }

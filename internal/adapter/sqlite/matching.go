@@ -397,11 +397,13 @@ func loadMatchingLimitObservations(ctx context.Context, database *sql.DB, source
 		       o.limits_refresh_ms, o.analytics_interval_seconds, o.normalization_generation,
 		       o.normalization_rule_version, o.normalization_logic_version, o.dedupe_state
 		FROM usage_limit_observations o
+		LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation
 		JOIN usage_limit_sources s ON s.hub_id = o.hub_id AND s.device_id = o.device_id
 		 AND s.account_key = o.account_key AND s.raw_service_identifier = o.raw_service_identifier
 		 AND s.window_key = o.window_key AND s.normalized_kind = o.normalized_kind
 		 AND s.normalized_metric = o.normalized_metric
 		WHERE s.usage_limit_source_id = ? AND o.provider_updated_at >= ? AND o.provider_updated_at < ?
+		  AND (nr.state = 'active' OR nr.state IS NULL)
 		ORDER BY o.provider_updated_at, o.observation_id`, sourceID, utcText(start), utcText(end))
 	if err != nil {
 		return nil, fmt.Errorf("list matching limit observations: %w", err)
@@ -437,10 +439,12 @@ func loadMatchingCostObservations(ctx context.Context, database *sql.DB, sourceI
 		       o.normalization_generation, o.normalization_rule_version,
 		       o.normalization_logic_version, o.dedupe_state, COALESCE(rs.api_contract, '')
 		FROM usage_cost_observations o
+		LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation
 		JOIN usage_cost_sources s ON s.hub_id = o.hub_id AND s.device_id = o.device_id
 		 AND s.raw_service_identifier = o.raw_service_identifier
 		LEFT JOIN raw_snapshots rs ON rs.snapshot_id = o.snapshot_id
 		WHERE s.usage_cost_source_id = ? AND o.usage_updated_at >= ? AND o.usage_updated_at < ?
+		  AND (nr.state = 'active' OR nr.state IS NULL)
 		ORDER BY o.usage_updated_at, o.observation_id`, sourceID, utcText(start), utcText(end))
 	if err != nil {
 		return nil, fmt.Errorf("list matching cost observations: %w", err)

@@ -464,7 +464,7 @@ export function ReviewPage({
             ? "条件に一致する項目はありません。"
             : tab === "warnings"
               ? "現在有効なデータ警告はありません。"
-              : "要確認作業はありません。"}
+              : "要確認作業はありません。完全一致した設定は自動的に関連付け済みです。"}
         </Body1>
       ) : (
         <div className={styles.content}>
@@ -538,6 +538,9 @@ function ReviewItemCard({
           {targetLabel(item)}
         </Button>
         <StatusBadge status={reviewCategoryStatus(item.kind)} />
+        {item.count > 1 && (
+          <span className={styles.badge}>関連する根拠 {item.count}件</span>
+        )}
       </div>
       <dl className={styles.grid}>
         <ReviewField styles={styles} label="種類">

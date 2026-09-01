@@ -211,6 +211,7 @@ func (l *Lifecycle) deriveReviewItems(ctx context.Context) ([]domain.ReviewItem,
 	}
 	costPeriods := reviewObservationPeriods(costObservations)
 	limitPeriods := reviewObservationPeriods(limitObservations)
+	actionableCostSources := costSourcesWithAccountEvidence(costSources, limitPeriods)
 	costLinks, err := readReviewCostLinks(ctx, database)
 	if err != nil {
 		return nil, err
@@ -240,33 +241,15 @@ func (l *Lifecycle) deriveReviewItems(ctx context.Context) ([]domain.ReviewItem,
 	if err != nil {
 		return nil, err
 	}
-	for _, source := range costSources {
-		if _, ok := associatedCost[source.ID]; ok {
-			continue
-		}
-		period := costPeriods[reviewSourceKey{HubID: source.HubID, DeviceID: source.DeviceID, RawServiceIdentifier: source.RawServiceIdentifier}]
-		if period.First.IsZero() {
-			period = reviewPeriod{First: source.CreatedAt, Last: source.CreatedAt}
-		}
-		if err := appendItems(newReviewItem("cost:"+source.ID, domain.ReviewKindUsageCostUnassociated, domain.ReviewStateUnconfirmed, domain.ReviewImpactCalculationIntervalImpossible, source.HubID, source.ID, source.ID, source.RawServiceIdentifier, period, "cost source has no logical-account association", nil)); err != nil {
-			return nil, err
-		}
+	if err := appendItems(aggregateUnassociatedReviewItems(actionableCostSources, associatedCost, costPeriods, true)...); err != nil {
+		return nil, err
 	}
 	associatedLimit, err := readAssociatedReviewSources(ctx, database, false)
 	if err != nil {
 		return nil, err
 	}
-	for _, source := range limitSources {
-		if _, ok := associatedLimit[source.ID]; ok {
-			continue
-		}
-		period := limitPeriods[reviewSourceKey{HubID: source.HubID, DeviceID: source.DeviceID, RawServiceIdentifier: source.RawServiceIdentifier, AccountKey: source.AccountKey, WindowKey: source.WindowKey}]
-		if period.First.IsZero() {
-			period = reviewPeriod{First: source.CreatedAt, Last: source.CreatedAt}
-		}
-		if err := appendItems(newReviewItem("limit:"+source.ID, domain.ReviewKindUsageLimitUnassociated, domain.ReviewStateUnconfirmed, domain.ReviewImpactCalculationIntervalImpossible, source.HubID, source.ID, source.ID, source.RawServiceIdentifier, period, "limit source has no logical-account association", nil, source.AccountKey)); err != nil {
-			return nil, err
-		}
+	if err := appendItems(aggregateUnassociatedReviewItems(limitSources, associatedLimit, limitPeriods, false)...); err != nil {
+		return nil, err
 	}
 
 	identification, err := readReviewIdentificationCandidates(ctx, database)
@@ -297,7 +280,7 @@ func (l *Lifecycle) deriveReviewItems(ctx context.Context) ([]domain.ReviewItem,
 	if err := appendItems(billing...); err != nil {
 		return nil, err
 	}
-	completeness, err := readReviewCompleteness(ctx, database, costSources, costPeriods)
+	completeness, err := readReviewCompleteness(ctx, database, actionableCostSources, costPeriods)
 	if err != nil {
 		return nil, err
 	}
@@ -328,6 +311,19 @@ func (l *Lifecycle) deriveReviewItems(ctx context.Context) ([]domain.ReviewItem,
 	return items, nil
 }
 
+func costSourcesWithAccountEvidence(sources []reviewSource, limitPeriods map[reviewSourceKey]reviewPeriod) []reviewSource {
+	result := make([]reviewSource, 0, len(sources))
+	for _, source := range sources {
+		for key := range limitPeriods {
+			if key.HubID == source.HubID && key.DeviceID == source.DeviceID && key.RawServiceIdentifier == source.RawServiceIdentifier {
+				result = append(result, source)
+				break
+			}
+		}
+	}
+	return result
+}
+
 func newReviewItem(id string, kind domain.ReviewKind, state domain.ReviewState, impact domain.ReviewImpact, hubID, sourceID, targetID, target string, period reviewPeriod, exclusion string, evidence []string, accountKey ...string) domain.ReviewItem {
 	item := domain.ReviewItem{
 		ID: id, Kind: kind, State: state, Impact: impact, HubID: hubID,
@@ -340,6 +336,52 @@ func newReviewItem(id string, kind domain.ReviewKind, state domain.ReviewState, 
 		item.AccountKey = accountKey[0]
 	}
 	return item
+}
+
+func aggregateUnassociatedReviewItems(sources []reviewSource, associated map[string]struct{}, periods map[reviewSourceKey]reviewPeriod, cost bool) []domain.ReviewItem {
+	type aggregate struct {
+		item domain.ReviewItem
+	}
+	groups := make(map[string]*aggregate)
+	for _, source := range sources {
+		if _, ok := associated[source.ID]; ok {
+			continue
+		}
+		key := source.HubID + "\x1f" + source.RawServiceIdentifier
+		kind := domain.ReviewKindUsageCostUnassociated
+		prefix, reason := "cost-root:", "cost sources have no logical-account association"
+		periodKey := reviewSourceKey{HubID: source.HubID, DeviceID: source.DeviceID, RawServiceIdentifier: source.RawServiceIdentifier}
+		if !cost {
+			key += "\x1f" + source.AccountKey
+			kind = domain.ReviewKindUsageLimitUnassociated
+			prefix, reason = "limit-root:", "limit sources have no logical-account association"
+			periodKey.AccountKey, periodKey.WindowKey = source.AccountKey, source.WindowKey
+		}
+		period := periods[periodKey]
+		if period.First.IsZero() {
+			period = reviewPeriod{First: source.CreatedAt, Last: source.CreatedAt}
+		}
+		group := groups[key]
+		if group == nil {
+			item := newReviewItem(prefix+key, kind, domain.ReviewStateUnconfirmed, domain.ReviewImpactCalculationIntervalImpossible, source.HubID, source.ID, source.ID, source.RawServiceIdentifier, period, reason, []string{source.ID}, source.AccountKey)
+			group = &aggregate{item: item}
+			groups[key] = group
+			continue
+		}
+		group.item.Count++
+		group.item.EvidenceIDs = append(group.item.EvidenceIDs, source.ID)
+		if period.First.Before(group.item.FirstObservedAt) {
+			group.item.FirstObservedAt = period.First.UTC()
+		}
+		if period.Last.After(group.item.LastObservedAt) {
+			group.item.LastObservedAt = period.Last.UTC()
+		}
+	}
+	result := make([]domain.ReviewItem, 0, len(groups))
+	for _, group := range groups {
+		result = append(result, group.item)
+	}
+	return result
 }
 
 func reviewObservationPeriods(observations []reviewObservation) map[reviewSourceKey]reviewPeriod {
@@ -388,9 +430,9 @@ func readReviewSources(ctx context.Context, database *sql.DB, cost bool) ([]revi
 }
 
 func readReviewObservations(ctx context.Context, database *sql.DB, cost bool) ([]reviewObservation, error) {
-	query := `SELECT observation_id, hub_id, device_id, raw_service_identifier, account_key, window_key, plan_label, provider_updated_at, dedupe_state FROM usage_limit_observations`
+	query := `SELECT o.observation_id, o.hub_id, o.device_id, o.raw_service_identifier, o.account_key, o.window_key, o.plan_label, o.provider_updated_at, o.dedupe_state FROM usage_limit_observations o LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation WHERE nr.state = 'active' OR nr.state IS NULL`
 	if cost {
-		query = `SELECT observation_id, hub_id, device_id, raw_service_identifier, '', '', '', usage_updated_at, dedupe_state FROM usage_cost_observations`
+		query = `SELECT o.observation_id, o.hub_id, o.device_id, o.raw_service_identifier, '', '', '', o.usage_updated_at, o.dedupe_state FROM usage_cost_observations o LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation WHERE nr.state = 'active' OR nr.state IS NULL`
 	}
 	rows, err := database.QueryContext(ctx, query)
 	if err != nil {
@@ -539,7 +581,11 @@ func readReviewLabelChanges(ctx context.Context, database *sql.DB) ([]domain.Rev
 }
 
 func readReviewBilling(ctx context.Context, database *sql.DB) ([]domain.ReviewItem, error) {
-	rows, err := database.QueryContext(ctx, `SELECT limit_definition_id, meaning, created_at, updated_at FROM limit_definitions WHERE cycle_type = 'billing' AND billing_confirmation = 'unconfirmed' ORDER BY limit_definition_id`)
+	rows, err := database.QueryContext(ctx, `SELECT ld.limit_definition_id, ld.meaning, ld.created_at, ld.updated_at
+		FROM limit_definitions ld
+		WHERE ld.cycle_type = 'billing' AND ld.billing_confirmation = 'unconfirmed'
+		AND NOT EXISTS (SELECT 1 FROM catalog_bindings cb WHERE cb.entity_type = 'limit_definition' AND cb.entity_id = ld.limit_definition_id AND cb.management_mode = 'observed')
+		ORDER BY ld.limit_definition_id`)
 	if err != nil {
 		return nil, fmt.Errorf("read review billing definitions: %w", err)
 	}
@@ -712,6 +758,9 @@ func readReviewPlanIssues(ctx context.Context, database *sql.DB, sources []revie
 	type issueKey struct{ HubID, SourceID string }
 	issues := make(map[issueKey]*domain.ReviewItem)
 	for _, observation := range observations {
+		if strings.TrimSpace(observation.PlanLabel) == "" {
+			continue
+		}
 		sourceID := sourceIDs[reviewSourceKey{HubID: observation.HubID, DeviceID: observation.DeviceID, RawServiceIdentifier: observation.RawServiceIdentifier, AccountKey: observation.AccountKey, WindowKey: observation.WindowKey}]
 		if sourceID == "" {
 			continue

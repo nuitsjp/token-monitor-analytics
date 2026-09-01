@@ -80,8 +80,8 @@ type BuildIdentity struct {
 
 type Contract struct {
 	Build BuildIdentity
-	// UsageUpdatedAt distinguishes contracts that can participate in
-	// cost-to-limit estimation from collection-only contracts.
+	// UsageUpdatedAt is retained as the capability field name. It means that
+	// the contract supplies a verified device-level usage observation time.
 	UsageUpdatedAt bool
 }
 
@@ -117,14 +117,14 @@ func NewAllowlist(policies ...ContractPolicy) Allowlist {
 	return a
 }
 
-// DefaultAllowlist accepts node-hub core revision 18 and later as a
-// collection-only contract. It is intentionally not estimation-capable
-// because its device rows do not guarantee usageUpdatedAt.
+// DefaultAllowlist accepts node-hub core revision 18 and later as an
+// estimation-capable contract. In this family devices[].updatedAt belongs to
+// the retained usage part and is not advanced by a limits-only publication.
 var DefaultAllowlist = NewAllowlist(ContractPolicy{
 	SchemaVersion:       1,
 	Runtime:             "node-hub",
 	MinimumCoreRevision: 18,
-	UsageUpdatedAt:      false,
+	UsageUpdatedAt:      true,
 })
 
 func (a Allowlist) match(build BuildIdentity) (Contract, bool) {
@@ -302,16 +302,16 @@ func intValue(value any) (int, error) {
 	return int(parsed), nil
 }
 
-func validateUsageUpdatedAt(value any) error {
+func validateDeviceUpdatedAt(value any) error {
 	if value == nil {
-		return errors.New("usageUpdatedAt is null")
+		return errors.New("device updatedAt is null")
 	}
 	text, ok := value.(string)
 	if !ok || text == "" {
-		return errors.New("usageUpdatedAt is not a string")
+		return errors.New("device updatedAt is not a string")
 	}
 	if _, err := time.Parse(time.RFC3339, text); err != nil {
-		return errors.New("usageUpdatedAt is not RFC3339")
+		return errors.New("device updatedAt is not RFC3339")
 	}
 	return nil
 }

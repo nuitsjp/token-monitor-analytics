@@ -115,8 +115,8 @@ func (c *Client) FetchStats(ctx context.Context, secret string) (Result, error) 
 		return Result{Health: health, Contract: contract}, classify("stats", ClassificationInvalidJSON, "response JSON is invalid")
 	}
 	if contract.UsageUpdatedAt {
-		if err := requireUsageUpdatedAt(stats.Value); err != nil {
-			return Result{Health: health, Contract: contract}, classify("stats", ClassificationUnsupported, "stats does not satisfy the usageUpdatedAt contract")
+		if err := requireDeviceUpdatedAt(stats.Value); err != nil {
+			return Result{Health: health, Contract: contract}, classify("stats", ClassificationUnsupported, "stats does not satisfy the device updatedAt contract")
 		}
 	}
 	stats.HTTPStatus = response.StatusCode
@@ -219,7 +219,7 @@ func isTLSError(err error) bool {
 	return strings.Contains(text, "tls") || strings.Contains(text, "certificate") || strings.Contains(text, "x509") || strings.Contains(text, "unknown authority")
 }
 
-func requireUsageUpdatedAt(value any) error {
+func requireDeviceUpdatedAt(value any) error {
 	object, ok := value.(map[string]any)
 	if !ok {
 		return errors.New("stats is not an object")
@@ -230,18 +230,18 @@ func requireUsageUpdatedAt(value any) error {
 	}
 	rows, valid := devices.([]any)
 	if !valid || len(rows) == 0 {
-		return errors.New("usageUpdatedAt is missing")
+		return errors.New("device updatedAt is missing")
 	}
 	for _, row := range rows {
 		device, ok := row.(map[string]any)
 		if !ok {
 			return errors.New("device row is invalid")
 		}
-		marker, exists := device["usageUpdatedAt"]
+		marker, exists := device["updatedAt"]
 		if !exists {
-			return errors.New("usageUpdatedAt is missing")
+			return errors.New("device updatedAt is missing")
 		}
-		if err := validateUsageUpdatedAt(marker); err != nil {
+		if err := validateDeviceUpdatedAt(marker); err != nil {
 			return err
 		}
 	}

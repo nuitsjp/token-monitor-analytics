@@ -9,11 +9,11 @@
 - `/api/health` は HTTP 200 で、`schemaVersion=1`、`runtime=node-hub`、`coreRevision=11`、`runtimeRevision=1` を返した。二回の `hubBuild` は一致した。
 - 認証済み `/api/stats` は HTTP 200 で、応答サイズは 1,349,168 bytes と 1,349,169 bytes だった。
 - `/api/stats` のトップレベルは `updatedAt`、`periods`、`devices`、`projectsIncomplete`、`limits`、`staleAfterMs`、`historyPreview`、`historyRevision`、`deviceHistoryRevision`、`subscriptionsUpdatedAt` だった。
-- 二回とも応答全体に `usageUpdatedAt` が存在しなかった。一方、トップレベルの `updatedAt` は約 1.3 秒で変化したため、利用額観測時刻へ代用できない。
+- 二回とも応答全体に `usageUpdatedAt` は存在しなかった。トップレベルの `updatedAt` は約 1.3 秒で変化する取得集約時刻なので利用額観測時刻へ代用できない。一方、端末単位の `devices[].updatedAt` は利用実績部分に保持される時刻であり、利用枠だけの更新では据え置かれることを core revision 18 と 23 の実装および連続スナップショットで確認した。
 
 HTTP クライアントの固定値は、接続 5 秒、応答全体 15 秒、応答本文上限 8 MiB とする。実測応答に対して約 6 倍の余裕があり、無制限読込みを避けられる。暗黙の再試行は行わない。
 
-収集専用契約は `schemaVersion=1`、`runtime=node-hub`、`coreRevision>=18` とする。build ID は実際に応答したビルドの追跡情報として保存し、互換性判定には使用しない。原 JSONと `providers[].updatedAt` を持つ利用枠観測は収集する一方、`usageUpdatedAt` がない利用額から正規化済み利用額観測や推定観測点を作らない。取得時刻や `devices[].updatedAt` へのフォールバックは実装しない。将来の Hub 更新で契約不一致が発生した場合は実装を新契約へ対応させ、最低 core revision を引き上げる。
+利用実績推定対応契約は `schemaVersion=1`、`runtime=node-hub`、`coreRevision>=18` とする。build ID は実際に応答したビルドの追跡情報として保存し、互換性判定には使用しない。利用額観測時刻には `devices[].updatedAt` を使い、API 最上位時刻、取得時刻、受信時刻への代用は実装しない。将来の Hub 更新で単調性や同時刻同値の契約不一致が発生した場合は、その系列を推定対象外にして新契約への対応を行う。
 
 ## SP-02 Wails Windows 複数ウィンドウ
 
@@ -48,4 +48,4 @@ Alt+F4、DPI・モニター復元、フォーカス非奪取、複数モニタ�
 
 Windows Generic Credential の Target を `TokenMonitorAnalytics/Hub/{Hub 識別子}` に固定し、Hub ごとの書込み、読出し、削除、相互分離を Windows 実機試験で確認した。秘密値は UTF-16LE の blob だけに格納し、Target、エラー、監査へ含めない。評価用共有シークレットもソース、fixture、SQLite、ログ、文書へ保存していない。
 
-原 JSON の許可・禁止・未知フィールド分類は、収集専用契約として確認した評価 Hub のフィクスチャを基準に固定する。利用額推定対応契約は `usageUpdatedAt` を提供する Hub を確認するまで未完了とする。
+原 JSON の許可・禁止・未知フィールド分類は、評価 Hub のフィクスチャを基準に固定する。利用額推定対応契約は端末単位 `updatedAt`、同一時刻同値、時刻後退時の断絶を固定フィクスチャで継続検証する。

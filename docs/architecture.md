@@ -305,6 +305,7 @@ Service は薄い変換層とし、SQL や業務判断を置かない。DB entit
 - `journal_mode` は WAL、`synchronous` は FULL、`foreign_keys` は ON とし、`busy_timeout` を全接続へ適用する。
 - 運用 DB は一つの `Lifecycle` が所有し、各 usecase が独自に `database/sql.DB` を生成しない。
 - マイグレーションは **migrations/** の連番 SQL を埋め込み、アプリは前方向だけを適用する。
+- 既存 DB の前方向マイグレーション前には SQLite Online Backup API で旧スキーマ版の退避を同じアプリデータディレクトリへ一度作り、`integrity_check` と `schema_metadata` を検証できた場合だけ更新する。これは利用者向け ZIP バックアップとは別の局所的な安全策とする。
 - `CurrentSchemaVersion` は SQLite アダプターの一箇所だけに置き、マイグレーション、manifest、復元検証、画面表示が同じ値を参照する。埋め込み済みマイグレーションの最大番号との一致を生成検査で保証する。
 - 復元処理は明示的に対応する `schemaVersion` だけを受理し、暗黙の互換変換はしない。
 - 原 JSON は BLOB、原 API の十進数字句は TEXT、導出数値は REAL とする。

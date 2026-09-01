@@ -740,6 +740,7 @@ export interface OverviewRecentLimitSnapshot {
     "reset": StatusPresentationSnapshot;
     "lastIncrease": OverviewTimeSnapshot;
     "freshness": OverviewFreshnessSnapshot;
+    "observationOnly": boolean;
     "privacyMasked": boolean;
     "accessibleLabel": string;
     "tooltip": string;

@@ -56,6 +56,7 @@ const showcaseLimit: OverviewRecentLimitSnapshot = {
   accountName: "個人アカウント",
   limitName: "Weekly",
   cycleType: "weekly",
+  observationOnly: false,
   remainingPercent: 74.5,
   remainingLabel: "74.5%",
   remainingDetailLabel: "74.50%",

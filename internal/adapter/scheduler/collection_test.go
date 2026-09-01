@@ -205,7 +205,7 @@ func TestSchedulerRestoresEnabledHubAndStopsTimers(t *testing.T) {
 		if request.URL.Path == "/api/stats" {
 			statsCalls.Add(1)
 			statsCollected <- struct{}{}
-			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T00:00:00Z","syncUploadIntervalMs":0}]}`))
+			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T00:00:00Z","syncUploadIntervalMs":0}]}`))
 			return
 		}
 		http.NotFound(writer, request)
@@ -369,7 +369,7 @@ func newSchedulerFixture(t *testing.T, status int, collectionEnabled bool) *sche
 				_, _ = writer.Write([]byte(`{"error":"test failure"}`))
 				return
 			}
-			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","usageUpdatedAt":"2026-08-25T00:00:00Z","syncUploadIntervalMs":0}]}`))
+			_, _ = writer.Write([]byte(`{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T00:00:00Z","syncUploadIntervalMs":0}]}`))
 		default:
 			http.NotFound(writer, request)
 		}

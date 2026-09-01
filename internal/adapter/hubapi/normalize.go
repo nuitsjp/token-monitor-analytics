@@ -19,9 +19,9 @@ import (
 // These versions are persisted with every normalized observation. A change
 // creates a new generation; it never rewrites an existing observation.
 const (
-	NormalizationGeneration   int64 = 1
-	NormalizationRuleVersion        = "api-stats-v1"
-	NormalizationLogicVersion       = "t012-normalize-v1"
+	NormalizationGeneration   int64 = 3
+	NormalizationRuleVersion        = "api-stats-v1-device-updated-at"
+	NormalizationLogicVersion       = "t012-normalize-v3-window-key"
 )
 
 type NormalizedCostObservation struct {
@@ -116,11 +116,15 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 		if !ok || deviceID == "" {
 			return NormalizedStats{}, errors.New("stats deviceId is missing")
 		}
-		usage, usagePresent, usageValid := timestampValue(device["usageUpdatedAt"])
+		usage, usagePresent, usageValid := timestampValue(device["updatedAt"])
 		if usagePresent && !usageValid {
-			return NormalizedStats{}, errors.New("stats usageUpdatedAt is invalid")
+			return NormalizedStats{}, errors.New("stats device updatedAt is invalid")
 		}
 		syncMS, syncPresent, syncValid := nonNegativeInteger(device["syncUploadIntervalMs"])
+		if !syncPresent {
+			zero := int64(0)
+			syncMS, syncPresent, syncValid = &zero, true, true
+		}
 		if syncPresent && !syncValid {
 			// The device remains usable as a raw observation, but cannot be a
 			// matched observation without this metadata.
@@ -300,7 +304,7 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 					DeviceID: deviceID, RawServiceIdentifier: providerID, AccountKey: accountKey,
 					ProviderUpdatedAt: providerUpdated, WindowKey: windowKey,
 					NormalizedKind: normalizedKind, NormalizedMetric: normalizedMetric, NormalizedLabel: normalizedLabel,
-					PlanLabel: planLabel(provider), AbsoluteUsedText: absoluteUsed, AbsoluteLimitText: absoluteLimit,
+					PlanLabel: planLabel(providerID, provider), AbsoluteUsedText: absoluteUsed, AbsoluteLimitText: absoluteLimit,
 					AbsoluteRemainingText: absoluteRemaining, Currency: currency,
 					UsedPercent: used, ResetsAt: cloneTime(reset, resetPresent && resetValid),
 					SyncUploadIntervalMS: cloneInt64(syncMS), LimitsRefreshMS: cloneInt64(refreshMS),
@@ -525,9 +529,11 @@ func asciiLower(value string) string {
 	}, value)
 }
 
-func planLabel(provider map[string]any) string {
-	// accountLabel is intentionally not a fallback. It is not a plan field.
+func planLabel(providerID string, provider map[string]any) string {
 	value, _ := stringValue(provider["planLabel"])
+	if value == "" && asciiLower(strings.TrimSpace(providerID)) == "codex" {
+		value, _ = stringValue(provider["accountLabel"])
+	}
 	return value
 }
 
