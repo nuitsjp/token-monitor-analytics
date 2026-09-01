@@ -187,6 +187,66 @@ describe("CompactWindow", () => {
     ).toBeVisible();
   });
 
+  it("shows only enabled Hubs whose latest collection failed", async () => {
+    const snapshot = overview();
+    const succeeded = snapshot.hubs.items![0];
+    snapshot.hubs.items = [
+      {
+        ...succeeded,
+        id: "hub-resolved",
+        lastFailureAt: "2026-08-26T00:00:00Z",
+      },
+      {
+        ...succeeded,
+        id: "hub-failing",
+        lastCollection: status(
+          "collection_failed",
+          "取得失敗",
+          "danger",
+          "error",
+        ),
+        lastCollectionAt: "2026-08-26T00:06:00Z",
+        lastFailureAt: "2026-08-26T00:06:00Z",
+      },
+      {
+        ...succeeded,
+        id: "hub-disabled",
+        enabled: false,
+        lastCollection: status(
+          "collection_failed",
+          "取得失敗",
+          "danger",
+          "error",
+        ),
+        lastCollectionAt: "2026-08-26T00:07:00Z",
+        lastFailureAt: "2026-08-26T00:07:00Z",
+      },
+    ];
+
+    renderCompact(createFakeBackend({ overview: snapshot }));
+
+    expect(
+      await screen.findByRole("button", {
+        name: "取得エラー 1 Hub。取得履歴を開く",
+      }),
+    ).toHaveTextContent("取得エラー 1 Hub");
+  });
+
+  it("hides the collection error after a later success", async () => {
+    const snapshot = overview();
+    snapshot.hubs.items![0] = {
+      ...snapshot.hubs.items![0],
+      lastFailureAt: "2026-08-26T00:00:00Z",
+    };
+
+    renderCompact(createFakeBackend({ overview: snapshot }));
+
+    expect(await screen.findByText(/Weekly 1$/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /取得エラー/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("QL-UI-07 uses a dedicated dark error-counter fill with at least 4.5:1 white-text contrast", async () => {
     renderCompact(
       createFakeBackend({

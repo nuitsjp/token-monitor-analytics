@@ -482,8 +482,10 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
     (backend.isShowcase && usage?.series?.length
       ? usage.series[usage.series.length - 1]
       : undefined);
-  const failedCollectionCount =
-    snapshot?.hubs.items?.filter((hub) => hub.lastFailureAt).length ?? 0;
+  const failedHubCount =
+    snapshot?.hubs.items?.filter(
+      (hub) => hub.enabled && hub.lastCollection.code === "collection_failed",
+    ).length ?? 0;
   return (
     <>
       <main
@@ -645,16 +647,16 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   </div>
                 ) : null}
                 <div className={styles.meta}>
-                  {failedCollectionCount > 0 ? (
+                  {failedHubCount > 0 ? (
                     <Button
                       appearance="subtle"
                       size="small"
                       className={styles.metaFailure}
                       icon={<Warning16Regular />}
                       onClick={() => openMainRoute("/hubs")}
-                      aria-label={`対象期間に取得失敗 ${failedCollectionCount} 件。取得履歴を開く`}
+                      aria-label={`取得エラー ${failedHubCount} Hub。取得履歴を開く`}
                     >
-                      取得失敗 {failedCollectionCount}
+                      取得エラー {failedHubCount} Hub
                     </Button>
                   ) : (
                     <span />
