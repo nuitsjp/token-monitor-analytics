@@ -233,6 +233,46 @@ func TestNormalizeStatsExtractsPhaseTwoUsageAndNativeAmounts(t *testing.T) {
 	})
 }
 
+func TestNormalizeStatsExtractsSourcePeriodObservations(t *testing.T) {
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-09-03T05:25:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-09-03","endsAt":"2026-09-03T15:00:00Z"},"month":{"key":"2026-09","endsAt":"2026-09-30T15:00:00Z"}},"periods":{"today":{"totalTokens":100,"costUsd":1.25,"clients":{"codex":80,"claude":20},"clientCosts":{"codex":1,"claude":0.25},"models":{"gpt-5":80,"opus":20},"modelCosts":{"gpt-5":1,"opus":0.25},"clientModels":{"codex":{"gpt-5":80}},"clientModelCosts":{"codex":{"gpt-5":1}}},"month":{"totalTokens":500,"costUsd":6.5},"allTime":{"clientCosts":{"codex":10}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-09-03T05:25:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-10T00:00:00Z"}]}]}}]}`
+	result, err := NormalizeStats([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Periods) != 2 {
+		t.Fatalf("periods = %#v", result.Periods)
+	}
+	day, month := result.Periods[0], result.Periods[1]
+	if day.PeriodKind != "day" || day.PeriodKey != "2026-09-03" || day.SourceTimezone != "Asia/Tokyo" || day.TokenCount != 100 || day.APICostUSDText != "1.25" || day.ToolTokens["codex"] != 80 || day.ModelTokens["opus"] != 20 || day.ToolModelTokens["codex"]["gpt-5"] != 80 || day.JSONPath != "$.devices[0].periods.today" {
+		t.Fatalf("day period = %#v", day)
+	}
+	if month.PeriodKind != "month" || month.PeriodKey != "2026-09" || month.TokenCount != 500 || month.JSONPath != "$.devices[0].periods.month" {
+		t.Fatalf("month period = %#v", month)
+	}
+	if !day.PeriodEndsAt.Equal(time.Date(2026, 9, 3, 15, 0, 0, 0, time.UTC)) {
+		t.Fatalf("day endsAt = %s", day.PeriodEndsAt)
+	}
+}
+
+func TestNormalizeStatsSkipsInvalidSourcePeriodsWithoutFailing(t *testing.T) {
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-09-03T05:25:00Z","periodWindows":{"timeZone":"Not/AZone","today":{"key":"2026-09-03","endsAt":"2026-09-03T15:00:00Z"}},"periods":{"today":{"totalTokens":100,"costUsd":1},"allTime":{"clientCosts":{"codex":1}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-09-03T05:25:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-10T00:00:00Z"}]}]}}]}`
+	result, err := NormalizeStats([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Periods) != 0 || len(result.Costs) != 1 {
+		t.Fatalf("invalid timezone should skip periods only: periods=%#v costs=%#v", result.Periods, result.Costs)
+	}
+	missingEnds := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-09-03T05:25:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-09-03"},"month":{"key":"2026-09","endsAt":"2026-09-30T15:00:00Z"}},"periods":{"today":{"totalTokens":100,"costUsd":1},"month":{"totalTokens":500,"costUsd":6},"allTime":{"clientCosts":{"codex":1}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-09-03T05:25:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-10T00:00:00Z"}]}]}}]}`
+	result, err = NormalizeStats([]byte(missingEnds))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Periods) != 1 || result.Periods[0].PeriodKind != "month" {
+		t.Fatalf("missing endsAt should skip only that period: %#v", result.Periods)
+	}
+}
+
 func TestNormalizeStatsKeepsLimitsWithoutDeviceUpdatedAt(t *testing.T) {
 	raw := `{"devices":[{"deviceId":"device-1","periods":{"allTime":{"clientCosts":{"codex":1.5}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
 	result, err := NormalizeStats([]byte(raw))

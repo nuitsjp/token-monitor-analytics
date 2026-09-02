@@ -110,6 +110,10 @@ describe("production Wails adapter contract", () => {
         args: ["series"],
       },
       getUsage: { binding: "UsageService.GetUsage", args: [{ from: "a" }] },
+      getCalendarPeriodUsage: {
+        binding: "UsageService.GetCalendarPeriodUsage",
+        args: [{ displayTimeZone: "Asia/Tokyo" }],
+      },
       exportUsage: {
         binding: "UsageService.ExportUsage",
         args: [{ from: "a" }, "csv"],

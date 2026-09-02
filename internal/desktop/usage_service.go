@@ -21,6 +21,7 @@ const usageExportSchemaVersion = "2"
 type UsageReader interface {
 	ListUsageAnalysisObservations(context.Context) ([]domain.UsageObservation, error)
 	ListUsageNativeAmounts(context.Context) ([]domain.UsageNativeAmount, error)
+	ListUsagePeriodObservations(context.Context) ([]domain.UsagePeriodObservation, error)
 }
 
 type UsageService struct {
@@ -114,17 +115,44 @@ type UsageNativeAmountSnapshot struct {
 }
 
 type UsageSnapshot struct {
-	GeneratedAt     string                      `json:"generatedAt"`
-	From            string                      `json:"from"`
-	To              string                      `json:"to"`
+	GeneratedAt                 string                      `json:"generatedAt"`
+	From                        string                      `json:"from"`
+	To                          string                      `json:"to"`
+	DisplayTimeZone             string                      `json:"displayTimeZone"`
+	Granularity                 string                      `json:"granularity"`
+	GroupBy                     string                      `json:"groupBy"`
+	Summary                     UsageSummarySnapshot        `json:"summary"`
+	Series                      []UsagePointSnapshot        `json:"series"`
+	Breakdown                   []UsageBreakdownSnapshot    `json:"breakdown"`
+	NativeAmounts               []UsageNativeAmountSnapshot `json:"nativeAmounts"`
+	Evidence                    []UsageEvidenceSnapshot     `json:"evidence"`
+	UnallocatedObservationCount int                         `json:"unallocatedObservationCount"`
+	UnallocatedTokens           int64                       `json:"unallocatedTokens"`
+	UnallocatedAPICostUSD       float64                     `json:"unallocatedApiCostUsd"`
+	UnallocatedAPICostUSDText   string                      `json:"unallocatedApiCostUsdText"`
+}
+
+type CalendarPeriodUsageInput struct {
+	DisplayTimeZone string `json:"displayTimeZone"`
+}
+
+type CalendarPeriodValueSnapshot struct {
+	Available         bool    `json:"available"`
+	PeriodKind        string  `json:"periodKind"`
+	PeriodKey         string  `json:"periodKey"`
+	Tokens            int64   `json:"tokens"`
+	APICostUSD        float64 `json:"apiCostUsd"`
+	APICostUSDText    string  `json:"apiCostUsdText"`
+	LatestObservedAt  string  `json:"latestObservedAt"`
+	OldestObservedAt  string  `json:"oldestObservedAt"`
+	DeviceCount       int     `json:"deviceCount"`
+	UnavailableReason string  `json:"unavailableReason"`
+}
+
+type CalendarPeriodUsageSnapshot struct {
 	DisplayTimeZone string                      `json:"displayTimeZone"`
-	Granularity     string                      `json:"granularity"`
-	GroupBy         string                      `json:"groupBy"`
-	Summary         UsageSummarySnapshot        `json:"summary"`
-	Series          []UsagePointSnapshot        `json:"series"`
-	Breakdown       []UsageBreakdownSnapshot    `json:"breakdown"`
-	NativeAmounts   []UsageNativeAmountSnapshot `json:"nativeAmounts"`
-	Evidence        []UsageEvidenceSnapshot     `json:"evidence"`
+	Day             CalendarPeriodValueSnapshot `json:"day"`
+	Month           CalendarPeriodValueSnapshot `json:"month"`
 }
 
 type UsageExportSnapshot struct {
@@ -179,8 +207,15 @@ func (s *UsageService) GetUsage(ctx context.Context, input UsageFilterInput) (Us
 		return UsageSnapshot{}, err
 	}
 	filtered := make([]domain.UsageDelta, 0, len(deltas))
+	unallocated := make([]domain.UsageDelta, 0)
 	for _, delta := range deltas {
 		if delta.EndAt.Before(from) || !delta.EndAt.Before(to) || !matchesUsageFilter(delta, input) {
+			continue
+		}
+		startBucket, _ := usagePeriod(delta.StartAt, granularityOrDefault(input.Granularity), location)
+		endBucket, _ := usagePeriod(delta.EndAt, granularityOrDefault(input.Granularity), location)
+		if !startBucket.Equal(endBucket) {
+			unallocated = append(unallocated, delta)
 			continue
 		}
 		filtered = append(filtered, delta)
@@ -201,6 +236,7 @@ func (s *UsageService) GetUsage(ctx context.Context, input UsageFilterInput) (Us
 		GeneratedAt: s.clock.Now().UTC().Format(time.RFC3339Nano), From: from.Format(time.RFC3339Nano), To: to.Format(time.RFC3339Nano),
 		DisplayTimeZone: input.DisplayTimeZone, Granularity: granularity, GroupBy: groupBy,
 		Series: []UsagePointSnapshot{}, Breakdown: []UsageBreakdownSnapshot{}, NativeAmounts: []UsageNativeAmountSnapshot{}, Evidence: []UsageEvidenceSnapshot{},
+		UnallocatedAPICostUSDText: "0",
 	}
 	series := make(map[string]*UsagePointSnapshot)
 	seriesBreakdown := make(map[string]map[string]*UsageBreakdownSnapshot)
@@ -242,6 +278,14 @@ func (s *UsageService) GetUsage(ctx context.Context, input UsageFilterInput) (Us
 		}
 		result.Evidence = append(result.Evidence, usageEvidence(delta))
 	}
+	for _, delta := range unallocated {
+		tokens, cost := usageDeltaValues(delta, input.Model)
+		result.UnallocatedObservationCount++
+		result.UnallocatedTokens += tokens
+		result.UnallocatedAPICostUSDText = addDecimal(result.UnallocatedAPICostUSDText, cost)
+		result.Evidence = append(result.Evidence, usageEvidence(delta))
+	}
+	result.UnallocatedAPICostUSD = decimalFloat(result.UnallocatedAPICostUSDText)
 	result.Summary.SourceCount = len(sources)
 	result.Summary.APICostUSD = decimalFloat(result.Summary.APICostUSDText)
 	result.Summary.SharedAPICostUSD = decimalFloat(result.Summary.SharedAPICostUSDText)
@@ -276,6 +320,68 @@ func (s *UsageService) GetUsage(ctx context.Context, input UsageFilterInput) (Us
 		})
 	}
 	return result, nil
+}
+
+func granularityOrDefault(value string) string {
+	if value == "" {
+		return "day"
+	}
+	return value
+}
+
+func (s *UsageService) GetCalendarPeriodUsage(ctx context.Context, input CalendarPeriodUsageInput) (CalendarPeriodUsageSnapshot, error) {
+	location, err := s.timezone.LoadLocation(input.DisplayTimeZone)
+	if err != nil {
+		return CalendarPeriodUsageSnapshot{}, err
+	}
+	now := s.clock.Now().UTC()
+	local := now.In(location)
+	observations, err := s.reader.ListUsagePeriodObservations(ctx)
+	if err != nil {
+		return CalendarPeriodUsageSnapshot{}, err
+	}
+	return CalendarPeriodUsageSnapshot{
+		DisplayTimeZone: input.DisplayTimeZone,
+		Day:             aggregateCalendarPeriod(observations, domain.UsagePeriodKindDay, local.Format("2006-01-02"), input.DisplayTimeZone, now),
+		Month:           aggregateCalendarPeriod(observations, domain.UsagePeriodKindMonth, local.Format("2006-01"), input.DisplayTimeZone, now),
+	}, nil
+}
+
+func aggregateCalendarPeriod(observations []domain.UsagePeriodObservation, kind, key, displayTimeZone string, now time.Time) CalendarPeriodValueSnapshot {
+	result := CalendarPeriodValueSnapshot{PeriodKind: kind, PeriodKey: key, UnavailableReason: "未取得", APICostUSDText: "0"}
+	type deviceKey struct{ hubID, deviceID string }
+	latest := make(map[deviceKey]domain.UsagePeriodObservation)
+	for _, item := range observations {
+		if item.PeriodKind != kind || item.PeriodKey != key || item.SourceTimezone != displayTimeZone || !item.PeriodEndsAt.After(now) {
+			continue
+		}
+		id := deviceKey{item.HubID, item.DeviceID}
+		existing, ok := latest[id]
+		if !ok || item.UsageUpdatedAt.After(existing.UsageUpdatedAt) || (item.UsageUpdatedAt.Equal(existing.UsageUpdatedAt) && item.ID > existing.ID) {
+			latest[id] = item
+		}
+	}
+	if len(latest) == 0 {
+		return result
+	}
+	var oldest, newest time.Time
+	for _, item := range latest {
+		result.Tokens += item.TokenCount
+		result.APICostUSDText = addDecimal(result.APICostUSDText, item.APICostUSDText)
+		result.DeviceCount++
+		if oldest.IsZero() || item.UsageUpdatedAt.Before(oldest) {
+			oldest = item.UsageUpdatedAt
+		}
+		if newest.IsZero() || item.UsageUpdatedAt.After(newest) {
+			newest = item.UsageUpdatedAt
+		}
+	}
+	result.Available = true
+	result.UnavailableReason = ""
+	result.APICostUSD = decimalFloat(result.APICostUSDText)
+	result.LatestObservedAt = newest.UTC().Format(time.RFC3339Nano)
+	result.OldestObservedAt = oldest.UTC().Format(time.RFC3339Nano)
+	return result
 }
 
 func (s *UsageService) ExportUsage(ctx context.Context, input UsageFilterInput, format string) (UsageExportSnapshot, error) {

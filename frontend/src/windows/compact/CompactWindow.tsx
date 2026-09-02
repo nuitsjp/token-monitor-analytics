@@ -33,21 +33,15 @@ import { Gauge } from "../../components/design";
 import { designTokens } from "../../components/designTokens";
 import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
 import type {
+  CalendarPeriodUsageSnapshot,
   FrontendAdapter,
   OverviewRecentLimitSnapshot,
   OverviewSnapshot,
-  UsageSnapshot,
 } from "../../lib/backend";
 import {
   formatOverviewInstant,
   splitOverviewInstant,
 } from "../../lib/overviewDisplay";
-import {
-  addLocalDays,
-  currentDateInZone,
-  firstDateOfMonth,
-  zonedMidnight,
-} from "../../lib/usageTime";
 
 export const compactRefreshMilliseconds = 30_000;
 
@@ -325,7 +319,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
   );
   const [privacyMode, setPrivacyMode] = useState(false);
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null);
-  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
+  const [usage, setUsage] = useState<CalendarPeriodUsageSnapshot | null>(null);
   const hasSnapshot = useRef(false);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -375,30 +369,10 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
       if (hasSnapshot.current) setUpdating(true);
       else setLoading(true);
       try {
-        const currentDate = currentDateInZone(settings.displayTimeZone);
         const [value, usageValue] = await Promise.all([
           backend.getOverview(privacyMode),
-          backend.getUsage({
-            from: zonedMidnight(
-              firstDateOfMonth(currentDate),
-              settings.displayTimeZone,
-            ),
-            to: zonedMidnight(
-              addLocalDays(currentDate, 1),
-              settings.displayTimeZone,
-            ),
+          backend.getCalendarPeriodUsage({
             displayTimeZone: settings.displayTimeZone,
-            granularity: "day",
-            groupBy: "hub",
-            hubId: "",
-            collectionDeviceId: "",
-            deviceId: "",
-            serviceId: "",
-            rawServiceIdentifier: "",
-            logicalAccountId: "",
-            planVersionId: "",
-            limitDefinitionId: "",
-            model: "",
           }),
         ]);
         if (!active) return;
@@ -471,18 +445,18 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
     ).date;
     return date.length > widest.length ? date : widest;
   }, "");
-  const usageForCurrentDate = usage?.series?.find(
-    (item) =>
-      currentDateInZone(
-        settings.displayTimeZone,
-        new Date(item.periodStart),
-      ) === currentDateInZone(settings.displayTimeZone),
-  );
-  const todayUsage =
-    usageForCurrentDate ??
-    (backend.isShowcase && usage?.series?.length
-      ? usage.series[usage.series.length - 1]
-      : undefined);
+  const todayUsage = usage?.day;
+  const monthUsage = usage?.month;
+  const usageObservedTimes = [
+    todayUsage?.latestObservedAt,
+    monthUsage?.latestObservedAt,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  const usageObservedAt =
+    usageObservedTimes.length > 0
+      ? usageObservedTimes[usageObservedTimes.length - 1]
+      : undefined;
   const failedHubCount =
     snapshot?.hubs.items?.filter(
       (hub) => hub.enabled && hub.lastCollection.code === "collection_failed",
@@ -631,8 +605,11 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   <div className={styles.usageSummary}>
                     <UsageRow
                       label="Today"
+                      available={Boolean(todayUsage?.available)}
                       tokens={todayUsage?.tokens ?? 0}
                       cost={todayUsage?.apiCostUsd ?? 0}
+                      observedAt={todayUsage?.latestObservedAt}
+                      displayTimeZone={settings.displayTimeZone}
                       privacyMode={privacyMode}
                       className={styles.usageRowDivider}
                       styles={styles}
@@ -640,8 +617,11 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                     />
                     <UsageRow
                       label="Month"
-                      tokens={usage.summary.tokens}
-                      cost={usage.summary.apiCostUsd}
+                      available={Boolean(monthUsage?.available)}
+                      tokens={monthUsage?.tokens ?? 0}
+                      cost={monthUsage?.apiCostUsd ?? 0}
+                      observedAt={monthUsage?.latestObservedAt}
+                      displayTimeZone={settings.displayTimeZone}
                       privacyMode={privacyMode}
                       styles={styles}
                       onClick={() => openMainRoute("/usage")}
@@ -665,7 +645,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   )}
                   <Caption1 className={styles.update}>
                     {formatOverviewInstant(
-                      snapshot.generatedAt,
+                      usageObservedAt ?? snapshot.generatedAt,
                       settings.displayTimeZone,
                     )}{" "}
                     更新
@@ -865,34 +845,52 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
 
 function UsageRow({
   label,
+  available,
   tokens: tokenCount,
   cost,
+  observedAt,
+  displayTimeZone,
   privacyMode,
   className,
   styles,
   onClick,
 }: {
   label: string;
+  available: boolean;
   tokens: number;
   cost: number;
+  observedAt?: string;
+  displayTimeZone: string;
   privacyMode: boolean;
   className?: string;
   styles: ReturnType<typeof useStyles>;
   onClick: () => void;
 }) {
-  const value = privacyMode ? "••••" : integerFormatter.format(tokenCount);
-  const costValue = privacyMode ? "••••" : usdFormatter.format(cost);
+  const value = !available
+    ? "未取得"
+    : privacyMode
+      ? "••••"
+      : integerFormatter.format(tokenCount);
+  const costValue = !available
+    ? "—"
+    : privacyMode
+      ? "••••"
+      : usdFormatter.format(cost);
+  const observedLabel =
+    available && observedAt
+      ? formatOverviewInstant(observedAt, displayTimeZone)
+      : "";
   return (
     <button
       type="button"
       className={mergeClasses(styles.usageRow, className)}
       onClick={onClick}
-      aria-label={`${label} の利用トークン ${value}、API換算利用金額 ${costValue}。利用実績を開く`}
+      aria-label={`${label} の利用トークン ${value}、API換算利用金額 ${costValue}${observedLabel ? `、観測時刻 ${observedLabel}` : ""}。利用実績を開く`}
     >
       <span className={styles.usageLabel}>{label}</span>
       <span className={styles.usageValue}>
         {value}
-        <span className={styles.usageUnit}>tokens</span>
+        {available ? <span className={styles.usageUnit}>tokens</span> : null}
       </span>
       <span className={styles.usageCost}>{costValue}</span>
     </button>

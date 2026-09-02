@@ -19,6 +19,8 @@ type CostObservation = domain.CostObservation
 
 type UsageObservation = domain.CollectionUsageObservation
 
+type UsagePeriodObservation = domain.CollectionUsagePeriodObservation
+
 type LimitObservation = domain.LimitObservation
 
 func (l *Lifecycle) CreateCollectionAttempt(ctx context.Context, attempt CollectionAttempt) error {
@@ -256,13 +258,13 @@ func (l *Lifecycle) insertLimitObservationsTx(ctx context.Context, tx *sql.Tx, o
 // side fails, no normalized row is committed and the raw snapshot remains the
 // evidence of the attempted collection.
 func (l *Lifecycle) InsertObservations(ctx context.Context, costs []CostObservation, limits []LimitObservation) error {
-	return l.InsertAllObservations(ctx, costs, nil, limits)
+	return l.InsertAllObservations(ctx, costs, nil, limits, nil)
 }
 
 // InsertAllObservations commits every normalized observation derived from one
 // raw snapshot in one transaction.
-func (l *Lifecycle) InsertAllObservations(ctx context.Context, costs []CostObservation, usage []UsageObservation, limits []LimitObservation) error {
-	if len(costs) == 0 && len(usage) == 0 && len(limits) == 0 {
+func (l *Lifecycle) InsertAllObservations(ctx context.Context, costs []CostObservation, usage []UsageObservation, limits []LimitObservation, periods []UsagePeriodObservation) error {
+	if len(costs) == 0 && len(usage) == 0 && len(limits) == 0 && len(periods) == 0 {
 		return nil
 	}
 	database, err := l.DB()
@@ -283,7 +285,10 @@ func (l *Lifecycle) InsertAllObservations(ctx context.Context, costs []CostObser
 	if err := l.insertLimitObservationsTx(ctx, tx, limits); err != nil {
 		return err
 	}
-	if err := recordActiveNormalizationTx(ctx, tx, costs, usage, limits); err != nil {
+	if err := l.insertUsagePeriodObservationsTx(ctx, tx, periods); err != nil {
+		return err
+	}
+	if err := recordActiveNormalizationTx(ctx, tx, costs, usage, limits, periods); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -350,6 +355,68 @@ func (l *Lifecycle) insertUsageObservationsTx(ctx context.Context, tx *sql.Tx, o
 		}
 		if err := insertUsageOccurrence(ctx, tx, observation.ObservationID, observation); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (l *Lifecycle) insertUsagePeriodObservationsTx(ctx context.Context, tx *sql.Tx, observations []UsagePeriodObservation) error {
+	for _, observation := range observations {
+		if err := validateUsagePeriodObservation(observation); err != nil {
+			return err
+		}
+		decision, err := usagePeriodDedupeDecision(ctx, tx, observation)
+		if err != nil {
+			return err
+		}
+		if decision.existingID != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE usage_period_observations SET snapshot_id = ?, json_path = ? WHERE period_observation_id = ?`, observation.SnapshotID, observation.JSONPath, decision.existingID); err != nil {
+				return fmt.Errorf("refresh usage period observation snapshot: %w", err)
+			}
+			continue
+		}
+		state := decision.state
+		if state == "conflict" {
+			if _, err := tx.ExecContext(ctx, `UPDATE usage_period_observations SET dedupe_state = 'conflict' WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? AND value_fingerprint <> ?`, observation.HubID, observation.DedupeKey, observation.NormalizationGeneration, observation.ValueFingerprint); err != nil {
+				return fmt.Errorf("mark usage period conflict: %w", err)
+			}
+		}
+		toolTokens, err := marshalJSONObject(observation.ToolTokens)
+		if err != nil {
+			return fmt.Errorf("encode usage period tool tokens: %w", err)
+		}
+		toolCosts, err := marshalJSONObject(observation.ToolCosts)
+		if err != nil {
+			return fmt.Errorf("encode usage period tool costs: %w", err)
+		}
+		modelTokens, err := marshalJSONObject(observation.ModelTokens)
+		if err != nil {
+			return fmt.Errorf("encode usage period model tokens: %w", err)
+		}
+		modelCosts, err := marshalJSONObject(observation.ModelCosts)
+		if err != nil {
+			return fmt.Errorf("encode usage period model costs: %w", err)
+		}
+		toolModelTokens, err := marshalJSONObject(observation.ToolModelTokens)
+		if err != nil {
+			return fmt.Errorf("encode usage period tool model tokens: %w", err)
+		}
+		toolModelCosts, err := marshalJSONObject(observation.ToolModelCosts)
+		if err != nil {
+			return fmt.Errorf("encode usage period tool model costs: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO usage_period_observations
+			(period_observation_id, snapshot_id, hub_id, device_id, period_kind, period_key, period_ends_at, usage_updated_at,
+			source_timezone, token_count, api_cost_usd_text, tool_tokens_json, tool_costs_json, model_tokens_json, model_costs_json,
+			tool_model_tokens_json, tool_model_costs_json, normalization_generation, normalization_rule_version, normalization_logic_version,
+			json_path, dedupe_state, dedupe_key, value_fingerprint)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			observation.ObservationID, observation.SnapshotID, observation.HubID, observation.DeviceID, observation.PeriodKind, observation.PeriodKey,
+			utcText(observation.PeriodEndsAt), utcText(observation.UsageUpdatedAt), observation.SourceTimezone, observation.TokenCount,
+			nullText(observation.APICostUSDText), toolTokens, toolCosts, modelTokens, modelCosts, toolModelTokens, toolModelCosts,
+			observation.NormalizationGeneration, observation.NormalizationRuleVersion, observation.NormalizationLogicVersion,
+			observation.JSONPath, state, observation.DedupeKey, observation.ValueFingerprint); err != nil {
+			return fmt.Errorf("insert usage period observation: %w", err)
 		}
 	}
 	return nil
@@ -678,6 +745,27 @@ func validateUsageObservation(value UsageObservation) error {
 	return nil
 }
 
+func validateUsagePeriodObservation(value UsagePeriodObservation) error {
+	if value.ObservationID == "" || value.SnapshotID == "" || value.HubID == "" || value.DeviceID == "" || (value.PeriodKind != domain.UsagePeriodKindDay && value.PeriodKind != domain.UsagePeriodKindMonth) || value.PeriodKey == "" || value.PeriodEndsAt.IsZero() || value.UsageUpdatedAt.IsZero() || value.SourceTimezone == "" || value.TokenCount < 0 || value.NormalizationGeneration <= 0 || value.JSONPath == "" || value.DedupeKey == "" || value.ValueFingerprint == "" {
+		return errors.New("usage period observation has an empty or invalid required field")
+	}
+	return nil
+}
+
+func marshalJSONObject(value any) (string, error) {
+	if value == nil {
+		return "{}", nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	if string(encoded) == "null" {
+		return "{}", nil
+	}
+	return string(encoded), nil
+}
+
 func validateLimitObservation(value LimitObservation) error {
 	if value.ObservationID == "" || value.SnapshotID == "" || value.HubID == "" || value.DeviceID == "" || value.RawServiceIdentifier == "" || value.ProviderUpdatedAt.IsZero() || value.JSONPath == "" || value.DedupeKey == "" || value.ValueFingerprint == "" || value.AnalyticsIntervalSeconds <= 0 {
 		return errors.New("limit observation has an empty required field")
@@ -724,6 +812,25 @@ func usageDedupeDecision(ctx context.Context, tx *sql.Tx, value UsageObservation
 	}
 	if err != nil {
 		return observationDedupeDecision{}, fmt.Errorf("check usage conflict: %w", err)
+	}
+	return observationDedupeDecision{state: "conflict"}, nil
+}
+
+func usagePeriodDedupeDecision(ctx context.Context, tx *sql.Tx, value UsagePeriodObservation) (observationDedupeDecision, error) {
+	var existingID string
+	err := tx.QueryRowContext(ctx, `SELECT period_observation_id FROM usage_period_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? AND value_fingerprint = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration, value.ValueFingerprint).Scan(&existingID)
+	if err == nil {
+		return observationDedupeDecision{existingID: existingID}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return observationDedupeDecision{}, fmt.Errorf("check exact usage period duplicate: %w", err)
+	}
+	err = tx.QueryRowContext(ctx, `SELECT period_observation_id FROM usage_period_observations WHERE hub_id = ? AND dedupe_key = ? AND normalization_generation = ? LIMIT 1`, value.HubID, value.DedupeKey, value.NormalizationGeneration).Scan(&existingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return observationDedupeDecision{state: "canonical"}, nil
+	}
+	if err != nil {
+		return observationDedupeDecision{}, fmt.Errorf("check usage period conflict: %w", err)
 	}
 	return observationDedupeDecision{state: "conflict"}, nil
 }

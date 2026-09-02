@@ -238,6 +238,9 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 			return domain.PurgeResult{}, fmt.Errorf("delete purge usage analysis observations: %w", err)
 		}
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_period_observations WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`)`, stringsToAny(snapshotIDs)...); err != nil {
+		return domain.PurgeResult{}, fmt.Errorf("delete purge usage period observations: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM raw_snapshots WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`)`, stringsToAny(snapshotIDs)...); err != nil {
 		return domain.PurgeResult{}, fmt.Errorf("delete purge raw snapshots: %w", err)
 	}

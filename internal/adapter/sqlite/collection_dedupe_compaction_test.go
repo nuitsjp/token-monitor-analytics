@@ -51,7 +51,7 @@ func collectionDedupeCompactionCases() []collectionDedupeCompactionCase {
 					NormalizationGeneration: generation, NormalizationRuleVersion: "rule-v1",
 					NormalizationLogicVersion: "logic-v1", JSONPath: "$.usage", DedupeKey: "same-key",
 					ValueFingerprint: fingerprint,
-				}}, nil)
+				}}, nil, nil)
 			},
 		},
 		{
