@@ -142,7 +142,7 @@ func mainCollectionDependencies() usecase.CollectionDependencies {
 				normalized.Usage = append(normalized.Usage, usecase.NormalizedUsageObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
 			}
 			for _, item := range result.Limits {
-				normalized.Limits = append(normalized.Limits, usecase.NormalizedLimitObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
+				normalized.Limits = append(normalized.Limits, usecase.NormalizedLimitObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, AccountKeyKind: item.AccountKeyKind, AccountLabel: item.AccountLabel, AccountEmail: item.AccountEmail, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
 			}
 			return normalized, nil
 		},
@@ -229,6 +229,36 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("start usage service: %w", err)
 	}
+	recalculationWorker, err := usecase.NewRecalculationWorker(storage.lifecycle, "desktop-worker")
+	if err != nil {
+		return fmt.Errorf("start recalculation worker: %w", err)
+	}
+	recalcCtx, cancelRecalc := context.WithCancel(context.Background())
+	defer cancelRecalc()
+	triggerRecalc := make(chan struct{}, 1)
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-recalcCtx.Done():
+				return
+			case <-ticker.C:
+			case <-triggerRecalc:
+			}
+			for {
+				claimed, err := recalculationWorker.RunOnce(recalcCtx)
+				if err != nil || !claimed || recalcCtx.Err() != nil {
+					break
+				}
+			}
+		}
+	}()
+	select {
+	case triggerRecalc <- struct{}{}:
+	default:
+	}
+
 	collector, err := usecase.NewCollectionUsecase(
 		storage.lifecycle,
 		credentials,
@@ -238,8 +268,14 @@ func run() (runErr error) {
 		func() usecase.CollectionDependencies {
 			dependencies := mainCollectionDependencies()
 			dependencies.AfterSuccessfulCollection = func(ctx context.Context, hubID string) error {
-				_, err := reconciliation.Reconcile(ctx, hubID)
-				return err
+				if _, err := reconciliation.Reconcile(ctx, hubID); err != nil {
+					return err
+				}
+				select {
+				case triggerRecalc <- struct{}{}:
+				default:
+				}
+				return nil
 			}
 			return dependencies
 		}(),

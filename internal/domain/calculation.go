@@ -226,7 +226,7 @@ func DeriveCalculationIntervals(series CalculationSeries, request CalculationBui
 		}
 		return observations[a].ObservedAt.Before(observations[b].ObservedAt)
 	})
-	resetTimes := uniqueResetTimes(observations, request)
+	resetTimes := uniqueResetTimes(observations, series.CycleType, request)
 	if len(resetTimes) < 2 {
 		return nil, nil, nil
 	}
@@ -347,24 +347,39 @@ func DeriveCalculationIntervals(series CalculationSeries, request CalculationBui
 	return result, boundaries, nil
 }
 
-func uniqueResetTimes(observations []CalculationObservation, request CalculationBuildRequest) []time.Time {
-	seen := make(map[string]time.Time)
+func uniqueResetTimes(observations []CalculationObservation, cycleType string, request CalculationBuildRequest) []time.Time {
+	rawTimes := make([]time.Time, 0)
 	for _, observation := range observations {
 		if observation.ResetAt == nil {
 			continue
 		}
 		reset := observation.ResetAt.UTC()
-		if reset.Before(request.ValidFrom) || reset.After(request.ValidTo) {
+		rawTimes = append(rawTimes, reset)
+		switch cycleType {
+		case LimitCycleWeekly:
+			rawTimes = append(rawTimes, reset.AddDate(0, 0, -7))
+		case LimitCycleBilling:
+			rawTimes = append(rawTimes, reset.AddDate(0, -1, 0))
+		}
+	}
+	sort.Slice(rawTimes, func(a, b int) bool { return rawTimes[a].Before(rawTimes[b]) })
+
+	clustered := make([]time.Time, 0)
+	for _, t := range rawTimes {
+		if t.Before(request.ValidFrom) || t.After(request.ValidTo) {
 			continue
 		}
-		seen[reset.Format(time.RFC3339Nano)] = reset
+		if len(clustered) == 0 {
+			clustered = append(clustered, t)
+			continue
+		}
+		last := clustered[len(clustered)-1]
+		if t.Sub(last) <= 10*time.Minute {
+			continue
+		}
+		clustered = append(clustered, t)
 	}
-	result := make([]time.Time, 0, len(seen))
-	for _, value := range seen {
-		result = append(result, value)
-	}
-	sort.Slice(result, func(a, b int) bool { return result[a].Before(result[b]) })
-	return result
+	return clustered
 }
 
 func appendPeriodPoints(points *[]time.Time, period CalculationPeriod, start, end time.Time) {

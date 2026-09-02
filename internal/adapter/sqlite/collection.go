@@ -224,14 +224,15 @@ func (l *Lifecycle) insertLimitObservationsTx(ctx context.Context, tx *sql.Tx, o
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO usage_limit_observations
-				(observation_id, snapshot_id, hub_id, device_id, raw_service_identifier, account_key, provider_updated_at,
+				(observation_id, snapshot_id, hub_id, device_id, raw_service_identifier, account_key, account_key_kind, account_display_name, account_email, provider_updated_at,
 				window_key, normalized_kind, normalized_metric, normalized_label, plan_label, used_percent, resets_at,
 				sync_upload_interval_ms, limits_refresh_ms, analytics_interval_seconds, source_timezone, source_local_date,
 				normalization_generation, normalization_rule_version, normalization_logic_version, json_path,
 				dedupe_state, dedupe_key, value_fingerprint)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			observation.ObservationID, observation.SnapshotID, observation.HubID, observation.DeviceID,
-			observation.RawServiceIdentifier, observation.AccountKey, utcText(observation.ProviderUpdatedAt), observation.WindowKey,
+			observation.RawServiceIdentifier, observation.AccountKey, observation.AccountKeyKind, observation.AccountDisplayName, observation.AccountEmail,
+			utcText(observation.ProviderUpdatedAt), observation.WindowKey,
 			observation.NormalizedKind, observation.NormalizedMetric, observation.NormalizedLabel, observation.PlanLabel, nullableFloat64(observation.UsedPercent),
 			nullableTime(observation.ResetsAt), nullableInt64(observation.SyncUploadIntervalMS), nullableInt64(observation.LimitsRefreshMS),
 			observation.AnalyticsIntervalSeconds, nullText(observation.SourceTimezone), nullText(observation.SourceLocalDate),
@@ -368,8 +369,9 @@ func upsertHubAccountCandidateFromLimitObservationTx(ctx context.Context, tx *sq
 	}
 	candidate := HubAccountCandidate{
 		ID: observation.HubAccountCandidateID, HubID: observation.HubID, ServiceID: serviceID,
-		AccountKey: observation.AccountKey,
-		State:      domain.HubAccountCandidateUnconfirmed, FirstObservedAt: normalizedTimePtr(&observation.ProviderUpdatedAt),
+		AccountKey: observation.AccountKey, AccountKeyKind: observation.AccountKeyKind,
+		DisplayName: observation.AccountDisplayName, Email: observation.AccountEmail,
+		State: domain.HubAccountCandidateUnconfirmed, FirstObservedAt: normalizedTimePtr(&observation.ProviderUpdatedAt),
 		LastObservedAt: normalizedTimePtr(&observation.ProviderUpdatedAt), CreatedAt: observation.ProviderUpdatedAt, UpdatedAt: observation.ProviderUpdatedAt,
 	}
 	if err := candidate.Validate(); err != nil {
@@ -579,7 +581,7 @@ func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) (re
 		JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id
 	)
 		SELECT o.observation_id, o.snapshot_id, o.hub_id, o.device_id, o.raw_service_identifier,
-		account_key, provider_updated_at, window_key, normalized_kind, normalized_metric, normalized_label, plan_label,
+		account_key, account_key_kind, account_display_name, account_email, provider_updated_at, window_key, normalized_kind, normalized_metric, normalized_label, plan_label,
 		used_percent, resets_at, sync_upload_interval_ms, limits_refresh_ms, analytics_interval_seconds,
 		source_timezone, source_local_date, normalization_generation, normalization_rule_version, normalization_logic_version,
 		json_path, dedupe_state, dedupe_key, value_fingerprint, COALESCE(s.occurrence_count, 1),
@@ -604,7 +606,7 @@ func (l *Lifecycle) ListLimitObservations(ctx context.Context, hubID string) (re
 		var used sql.NullFloat64
 		var syncMS, refreshMS sql.NullInt64
 		if err := rows.Scan(&item.ObservationID, &item.SnapshotID, &item.HubID, &item.DeviceID, &item.RawServiceIdentifier,
-			&item.AccountKey, &updated, &item.WindowKey, &item.NormalizedKind, &item.NormalizedMetric, &item.NormalizedLabel,
+			&item.AccountKey, &item.AccountKeyKind, &item.AccountDisplayName, &item.AccountEmail, &updated, &item.WindowKey, &item.NormalizedKind, &item.NormalizedMetric, &item.NormalizedLabel,
 			&item.PlanLabel, &used, &reset, &syncMS, &refreshMS, &item.AnalyticsIntervalSeconds, &sourceTimezone, &sourceDate,
 			&item.NormalizationGeneration, &item.NormalizationRuleVersion, &item.NormalizationLogicVersion, &item.JSONPath,
 			&item.DedupeState, &item.DedupeKey, &item.ValueFingerprint, &item.OccurrenceCount, &firstSeen, &lastSeen,

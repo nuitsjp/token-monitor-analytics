@@ -160,6 +160,7 @@ const useStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
     letterSpacing: ".04em",
     textTransform: "uppercase",
+    whiteSpace: "nowrap",
   },
   usageValue: {
     minWidth: 0,
@@ -638,7 +639,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                       onClick={() => openMainRoute("/usage")}
                     />
                     <UsageRow
-                      label="This month"
+                      label="Month"
                       tokens={usage.summary.tokens}
                       cost={usage.summary.apiCostUsd}
                       privacyMode={privacyMode}

@@ -87,6 +87,9 @@ type NormalizedLimitObservation struct {
 	DeviceID              string
 	RawServiceIdentifier  string
 	AccountKey            string
+	AccountKeyKind        string
+	AccountLabel          string
+	AccountEmail          string
 	ProviderUpdatedAt     time.Time
 	WindowKey             string
 	NormalizedKind        string
@@ -353,7 +356,7 @@ func buildObservationBatch(normalized NormalizedStats, snapshotID, hubID string,
 	}
 	limits := make([]domain.LimitObservation, 0, len(normalized.Limits))
 	for _, item := range normalized.Limits {
-		limits = append(limits, domain.LimitObservation{ObservationID: ids.New(), UsageLimitSourceID: ids.New(), HubAccountCandidateID: ids.New(), IdentificationCandidateID: ids.New(), SnapshotID: snapshotID, HubID: hubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, AnalyticsIntervalSeconds: analyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: dependencies.NormalizationGeneration, NormalizationRuleVersion: dependencies.NormalizationRuleVersion, NormalizationLogicVersion: dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
+		limits = append(limits, domain.LimitObservation{ObservationID: ids.New(), UsageLimitSourceID: ids.New(), HubAccountCandidateID: ids.New(), IdentificationCandidateID: ids.New(), SnapshotID: snapshotID, HubID: hubID, DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, AccountKeyKind: item.AccountKeyKind, AccountDisplayName: item.AccountLabel, AccountEmail: item.AccountEmail, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, AnalyticsIntervalSeconds: analyticsIntervalSeconds, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, NormalizationGeneration: dependencies.NormalizationGeneration, NormalizationRuleVersion: dependencies.NormalizationRuleVersion, NormalizationLogicVersion: dependencies.NormalizationLogicVersion, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
 	}
 	return observationBatch{costs: costs, usage: usage, limits: limits}
 }

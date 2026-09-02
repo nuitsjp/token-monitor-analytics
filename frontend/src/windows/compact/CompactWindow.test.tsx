@@ -7,6 +7,7 @@ import {
   createFakeBackend,
   emitFakeBackendEvent,
   emptyOverviewSnapshot,
+  emptyUsageSnapshot,
 } from "../../lib/backend";
 import type {
   FrontendAdapter,
@@ -494,5 +495,40 @@ describe("CompactWindow", () => {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(result.violations).toEqual([]);
+  });
+
+  it("renders Today and Month usage rows and navigates to usage on click", async () => {
+    const routes: string[] = [];
+    const backend = createFakeBackend({
+      overview: overview(),
+      usage: {
+        ...emptyUsageSnapshot,
+        summary: {
+          ...emptyUsageSnapshot.summary,
+          tokens: 1367326111,
+          apiCostUsd: 316.16,
+        },
+      },
+      onOpenMainRoute: (route) => routes.push(route),
+    });
+    const user = userEvent.setup();
+    renderCompact(backend);
+
+    const monthButton = await screen.findByRole("button", {
+      name: /Month の利用トークン/,
+    });
+    expect(monthButton).toBeVisible();
+    expect(monthButton).toHaveTextContent("Month");
+    expect(monthButton).toHaveTextContent("1,367,326,111");
+    expect(monthButton).toHaveTextContent("$316.16");
+
+    const todayButton = screen.getByRole("button", {
+      name: /Today の利用トークン/,
+    });
+    expect(todayButton).toBeVisible();
+    expect(todayButton).toHaveTextContent("Today");
+
+    await user.click(monthButton);
+    expect(routes).toEqual(["/usage"]);
   });
 });

@@ -227,6 +227,7 @@ type HubAccountCandidate struct {
 	LastObservedAt        sql.NullString `json:"last_observed_at"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
+	AccountKeyKind        string         `json:"account_key_kind"`
 }
 
 type HubConnectionAttempt struct {
@@ -496,6 +497,17 @@ type UsageAnalysisObservation struct {
 	DedupeState               string         `json:"dedupe_state"`
 	DedupeKey                 string         `json:"dedupe_key"`
 	ValueFingerprint          string         `json:"value_fingerprint"`
+	SeenCount                 int64          `json:"seen_count"`
+	FirstSeenAt               sql.NullString `json:"first_seen_at"`
+	LastSeenAt                sql.NullString `json:"last_seen_at"`
+	RepresentativeSnapshotID  sql.NullString `json:"representative_snapshot_id"`
+	LatestSnapshotID          sql.NullString `json:"latest_snapshot_id"`
+}
+
+type UsageAnalysisObservationOccurrence struct {
+	UsageObservationID string `json:"usage_observation_id"`
+	SnapshotID         string `json:"snapshot_id"`
+	JsonPath           string `json:"json_path"`
 }
 
 type UsageCostObservation struct {
@@ -517,6 +529,17 @@ type UsageCostObservation struct {
 	DedupeState               string         `json:"dedupe_state"`
 	DedupeKey                 string         `json:"dedupe_key"`
 	ValueFingerprint          string         `json:"value_fingerprint"`
+	SeenCount                 int64          `json:"seen_count"`
+	FirstSeenAt               sql.NullString `json:"first_seen_at"`
+	LastSeenAt                sql.NullString `json:"last_seen_at"`
+	RepresentativeSnapshotID  sql.NullString `json:"representative_snapshot_id"`
+	LatestSnapshotID          sql.NullString `json:"latest_snapshot_id"`
+}
+
+type UsageCostObservationOccurrence struct {
+	ObservationID string `json:"observation_id"`
+	SnapshotID    string `json:"snapshot_id"`
+	JsonPath      string `json:"json_path"`
 }
 
 type UsageCostSource struct {
@@ -584,6 +607,20 @@ type UsageLimitObservation struct {
 	DedupeState               string          `json:"dedupe_state"`
 	DedupeKey                 string          `json:"dedupe_key"`
 	ValueFingerprint          string          `json:"value_fingerprint"`
+	SeenCount                 int64           `json:"seen_count"`
+	FirstSeenAt               sql.NullString  `json:"first_seen_at"`
+	LastSeenAt                sql.NullString  `json:"last_seen_at"`
+	RepresentativeSnapshotID  sql.NullString  `json:"representative_snapshot_id"`
+	LatestSnapshotID          sql.NullString  `json:"latest_snapshot_id"`
+	AccountKeyKind            string          `json:"account_key_kind"`
+	AccountDisplayName        string          `json:"account_display_name"`
+	AccountEmail              string          `json:"account_email"`
+}
+
+type UsageLimitObservationOccurrence struct {
+	ObservationID string `json:"observation_id"`
+	SnapshotID    string `json:"snapshot_id"`
+	JsonPath      string `json:"json_path"`
 }
 
 type UsageLimitSource struct {
