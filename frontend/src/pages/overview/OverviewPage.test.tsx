@@ -104,7 +104,7 @@ function populatedOverview(): OverviewSnapshot {
     estimation: {
       states: [
         {
-          status: status("verified", "検証済み推定", "success", "checkmark"),
+          status: status("estimated", "推定済み", "success", "checkmark"),
           count: 3,
         },
       ],
@@ -173,7 +173,7 @@ describe("OverviewPage", () => {
     expect(screen.getByText("現在の実行状態")).toBeVisible();
     expect(screen.getByText("最終取得結果")).toBeVisible();
     expect(screen.getByText("推定状態")).toBeVisible();
-    expect(screen.getByText("検証済み推定")).toBeVisible();
+    expect(screen.getByText("推定済み")).toBeVisible();
     expect(screen.getByText("旧区間を表示中")).toBeVisible();
     expect(screen.getByText("サービス・プラン同定候補")).toBeVisible();
     expect(screen.getByText("バックアップ")).toBeVisible();

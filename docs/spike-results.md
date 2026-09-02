@@ -40,7 +40,7 @@ Alt+F4、DPI・モニター復元、フォーカス非奪取、複数モニタ�
 
 状態: **合格**
 
-列 L2 正規化後の SVD、要件の階数許容差、Lawson-Hanson active-set NNLS を `nnls-lawson-hanson-v1` として固定した。NNLS の KKT 条件を解ごとに検査し、反復上限を 10,000 とする。AC-P1-13 から AC-P1-19、行順入替え、表示丸め前の 10% 閾値を Go 試験で確認した。実行時の別解法フォールバックは設けない。
+列 L2 正規化後の SVD、要件の階数許容差、Lawson-Hanson active-set NNLS を `nnls-lawson-hanson-v1` として固定した。NNLS の KKT 条件を解ごとに検査し、反復上限を 10,000 とする。AC-P1-13 から AC-P1-19、行順入替え、正の一意解判定を Go 試験で確認した。実行時の別解法フォールバックは設けない。
 
 ## SP-05 資格情報と機微データ境界
 

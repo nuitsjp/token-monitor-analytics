@@ -262,7 +262,7 @@ const overview: OverviewSnapshot = {
   estimation: {
     states: [
       {
-        status: status("provisional", "暫定推定", "informative", "info"),
+        status: status("estimated", "推定済み", "success", "checkmark"),
         count: 1,
       },
     ],
@@ -399,9 +399,9 @@ const limitSeries: LimitSeriesSnapshot = {
   resetAt: "2026-09-01T00:00:00Z",
   latestObservationAt: "2026-08-26T00:05:00Z",
   seriesState: "normal",
-  state: status("provisional", "暫定推定", "informative", "info"),
-  stateReasonCode: "exactly_identified",
-  stateReason: "利用枠観測から暫定値を算出しました。",
+  state: status("estimated", "推定済み", "success", "checkmark"),
+  stateReasonCode: "positive_unique_solution",
+  stateReason: "利用枠観測から利用上限を算出しました。",
   currentInterval: {
     id: "interval-codex-weekly-current",
     serviceId: "service-codex",
@@ -453,15 +453,13 @@ const limitSeries: LimitSeriesSnapshot = {
   result: {
     id: "result-codex-weekly",
     resultSetKey: "codex-weekly-2026-08-25",
-    status: status("provisional", "暫定推定", "informative", "info"),
-    statusReasonCode: "exactly_identified",
+    status: status("estimated", "推定済み", "success", "checkmark"),
+    statusReasonCode: "positive_unique_solution",
     statusReason: "2つの観測点と利用額差分から一意に推定しました。",
     limits: [123],
     observationPointCount: 2,
     differenceRowCount: 1,
     rank: 1,
-    absoluteErrorRatio: 0,
-    absoluteErrorRatioLabel: "0.00%",
     maxTimeDelta: "1秒",
     calculationLogicVersion: "limit-estimation-v1",
     matchingRuleVersion: "nearest-observation-v1",

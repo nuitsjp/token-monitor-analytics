@@ -248,7 +248,7 @@ func readOverviewRecentLimits(ctx context.Context, database *sql.DB, result *Ove
 		         WHERE ers.calculation_interval_id = i.calculation_interval_id
 		           AND ers.usage_limit_source_id = i.usage_limit_source_id
 		           AND ers.logical_account_id = i.logical_account_id
-		           AND er.status IN ('provisional', 'verified')
+		           AND er.status = 'estimated'
 		         ORDER BY er.updated_at DESC, er.estimation_result_id DESC
 		         LIMIT 1) AS estimated_limit,
 		       l.latest_resets_at, i.provider_updated_at,

@@ -55,7 +55,7 @@ func TestOverviewServiceComputesRemainingFreshnessAndUsesOneStatusMapper(t *test
 				TimezoneConfirmed: true,
 				Hubs:              []sqliteadapter.OverviewHub{{ID: "hub-1", DisplayName: "Hub 1", Enabled: true, CollectionEnabled: true, ConnectionState: "connected", CollectionRunning: true, LastCollectionState: "succeeded", LastSuccessAt: timePointer(now.Add(-time.Minute))}},
 				ReviewActionCount: 2, ReviewWarningCount: 1,
-				ReviewActionKindCounts: map[string]int{string(domain.ReviewKindIdentificationCandidate): 2}, ReviewWarningKindCounts: map[string]int{string(domain.ReviewKindMissingAccountKey): 1}, EstimationStatusCounts: map[string]int{"verified": 1},
+				ReviewActionKindCounts: map[string]int{string(domain.ReviewKindIdentificationCandidate): 2}, ReviewWarningKindCounts: map[string]int{string(domain.ReviewKindMissingAccountKey): 1}, EstimationStatusCounts: map[string]int{"estimated": 1},
 				ServiceCount: 1, LogicalAccountCount: 1, LimitAssociationCount: 1, CostAssociationCount: 1, ConfirmedCompletenessCount: 1,
 				RecentLimits: []sqliteadapter.OverviewRecentLimit{{
 					LogicalAccountID: "account-1", LimitDefinitionID: "definition-1", ServiceName: "Service",
@@ -86,7 +86,7 @@ func TestOverviewServiceComputesRemainingFreshnessAndUsesOneStatusMapper(t *test
 		if limit.Freshness.Status.Code != "freshness_stale" || limit.Freshness.Reason == "" || limit.Freshness.ObservationAt != now.Add(-6*time.Minute).Format(time.RFC3339Nano) {
 			t.Fatalf("freshness display = %#v", limit.Freshness)
 		}
-		if snapshot.Hubs.CredentialReadyCount != 1 || snapshot.Hubs.AbnormalCount != 0 || len(snapshot.Estimation.States) != 1 || snapshot.Estimation.States[0].Status.Label != "検証済み推定" {
+		if snapshot.Hubs.CredentialReadyCount != 1 || snapshot.Hubs.AbnormalCount != 0 || len(snapshot.Estimation.States) != 1 || snapshot.Estimation.States[0].Status.Label != "推定済み" {
 			t.Fatalf("overview status DTO = %#v", snapshot)
 		}
 		if snapshot.Hubs.RunningCount != 1 || len(snapshot.Hubs.CurrentCollectionStates) != 1 || snapshot.Hubs.CurrentCollectionStates[0].Status.Code != "collection_started" || snapshot.Hubs.Items[0].LastCollection.Code != "collection_succeeded" {

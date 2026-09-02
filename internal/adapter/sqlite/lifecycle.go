@@ -21,16 +21,23 @@ type Lifecycle struct {
 
 func (l *Lifecycle) Open(ctx context.Context, path string) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.database != nil {
+		l.mu.Unlock()
 		return fmt.Errorf("database is already open")
 	}
 	absolutePath, database, err := openLifecycleDatabase(ctx, path)
 	if err != nil {
+		l.mu.Unlock()
 		return err
 	}
 	l.database = database
 	l.databasePath = absolutePath
+	l.mu.Unlock()
+
+	if err := l.RecalculateStaleDerivedResults(ctx); err != nil {
+		_ = l.Close()
+		return fmt.Errorf("recalculate stale derived results on open: %w", err)
+	}
 	return nil
 }
 

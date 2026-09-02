@@ -62,16 +62,16 @@ function series(): LimitSeriesSnapshot {
     latestObservationAt: "2026-08-26T11:00:00Z",
     seriesState: "normal",
     state: {
-      code: "provisional",
-      label: "暫定推定",
-      intent: "informative",
-      icon: "info",
-      description: "利用上限は暫定推定です。",
-      nextAction: "推定根拠を確認",
-      nextRoute: "/limits",
+      code: "estimated",
+      label: "推定済み",
+      intent: "success",
+      icon: "checkmark",
+      description: "利用上限の推定を算出できました。",
+      nextAction: "",
+      nextRoute: "",
     },
-    stateReasonCode: "exactly_identified",
-    stateReason: "必要最小限の差分行で暫定推定しました。",
+    stateReasonCode: "positive_unique_solution",
+    stateReason: "利用枠観測から利用上限を算出しました。",
     currentInterval: {
       id: "interval-1",
       serviceId: "service-1",
@@ -107,22 +107,20 @@ function series(): LimitSeriesSnapshot {
       id: "result-1",
       resultSetKey: "key",
       status: {
-        code: "provisional",
-        label: "暫定推定",
-        intent: "informative",
-        icon: "info",
-        description: "利用上限は暫定推定です。",
-        nextAction: "推定根拠を確認",
-        nextRoute: "/limits",
+        code: "estimated",
+        label: "推定済み",
+        intent: "success",
+        icon: "checkmark",
+        description: "利用上限の推定を算出できました。",
+        nextAction: "",
+        nextRoute: "",
       },
-      statusReasonCode: "exactly_identified",
-      statusReason: "必要最小限の差分行で暫定推定しました。",
+      statusReasonCode: "positive_unique_solution",
+      statusReason: "必要十分な差分行から推定しました。",
       limits: [123],
       observationPointCount: 2,
       differenceRowCount: 1,
       rank: 1,
-      absoluteErrorRatio: 0,
-      absoluteErrorRatioLabel: "0.00%",
       maxTimeDelta: "1s",
       calculationLogicVersion: "logic",
       matchingRuleVersion: "matching",
@@ -323,7 +321,7 @@ it("P1-UI-04 shows current state, API-converted estimate, quality, and an uncomp
 
   const details = screen.getAllByRole("link", { name: "詳細" });
   await user.click(details[0]);
-  expect(await screen.findByText("暫定推定")).toBeVisible();
+  expect(await screen.findByText("推定済み")).toBeVisible();
   expect(screen.getByText("123.00")).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "品質" }));
   expect(screen.getByText("計算論理版: logic")).toBeVisible();

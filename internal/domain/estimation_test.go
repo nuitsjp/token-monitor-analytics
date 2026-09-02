@@ -35,46 +35,39 @@ func TestACP113AdjacentDifferences(t *testing.T) {
 	})
 }
 
-func TestACP114ProvisionalSingleAccount(t *testing.T) {
+func TestACP114EstimatedSingleAccount(t *testing.T) {
 	result := estimatePoints(t, []EstimationPoint{
 		{SharedCost: 10, Utilization: []float64{0.1}},
 		{SharedCost: 30, Utilization: []float64{0.3}},
 	})
-	if result.Status != EstimationProvisional {
+	if result.Status != EstimationEstimated {
 		t.Fatalf("status = %s", result.Status)
 	}
 	closeEnough(t, result.Limits[0], 100)
 }
 
-func TestACP115VerifiedSingleAccount(t *testing.T) {
+func TestACP115EstimatedMultiPoint(t *testing.T) {
 	result := estimatePoints(t, []EstimationPoint{
 		{SharedCost: 10, Utilization: []float64{0.1}},
 		{SharedCost: 30, Utilization: []float64{0.3}},
 		{SharedCost: 40, Utilization: []float64{0.4}},
 	})
-	if result.Status != EstimationVerified {
+	if result.Status != EstimationEstimated {
 		t.Fatalf("status = %s", result.Status)
 	}
 	closeEnough(t, result.Limits[0], 100)
-	closeEnough(t, result.AbsoluteErrorRatio, 0)
 }
 
-func TestACP116ModelMismatch(t *testing.T) {
+func TestACP116EstimatedOveridentifiedWithResidual(t *testing.T) {
 	result := estimatePoints(t, []EstimationPoint{
 		{SharedCost: 0, Utilization: []float64{0}},
 		{SharedCost: 10, Utilization: []float64{0.1}},
 		{SharedCost: 30, Utilization: []float64{0.2}},
 	})
-	if result.Status != EstimationModelMismatch {
+	if result.Status != EstimationEstimated {
 		t.Fatalf("status = %s", result.Status)
 	}
 	closeEnough(t, result.Limits[0], 150)
-	closeEnough(t, result.AbsoluteErrorRatio, 1.0/3.0)
-	t.Run("P1-EST-11 model mismatch retains the unmodified residual", func(t *testing.T) {
-		if result.Status != EstimationModelMismatch || result.AbsoluteErrorRatio != 1.0/3.0 {
-			t.Fatalf("model mismatch was not retained: %#v", result)
-		}
-	})
 }
 
 func TestACP117InsufficientAndRankDeficient(t *testing.T) {
@@ -104,13 +97,13 @@ func TestACP118PlanMultiplier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != EstimationProvisional {
+	if result.Status != EstimationEstimated {
 		t.Fatalf("status = %s", result.Status)
 	}
 	closeEnough(t, result.Limits[0], 100)
 }
 
-func TestACP119ZeroSignalAndUnroundedThreshold(t *testing.T) {
+func TestACP119ZeroSignalAndPositiveUniqueSolution(t *testing.T) {
 	zeroSignal, err := EstimateFromDifferences(mat.NewDense(1, 1, []float64{0.1}), []float64{0})
 	if err != nil {
 		t.Fatal(err)
@@ -119,25 +112,21 @@ func TestACP119ZeroSignalAndUnroundedThreshold(t *testing.T) {
 		t.Fatalf("zero signal status = %s", zeroSignal.Status)
 	}
 
-	below, err := EstimateFromDifferences(mat.NewDense(2, 1, []float64{1, 1}), []float64{100, 81.8181818183})
-	if err != nil {
-		t.Fatal(err)
+	// Synthetic lagged data: utilization held across rows then jumps by 1%, costs increase.
+	// As long as finite positive unique solution exists, it must be estimated regardless of residuals.
+	laggedPoints := []EstimationPoint{
+		{SharedCost: 10, Utilization: []float64{0.10}},
+		{SharedCost: 20, Utilization: []float64{0.10}}, // cost increases, utilization unchanged
+		{SharedCost: 35, Utilization: []float64{0.11}}, // cost increases, utilization jumps by 1%
+		{SharedCost: 50, Utilization: []float64{0.12}},
 	}
-	if below.AbsoluteErrorRatio > 0.1 || below.Status != EstimationVerified {
-		t.Fatalf("below threshold: status=%s ratio=%.15f", below.Status, below.AbsoluteErrorRatio)
+	laggedResult := estimatePoints(t, laggedPoints)
+	if laggedResult.Status != EstimationEstimated {
+		t.Fatalf("lagged result status = %s, want %s", laggedResult.Status, EstimationEstimated)
 	}
-	above, err := EstimateFromDifferences(mat.NewDense(2, 1, []float64{1, 1}), []float64{100, 81.8181818180})
-	if err != nil {
-		t.Fatal(err)
+	if len(laggedResult.Limits) != 1 || laggedResult.Limits[0] <= 0 {
+		t.Fatalf("lagged result limits = %#v", laggedResult.Limits)
 	}
-	if above.AbsoluteErrorRatio <= 0.1 || above.Status != EstimationModelMismatch {
-		t.Fatalf("above threshold: status=%s ratio=%.15f", above.Status, above.AbsoluteErrorRatio)
-	}
-	t.Run("P1-EST-16 threshold compares unrounded residual", func(t *testing.T) {
-		if below.Status != EstimationVerified || above.Status != EstimationModelMismatch || above.AbsoluteErrorRatio <= 0.1 {
-			t.Fatalf("unrounded threshold results: below=%#v above=%#v", below, above)
-		}
-	})
 }
 
 func TestNNLSIsInvariantToRowOrder(t *testing.T) {

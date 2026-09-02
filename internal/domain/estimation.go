@@ -10,10 +10,14 @@ import (
 )
 
 const (
-	CalculationLogicVersion = "t032-adjacent-l2-rank-nnls-v1"
+	CalculationLogicVersion = "t032-adjacent-l2-rank-nnls-v2"
 	RankToleranceFactor     = 1e-10
 	NnlsTolerance           = 1e-12
 	NnlsIterationLimit      = 10_000
+)
+
+const (
+	EstimationReasonPositiveUniqueSolution = "positive_unique_solution"
 )
 
 type EstimationStatus string
@@ -21,8 +25,7 @@ type EstimationStatus string
 const (
 	EstimationInsufficient   EstimationStatus = "insufficient_observations"
 	EstimationUnidentifiable EstimationStatus = "unidentifiable"
-	EstimationProvisional    EstimationStatus = "provisional"
-	EstimationVerified       EstimationStatus = "verified"
+	EstimationEstimated      EstimationStatus = "estimated"
 	EstimationModelMismatch  EstimationStatus = "model_mismatch"
 	EstimationNotApplicable  EstimationStatus = "not_applicable"
 	EstimationUncomputed     EstimationStatus = "uncomputed"
@@ -59,7 +62,6 @@ type EstimationResult struct {
 	Limits                            []float64
 	Rows                              int
 	Rank                              int
-	AbsoluteErrorRatio                float64
 	CalculationLogicVersion           string
 	PointIDs                          []string
 	ObservationIDs                    []string
@@ -174,27 +176,8 @@ func EstimateFromDifferences(coefficients *mat.Dense, costs []float64) (Estimati
 		}
 	}
 
-	predicted := make([]float64, rows)
-	for row := range rows {
-		for column, limit := range limits {
-			predicted[row] += coefficients.At(row, column) * limit
-		}
-	}
-	denominator := sum(costs)
-	for row, value := range costs {
-		result.AbsoluteErrorRatio += math.Abs(value - predicted[row])
-	}
-	result.AbsoluteErrorRatio /= denominator
-	if rows == columns {
-		result.Status = EstimationProvisional
-		result.Reasons = []string{"exactly_identified"}
-	} else if result.AbsoluteErrorRatio <= 0.1 {
-		result.Status = EstimationVerified
-		result.Reasons = []string{"residual_within_ten_percent"}
-	} else {
-		result.Status = EstimationModelMismatch
-		result.Reasons = []string{"residual_over_ten_percent"}
-	}
+	result.Status = EstimationEstimated
+	result.Reasons = []string{EstimationReasonPositiveUniqueSolution}
 	return result, nil
 }
 

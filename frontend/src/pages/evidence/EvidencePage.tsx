@@ -766,7 +766,8 @@ function ObservationList({
           </div>
           {(item.occurrenceCount ?? 1) > 1 && (
             <div className={styles.meta}>
-              同一値を {item.occurrenceCount} 回確認 / 初回: {item.firstSeenAt} / 最終: {item.lastSeenAt}
+              同一値を {item.occurrenceCount} 回確認 / 初回: {item.firstSeenAt}{" "}
+              / 最終: {item.lastSeenAt}
             </div>
           )}
         </article>
@@ -798,7 +799,8 @@ function ObservationList({
           </div>
           {(item.occurrenceCount ?? 1) > 1 && (
             <div className={styles.meta}>
-              同一値を {item.occurrenceCount} 回確認 / 初回: {item.firstSeenAt} / 最終: {item.lastSeenAt}
+              同一値を {item.occurrenceCount} 回確認 / 初回: {item.firstSeenAt}{" "}
+              / 最終: {item.lastSeenAt}
             </div>
           )}
         </article>

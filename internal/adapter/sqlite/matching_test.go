@@ -181,7 +181,7 @@ func TestT031SQLiteMatchingFixturePersistsCompletePointAndSharedCostOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != domain.EstimationProvisional || len(result.PlanLimitRuleIDs) != 1 || result.PlanLimitRuleIDs[0] != "matching-rule-five" {
+	if result.Status != domain.EstimationEstimated || len(result.PlanLimitRuleIDs) != 1 || result.PlanLimitRuleIDs[0] != "matching-rule-five" {
 		t.Fatalf("mixed-plan estimation = %#v", result)
 	}
 	database, err := lifecycle.DB()
