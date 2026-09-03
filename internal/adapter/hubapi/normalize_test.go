@@ -271,6 +271,26 @@ func TestNormalizeStatsSkipsInvalidSourcePeriodsWithoutFailing(t *testing.T) {
 	if len(result.Periods) != 1 || result.Periods[0].PeriodKind != "month" {
 		t.Fatalf("missing endsAt should skip only that period: %#v", result.Periods)
 	}
+	mismatchedEnds := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-09-03T05:25:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-09-03","endsAt":"2026-09-04T15:00:00Z"},"month":{"key":"2026-09","endsAt":"2026-10-31T15:00:00Z"}},"periods":{"today":{"totalTokens":100,"costUsd":1},"month":{"totalTokens":500,"costUsd":6},"allTime":{"clientCosts":{"codex":1}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","updatedAt":"2026-09-03T05:25:00Z","windows":[{"kind":"weekly","metric":"percent","label":"Weekly","usedPercent":42,"resetsAt":"2026-09-10T00:00:00Z"}]}]}}]}`
+	result, err = NormalizeStats([]byte(mismatchedEnds))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Periods) != 0 {
+		t.Fatalf("endsAt that does not match the source calendar key must be skipped: %#v", result.Periods)
+	}
+}
+
+func TestNormalizeStatsAcceptsSourcePeriodEndAcrossDST(t *testing.T) {
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-03-08T16:00:00Z","periodWindows":{"timeZone":"America/New_York","today":{"key":"2026-03-08","endsAt":"2026-03-09T04:00:00Z"}},"periods":{"today":{"totalTokens":100,"costUsd":1},"allTime":{}},"limits":{}}]}`
+
+	result, err := NormalizeStats([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Periods) != 1 || result.Periods[0].PeriodKey != "2026-03-08" {
+		t.Fatalf("DST source period was not preserved: %#v", result.Periods)
+	}
 }
 
 func TestNormalizeStatsKeepsLimitsWithoutDeviceUpdatedAt(t *testing.T) {

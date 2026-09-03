@@ -971,7 +971,7 @@ export function UsagePage({
                 <Caption1>
                   保存先: 既定のダウンロード先 / 列:
                   期間、分類、帰属、利用量、API 換算利用金額、差分数 /
-                  スキーマ版: 2
+                  スキーマ版: 3
                 </Caption1>
                 <Caption1>
                   期間 {fromDate} ～ {toDate}（終了日を含まない）・

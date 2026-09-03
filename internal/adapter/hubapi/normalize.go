@@ -17,7 +17,9 @@ import (
 )
 
 // These versions are persisted with every normalized observation. A change
-// creates a new generation; it never rewrites an existing observation.
+// to an existing observation kind creates a new generation; it never rewrites
+// an existing observation. Source-period observations are additive in the
+// unreleased schema and therefore start in the current generation.
 const (
 	NormalizationGeneration   int64 = 3
 	NormalizationRuleVersion        = "api-stats-v1-device-updated-at"
@@ -655,6 +657,10 @@ func normalizePeriodObservations(device map[string]any, deviceIndex int, deviceI
 }
 
 func normalizeOnePeriod(windows, periods map[string]any, windowKey, periodKind, keyLayout string, deviceIndex int, deviceID string, usage time.Time, zone string) (NormalizedPeriodObservation, bool) {
+	location, err := time.LoadLocation(zone)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
 	window, ok := objectValue(windows[windowKey])
 	if !ok {
 		return NormalizedPeriodObservation{}, false
@@ -663,11 +669,19 @@ func normalizeOnePeriod(windows, periods map[string]any, windowKey, periodKind, 
 	if !keyOK || key == "" {
 		return NormalizedPeriodObservation{}, false
 	}
-	if _, err := time.Parse(keyLayout, key); err != nil {
+	periodStart, err := time.ParseInLocation(keyLayout, key, location)
+	if err != nil {
 		return NormalizedPeriodObservation{}, false
 	}
 	endsAt, present, valid := timestampValue(window["endsAt"])
 	if !present || !valid {
+		return NormalizedPeriodObservation{}, false
+	}
+	expectedEndsAt := periodStart.AddDate(0, 0, 1)
+	if periodKind == "month" {
+		expectedEndsAt = periodStart.AddDate(0, 1, 0)
+	}
+	if !endsAt.Equal(expectedEndsAt.UTC()) {
 		return NormalizedPeriodObservation{}, false
 	}
 	period, ok := objectValue(periods[windowKey])

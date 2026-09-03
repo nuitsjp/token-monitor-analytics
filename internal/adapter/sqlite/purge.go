@@ -125,6 +125,10 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 	if err != nil {
 		return domain.PurgeResult{}, fmt.Errorf("find purge usage analysis observations: %w", err)
 	}
+	periodAffectedIDs, periodDeleteIDs, err := queryOccurrencePurgeIDs(ctx, tx, "period", snapshotIDs)
+	if err != nil {
+		return domain.PurgeResult{}, fmt.Errorf("find purge usage period observations: %w", err)
+	}
 	pointIDs, err := queryMatchedPointIDs(ctx, tx, costEvidenceIDs, limitEvidenceIDs)
 	if err != nil {
 		return domain.PurgeResult{}, err
@@ -223,6 +227,9 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 	if err := reanchorPurgeObservations(ctx, tx, "usage", usageAffectedIDs, usageDeleteIDs, snapshotIDs); err != nil {
 		return domain.PurgeResult{}, err
 	}
+	if err := reanchorPurgeObservations(ctx, tx, "period", periodAffectedIDs, periodDeleteIDs, snapshotIDs); err != nil {
+		return domain.PurgeResult{}, err
+	}
 	if len(costDeleteIDs) > 0 {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_cost_observations WHERE observation_id IN (`+placeholders(len(costDeleteIDs))+`)`, stringsToAny(costDeleteIDs)...); err != nil {
 			return domain.PurgeResult{}, fmt.Errorf("delete purge cost observations: %w", err)
@@ -238,8 +245,10 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 			return domain.PurgeResult{}, fmt.Errorf("delete purge usage analysis observations: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_period_observations WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`)`, stringsToAny(snapshotIDs)...); err != nil {
-		return domain.PurgeResult{}, fmt.Errorf("delete purge usage period observations: %w", err)
+	if len(periodDeleteIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_period_observations WHERE period_observation_id IN (`+placeholders(len(periodDeleteIDs))+`)`, stringsToAny(periodDeleteIDs)...); err != nil {
+			return domain.PurgeResult{}, fmt.Errorf("delete purge usage period observations: %w", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM raw_snapshots WHERE snapshot_id IN (`+placeholders(len(snapshotIDs))+`)`, stringsToAny(snapshotIDs)...); err != nil {
 		return domain.PurgeResult{}, fmt.Errorf("delete purge raw snapshots: %w", err)
@@ -251,6 +260,9 @@ func (l *Lifecycle) purgeWithInjector(ctx context.Context, selection domain.Purg
 		return domain.PurgeResult{}, err
 	}
 	if err := refreshPurgeOccurrenceSummaries(ctx, tx, "usage", usageAffectedIDs); err != nil {
+		return domain.PurgeResult{}, err
+	}
+	if err := refreshPurgeOccurrenceSummaries(ctx, tx, "period", periodAffectedIDs); err != nil {
 		return domain.PurgeResult{}, err
 	}
 	if err := inject(injector, "after-observations"); err != nil {
@@ -327,6 +339,8 @@ func occurrenceConfig(kind string) (occurrenceTableConfig, error) {
 		return occurrenceTableConfig{"usage_analysis_observations", "usage_analysis_observation_occurrences", "usage_observation_id", "usage_observation_id"}, nil
 	case "limit":
 		return occurrenceTableConfig{"usage_limit_observations", "usage_limit_observation_occurrences", "observation_id", "observation_id"}, nil
+	case "period":
+		return occurrenceTableConfig{"usage_period_observations", "usage_period_observation_occurrences", "period_observation_id", "period_observation_id"}, nil
 	default:
 		return occurrenceTableConfig{}, errors.New("observation occurrence kind is invalid")
 	}

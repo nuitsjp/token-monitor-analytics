@@ -512,7 +512,7 @@ describe("CompactWindow", () => {
           apiCostUsd: 1.25,
           apiCostUsdText: "1.25",
           latestObservedAt: "2026-09-03T05:25:00Z",
-          oldestObservedAt: "2026-09-03T05:25:00Z",
+          oldestObservedAt: "2026-09-03T05:20:00Z",
           deviceCount: 1,
           unavailableReason: "",
         },
@@ -524,7 +524,7 @@ describe("CompactWindow", () => {
           apiCostUsd: 316.16,
           apiCostUsdText: "316.16",
           latestObservedAt: "2026-09-03T05:25:00Z",
-          oldestObservedAt: "2026-09-03T05:25:00Z",
+          oldestObservedAt: "2026-09-03T05:15:00Z",
           deviceCount: 1,
           unavailableReason: "",
         },
@@ -548,6 +548,10 @@ describe("CompactWindow", () => {
     expect(todayButton).toBeVisible();
     expect(todayButton).toHaveTextContent("Today");
     expect(todayButton).toHaveTextContent("12,345");
+    const observed = screen.getByText(/^観測 /);
+    expect(observed).toHaveTextContent("5:25");
+    expect(observed).toHaveTextContent("最古");
+    expect(observed).toHaveTextContent("5:15");
 
     await user.click(monthButton);
     expect(routes).toEqual(["/usage"]);

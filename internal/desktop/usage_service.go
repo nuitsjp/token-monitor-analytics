@@ -16,7 +16,7 @@ import (
 	"token-monitor-analytics/internal/usecase"
 )
 
-const usageExportSchemaVersion = "2"
+const usageExportSchemaVersion = "3"
 
 type UsageReader interface {
 	ListUsageAnalysisObservations(context.Context) ([]domain.UsageObservation, error)
@@ -162,6 +162,7 @@ type UsageExportSnapshot struct {
 }
 
 type UsageExportRowSnapshot struct {
+	ObservationType  string  `json:"observationType"`
 	PeriodStart      string  `json:"periodStart"`
 	PeriodEnd        string  `json:"periodEnd"`
 	Key              string  `json:"key"`
@@ -410,7 +411,7 @@ func (s *UsageService) ExportUsage(ctx context.Context, input UsageFilterInput, 
 		header := []string{"schemaVersion", "generatedAtUtc", "from", "to", "displayTimeZone", "granularity", "groupBy", "observationType", "hubId", "collectionDeviceId", "deviceId", "serviceId", "rawServiceIdentifier", "logicalAccountId", "planVersionId", "limitDefinitionId", "model", "periodStart", "periodEnd", "key", "categoryKey", "label", "attribution", "tokens", "apiCostUsd", "observationCount"}
 		_ = writer.Write(header)
 		for _, row := range rows {
-			_ = writer.Write([]string{usageExportSchemaVersion, result.GeneratedAt, result.From, result.To, result.DisplayTimeZone, result.Granularity, result.GroupBy, "observed", input.HubID, input.CollectionDeviceID, input.DeviceID, input.ServiceID, input.RawServiceIdentifier, input.LogicalAccountID, input.PlanVersionID, input.LimitDefinitionID, input.Model, row.PeriodStart, row.PeriodEnd, row.Key, row.CategoryKey, row.Label, row.Attribution, strconv.FormatInt(row.Tokens, 10), row.APICostUSDText, strconv.Itoa(row.ObservationCount)})
+			_ = writer.Write([]string{usageExportSchemaVersion, result.GeneratedAt, result.From, result.To, result.DisplayTimeZone, result.Granularity, result.GroupBy, row.ObservationType, input.HubID, input.CollectionDeviceID, input.DeviceID, input.ServiceID, input.RawServiceIdentifier, input.LogicalAccountID, input.PlanVersionID, input.LimitDefinitionID, input.Model, row.PeriodStart, row.PeriodEnd, row.Key, row.CategoryKey, row.Label, row.Attribution, strconv.FormatInt(row.Tokens, 10), row.APICostUSDText, strconv.Itoa(row.ObservationCount)})
 		}
 		writer.Flush()
 		if err := writer.Error(); err != nil {
@@ -756,16 +757,25 @@ func decimalFloat(value string) float64 {
 }
 
 func usageExportRows(result UsageSnapshot) []UsageExportRowSnapshot {
-	rows := make([]UsageExportRowSnapshot, 0)
+	rows := make([]UsageExportRowSnapshot, 0, len(result.Series)+1)
 	for _, point := range result.Series {
 		for _, segment := range point.Breakdown {
 			rows = append(rows, UsageExportRowSnapshot{
-				PeriodStart: point.PeriodStart, PeriodEnd: point.PeriodEnd,
+				ObservationType: "observed",
+				PeriodStart:     point.PeriodStart, PeriodEnd: point.PeriodEnd,
 				Key: segment.Key, CategoryKey: segment.CategoryKey, Label: segment.Label, Attribution: segment.Attribution,
 				Tokens: segment.Tokens, APICostUSD: segment.APICostUSD, APICostUSDText: segment.APICostUSDText,
 				ObservationCount: segment.ObservationCount, EvidenceRoute: segment.EvidenceRoute,
 			})
 		}
+	}
+	if result.UnallocatedObservationCount > 0 {
+		rows = append(rows, UsageExportRowSnapshot{
+			ObservationType: "unallocated", Key: "unallocated", CategoryKey: "unallocated",
+			Label: "欠測区間を暦期間へ配分できない", Attribution: "未配分",
+			Tokens: result.UnallocatedTokens, APICostUSD: result.UnallocatedAPICostUSD,
+			APICostUSDText: result.UnallocatedAPICostUSDText, ObservationCount: result.UnallocatedObservationCount,
+		})
 	}
 	return rows
 }

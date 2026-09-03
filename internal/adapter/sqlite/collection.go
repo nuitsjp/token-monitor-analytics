@@ -370,8 +370,8 @@ func (l *Lifecycle) insertUsagePeriodObservationsTx(ctx context.Context, tx *sql
 			return err
 		}
 		if decision.existingID != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE usage_period_observations SET snapshot_id = ?, json_path = ? WHERE period_observation_id = ?`, observation.SnapshotID, observation.JSONPath, decision.existingID); err != nil {
-				return fmt.Errorf("refresh usage period observation snapshot: %w", err)
+			if err := insertUsagePeriodOccurrence(ctx, tx, decision.existingID, observation); err != nil {
+				return err
 			}
 			continue
 		}
@@ -417,6 +417,9 @@ func (l *Lifecycle) insertUsagePeriodObservationsTx(ctx context.Context, tx *sql
 			observation.NormalizationGeneration, observation.NormalizationRuleVersion, observation.NormalizationLogicVersion,
 			observation.JSONPath, state, observation.DedupeKey, observation.ValueFingerprint); err != nil {
 			return fmt.Errorf("insert usage period observation: %w", err)
+		}
+		if err := insertUsagePeriodOccurrence(ctx, tx, observation.ObservationID, observation); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -898,6 +901,22 @@ func insertLimitOccurrence(ctx context.Context, tx *sql.Tx, observationID string
 		latest_snapshot_id = (SELECT oc.snapshot_id FROM usage_limit_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.observation_id = ? ORDER BY rs.received_completed_at DESC, oc.snapshot_id DESC LIMIT 1)
 		WHERE observation_id = ?`, observationID, observationID, observationID, observationID, observationID); err != nil {
 		return fmt.Errorf("refresh limit observation occurrence summary: %w", err)
+	}
+	return nil
+}
+
+func insertUsagePeriodOccurrence(ctx context.Context, tx *sql.Tx, observationID string, value UsagePeriodObservation) error {
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO usage_period_observation_occurrences (period_observation_id, snapshot_id, json_path) VALUES (?, ?, ?)`, observationID, value.SnapshotID, value.JSONPath); err != nil {
+		return fmt.Errorf("insert usage period observation occurrence: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE usage_period_observations SET
+		seen_count = (SELECT COUNT(*) FROM usage_period_observation_occurrences WHERE period_observation_id = ?),
+		first_seen_at = (SELECT MIN(rs.received_completed_at) FROM usage_period_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.period_observation_id = ?),
+		last_seen_at = (SELECT MAX(rs.received_completed_at) FROM usage_period_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.period_observation_id = ?),
+		representative_snapshot_id = snapshot_id,
+		latest_snapshot_id = (SELECT oc.snapshot_id FROM usage_period_observation_occurrences oc JOIN raw_snapshots rs ON rs.snapshot_id = oc.snapshot_id WHERE oc.period_observation_id = ? ORDER BY rs.received_completed_at DESC, oc.snapshot_id DESC LIMIT 1)
+		WHERE period_observation_id = ?`, observationID, observationID, observationID, observationID, observationID); err != nil {
+		return fmt.Errorf("refresh usage period observation occurrence summary: %w", err)
 	}
 	return nil
 }

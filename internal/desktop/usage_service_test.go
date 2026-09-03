@@ -132,7 +132,7 @@ func TestUsageServiceAggregatesOnceAndExportsScreenRows(t *testing.T) {
 				t.Fatalf("CSV column %q missing: %v", required, rows[0])
 			}
 		}
-		if rows[1][columns["schemaVersion"]] != "2" || rows[1][columns["displayTimeZone"]] != "America/New_York" || rows[1][columns["observationType"]] != "observed" || rows[1][columns["hubId"]] != "hub" || rows[1][columns["periodStart"]] == "" || rows[1][columns["periodEnd"]] == "" || rows[1][columns["categoryKey"]] != "service" || rows[1][columns["tokens"]] != "150" || rows[1][columns["apiCostUsd"]] != "2.25" {
+		if rows[1][columns["schemaVersion"]] != "3" || rows[1][columns["displayTimeZone"]] != "America/New_York" || rows[1][columns["observationType"]] != "observed" || rows[1][columns["hubId"]] != "hub" || rows[1][columns["periodStart"]] == "" || rows[1][columns["periodEnd"]] == "" || rows[1][columns["categoryKey"]] != "service" || rows[1][columns["tokens"]] != "150" || rows[1][columns["apiCostUsd"]] != "2.25" {
 			t.Fatalf("CSV row = %v", rows[1])
 		}
 	})
@@ -149,7 +149,7 @@ func TestUsageServiceAggregatesOnceAndExportsScreenRows(t *testing.T) {
 		if err := json.Unmarshal([]byte(jsonResult.Content), &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.SchemaVersion != "2" || payload.Metadata["displayTimeZone"] != "America/New_York" || payload.Metadata["hubId"] != "hub" || len(payload.Rows) != 1 || payload.Rows[0].PeriodStart == "" || payload.Rows[0].PeriodEnd == "" || payload.Rows[0].APICostUSDText != "2.25" || payload.Rows[0].Tokens != 150 {
+		if payload.SchemaVersion != "3" || payload.Metadata["displayTimeZone"] != "America/New_York" || payload.Metadata["hubId"] != "hub" || len(payload.Rows) != 1 || payload.Rows[0].ObservationType != "observed" || payload.Rows[0].PeriodStart == "" || payload.Rows[0].PeriodEnd == "" || payload.Rows[0].APICostUSDText != "2.25" || payload.Rows[0].Tokens != 150 {
 			t.Fatalf("JSON export = %#v", payload)
 		}
 	})
@@ -403,6 +403,15 @@ func TestUsageServiceUsesHalfOpenFilterAtSpringDSTBoundaries(t *testing.T) {
 	}
 	if result.UnallocatedObservationCount != 1 || result.UnallocatedTokens != 10 {
 		t.Fatalf("DST boundary-crossing increment should stay unallocated = %#v", result)
+	}
+	for _, format := range []string{"csv", "json"} {
+		exported, exportErr := service.ExportUsage(context.Background(), UsageFilterInput{From: from.Format(time.RFC3339), To: to.Format(time.RFC3339), DisplayTimeZone: "America/New_York", Granularity: "day", GroupBy: "service"}, format)
+		if exportErr != nil {
+			t.Fatal(exportErr)
+		}
+		if !strings.Contains(exported.Content, "unallocated") || !strings.Contains(exported.Content, "欠測区間を暦期間へ配分できない") || !strings.Contains(exported.Content, "10") {
+			t.Fatalf("%s export did not retain the unallocated increment: %s", format, exported.Content)
+		}
 	}
 	if len(result.NativeAmounts) != 1 || result.NativeAmounts[0].ObservationID != "native-at-start" {
 		t.Fatalf("DST half-open native amounts = %#v", result.NativeAmounts)

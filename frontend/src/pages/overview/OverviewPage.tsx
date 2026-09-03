@@ -247,7 +247,8 @@ export function OverviewPage({
           概要
         </h1>
         <Caption1 className={design.pageMeta} title={snapshot.generatedAt}>
-          {formatOverviewInstant(snapshot.generatedAt, displayTimeZone)} 更新
+          {formatOverviewInstant(snapshot.generatedAt, displayTimeZone)}{" "}
+          画面更新
         </Caption1>
       </header>
 
@@ -426,19 +427,26 @@ export function OverviewPage({
                 </Caption1>
               </div>
             </div>
-            {todayUsage?.available && todayUsage.latestObservedAt ? (
-              <Caption1 className={design.muted}>
-                採用した観測時刻{" "}
-                {formatOverviewInstant(
-                  todayUsage.latestObservedAt,
-                  displayTimeZone,
-                )}
-                {todayUsage.oldestObservedAt &&
-                todayUsage.oldestObservedAt !== todayUsage.latestObservedAt
-                  ? `（最古 ${formatOverviewInstant(todayUsage.oldestObservedAt, displayTimeZone)}）`
-                  : ""}
-              </Caption1>
-            ) : null}
+            {(
+              [
+                ["当日", todayUsage],
+                ["当月", monthUsage],
+              ] as const
+            ).map(([label, period]) =>
+              period?.available && period.latestObservedAt ? (
+                <Caption1 className={design.muted} key={label}>
+                  {label}の観測時刻{" "}
+                  {formatOverviewInstant(
+                    period.latestObservedAt,
+                    displayTimeZone,
+                  )}
+                  {period.oldestObservedAt &&
+                  period.oldestObservedAt !== period.latestObservedAt
+                    ? `（最古 ${formatOverviewInstant(period.oldestObservedAt, displayTimeZone)}）`
+                    : ""}
+                </Caption1>
+              ) : null,
+            )}
           </NavigationCard>
         ) : null}
 

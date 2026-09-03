@@ -457,6 +457,13 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
     usageObservedTimes.length > 0
       ? usageObservedTimes[usageObservedTimes.length - 1]
       : undefined;
+  const usageOldestTimes = [
+    todayUsage?.oldestObservedAt,
+    monthUsage?.oldestObservedAt,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  const usageOldestAt = usageOldestTimes[0];
   const failedHubCount =
     snapshot?.hubs.items?.filter(
       (hub) => hub.enabled && hub.lastCollection.code === "collection_failed",
@@ -644,11 +651,13 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                     <span />
                   )}
                   <Caption1 className={styles.update}>
-                    {formatOverviewInstant(
-                      usageObservedAt ?? snapshot.generatedAt,
-                      settings.displayTimeZone,
-                    )}{" "}
-                    更新
+                    {usageObservedAt
+                      ? `観測 ${formatOverviewInstant(usageObservedAt, settings.displayTimeZone)}${
+                          usageOldestAt && usageOldestAt !== usageObservedAt
+                            ? `（最古 ${formatOverviewInstant(usageOldestAt, settings.displayTimeZone)}）`
+                            : ""
+                        }`
+                      : "観測 未取得"}
                   </Caption1>
                 </div>
 
@@ -801,7 +810,7 @@ export function CompactWindow({ backend }: { backend: FrontendAdapter }) {
                   >
                     {updating
                       ? "更新中"
-                      : `${formatOverviewInstant(snapshot.generatedAt, settings.displayTimeZone)} 更新`}
+                      : `${formatOverviewInstant(snapshot.generatedAt, settings.displayTimeZone)} 画面更新`}
                   </Caption1>
                 </footer>
               </div>
