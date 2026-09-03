@@ -952,7 +952,11 @@ func (l *Lifecycle) rebuildEstimationPoints(ctx context.Context, interval domain
 		if !containsInterval {
 			continue
 		}
-		derived, err := domain.BuildEstimationPoints(input, uuid.NewString, now)
+		selected, ok := matchingInputForInterval(input, interval.ID)
+		if !ok {
+			continue
+		}
+		derived, err := domain.BuildEstimationPoints(selected, uuid.NewString, now)
 		if err != nil {
 			return nil, fmt.Errorf("rebuild estimation points: %w", err)
 		}
@@ -967,6 +971,56 @@ func (l *Lifecycle) rebuildEstimationPoints(ctx context.Context, interval domain
 		return nil, err
 	}
 	return l.ListEstimationPoints(ctx, interval.ID)
+}
+
+// matchingInputForInterval keeps one limit series per logical account while
+// rebuilding one interval. If the target account has duplicate source series,
+// the target interval is the only unambiguous choice. A duplicate belonging to
+// another account cannot be resolved from the target interval, so the input is
+// skipped instead of selecting an arbitrary source.
+func matchingInputForInterval(input domain.CalculationMatchingInput, intervalID string) (domain.CalculationMatchingInput, bool) {
+	targetIndex := -1
+	accountCounts := make(map[string]int, len(input.LimitSeries))
+	for index, series := range input.LimitSeries {
+		accountCounts[series.LogicalAccountID]++
+		if series.CalculationIntervalID == intervalID {
+			targetIndex = index
+		}
+	}
+	if targetIndex < 0 {
+		return domain.CalculationMatchingInput{}, false
+	}
+	targetAccountID := input.LimitSeries[targetIndex].LogicalAccountID
+	for accountID, count := range accountCounts {
+		if count > 1 && accountID != targetAccountID {
+			return domain.CalculationMatchingInput{}, false
+		}
+	}
+	if accountCounts[targetAccountID] == 1 {
+		return input, true
+	}
+
+	selected := make([]domain.MatchingLimitSeries, 0, len(accountCounts))
+	selected = append(selected, input.LimitSeries[targetIndex])
+	for index, series := range input.LimitSeries {
+		if index == targetIndex || series.LogicalAccountID == targetAccountID {
+			continue
+		}
+		selected = append(selected, series)
+	}
+	input.LimitSeries = selected
+	input.CalculationIntervalIDs = make([]string, 0, len(selected))
+	for _, series := range selected {
+		input.CalculationIntervalIDs = append(input.CalculationIntervalIDs, series.CalculationIntervalID)
+	}
+	input.PlanVersionID = selected[0].PlanVersionID
+	for _, series := range selected[1:] {
+		if series.PlanVersionID != input.PlanVersionID {
+			input.PlanVersionID = ""
+			break
+		}
+	}
+	return input, true
 }
 
 func (l *Lifecycle) removeStaleEstimationPoints(ctx context.Context, intervalID string) error {

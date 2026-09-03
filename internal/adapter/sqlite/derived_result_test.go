@@ -114,6 +114,86 @@ func TestClaimRecalculationRequestIsAtomic(t *testing.T) {
 	}
 }
 
+func TestMatchingInputForIntervalPrefersTargetSeries(t *testing.T) {
+	input := domain.CalculationMatchingInput{
+		CalculationIntervalIDs: []string{"interval-a", "interval-b", "interval-c"},
+		LimitSeries: []domain.MatchingLimitSeries{
+			{CalculationIntervalID: "interval-a", LogicalAccountID: "account", UsageLimitSourceID: "source-a", PlanVersionID: "plan"},
+			{CalculationIntervalID: "interval-b", LogicalAccountID: "account", UsageLimitSourceID: "source-b", PlanVersionID: "plan"},
+			{CalculationIntervalID: "interval-c", LogicalAccountID: "other-account", UsageLimitSourceID: "source-c", PlanVersionID: "plan"},
+		},
+	}
+
+	selected, ok := matchingInputForInterval(input, "interval-b")
+	if !ok {
+		t.Fatal("duplicate target series was not selected")
+	}
+	if len(selected.LimitSeries) != 2 || selected.LimitSeries[0].CalculationIntervalID != "interval-b" || selected.LimitSeries[0].UsageLimitSourceID != "source-b" || selected.LimitSeries[1].CalculationIntervalID != "interval-c" {
+		t.Fatalf("selected series = %#v", selected.LimitSeries)
+	}
+	if len(selected.CalculationIntervalIDs) != 2 || selected.CalculationIntervalIDs[0] != "interval-b" || selected.CalculationIntervalIDs[1] != "interval-c" || selected.PlanVersionID != "plan" {
+		t.Fatalf("selected target metadata = %#v", selected)
+	}
+
+	input.LimitSeries = append(input.LimitSeries, domain.MatchingLimitSeries{CalculationIntervalID: "interval-d", LogicalAccountID: "other-account", UsageLimitSourceID: "source-d", PlanVersionID: "plan"})
+	if _, ok := matchingInputForInterval(input, "interval-b"); ok {
+		t.Fatal("unrelated duplicate series was resolved arbitrarily")
+	}
+}
+
+func TestRecalculateStaleDerivedResultsHandlesDuplicateLogicalAccountIntervals(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	start := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	hubID := insertAccountTestHub(t, lifecycle, start, "duplicate-series-hub")
+	service := testCatalogService(start, "duplicate-series-service")
+	if err := lifecycle.CreateService(ctx, service); err != nil {
+		t.Fatal(err)
+	}
+	account := LogicalAccount{ID: "duplicate-series-account", ServiceID: service.ID, DisplayName: "Account", CreatedAt: start, UpdatedAt: start}
+	if err := lifecycle.CreateLogicalAccount(ctx, account); err != nil {
+		t.Fatal(err)
+	}
+	definition := LimitDefinition{ID: "duplicate-series-definition", ServiceID: service.ID, CycleType: domain.LimitCycleWeekly, Meaning: "tokens", Unit: "percent", CreatedAt: start, UpdatedAt: start}
+	if err := lifecycle.CreateLimitDefinition(ctx, definition); err != nil {
+		t.Fatal(err)
+	}
+	intervals := make([]domain.CalculationInterval, 0, 2)
+	for _, device := range []string{"home-main", "home-mini"} {
+		source := UsageLimitSource{ID: "duplicate-series-source-" + device, HubID: hubID, DeviceID: device, AccountKey: "account-key", RawServiceIdentifier: "limit.raw", WindowKey: "weekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", CreatedAt: start}
+		if err := lifecycle.CreateUsageLimitSource(ctx, source); err != nil {
+			t.Fatal(err)
+		}
+		if err := lifecycle.CreateUsageLimitAssociation(ctx, UsageLimitAssociation{ID: "duplicate-series-link-" + device, UsageLimitSourceID: source.ID, LogicalAccountID: account.ID, LimitDefinitionID: definition.ID, ValidFrom: start, ValidTo: &end, CreatedAt: start, UpdatedAt: start}); err != nil {
+			t.Fatal(err)
+		}
+		intervals = append(intervals, domain.CalculationInterval{ID: "duplicate-series-interval-" + device, ServiceID: service.ID, LogicalAccountID: account.ID, UsageLimitSourceID: source.ID, LimitDefinitionID: definition.ID, CycleType: domain.LimitCycleWeekly, ValidFrom: start, ValidTo: end, State: domain.CalculationEstimable, CreatedAt: start, UpdatedAt: start})
+	}
+	if err := lifecycle.CreateUsageCostSource(ctx, UsageCostSource{ID: "duplicate-series-cost", HubID: hubID, DeviceID: "cost-device", RawServiceIdentifier: "cost.raw", CreatedAt: start}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.CreateUsageCostAssociation(ctx, UsageCostAssociation{ID: "duplicate-series-cost-link", UsageCostSourceID: "duplicate-series-cost", LogicalAccountID: account.ID, ValidFrom: start, ValidTo: &end, CreatedAt: start, UpdatedAt: start}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.SaveCalculationIntervals(ctx, intervals, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.RecalculateStaleDerivedResults(ctx); err != nil {
+		t.Fatalf("stale derived result rebuild failed: %v", err)
+	}
+	for _, interval := range intervals {
+		key := domain.ResultSetKey(service.ID, definition.ID, domain.LimitCycleWeekly, start, end, []string{interval.ID})
+		result, err := lifecycle.GetEstimationResult(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.CalculationIntervalIDs) != 1 || result.CalculationIntervalIDs[0] != interval.ID || len(result.Series) != 1 || result.Series[0].LogicalAccountID != account.ID || result.Series[0].UsageLimitSourceID != interval.UsageLimitSourceID {
+			t.Fatalf("result for %s = %#v", interval.ID, result)
+		}
+	}
+}
+
 func TestRecalculateScopeFiltersIntervalsByConfirmedIDs(t *testing.T) {
 	lifecycle := openTestLifecycle(t)
 	database, err := lifecycle.DB()
