@@ -752,26 +752,101 @@ func (l *Lifecycle) Recalculate(ctx context.Context, request domain.Recalculatio
 		return fmt.Errorf("read recalculation intervals: %w", err)
 	}
 	for _, intervalID := range sortedUnique(intervalIDs) {
-		points, err := l.ListEstimationPoints(ctx, intervalID)
-		if err != nil {
+		if err := l.recalculateInterval(ctx, intervalID, false); err != nil {
 			return err
 		}
-		input, err := l.ListEstimationInput(ctx, intervalID)
+	}
+	return nil
+}
+
+func (l *Lifecycle) recalculateInterval(ctx context.Context, intervalID string, rebuildPoints bool) error {
+	allIntervals, err := l.ListCalculationIntervals(ctx, "")
+	if err != nil {
+		return err
+	}
+	interval, err := l.findCalculationInterval(allIntervals, intervalID)
+	if err != nil {
+		return err
+	}
+
+	var points []domain.EstimationPoint
+	if rebuildPoints {
+		points, err = l.rebuildEstimationPoints(ctx, interval)
+	} else {
+		points, err = l.ListEstimationPoints(ctx, intervalID)
+	}
+	if err != nil {
+		return err
+	}
+	input, err := l.estimationInputForPoints(ctx, intervalID, points)
+	if err != nil {
+		return err
+	}
+	estimate, err := domain.EstimateFromPoints(input)
+	if err != nil {
+		return fmt.Errorf("recalculate estimation result: %w", err)
+	}
+	now := time.Now().UTC()
+	result := domain.DerivedResult{ID: uuid.NewString(), ServiceID: interval.ServiceID, LimitDefinitionID: interval.LimitDefinitionID, CycleType: interval.CycleType, CalculationIntervalIDs: []string{interval.ID}, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo, EstimationResult: estimate, Points: points, Intervals: input.Intervals, CreatedAt: now, UpdatedAt: now}
+	if err := l.SaveDerivedResult(ctx, result, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
+// rebuildEstimationPoints regenerates current calculation points from the
+// immutable observations and associations. Persisted points are derived data,
+// so a stale calculation logic version must never be relabeled in place.
+func (l *Lifecycle) rebuildEstimationPoints(ctx context.Context, interval domain.CalculationInterval) ([]domain.EstimationPoint, error) {
+	if interval.State != domain.CalculationEstimable {
+		return nil, l.removeStaleEstimationPoints(ctx, interval.ID)
+	}
+	inputs, err := l.ListCalculationMatchingInputs(ctx, domain.CalculationBuildRequest{ServiceID: interval.ServiceID, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo})
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	points := make([]domain.EstimationPoint, 0)
+	for _, input := range inputs {
+		containsInterval := false
+		for _, id := range input.CalculationIntervalIDs {
+			if id == interval.ID {
+				containsInterval = true
+				break
+			}
+		}
+		if !containsInterval {
+			continue
+		}
+		derived, err := domain.BuildEstimationPoints(input, uuid.NewString, now)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("rebuild estimation points: %w", err)
 		}
-		estimate, err := domain.EstimateFromPoints(input)
-		if err != nil {
-			return fmt.Errorf("recalculate estimation result: %w", err)
+		points = append(points, derived...)
+	}
+	if len(points) > 0 {
+		if err := l.SaveEstimationPoints(ctx, points); err != nil {
+			return nil, err
 		}
-		interval, err := l.findCalculationInterval(input.Intervals, intervalID)
-		if err != nil {
-			return err
-		}
-		result := domain.DerivedResult{ID: uuid.NewString(), ServiceID: interval.ServiceID, LimitDefinitionID: interval.LimitDefinitionID, CycleType: interval.CycleType, CalculationIntervalIDs: []string{interval.ID}, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo, EstimationResult: estimate, Points: points, Intervals: input.Intervals, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
-		if err := l.SaveDerivedResult(ctx, result, nil); err != nil {
-			return err
-		}
+	}
+	if err := l.removeStaleEstimationPoints(ctx, interval.ID); err != nil {
+		return nil, err
+	}
+	return l.ListEstimationPoints(ctx, interval.ID)
+}
+
+func (l *Lifecycle) removeStaleEstimationPoints(ctx context.Context, intervalID string) error {
+	database, err := l.DB()
+	if err != nil {
+		return err
+	}
+	if _, err := database.ExecContext(ctx, `
+		DELETE FROM estimation_points
+		WHERE calculation_logic_version <> ?
+		  AND (calculation_interval_id = ? OR EXISTS (
+			SELECT 1 FROM json_each(estimation_points.calculation_interval_ids_json) WHERE json_each.value = ?
+		  ))`, domain.CalculationLogicVersion, intervalID, intervalID); err != nil {
+		return fmt.Errorf("remove stale estimation points: %w", err)
 	}
 	return nil
 }
@@ -847,7 +922,6 @@ func (l *Lifecycle) RecalculateStaleDerivedResults(ctx context.Context) (err err
 	rows, queryErr := database.QueryContext(ctx, `
 		SELECT ci.calculation_interval_id
 		FROM calculation_intervals ci
-		WHERE ci.state = 'estimable'
 		ORDER BY ci.valid_from, ci.calculation_interval_id
 	`)
 	if queryErr != nil {
@@ -884,41 +958,7 @@ func (l *Lifecycle) RecalculateStaleDerivedResults(ctx context.Context) (err err
 		if count > 0 {
 			continue
 		}
-
-		points, err := l.ListEstimationPoints(ctx, intervalID)
-		if err != nil {
-			return err
-		}
-		if len(points) == 0 {
-			continue
-		}
-		input, err := l.ListEstimationInput(ctx, intervalID)
-		if err != nil {
-			return err
-		}
-		estimate, err := domain.EstimateFromPoints(input)
-		if err != nil {
-			return fmt.Errorf("recalculate stale estimation result: %w", err)
-		}
-		interval, err := l.findCalculationInterval(input.Intervals, intervalID)
-		if err != nil {
-			return err
-		}
-		result := domain.DerivedResult{
-			ID:                     uuid.NewString(),
-			ServiceID:              interval.ServiceID,
-			LimitDefinitionID:      interval.LimitDefinitionID,
-			CycleType:              interval.CycleType,
-			CalculationIntervalIDs: []string{interval.ID},
-			ValidFrom:              interval.ValidFrom,
-			ValidTo:                interval.ValidTo,
-			EstimationResult:       estimate,
-			Points:                 points,
-			Intervals:              input.Intervals,
-			CreatedAt:              time.Now().UTC(),
-			UpdatedAt:              time.Now().UTC(),
-		}
-		if err := l.SaveDerivedResult(ctx, result, nil); err != nil {
+		if err := l.recalculateInterval(ctx, intervalID, true); err != nil {
 			return err
 		}
 	}

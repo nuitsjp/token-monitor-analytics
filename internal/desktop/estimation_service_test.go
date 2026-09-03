@@ -69,7 +69,7 @@ func TestEstimationServiceKeepsUncomputedSeriesAndUsesGoDisplayValues(t *testing
 	if uncomputed.State.Code != "insufficient_observations" || uncomputed.StateReason == "" {
 		t.Fatalf("insufficient series = %#v", uncomputed)
 	}
-	if computed.State.Code != "estimated" || computed.RemainingLabel != "74.5%" || computed.EstimatedLimitLabel != "123.00" {
+	if computed.State.Code != "estimated" || computed.StateReason != "有限かつ正の一意解が得られました。" || computed.RemainingLabel != "74.5%" || computed.EstimatedLimitLabel != "123.00" {
 		t.Fatalf("computed display = %#v", computed)
 	}
 	if computed.MonthlyEquivalentLimit == nil || computed.ValueMultiplier == nil || computed.StandardPriceSourceURL != "https://vendor.example/prices" || computed.StandardPriceValidFrom == "" || computed.ValueReasonCode != string(domain.ValueReasonComputed) {
