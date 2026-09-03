@@ -831,12 +831,25 @@ func (l *Lifecycle) Recalculate(ctx context.Context, request domain.Recalculatio
 		fallbackQuery := `SELECT calculation_interval_id FROM calculation_intervals WHERE service_id IN (` + strings.Join(placeholders, ",") + `) AND state = 'estimable' ORDER BY valid_from DESC, calculation_interval_id LIMIT 10`
 		fbRows, fbErr := database.QueryContext(ctx, fallbackQuery, sArgs...)
 		if fbErr == nil {
-			defer fbRows.Close()
-			for fbRows.Next() {
-				var id string
-				if err := fbRows.Scan(&id); err == nil {
-					intervalIDs = append(intervalIDs, id)
+			fallbackErr := func() (err error) {
+				defer func() {
+					if closeErr := fbRows.Close(); closeErr != nil && err == nil {
+						err = fmt.Errorf("close fallback recalculation interval rows: %w", closeErr)
+					}
+				}()
+				for fbRows.Next() {
+					var id string
+					if scanErr := fbRows.Scan(&id); scanErr == nil {
+						intervalIDs = append(intervalIDs, id)
+					}
 				}
+				if rowsErr := fbRows.Err(); rowsErr != nil {
+					return fmt.Errorf("read fallback recalculation intervals: %w", rowsErr)
+				}
+				return nil
+			}()
+			if fallbackErr != nil {
+				return fallbackErr
 			}
 		}
 	}
