@@ -51,7 +51,7 @@ func collectionDedupeCompactionCases() []collectionDedupeCompactionCase {
 					NormalizationGeneration: generation, NormalizationRuleVersion: "rule-v1",
 					NormalizationLogicVersion: "logic-v1", JSONPath: "$.usage", DedupeKey: "same-key",
 					ValueFingerprint: fingerprint,
-				}}, nil)
+				}}, nil, nil)
 			},
 		},
 		{
@@ -67,6 +67,23 @@ func collectionDedupeCompactionCases() []collectionDedupeCompactionCase {
 					AnalyticsIntervalSeconds: 300, NormalizationGeneration: generation,
 					NormalizationRuleVersion: "rule-v1", NormalizationLogicVersion: "logic-v1",
 					JSONPath: "$.limit", DedupeKey: "same-key", ValueFingerprint: fingerprint,
+				}})
+			},
+		},
+		{
+			name:  "period",
+			table: "usage_period_observations",
+			insert: func(ctx context.Context, lifecycle *Lifecycle, observationID, snapshotID, hubID string, observedAt time.Time, generation int64, fingerprint string, value int64) error {
+				return lifecycle.InsertAllObservations(ctx, nil, nil, nil, []UsagePeriodObservation{{
+					ObservationID: observationID, SnapshotID: snapshotID, HubID: hubID, DeviceID: "device",
+					PeriodKind: domain.UsagePeriodKindDay, PeriodKey: "2026-09-02",
+					PeriodEndsAt: observedAt.Add(24 * time.Hour), UsageUpdatedAt: observedAt,
+					SourceTimezone: "UTC", TokenCount: value, APICostUSDText: fmt.Sprint(value),
+					ToolTokens: map[string]int64{}, ToolCosts: map[string]string{}, ModelTokens: map[string]int64{},
+					ModelCosts: map[string]string{}, ToolModelTokens: map[string]map[string]int64{}, ToolModelCosts: map[string]map[string]string{},
+					NormalizationGeneration: generation, NormalizationRuleVersion: "rule-v1",
+					NormalizationLogicVersion: "logic-v1", JSONPath: "$.period", DedupeKey: "same-key",
+					ValueFingerprint: fingerprint,
 				}})
 			},
 		},
@@ -281,12 +298,15 @@ func TestPurgeKeepsCompactedObservationWhenAnotherOccurrenceSurvives(t *testing.
 	saveCollectionCompactionSnapshot(t, lifecycle, ctx, "purge-attempt-first", "purge-snapshot-first", hubID, firstSeen)
 	saveCollectionCompactionSnapshot(t, lifecycle, ctx, "purge-attempt-last", "purge-snapshot-last", hubID, lastSeen)
 
-	insert := collectionDedupeCompactionCases()[0].insert
-	if err := insert(ctx, lifecycle, "purge-observation-first", "purge-snapshot-first", hubID, firstSeen, 1, "same-value", 25); err != nil {
-		t.Fatal(err)
-	}
-	if err := insert(ctx, lifecycle, "purge-observation-last", "purge-snapshot-last", hubID, firstSeen, 1, "same-value", 25); err != nil {
-		t.Fatal(err)
+	for _, testCase := range collectionDedupeCompactionCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := testCase.insert(ctx, lifecycle, "purge-observation-first-"+testCase.name, "purge-snapshot-first", hubID, firstSeen, 1, "same-value", 25); err != nil {
+				t.Fatal(err)
+			}
+			if err := testCase.insert(ctx, lifecycle, "purge-observation-last-"+testCase.name, "purge-snapshot-last", hubID, firstSeen, 1, "same-value", 25); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 
 	start, end := firstSeen.Add(-time.Second), firstSeen.Add(time.Second)
@@ -294,14 +314,18 @@ func TestPurgeKeepsCompactedObservationWhenAnotherOccurrenceSurvives(t *testing.
 		t.Fatal(err)
 	}
 
-	count, seenCount, firstSeenAt, lastSeenAt, representativeSnapshotID, latestSnapshotID, state := queryCompactedObservation(t, ctx, lifecycle, "usage_cost_observations", hubID, "same-key", 1)
-	if count != 1 || seenCount != 1 || state != "canonical" {
-		t.Fatalf("surviving compacted observation count=%d seen=%d state=%q", count, seenCount, state)
-	}
-	if firstSeenAt != utcText(lastSeen) || lastSeenAt != utcText(lastSeen) {
-		t.Fatalf("surviving seen range=(%q,%q), want %q", firstSeenAt, lastSeenAt, utcText(lastSeen))
-	}
-	if representativeSnapshotID != "purge-snapshot-last" || latestSnapshotID != "purge-snapshot-last" {
-		t.Fatalf("surviving snapshots representative=%q latest=%q", representativeSnapshotID, latestSnapshotID)
+	for _, testCase := range collectionDedupeCompactionCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			count, seenCount, firstSeenAt, lastSeenAt, representativeSnapshotID, latestSnapshotID, state := queryCompactedObservation(t, ctx, lifecycle, testCase.table, hubID, "same-key", 1)
+			if count != 1 || seenCount != 1 || state != "canonical" {
+				t.Fatalf("surviving compacted observation count=%d seen=%d state=%q", count, seenCount, state)
+			}
+			if firstSeenAt != utcText(lastSeen) || lastSeenAt != utcText(lastSeen) {
+				t.Fatalf("surviving seen range=(%q,%q), want %q", firstSeenAt, lastSeenAt, utcText(lastSeen))
+			}
+			if representativeSnapshotID != "purge-snapshot-last" || latestSnapshotID != "purge-snapshot-last" {
+				t.Fatalf("surviving snapshots representative=%q latest=%q", representativeSnapshotID, latestSnapshotID)
+			}
+		})
 	}
 }

@@ -17,6 +17,12 @@ ALTER TABLE usage_limit_observations ADD COLUMN last_seen_at TEXT;
 ALTER TABLE usage_limit_observations ADD COLUMN representative_snapshot_id TEXT;
 ALTER TABLE usage_limit_observations ADD COLUMN latest_snapshot_id TEXT;
 
+ALTER TABLE usage_period_observations ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 1 CHECK (seen_count > 0);
+ALTER TABLE usage_period_observations ADD COLUMN first_seen_at TEXT;
+ALTER TABLE usage_period_observations ADD COLUMN last_seen_at TEXT;
+ALTER TABLE usage_period_observations ADD COLUMN representative_snapshot_id TEXT;
+ALTER TABLE usage_period_observations ADD COLUMN latest_snapshot_id TEXT;
+
 CREATE TABLE usage_cost_observation_occurrences (
     observation_id TEXT NOT NULL REFERENCES usage_cost_observations(observation_id) ON DELETE CASCADE,
     snapshot_id TEXT NOT NULL REFERENCES raw_snapshots(snapshot_id) ON DELETE CASCADE,
@@ -46,6 +52,16 @@ CREATE TABLE usage_limit_observation_occurrences (
 
 CREATE INDEX usage_limit_observation_occurrences_snapshot
     ON usage_limit_observation_occurrences (snapshot_id, observation_id);
+
+CREATE TABLE usage_period_observation_occurrences (
+    period_observation_id TEXT NOT NULL REFERENCES usage_period_observations(period_observation_id) ON DELETE CASCADE,
+    snapshot_id TEXT NOT NULL REFERENCES raw_snapshots(snapshot_id) ON DELETE CASCADE,
+    json_path TEXT NOT NULL,
+    PRIMARY KEY (period_observation_id, snapshot_id, json_path)
+) STRICT;
+
+CREATE INDEX usage_period_observation_occurrences_snapshot
+    ON usage_period_observation_occurrences (snapshot_id, period_observation_id);
 
 CREATE TEMP TABLE cost_observation_compaction AS
 SELECT observation_id AS old_id,
@@ -202,6 +218,8 @@ UPDATE schema_metadata SET schema_version = 16 WHERE singleton = 1;
 
 -- +goose Down
 UPDATE schema_metadata SET schema_version = 15 WHERE singleton = 1;
+DROP INDEX usage_period_observation_occurrences_snapshot;
+DROP TABLE usage_period_observation_occurrences;
 DROP INDEX usage_limit_observations_exact_value;
 DROP INDEX usage_analysis_observations_exact_value;
 DROP INDEX usage_cost_observations_exact_value;

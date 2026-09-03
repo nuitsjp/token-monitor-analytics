@@ -6,8 +6,8 @@ import { AppProviders } from "../../app/providers";
 import {
   createFakeBackend,
   emitFakeBackendEvent,
+  emptyCalendarPeriodUsage,
   emptyOverviewSnapshot,
-  emptyUsageSnapshot,
 } from "../../lib/backend";
 import type {
   FrontendAdapter,
@@ -501,12 +501,32 @@ describe("CompactWindow", () => {
     const routes: string[] = [];
     const backend = createFakeBackend({
       overview: overview(),
-      usage: {
-        ...emptyUsageSnapshot,
-        summary: {
-          ...emptyUsageSnapshot.summary,
+      calendarPeriodUsage: {
+        ...emptyCalendarPeriodUsage,
+        displayTimeZone: "Asia/Tokyo",
+        day: {
+          ...emptyCalendarPeriodUsage.day,
+          available: true,
+          periodKey: "2026-09-03",
+          tokens: 12345,
+          apiCostUsd: 1.25,
+          apiCostUsdText: "1.25",
+          latestObservedAt: "2026-09-03T05:25:00Z",
+          oldestObservedAt: "2026-09-03T05:20:00Z",
+          deviceCount: 1,
+          unavailableReason: "",
+        },
+        month: {
+          ...emptyCalendarPeriodUsage.month,
+          available: true,
+          periodKey: "2026-09",
           tokens: 1367326111,
           apiCostUsd: 316.16,
+          apiCostUsdText: "316.16",
+          latestObservedAt: "2026-09-03T05:25:00Z",
+          oldestObservedAt: "2026-09-03T05:15:00Z",
+          deviceCount: 1,
+          unavailableReason: "",
         },
       },
       onOpenMainRoute: (route) => routes.push(route),
@@ -527,6 +547,11 @@ describe("CompactWindow", () => {
     });
     expect(todayButton).toBeVisible();
     expect(todayButton).toHaveTextContent("Today");
+    expect(todayButton).toHaveTextContent("12,345");
+    const observed = screen.getByText(/^観測 /);
+    expect(observed).toHaveTextContent("5:25");
+    expect(observed).toHaveTextContent("最古");
+    expect(observed).toHaveTextContent("5:15");
 
     await user.click(monthButton);
     expect(routes).toEqual(["/usage"]);

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   createFakeBackend,
   emptyDataManagementState,
+  emptyCalendarPeriodUsage,
   emptyOverviewSnapshot,
 } from "../../lib/backend";
 import type {
@@ -208,6 +209,39 @@ describe("OverviewPage", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText("当日トークン")).toBeInTheDocument();
     expect(screen.getByText("当月トークン")).toBeInTheDocument();
+  });
+
+  it("shows the newest and oldest adopted observation times for both periods", async () => {
+    const backend = createFakeBackend({
+      overview: populatedOverview(),
+      calendarPeriodUsage: {
+        ...emptyCalendarPeriodUsage,
+        day: {
+          ...emptyCalendarPeriodUsage.day,
+          available: true,
+          latestObservedAt: "2026-09-03T05:25:00Z",
+          oldestObservedAt: "2026-09-03T05:20:00Z",
+        },
+        month: {
+          ...emptyCalendarPeriodUsage.month,
+          available: true,
+          latestObservedAt: "2026-09-03T05:24:00Z",
+          oldestObservedAt: "2026-09-03T05:15:00Z",
+        },
+      },
+    });
+    render(
+      <MemoryRouter>
+        <OverviewPage backend={backend} displayTimeZone="Asia/Tokyo" />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText(/当日の観測時刻 9\/3 14:25/),
+    ).toHaveTextContent("最古 9/3 14:20");
+    expect(screen.getByText(/当月の観測時刻 9\/3 14:24/)).toHaveTextContent(
+      "最古 9/3 14:15",
+    );
   });
 
   it("shows restore maintenance instead of operational values", async () => {

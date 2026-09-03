@@ -28,9 +28,9 @@ function Get-RequirementDeclarationIds([string]$document) {
         $id = [string]$Matches['id']
         if (-not (Test-RequirementId $id)) {
             if ([regex]::IsMatch($id, '^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-[0-9]{2}$')) {
-                throw "要件宣言行の ID 名前空間が未知です (行 $lineNumber): $id"
+                throw "Unknown requirement ID namespace at line ${lineNumber}: $id"
             }
-            throw "要件宣言行の ID 形式が不正です (行 $lineNumber): $id"
+            throw "Invalid requirement ID format at line ${lineNumber}: $id"
         }
         $ids += $id
     }
@@ -42,7 +42,7 @@ function Assert-RequirementDocument([string]$document) {
     $declared = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($id in $ids) {
         if (-not $declared.Add($id)) {
-            throw "要件宣言 ID が重複しています: $id"
+            throw "Duplicate requirement declaration ID: $id"
         }
     }
 
@@ -52,7 +52,7 @@ function Assert-RequirementDocument([string]$document) {
     foreach ($match in [regex]::Matches($document, $referencePattern)) {
         $id = $match.Groups['id'].Value
         if (-not $declared.Contains($id)) {
-            throw "要件定義に存在しない ID 参照です: $id"
+            throw "Requirement ID reference has no declaration: $id"
         }
     }
     return @($declared | Sort-Object)

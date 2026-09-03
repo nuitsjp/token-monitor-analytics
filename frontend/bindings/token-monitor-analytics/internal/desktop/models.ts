@@ -75,6 +75,29 @@ export interface CalculationIntervalSnapshot {
     "valueReason": string;
 }
 
+export interface CalendarPeriodUsageInput {
+    "displayTimeZone": string;
+}
+
+export interface CalendarPeriodUsageSnapshot {
+    "displayTimeZone": string;
+    "day": CalendarPeriodValueSnapshot;
+    "month": CalendarPeriodValueSnapshot;
+}
+
+export interface CalendarPeriodValueSnapshot {
+    "available": boolean;
+    "periodKind": string;
+    "periodKey": string;
+    "tokens": number;
+    "apiCostUsd": number;
+    "apiCostUsdText": string;
+    "latestObservedAt": string;
+    "oldestObservedAt": string;
+    "deviceCount": number;
+    "unavailableReason": string;
+}
+
 export interface CandidateCorrectionInput {
     "candidateId": string;
     "rawLimitServiceIdentifier": string;
@@ -1215,6 +1238,10 @@ export interface UsageSnapshot {
     "breakdown": UsageBreakdownSnapshot[] | null;
     "nativeAmounts": UsageNativeAmountSnapshot[] | null;
     "evidence": UsageEvidenceSnapshot[] | null;
+    "unallocatedObservationCount": number;
+    "unallocatedTokens": number;
+    "unallocatedApiCostUsd": number;
+    "unallocatedApiCostUsdText": string;
 }
 
 export interface UsageSummarySnapshot {

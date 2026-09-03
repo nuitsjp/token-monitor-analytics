@@ -81,6 +81,9 @@ func collectionHubAPIDependencies() CollectionDependencies {
 			for _, item := range result.Limits {
 				normalized.Limits = append(normalized.Limits, NormalizedLimitObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, AccountKeyKind: item.AccountKeyKind, AccountLabel: item.AccountLabel, AccountEmail: item.AccountEmail, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
 			}
+			for _, item := range result.Periods {
+				normalized.Periods = append(normalized.Periods, NormalizedPeriodObservation{DeviceID: item.DeviceID, PeriodKind: item.PeriodKind, PeriodKey: item.PeriodKey, PeriodEndsAt: item.PeriodEndsAt, UsageUpdatedAt: item.UsageUpdatedAt, SourceTimezone: item.SourceTimezone, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ToolTokens: item.ToolTokens, ToolCosts: item.ToolCosts, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, ToolModelTokens: item.ToolModelTokens, ToolModelCosts: item.ToolModelCosts, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+			}
 			return normalized, nil
 		},
 		ClassifyError: func(err error) string {

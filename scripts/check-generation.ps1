@@ -2,23 +2,6 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3.0
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 
-function Get-FileSha256Hex([string]$Path) {
-    $stream = $null
-    $hash = $null
-    try {
-        $stream = [System.IO.File]::OpenRead($Path)
-        $hash = [System.Security.Cryptography.SHA256]::Create()
-        return ([BitConverter]::ToString($hash.ComputeHash($stream)) -replace '-', '')
-    } finally {
-        if ($null -ne $hash) {
-            $hash.Dispose()
-        }
-        if ($null -ne $stream) {
-            $stream.Dispose()
-        }
-    }
-}
-
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ('token-monitor-generation-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
@@ -36,11 +19,11 @@ try {
     $committed = Join-Path $repositoryRoot 'frontend/bindings'
     $committedHashes = @(Get-ChildItem -LiteralPath $committed -Recurse -File | ForEach-Object {
         $relative = $_.FullName.Substring($committed.Length).TrimStart('\', '/')
-        "$relative`t$(Get-FileSha256Hex -Path $_.FullName)"
+        "$relative`t$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
     })
     $generatedHashes = @(Get-ChildItem -LiteralPath $bindings -Recurse -File | ForEach-Object {
         $relative = $_.FullName.Substring($bindings.Length).TrimStart('\', '/')
-        "$relative`t$(Get-FileSha256Hex -Path $_.FullName)"
+        "$relative`t$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
     })
     $differences = @(Compare-Object $committedHashes $generatedHashes)
     if ($differences.Count -gt 0) {

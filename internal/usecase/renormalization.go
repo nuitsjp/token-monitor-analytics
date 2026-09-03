@@ -11,7 +11,7 @@ import (
 
 type RenormalizationStore interface {
 	ListRawStatsForNormalization(context.Context, int64) ([]domain.RawNormalizationInput, error)
-	InsertAllObservations(context.Context, []domain.CostObservation, []domain.CollectionUsageObservation, []domain.LimitObservation) error
+	InsertAllObservations(context.Context, []domain.CostObservation, []domain.CollectionUsageObservation, []domain.LimitObservation, []domain.CollectionUsagePeriodObservation) error
 	CompleteNormalization(context.Context, string, int64, string, string, time.Time, time.Time, string) error
 }
 
@@ -46,7 +46,7 @@ func (u *RenormalizationUsecase) Run(ctx context.Context) (int, error) {
 			continue
 		}
 		batch := buildObservationBatch(normalized, input.SnapshotID, input.HubID, input.AnalyticsIntervalSeconds, u.ids, u.dependencies)
-		if err := u.store.InsertAllObservations(ctx, batch.costs, batch.usage, batch.limits); err != nil {
+		if err := u.store.InsertAllObservations(ctx, batch.costs, batch.usage, batch.limits, batch.periods); err != nil {
 			return completed, fmt.Errorf("insert renormalized observations for snapshot %s: %w", input.SnapshotID, err)
 		}
 		finished := u.clock.Now().UTC()

@@ -100,3 +100,15 @@ func TestOpenApplicationStorageUnknownJournalDoesNotCreateDatabase(t *testing.T)
 		t.Fatalf("unsafe restore journal was modified: %q/%v", contents, err)
 	}
 }
+
+func TestMainCollectionDependenciesPreserveSourcePeriods(t *testing.T) {
+	raw := []byte(`{"devices":[{"deviceId":"device","updatedAt":"2026-09-03T05:25:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-09-03","endsAt":"2026-09-03T15:00:00Z"}},"periods":{"today":{"totalTokens":100,"costUsd":1},"allTime":{}},"limits":{}}]}`)
+
+	result, err := mainCollectionDependencies().NormalizeStats(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Periods) != 1 || result.Periods[0].PeriodKey != "2026-09-03" || result.Periods[0].TokenCount != 100 {
+		t.Fatalf("source periods were not preserved: %#v", result.Periods)
+	}
+}

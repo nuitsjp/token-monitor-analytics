@@ -33,7 +33,7 @@ func TestStoredRawSnapshotsAreRenormalizedWithDeviceUpdatedAt(t *testing.T) {
 	if err := lifecycle.CreateCollectionAttempt(ctx, CollectionAttempt{AttemptID: "raw-attempt", HubID: hubID, Trigger: "manual", State: "succeeded", StartedAt: now, AnalyticsIntervalSeconds: 300}); err != nil {
 		t.Fatal(err)
 	}
-	raw := `{"devices":[{"deviceId":"device","updatedAt":"2026-09-02T07:00:00Z","periods":{"allTime":{"clientCosts":{"codex":1.5}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","accountLabel":"Pro 5x","updatedAt":"2026-09-02T06:59:00Z","windows":[{"limitId":"weekly","kind":"weekly","metric":"percent","label":"Weekly","usedPercent":25,"resetsAt":"2026-09-09T00:00:00Z"}]}]}}]}`
+	raw := `{"devices":[{"deviceId":"device","updatedAt":"2026-09-02T07:00:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-09-02","endsAt":"2026-09-02T15:00:00Z"},"month":{"key":"2026-09","endsAt":"2026-09-30T15:00:00Z"}},"periods":{"today":{"totalTokens":100,"costUsd":1},"month":{"totalTokens":500,"costUsd":5},"allTime":{"clientCosts":{"codex":1.5}}},"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","accountLabel":"Pro 5x","updatedAt":"2026-09-02T06:59:00Z","windows":[{"limitId":"weekly","kind":"weekly","metric":"percent","label":"Weekly","usedPercent":25,"resetsAt":"2026-09-09T00:00:00Z"}]}]}}]}`
 	if err := lifecycle.SaveRawSnapshot(ctx, RawSnapshot{SnapshotID: "raw-stats", AttemptID: "raw-attempt", HubID: hubID, ResponseKind: "stats", ReceivedStartedAt: now, ReceivedCompletedAt: now, HTTPStatus: 200, APIContract: "schema=1;runtime=node-hub;core_revision=23", Body: []byte(raw)}); err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,9 @@ func TestStoredRawSnapshotsAreRenormalizedWithDeviceUpdatedAt(t *testing.T) {
 			for _, item := range value.Limits {
 				result.Limits = append(result.Limits, usecase.NormalizedLimitObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
 			}
+			for _, item := range value.Periods {
+				result.Periods = append(result.Periods, usecase.NormalizedPeriodObservation{DeviceID: item.DeviceID, PeriodKind: item.PeriodKind, PeriodKey: item.PeriodKey, PeriodEndsAt: item.PeriodEndsAt, UsageUpdatedAt: item.UsageUpdatedAt, SourceTimezone: item.SourceTimezone, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ToolTokens: item.ToolTokens, ToolCosts: item.ToolCosts, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, ToolModelTokens: item.ToolModelTokens, ToolModelCosts: item.ToolModelCosts, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
+			}
 			return result, nil
 		},
 	}
@@ -66,11 +69,14 @@ func TestStoredRawSnapshotsAreRenormalizedWithDeviceUpdatedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	database, _ := lifecycle.DB()
-	var costs, limits, active, histories int
+	var costs, limits, periods, active, histories int
 	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_cost_observations WHERE normalization_generation = ? AND usage_updated_at = '2026-09-02T07:00:00Z'`, hubapi.NormalizationGeneration).Scan(&costs); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_limit_observations WHERE normalization_generation = ? AND plan_label = 'Pro 5x' AND window_key = 'weekly'||char(31)||'percent'||char(31)||'Weekly'`, hubapi.NormalizationGeneration).Scan(&limits); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_period_observations WHERE normalization_generation = ?`, hubapi.NormalizationGeneration).Scan(&periods); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM normalization_runs WHERE snapshot_id = 'raw-stats' AND state = 'active'`).Scan(&active); err != nil {
@@ -79,7 +85,7 @@ func TestStoredRawSnapshotsAreRenormalizedWithDeviceUpdatedAt(t *testing.T) {
 	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM plan_histories`).Scan(&histories); err != nil {
 		t.Fatal(err)
 	}
-	if costs != 1 || limits != 1 || active != 1 || histories != 1 {
-		t.Fatalf("costs=%d limits=%d active=%d histories=%d", costs, limits, active, histories)
+	if costs != 1 || limits != 1 || periods != 2 || active != 1 || histories != 1 {
+		t.Fatalf("costs=%d limits=%d periods=%d active=%d histories=%d", costs, limits, periods, active, histories)
 	}
 }

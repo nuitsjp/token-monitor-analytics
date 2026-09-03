@@ -645,3 +645,41 @@ type UsageLimitSourceLink struct {
 	CreatedAt               string         `json:"created_at"`
 	UpdatedAt               string         `json:"updated_at"`
 }
+
+type UsagePeriodObservation struct {
+	PeriodObservationID       string         `json:"period_observation_id"`
+	SnapshotID                string         `json:"snapshot_id"`
+	HubID                     string         `json:"hub_id"`
+	DeviceID                  string         `json:"device_id"`
+	PeriodKind                string         `json:"period_kind"`
+	PeriodKey                 string         `json:"period_key"`
+	PeriodEndsAt              string         `json:"period_ends_at"`
+	UsageUpdatedAt            string         `json:"usage_updated_at"`
+	SourceTimezone            string         `json:"source_timezone"`
+	TokenCount                int64          `json:"token_count"`
+	ApiCostUsdText            sql.NullString `json:"api_cost_usd_text"`
+	ToolTokensJson            string         `json:"tool_tokens_json"`
+	ToolCostsJson             string         `json:"tool_costs_json"`
+	ModelTokensJson           string         `json:"model_tokens_json"`
+	ModelCostsJson            string         `json:"model_costs_json"`
+	ToolModelTokensJson       string         `json:"tool_model_tokens_json"`
+	ToolModelCostsJson        string         `json:"tool_model_costs_json"`
+	NormalizationGeneration   int64          `json:"normalization_generation"`
+	NormalizationRuleVersion  string         `json:"normalization_rule_version"`
+	NormalizationLogicVersion string         `json:"normalization_logic_version"`
+	JsonPath                  string         `json:"json_path"`
+	DedupeState               string         `json:"dedupe_state"`
+	DedupeKey                 string         `json:"dedupe_key"`
+	ValueFingerprint          string         `json:"value_fingerprint"`
+	SeenCount                 int64          `json:"seen_count"`
+	FirstSeenAt               sql.NullString `json:"first_seen_at"`
+	LastSeenAt                sql.NullString `json:"last_seen_at"`
+	RepresentativeSnapshotID  sql.NullString `json:"representative_snapshot_id"`
+	LatestSnapshotID          sql.NullString `json:"latest_snapshot_id"`
+}
+
+type UsagePeriodObservationOccurrence struct {
+	PeriodObservationID string `json:"period_observation_id"`
+	SnapshotID          string `json:"snapshot_id"`
+	JsonPath            string `json:"json_path"`
+}

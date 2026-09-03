@@ -27,6 +27,29 @@ type UsageObservation struct {
 	JSONPath                                     string
 }
 
+const (
+	UsagePeriodKindDay   = "day"
+	UsagePeriodKindMonth = "month"
+)
+
+// UsagePeriodObservation is one canonical source-reported calendar period
+// reading for a Hub device. It is not an allTime cumulative delta.
+type UsagePeriodObservation struct {
+	ID, SnapshotID, HubID, HubName, DeviceID string
+	PeriodKind, PeriodKey                    string
+	PeriodEndsAt, UsageUpdatedAt             time.Time
+	SourceTimezone                           string
+	TokenCount                               int64
+	APICostUSDText                           string
+	ToolTokens                               map[string]int64
+	ToolCosts                                map[string]string
+	ModelTokens                              map[string]int64
+	ModelCosts                               map[string]string
+	ToolModelTokens                          map[string]map[string]int64
+	ToolModelCosts                           map[string]map[string]string
+	JSONPath, DedupeState                    string
+}
+
 type UsageDelta struct {
 	StartObservationID, EndObservationID string
 	StartSnapshotID, EndSnapshotID       string

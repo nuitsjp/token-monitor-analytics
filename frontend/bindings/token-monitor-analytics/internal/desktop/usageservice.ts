@@ -13,6 +13,10 @@ export function ExportUsage(input: $models.UsageFilterInput, format: string): $C
     return $Call.ByID(1420066594, input, format);
 }
 
+export function GetCalendarPeriodUsage(input: $models.CalendarPeriodUsageInput): $CancellablePromise<$models.CalendarPeriodUsageSnapshot> {
+    return $Call.ByID(4250982811, input);
+}
+
 export function GetUsage(input: $models.UsageFilterInput): $CancellablePromise<$models.UsageSnapshot> {
     return $Call.ByID(1220379014, input);
 }
