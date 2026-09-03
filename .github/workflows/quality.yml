@@ -43,6 +43,7 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           python -m pip install zizmor==1.11.0
           choco install nsis --version=3.12 -y --no-progress
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files (x86)\NSIS'
           powershell -NoProfile -Command "Install-Module PSScriptAnalyzer -Repository PSGallery -RequiredVersion 1.24.0 -Scope CurrentUser -Force"
       - run: powershell -NoProfile -File scripts/verify-tools.ps1
 
@@ -94,6 +95,8 @@ jobs:
           go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.12
           Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
           npm --prefix frontend ci
+      - name: Build frontend assets for lint
+        run: npm --prefix frontend run build
       - run: go mod tidy -diff
       - run: go mod verify
       - run: wails3 task fmt:check
@@ -198,7 +201,6 @@ jobs:
         shell: pwsh
         run: |
           go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.12
-          npm --prefix frontend ci
       - run: wails3 task build
 
   workflow-policy:

@@ -1,4 +1,4 @@
-# Shared traceability identifier rules. This file intentionally contains only
+﻿# Shared traceability identifier rules. This file intentionally contains only
 # function and pattern definitions so callers can dot-source it safely.
 
 $script:RequirementIdPattern = '(?:API|DM|P[12]|QL)(?:-[A-Z0-9]+)*-[0-9]{2}|AC-P[12]-[0-9]{2}'
