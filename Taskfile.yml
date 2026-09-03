@@ -26,7 +26,7 @@ tasks:
   generate:check:
     summary: Compares committed generated code without changing the worktree
     cmds:
-      - powershell -NoProfile -File scripts/check-generation.ps1
+      - pwsh -NoProfile -File scripts/check-generation.ps1
 
   fmt:
     summary: Formats Go and frontend sources

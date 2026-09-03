@@ -27,21 +27,15 @@ import {
 } from "../../components/design";
 import { gaugeTextClass, useDesignStyles } from "../../components/designStyles";
 import type {
+  CalendarPeriodUsageSnapshot,
   DataManagementStateSnapshot,
   FrontendAdapter,
   OverviewSnapshot,
-  UsageSnapshot,
 } from "../../lib/backend";
 import {
   formatOverviewBytes,
   formatOverviewInstant,
 } from "../../lib/overviewDisplay";
-import {
-  addLocalDays,
-  currentDateInZone,
-  firstDateOfMonth,
-  zonedMidnight,
-} from "../../lib/usageTime";
 
 const useStyles = makeStyles({
   setup: {
@@ -95,7 +89,7 @@ export function OverviewPage({
   const [latestValidReferenceCount, setLatestValidReferenceCount] = useState<
     number | null
   >(null);
-  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
+  const [usage, setUsage] = useState<CalendarPeriodUsageSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [auxiliaryError, setAuxiliaryError] = useState("");
@@ -104,7 +98,6 @@ export function OverviewPage({
     setError("");
     setAuxiliaryError("");
     try {
-      const currentDate = currentDateInZone(displayTimeZone);
       const [
         overviewResult,
         dataManagementResult,
@@ -121,21 +114,8 @@ export function OverviewPage({
           sortBy: "status",
           descending: false,
         }),
-        backend.getUsage({
-          from: zonedMidnight(firstDateOfMonth(currentDate), displayTimeZone),
-          to: zonedMidnight(addLocalDays(currentDate, 1), displayTimeZone),
+        backend.getCalendarPeriodUsage({
           displayTimeZone,
-          granularity: "day",
-          groupBy: "hub",
-          hubId: "",
-          collectionDeviceId: "",
-          deviceId: "",
-          serviceId: "",
-          rawServiceIdentifier: "",
-          logicalAccountId: "",
-          planVersionId: "",
-          limitDefinitionId: "",
-          model: "",
         }),
       ]);
       if (overviewResult.status === "rejected") {
@@ -258,12 +238,8 @@ export function OverviewPage({
   const backup = dataManagement?.backup;
   const restoreTrial = dataManagement?.restore.trial;
   const abnormalHubs = snapshot.hubs.abnormalCount;
-  const currentUsageDate = currentDateInZone(displayTimeZone);
-  const todayUsage = usage?.series?.find(
-    (item) =>
-      currentDateInZone(displayTimeZone, new Date(item.periodStart)) ===
-      currentUsageDate,
-  );
+  const todayUsage = usage?.day;
+  const monthUsage = usage?.month;
   return (
     <div className={design.page}>
       <header className={design.pageHeader}>
@@ -271,7 +247,8 @@ export function OverviewPage({
           概要
         </h1>
         <Caption1 className={design.pageMeta} title={snapshot.generatedAt}>
-          {formatOverviewInstant(snapshot.generatedAt, displayTimeZone)} 更新
+          {formatOverviewInstant(snapshot.generatedAt, displayTimeZone)}{" "}
+          画面更新
         </Caption1>
       </header>
 
@@ -420,34 +397,56 @@ export function OverviewPage({
               <div className={design.metricCell}>
                 <Caption1 className={design.metricLabel}>当日トークン</Caption1>
                 <span className={design.metric}>
-                  {formatUsageTokens(todayUsage?.tokens ?? 0)}
+                  {todayUsage?.available
+                    ? formatUsageTokens(todayUsage.tokens)
+                    : "未取得"}
                 </span>
                 <Caption1
                   className={design.muted}
                   title="API 単価による換算値。実際の請求額ではありません"
                 >
-                  API 換算 {formatUsageCost(todayUsage?.apiCostUsd ?? 0)}*
+                  {todayUsage?.available
+                    ? `API 換算 ${formatUsageCost(todayUsage.apiCostUsd)}*`
+                    : (todayUsage?.unavailableReason ?? "未取得")}
                 </Caption1>
               </div>
               <div className={design.metricCell}>
                 <Caption1 className={design.metricLabel}>当月トークン</Caption1>
                 <span className={design.metric}>
-                  {formatUsageTokens(usage.summary.tokens)}
+                  {monthUsage?.available
+                    ? formatUsageTokens(monthUsage.tokens)
+                    : "未取得"}
                 </span>
                 <Caption1
                   className={design.muted}
                   title="API 単価による換算値。実際の請求額ではありません"
                 >
-                  API 換算 {formatUsageCost(usage.summary.apiCostUsd)}*
+                  {monthUsage?.available
+                    ? `API 換算 ${formatUsageCost(monthUsage.apiCostUsd)}*`
+                    : (monthUsage?.unavailableReason ?? "未取得")}
                 </Caption1>
               </div>
             </div>
-            {usage.summary.sharedTokens > 0 ? (
-              <Caption1 className={design.warning}>
-                共有利用実績 {formatUsageTokens(usage.summary.sharedTokens)}
-                （按分なし）
-              </Caption1>
-            ) : null}
+            {(
+              [
+                ["当日", todayUsage],
+                ["当月", monthUsage],
+              ] as const
+            ).map(([label, period]) =>
+              period?.available && period.latestObservedAt ? (
+                <Caption1 className={design.muted} key={label}>
+                  {label}の観測時刻{" "}
+                  {formatOverviewInstant(
+                    period.latestObservedAt,
+                    displayTimeZone,
+                  )}
+                  {period.oldestObservedAt &&
+                  period.oldestObservedAt !== period.latestObservedAt
+                    ? `（最古 ${formatOverviewInstant(period.oldestObservedAt, displayTimeZone)}）`
+                    : ""}
+                </Caption1>
+              ) : null,
+            )}
           </NavigationCard>
         ) : null}
 

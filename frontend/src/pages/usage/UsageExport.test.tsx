@@ -42,7 +42,7 @@ it("P2-VIS-04 confirms scope and cancels background export without an artifact",
   expect(
     screen.getByRole("dialog", { name: "利用実績の出力確認" }),
   ).toHaveTextContent("機微データ");
-  expect(screen.getByRole("dialog")).toHaveTextContent("スキーマ版: 2");
+  expect(screen.getByRole("dialog")).toHaveTextContent("スキーマ版: 3");
   await userEvent.click(screen.getByRole("button", { name: "出力を開始" }));
   expect(
     screen.getByText("利用実績をバックグラウンドで出力しています"),

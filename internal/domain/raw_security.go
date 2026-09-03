@@ -46,9 +46,21 @@ func IsKnownRawField(kind string, parts []string) bool {
 	switch joined {
 	case "devices", "devices.deviceId", "devices.usageUpdatedAt", "devices.syncUploadIntervalMs",
 		"devices.periodWindows", "devices.periodWindows.timeZone", "devices.periodWindows.today",
-		"devices.periodWindows.today.key", "devices.periods", "devices.periods.allTime",
+		"devices.periodWindows.today.key", "devices.periodWindows.today.endsAt",
+		"devices.periodWindows.month", "devices.periodWindows.month.key", "devices.periodWindows.month.endsAt",
+		"devices.periods", "devices.periods.allTime",
+		"devices.periods.allTime.totalTokens", "devices.periods.allTime.costUsd",
 		"devices.periods.allTime.clients", "devices.periods.allTime.clientCosts",
+		"devices.periods.allTime.models", "devices.periods.allTime.modelCosts",
 		"devices.periods.allTime.clientModels", "devices.periods.allTime.clientModelCosts",
+		"devices.periods.today", "devices.periods.today.totalTokens", "devices.periods.today.costUsd",
+		"devices.periods.today.clients", "devices.periods.today.clientCosts",
+		"devices.periods.today.models", "devices.periods.today.modelCosts",
+		"devices.periods.today.clientModels", "devices.periods.today.clientModelCosts",
+		"devices.periods.month", "devices.periods.month.totalTokens", "devices.periods.month.costUsd",
+		"devices.periods.month.clients", "devices.periods.month.clientCosts",
+		"devices.periods.month.models", "devices.periods.month.modelCosts",
+		"devices.periods.month.clientModels", "devices.periods.month.clientModelCosts",
 		"devices.limits", "devices.limits.refreshMs",
 		"devices.limits.providers", "devices.limits.providers.provider", "devices.limits.providers.accountKey",
 		"devices.limits.providers.updatedAt", "devices.limits.providers.planLabel", "devices.limits.providers.windows",
@@ -60,7 +72,7 @@ func IsKnownRawField(kind string, parts []string) bool {
 		return true
 	}
 	return len(withoutIndexes) == 5 && withoutIndexes[0] == "devices" && withoutIndexes[1] == "periods" &&
-		withoutIndexes[2] == "allTime" && map[string]bool{
-		"clients": true, "clientCosts": true, "clientModels": true, "clientModelCosts": true,
+		(withoutIndexes[2] == "allTime" || withoutIndexes[2] == "today" || withoutIndexes[2] == "month") && map[string]bool{
+		"clients": true, "clientCosts": true, "models": true, "modelCosts": true, "clientModels": true, "clientModelCosts": true,
 	}[withoutIndexes[3]]
 }

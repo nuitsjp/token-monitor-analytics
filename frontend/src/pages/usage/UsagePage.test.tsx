@@ -86,6 +86,10 @@ const usage: UsageSnapshot = {
   ],
   nativeAmounts: [],
   evidence: [],
+  unallocatedObservationCount: 0,
+  unallocatedTokens: 0,
+  unallocatedApiCostUsd: 0,
+  unallocatedApiCostUsdText: "0",
 };
 
 it("SCREEN-M02 AC-P2-05 AC-P2-06 renders usage, shared attribution and filter controls", async () => {

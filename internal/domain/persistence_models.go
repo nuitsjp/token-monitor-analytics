@@ -130,6 +130,32 @@ type CollectionUsageObservation struct {
 	LastSeenSnapshotID        string
 }
 
+type CollectionUsagePeriodObservation struct {
+	ObservationID             string
+	SnapshotID                string
+	HubID                     string
+	DeviceID                  string
+	PeriodKind                string
+	PeriodKey                 string
+	PeriodEndsAt              time.Time
+	UsageUpdatedAt            time.Time
+	SourceTimezone            string
+	TokenCount                int64
+	APICostUSDText            string
+	ToolTokens                map[string]int64
+	ToolCosts                 map[string]string
+	ModelTokens               map[string]int64
+	ModelCosts                map[string]string
+	ToolModelTokens           map[string]map[string]int64
+	ToolModelCosts            map[string]map[string]string
+	NormalizationGeneration   int64
+	NormalizationRuleVersion  string
+	NormalizationLogicVersion string
+	JSONPath                  string
+	DedupeKey                 string
+	ValueFingerprint          string
+}
+
 type IdentificationCandidateObservation struct {
 	ID                string
 	CandidateID       string

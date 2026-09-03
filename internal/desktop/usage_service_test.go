@@ -16,6 +16,7 @@ import (
 
 type usageTestReader struct {
 	observations []domain.UsageObservation
+	periods      []domain.UsagePeriodObservation
 	amounts      []sqliteadapter.UsageNativeAmount
 }
 
@@ -25,10 +26,14 @@ func (r usageTestReader) ListUsageAnalysisObservations(context.Context) ([]domai
 func (r usageTestReader) ListUsageNativeAmounts(context.Context) ([]sqliteadapter.UsageNativeAmount, error) {
 	return r.amounts, nil
 }
+func (r usageTestReader) ListUsagePeriodObservations(context.Context) ([]domain.UsagePeriodObservation, error) {
+	return r.periods, nil
+}
 
 type usageErrorReader struct {
 	analysisErr error
 	nativeErr   error
+	periodErr   error
 }
 
 func (r usageErrorReader) ListUsageAnalysisObservations(context.Context) ([]domain.UsageObservation, error) {
@@ -37,6 +42,10 @@ func (r usageErrorReader) ListUsageAnalysisObservations(context.Context) ([]doma
 
 func (r usageErrorReader) ListUsageNativeAmounts(context.Context) ([]sqliteadapter.UsageNativeAmount, error) {
 	return nil, r.nativeErr
+}
+
+func (r usageErrorReader) ListUsagePeriodObservations(context.Context) ([]domain.UsagePeriodObservation, error) {
+	return nil, r.periodErr
 }
 
 type usageTestClock struct{ now time.Time }
@@ -123,7 +132,7 @@ func TestUsageServiceAggregatesOnceAndExportsScreenRows(t *testing.T) {
 				t.Fatalf("CSV column %q missing: %v", required, rows[0])
 			}
 		}
-		if rows[1][columns["schemaVersion"]] != "2" || rows[1][columns["displayTimeZone"]] != "America/New_York" || rows[1][columns["observationType"]] != "observed" || rows[1][columns["hubId"]] != "hub" || rows[1][columns["periodStart"]] == "" || rows[1][columns["periodEnd"]] == "" || rows[1][columns["categoryKey"]] != "service" || rows[1][columns["tokens"]] != "150" || rows[1][columns["apiCostUsd"]] != "2.25" {
+		if rows[1][columns["schemaVersion"]] != "3" || rows[1][columns["displayTimeZone"]] != "America/New_York" || rows[1][columns["observationType"]] != "observed" || rows[1][columns["hubId"]] != "hub" || rows[1][columns["periodStart"]] == "" || rows[1][columns["periodEnd"]] == "" || rows[1][columns["categoryKey"]] != "service" || rows[1][columns["tokens"]] != "150" || rows[1][columns["apiCostUsd"]] != "2.25" {
 			t.Fatalf("CSV row = %v", rows[1])
 		}
 	})
@@ -140,7 +149,7 @@ func TestUsageServiceAggregatesOnceAndExportsScreenRows(t *testing.T) {
 		if err := json.Unmarshal([]byte(jsonResult.Content), &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.SchemaVersion != "2" || payload.Metadata["displayTimeZone"] != "America/New_York" || payload.Metadata["hubId"] != "hub" || len(payload.Rows) != 1 || payload.Rows[0].PeriodStart == "" || payload.Rows[0].PeriodEnd == "" || payload.Rows[0].APICostUSDText != "2.25" || payload.Rows[0].Tokens != 150 {
+		if payload.SchemaVersion != "3" || payload.Metadata["displayTimeZone"] != "America/New_York" || payload.Metadata["hubId"] != "hub" || len(payload.Rows) != 1 || payload.Rows[0].ObservationType != "observed" || payload.Rows[0].PeriodStart == "" || payload.Rows[0].PeriodEnd == "" || payload.Rows[0].APICostUSDText != "2.25" || payload.Rows[0].Tokens != 150 {
 			t.Fatalf("JSON export = %#v", payload)
 		}
 	})
@@ -389,8 +398,20 @@ func TestUsageServiceUsesHalfOpenFilterAtSpringDSTBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Summary.Tokens != 15 || result.Summary.APICostUSDText != "1.5" || result.Summary.ObservationCount != 2 {
+	if result.Summary.Tokens != 5 || result.Summary.APICostUSDText != "0.5" || result.Summary.ObservationCount != 1 {
 		t.Fatalf("DST half-open summary = %#v", result.Summary)
+	}
+	if result.UnallocatedObservationCount != 1 || result.UnallocatedTokens != 10 {
+		t.Fatalf("DST boundary-crossing increment should stay unallocated = %#v", result)
+	}
+	for _, format := range []string{"csv", "json"} {
+		exported, exportErr := service.ExportUsage(context.Background(), UsageFilterInput{From: from.Format(time.RFC3339), To: to.Format(time.RFC3339), DisplayTimeZone: "America/New_York", Granularity: "day", GroupBy: "service"}, format)
+		if exportErr != nil {
+			t.Fatal(exportErr)
+		}
+		if !strings.Contains(exported.Content, "unallocated") || !strings.Contains(exported.Content, "欠測区間を暦期間へ配分できない") || !strings.Contains(exported.Content, "10") {
+			t.Fatalf("%s export did not retain the unallocated increment: %s", format, exported.Content)
+		}
 	}
 	if len(result.NativeAmounts) != 1 || result.NativeAmounts[0].ObservationID != "native-at-start" {
 		t.Fatalf("DST half-open native amounts = %#v", result.NativeAmounts)
@@ -408,5 +429,96 @@ func TestUsageServiceUsesHalfOpenFilterAtSpringDSTBoundaries(t *testing.T) {
 	}
 	if periodStart.Format("2006-01-02 15:04 -0700") != "2026-03-08 00:00 -0500" || periodEnd.Format("2006-01-02 15:04 -0700") != "2026-03-09 00:00 -0400" || periodEnd.Sub(periodStart) != 23*time.Hour {
 		t.Fatalf("DST local day = %s..%s duration=%s", result.Series[0].PeriodStart, result.Series[0].PeriodEnd, periodEnd.Sub(periodStart))
+	}
+}
+
+func TestUsageServiceDoesNotAllocateCrossBoundaryDeltas(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 9, 2, 14, 50, 0, 0, time.UTC) // 23:50 JST
+	end := time.Date(2026, 9, 2, 20, 0, 0, 0, time.UTC)    // 05:00 JST next day
+	reader := usageTestReader{observations: []domain.UsageObservation{
+		{ID: "before-gap", SourceID: "source", HubID: "hub", HubName: "Hub", DeviceID: "device", RawServiceIdentifier: "codex", ServiceID: "service", ServiceName: "Codex", ObservedAt: start, TokenCount: 100, APICostUSDText: "1", CompletenessConfirmed: true, AccountIDs: []string{"a"}, AccountNames: []string{"A"}},
+		{ID: "after-gap", SourceID: "source", HubID: "hub", HubName: "Hub", DeviceID: "device", RawServiceIdentifier: "codex", ServiceID: "service", ServiceName: "Codex", ObservedAt: end, TokenCount: 858000100, APICostUSDText: "80", CompletenessConfirmed: true, AccountIDs: []string{"a"}, AccountNames: []string{"A"}},
+	}}
+	service, err := NewUsageServiceWithDependencies(reader, usageTestClock{now: end})
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC) // 2026-09-03 00:00 JST
+	to := time.Date(2026, 9, 3, 15, 0, 0, 0, time.UTC)
+	result, err := service.GetUsage(context.Background(), UsageFilterInput{From: from.Format(time.RFC3339), To: to.Format(time.RFC3339), DisplayTimeZone: "Asia/Tokyo", Granularity: "day"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary.Tokens != 0 || result.UnallocatedObservationCount != 1 || result.UnallocatedTokens != 858000000 {
+		t.Fatalf("cross-midnight increment must not land in the next day: %#v", result)
+	}
+	hourResult, err := service.GetUsage(context.Background(), UsageFilterInput{From: start.Add(-time.Hour).Format(time.RFC3339), To: end.Add(time.Hour).Format(time.RFC3339), DisplayTimeZone: "Asia/Tokyo", Granularity: "hour"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hourResult.Summary.Tokens != 0 || hourResult.UnallocatedTokens != 858000000 {
+		t.Fatalf("cross-hour increment must stay unallocated: %#v", hourResult)
+	}
+}
+
+func TestUsageServiceKeepsInBucketIncrements(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 9, 3, 1, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 9, 3, 2, 0, 0, 0, time.UTC)
+	reader := usageTestReader{observations: []domain.UsageObservation{
+		{ID: "one", SourceID: "source", HubID: "hub", DeviceID: "device", ServiceID: "service", ServiceName: "Service", ObservedAt: start, TokenCount: 10, APICostUSDText: "1", CompletenessConfirmed: true, AccountIDs: []string{"a"}},
+		{ID: "two", SourceID: "source", HubID: "hub", DeviceID: "device", ServiceID: "service", ServiceName: "Service", ObservedAt: end, TokenCount: 25, APICostUSDText: "2.5", CompletenessConfirmed: true, AccountIDs: []string{"a"}},
+	}}
+	service, err := NewUsageServiceWithDependencies(reader, usageTestClock{now: end})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.GetUsage(context.Background(), UsageFilterInput{From: start.Add(-time.Hour).Format(time.RFC3339), To: end.Add(time.Hour).Format(time.RFC3339), DisplayTimeZone: "UTC", Granularity: "day"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary.Tokens != 15 || result.UnallocatedObservationCount != 0 {
+		t.Fatalf("in-bucket increment = %#v", result)
+	}
+}
+
+func TestGetCalendarPeriodUsageSelectsLatestValidDeviceValues(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 3, 6, 0, 0, 0, time.UTC)
+	older := now.Add(-2 * time.Hour)
+	newer := now.Add(-time.Hour)
+	ends := time.Date(2026, 9, 3, 15, 0, 0, 0, time.UTC)
+	monthEnds := time.Date(2026, 9, 30, 15, 0, 0, 0, time.UTC)
+	reader := usageTestReader{periods: []domain.UsagePeriodObservation{
+		{ID: "day-old", SnapshotID: "s1", HubID: "hub-a", HubName: "A", DeviceID: "d1", PeriodKind: domain.UsagePeriodKindDay, PeriodKey: "2026-09-03", PeriodEndsAt: ends, UsageUpdatedAt: older, SourceTimezone: "Asia/Tokyo", TokenCount: 10, APICostUSDText: "1"},
+		{ID: "day-new", SnapshotID: "s2", HubID: "hub-a", HubName: "A", DeviceID: "d1", PeriodKind: domain.UsagePeriodKindDay, PeriodKey: "2026-09-03", PeriodEndsAt: ends, UsageUpdatedAt: newer, SourceTimezone: "Asia/Tokyo", TokenCount: 40, APICostUSDText: "4"},
+		{ID: "day-other-device", SnapshotID: "s2", HubID: "hub-b", HubName: "B", DeviceID: "d2", PeriodKind: domain.UsagePeriodKindDay, PeriodKey: "2026-09-03", PeriodEndsAt: ends, UsageUpdatedAt: newer, SourceTimezone: "Asia/Tokyo", TokenCount: 5, APICostUSDText: "0.5"},
+		{ID: "day-expired", SnapshotID: "s0", HubID: "hub-c", DeviceID: "d3", PeriodKind: domain.UsagePeriodKindDay, PeriodKey: "2026-09-03", PeriodEndsAt: now.Add(-time.Minute), UsageUpdatedAt: newer, SourceTimezone: "Asia/Tokyo", TokenCount: 999, APICostUSDText: "9"},
+		{ID: "day-tz", SnapshotID: "s2", HubID: "hub-d", DeviceID: "d4", PeriodKind: domain.UsagePeriodKindDay, PeriodKey: "2026-09-03", PeriodEndsAt: ends, UsageUpdatedAt: newer, SourceTimezone: "UTC", TokenCount: 888, APICostUSDText: "8"},
+		{ID: "day-key", SnapshotID: "s2", HubID: "hub-e", DeviceID: "d5", PeriodKind: domain.UsagePeriodKindDay, PeriodKey: "2026-09-02", PeriodEndsAt: ends, UsageUpdatedAt: newer, SourceTimezone: "Asia/Tokyo", TokenCount: 777, APICostUSDText: "7"},
+		{ID: "month", SnapshotID: "s2", HubID: "hub-a", DeviceID: "d1", PeriodKind: domain.UsagePeriodKindMonth, PeriodKey: "2026-09", PeriodEndsAt: monthEnds, UsageUpdatedAt: newer, SourceTimezone: "Asia/Tokyo", TokenCount: 500, APICostUSDText: "50"},
+		{ID: "month-other", SnapshotID: "s2", HubID: "hub-b", DeviceID: "d2", PeriodKind: domain.UsagePeriodKindMonth, PeriodKey: "2026-09", PeriodEndsAt: monthEnds, UsageUpdatedAt: newer, SourceTimezone: "Asia/Tokyo", TokenCount: 20, APICostUSDText: "2"},
+	}}
+	service, err := NewUsageServiceWithDependencies(reader, usageTestClock{now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.GetCalendarPeriodUsage(context.Background(), CalendarPeriodUsageInput{DisplayTimeZone: "Asia/Tokyo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Day.Available || result.Day.Tokens != 45 || result.Day.APICostUSDText != "4.5" || result.Day.DeviceCount != 2 || result.Day.LatestObservedAt == "" || result.Day.OldestObservedAt == "" {
+		t.Fatalf("day calendar period = %#v", result.Day)
+	}
+	if !result.Month.Available || result.Month.Tokens != 520 || result.Month.DeviceCount != 2 {
+		t.Fatalf("month calendar period = %#v", result.Month)
+	}
+	missing, err := service.GetCalendarPeriodUsage(context.Background(), CalendarPeriodUsageInput{DisplayTimeZone: "America/New_York"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing.Day.Available || missing.Day.UnavailableReason != "未取得" || missing.Day.Tokens != 0 {
+		t.Fatalf("timezone mismatch must not fall back: %#v", missing.Day)
 	}
 }

@@ -866,6 +866,15 @@ export function UsagePage({
           <MessageBarBody>{error}</MessageBarBody>
         </MessageBar>
       ) : null}
+      {usage && usage.unallocatedObservationCount > 0 ? (
+        <MessageBar intent="warning">
+          <MessageBarBody>
+            欠測区間を暦期間へ配分できない: {usage.unallocatedObservationCount}{" "}
+            件、{formatTokens(usage.unallocatedTokens)} トークン、API 換算{" "}
+            {formatCost(usage.unallocatedApiCostUsd)}
+          </MessageBarBody>
+        </MessageBar>
+      ) : null}
       {!usage ? (
         <Spinner label="利用実績を集計しています" />
       ) : (
@@ -962,7 +971,7 @@ export function UsagePage({
                 <Caption1>
                   保存先: 既定のダウンロード先 / 列:
                   期間、分類、帰属、利用量、API 換算利用金額、差分数 /
-                  スキーマ版: 2
+                  スキーマ版: 3
                 </Caption1>
                 <Caption1>
                   期間 {fromDate} ～ {toDate}（終了日を含まない）・

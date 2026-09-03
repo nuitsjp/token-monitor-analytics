@@ -17,7 +17,9 @@ import (
 )
 
 // These versions are persisted with every normalized observation. A change
-// creates a new generation; it never rewrites an existing observation.
+// to an existing observation kind creates a new generation; it never rewrites
+// an existing observation. Source-period observations are additive in the
+// unreleased schema and therefore start in the current generation.
 const (
 	NormalizationGeneration   int64 = 3
 	NormalizationRuleVersion        = "api-stats-v1-device-updated-at"
@@ -83,10 +85,31 @@ type NormalizedLimitObservation struct {
 	WindowKeyConflict     bool
 }
 
+type NormalizedPeriodObservation struct {
+	DeviceID         string
+	PeriodKind       string
+	PeriodKey        string
+	PeriodEndsAt     time.Time
+	UsageUpdatedAt   time.Time
+	SourceTimezone   string
+	TokenCount       int64
+	APICostUSDText   string
+	ToolTokens       map[string]int64
+	ToolCosts        map[string]string
+	ModelTokens      map[string]int64
+	ModelCosts       map[string]string
+	ToolModelTokens  map[string]map[string]int64
+	ToolModelCosts   map[string]map[string]string
+	JSONPath         string
+	DedupeKey        string
+	ValueFingerprint string
+}
+
 type NormalizedStats struct {
-	Costs  []NormalizedCostObservation
-	Usage  []NormalizedUsageObservation
-	Limits []NormalizedLimitObservation
+	Costs   []NormalizedCostObservation
+	Usage   []NormalizedUsageObservation
+	Limits  []NormalizedLimitObservation
+	Periods []NormalizedPeriodObservation
 }
 
 // NormalizeStats extracts only fields defined by the authenticated stats
@@ -219,6 +242,9 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 				usageObservation.ValueFingerprint = fingerprintUsage(usageObservation)
 				result.Usage = append(result.Usage, usageObservation)
 			}
+		}
+		if usagePresent && usageValid {
+			result.Periods = append(result.Periods, normalizePeriodObservations(device, deviceIndex, deviceID, usage)...)
 		}
 
 		limits := map[string]any{}
@@ -599,6 +625,205 @@ func fingerprintLimit(value NormalizedLimitObservation) string {
 		RefreshMS  *int64
 		SyncMS     *int64
 	}{value.UsedPercent, value.ResetsAt, value.NormalizedKind, value.NormalizedMetric, value.NormalizedLabel, value.PlanLabel, value.AbsoluteUsedText, value.AbsoluteLimitText, value.AbsoluteRemainingText, value.Currency, value.LimitsRefreshMS, value.SyncUploadIntervalMS}
+	encoded, _ := json.Marshal(payload)
+	hash := sha256.Sum256(encoded)
+	return hex.EncodeToString(hash[:])
+}
+
+func normalizePeriodObservations(device map[string]any, deviceIndex int, deviceID string, usage time.Time) []NormalizedPeriodObservation {
+	windows, ok := objectValue(device["periodWindows"])
+	if !ok {
+		return nil
+	}
+	zone, _ := stringValue(windows["timeZone"])
+	if zone == "" {
+		return nil
+	}
+	if _, err := time.LoadLocation(zone); err != nil {
+		return nil
+	}
+	periods, ok := objectValue(device["periods"])
+	if !ok {
+		return nil
+	}
+	result := make([]NormalizedPeriodObservation, 0, 2)
+	if observation, ok := normalizeOnePeriod(windows, periods, "today", "day", "2006-01-02", deviceIndex, deviceID, usage, zone); ok {
+		result = append(result, observation)
+	}
+	if observation, ok := normalizeOnePeriod(windows, periods, "month", "month", "2006-01", deviceIndex, deviceID, usage, zone); ok {
+		result = append(result, observation)
+	}
+	return result
+}
+
+func normalizeOnePeriod(windows, periods map[string]any, windowKey, periodKind, keyLayout string, deviceIndex int, deviceID string, usage time.Time, zone string) (NormalizedPeriodObservation, bool) {
+	location, err := time.LoadLocation(zone)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	window, ok := objectValue(windows[windowKey])
+	if !ok {
+		return NormalizedPeriodObservation{}, false
+	}
+	key, keyOK := stringValue(window["key"])
+	if !keyOK || key == "" {
+		return NormalizedPeriodObservation{}, false
+	}
+	periodStart, err := time.ParseInLocation(keyLayout, key, location)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	endsAt, present, valid := timestampValue(window["endsAt"])
+	if !present || !valid {
+		return NormalizedPeriodObservation{}, false
+	}
+	expectedEndsAt := periodStart.AddDate(0, 0, 1)
+	if periodKind == "month" {
+		expectedEndsAt = periodStart.AddDate(0, 1, 0)
+	}
+	if !endsAt.Equal(expectedEndsAt.UTC()) {
+		return NormalizedPeriodObservation{}, false
+	}
+	period, ok := objectValue(periods[windowKey])
+	if !ok {
+		return NormalizedPeriodObservation{}, false
+	}
+	if _, present := period["totalTokens"]; !present {
+		return NormalizedPeriodObservation{}, false
+	}
+	if _, present := period["costUsd"]; !present {
+		return NormalizedPeriodObservation{}, false
+	}
+	tokens, err := optionalNonNegativeInt64(period["totalTokens"])
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	cost, err := optionalNumberText(period["costUsd"])
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	toolTokens, ok := optionalPeriodObject(period, "clients")
+	if !ok {
+		return NormalizedPeriodObservation{}, false
+	}
+	toolCosts, ok := optionalPeriodObject(period, "clientCosts")
+	if !ok {
+		return NormalizedPeriodObservation{}, false
+	}
+	modelTokens, ok := optionalPeriodObject(period, "models")
+	if !ok {
+		return NormalizedPeriodObservation{}, false
+	}
+	modelCosts, ok := optionalPeriodObject(period, "modelCosts")
+	if !ok {
+		return NormalizedPeriodObservation{}, false
+	}
+	clientModels, ok := optionalPeriodObject(period, "clientModels")
+	if !ok {
+		return NormalizedPeriodObservation{}, false
+	}
+	clientModelCosts, ok := optionalPeriodObject(period, "clientModelCosts")
+	if !ok {
+		return NormalizedPeriodObservation{}, false
+	}
+	tools, err := modelTokenValues(toolTokens)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	toolCostValues, err := modelCostValues(toolCosts)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	models, err := modelTokenValues(modelTokens)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	modelCostValues, err := modelCostValues(modelCosts)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	toolModels, err := nestedTokenValues(clientModels)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	toolModelCosts, err := nestedCostValues(clientModelCosts)
+	if err != nil {
+		return NormalizedPeriodObservation{}, false
+	}
+	observation := NormalizedPeriodObservation{
+		DeviceID: deviceID, PeriodKind: periodKind, PeriodKey: key, PeriodEndsAt: endsAt, UsageUpdatedAt: usage,
+		SourceTimezone: zone, TokenCount: tokens, APICostUSDText: cost,
+		ToolTokens: tools, ToolCosts: toolCostValues, ModelTokens: models, ModelCosts: modelCostValues,
+		ToolModelTokens: toolModels, ToolModelCosts: toolModelCosts,
+		JSONPath:  fmt.Sprintf("$.devices[%d].periods.%s", deviceIndex, windowKey),
+		DedupeKey: fmt.Sprintf("%s\x1f%s\x1f%s\x1f%s", deviceID, periodKind, key, usage.UTC().Format(time.RFC3339Nano)),
+	}
+	observation.ValueFingerprint = fingerprintPeriod(observation)
+	return observation, true
+}
+
+func optionalPeriodObject(parent map[string]any, key string) (map[string]any, bool) {
+	value, present := parent[key]
+	if !present || value == nil {
+		return map[string]any{}, true
+	}
+	result, ok := objectValue(value)
+	return result, ok
+}
+
+func nestedTokenValues(value any) (map[string]map[string]int64, error) {
+	object, ok := objectValue(value)
+	if !ok {
+		object = map[string]any{}
+	}
+	result := make(map[string]map[string]int64, len(object))
+	for tool, raw := range object {
+		if tool == "" {
+			return nil, errors.New("tool identifier is empty")
+		}
+		inner, err := modelTokenValues(raw)
+		if err != nil {
+			return nil, err
+		}
+		result[tool] = inner
+	}
+	return result, nil
+}
+
+func nestedCostValues(value any) (map[string]map[string]string, error) {
+	object, ok := objectValue(value)
+	if !ok {
+		object = map[string]any{}
+	}
+	result := make(map[string]map[string]string, len(object))
+	for tool, raw := range object {
+		if tool == "" {
+			return nil, errors.New("tool identifier is empty")
+		}
+		inner, err := modelCostValues(raw)
+		if err != nil {
+			return nil, err
+		}
+		result[tool] = inner
+	}
+	return result, nil
+}
+
+func fingerprintPeriod(value NormalizedPeriodObservation) string {
+	payload := struct {
+		Kind            string
+		Key             string
+		EndsAt          time.Time
+		Timezone        string
+		Tokens          int64
+		Cost            string
+		ToolTokens      map[string]int64
+		ToolCosts       map[string]string
+		ModelTokens     map[string]int64
+		ModelCosts      map[string]string
+		ToolModelTokens map[string]map[string]int64
+		ToolModelCosts  map[string]map[string]string
+	}{value.PeriodKind, value.PeriodKey, value.PeriodEndsAt, value.SourceTimezone, value.TokenCount, value.APICostUSDText, value.ToolTokens, value.ToolCosts, value.ModelTokens, value.ModelCosts, value.ToolModelTokens, value.ToolModelCosts}
 	encoded, _ := json.Marshal(payload)
 	hash := sha256.Sum256(encoded)
 	return hex.EncodeToString(hash[:])

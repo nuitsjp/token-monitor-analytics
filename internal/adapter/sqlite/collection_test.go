@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"token-monitor-analytics/internal/domain"
 )
 
 func TestInsertObservationsRollsBackBothKindsTogether(t *testing.T) {
@@ -97,7 +98,7 @@ func TestInsertAllObservationsPersistsPhaseTwoUsageAndNativeAmounts(t *testing.T
 	}
 	usage := UsageObservation{ObservationID: "usage-observation", UsageCostSourceID: "usage-source", SnapshotID: "usage-stats", HubID: hubID, DeviceID: "device", RawServiceIdentifier: "codex", UsageUpdatedAt: now, TokenCount: 120, APICostUSDText: "2.75", ModelTokens: map[string]int64{"gpt-5": 120}, ModelCosts: map[string]string{"gpt-5": "2.75"}, NormalizationGeneration: 1, NormalizationRuleVersion: "rule", NormalizationLogicVersion: "logic", JSONPath: "$.periods.allTime", DedupeKey: "usage-key", ValueFingerprint: "usage-value"}
 	limit := LimitObservation{ObservationID: "native-amount", UsageLimitSourceID: "limit-source", SnapshotID: "usage-stats", HubID: hubID, DeviceID: "device", RawServiceIdentifier: "codex", ProviderUpdatedAt: now, WindowKey: "balance", NormalizedKind: "balance", NormalizedMetric: "credits", NormalizedLabel: "Credits", AbsoluteUsedText: "58", AbsoluteLimitText: "100", AbsoluteRemainingText: "42", Currency: "CREDITS", AnalyticsIntervalSeconds: 300, NormalizationGeneration: 1, NormalizationRuleVersion: "rule", NormalizationLogicVersion: "logic", JSONPath: "$.limits[0]", DedupeKey: "native-key", ValueFingerprint: "native-value"}
-	if err := lifecycle.InsertAllObservations(ctx, nil, []UsageObservation{usage}, []LimitObservation{limit}); err != nil {
+	if err := lifecycle.InsertAllObservations(ctx, nil, []UsageObservation{usage}, []LimitObservation{limit}, nil); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := lifecycle.ListUsageAnalysisObservations(ctx)
@@ -107,6 +108,60 @@ func TestInsertAllObservationsPersistsPhaseTwoUsageAndNativeAmounts(t *testing.T
 	amounts, err := lifecycle.ListUsageNativeAmounts(ctx)
 	if err != nil || len(amounts) != 1 || amounts[0].RemainingText != "42" || amounts[0].Currency != "CREDITS" {
 		t.Fatalf("P2-USAGE-06 amounts=%#v err=%v", amounts, err)
+	}
+}
+
+func TestInsertAllObservationsPersistsSourcePeriodObservations(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 3, 5, 25, 0, 0, time.UTC)
+	ends := time.Date(2026, 9, 3, 15, 0, 0, 0, time.UTC)
+	hubID := uuid.NewString()
+	if err := lifecycle.CreateHub(ctx, Hub{ID: hubID, DisplayName: "Hub", URL: "https://period.example.test", CollectionEnabled: true, CollectionIntervalSeconds: 300, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.CreateCollectionAttempt(ctx, CollectionAttempt{AttemptID: "period-attempt", HubID: hubID, Trigger: "manual", State: "started", StartedAt: now, AnalyticsIntervalSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.SaveRawSnapshot(ctx, RawSnapshot{SnapshotID: "period-stats", AttemptID: "period-attempt", HubID: hubID, ResponseKind: "stats", ReceivedStartedAt: now, ReceivedCompletedAt: now, HTTPStatus: 200, Body: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	period := UsagePeriodObservation{
+		ObservationID: "period-day", SnapshotID: "period-stats", HubID: hubID, DeviceID: "device",
+		PeriodKind: domain.UsagePeriodKindDay, PeriodKey: "2026-09-03", PeriodEndsAt: ends, UsageUpdatedAt: now,
+		SourceTimezone: "Asia/Tokyo", TokenCount: 100, APICostUSDText: "1.25",
+		ToolTokens: map[string]int64{"codex": 80}, ModelTokens: map[string]int64{"gpt-5": 80},
+		ToolModelTokens:         map[string]map[string]int64{"codex": {"gpt-5": 80}},
+		NormalizationGeneration: 1, NormalizationRuleVersion: "rule", NormalizationLogicVersion: "logic",
+		JSONPath: "$.devices[0].periods.today", DedupeKey: "period-key", ValueFingerprint: "period-value",
+	}
+	if err := lifecycle.InsertAllObservations(ctx, nil, nil, nil, []UsagePeriodObservation{period}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := lifecycle.ListUsagePeriodObservations(ctx)
+	if err != nil || len(rows) != 1 || rows[0].TokenCount != 100 || rows[0].PeriodKey != "2026-09-03" || rows[0].ToolTokens["codex"] != 80 {
+		t.Fatalf("period rows=%#v err=%v", rows, err)
+	}
+	duplicate := period
+	duplicate.ObservationID = "period-day-dup"
+	duplicate.SnapshotID = "period-stats"
+	if err := lifecycle.InsertAllObservations(ctx, nil, nil, nil, []UsagePeriodObservation{duplicate}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = lifecycle.ListUsagePeriodObservations(ctx)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("exact duplicate should keep one canonical row: %#v err=%v", rows, err)
+	}
+	conflict := period
+	conflict.ObservationID = "period-day-conflict"
+	conflict.ValueFingerprint = "other-value"
+	conflict.TokenCount = 999
+	if err := lifecycle.InsertAllObservations(ctx, nil, nil, nil, []UsagePeriodObservation{conflict}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = lifecycle.ListUsagePeriodObservations(ctx)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("conflicting same-time values must leave no canonical current value: %#v err=%v", rows, err)
 	}
 }
 

@@ -66,6 +66,8 @@ import type {
   UsageFilterInput,
   UsageSnapshot,
   UsageExportSnapshot,
+  CalendarPeriodUsageInput,
+  CalendarPeriodUsageSnapshot,
   DataManagementBackupStateSnapshot,
   DataManagementCancellationSnapshot,
   DataManagementPurgeSelectionInput,
@@ -135,6 +137,8 @@ export type {
   UsageFilterInput,
   UsageSnapshot,
   UsageExportSnapshot,
+  CalendarPeriodUsageInput,
+  CalendarPeriodUsageSnapshot,
   UsagePointSnapshot,
   EstimationEvidenceSnapshot,
   DataManagementArtifactSnapshot,
@@ -207,6 +211,9 @@ export interface FrontendAdapter {
   getLimitSeries(input: LimitSeriesFilterInput): Promise<LimitSeriesSnapshot[]>;
   getLimitSeriesDetail(seriesID: string): Promise<LimitSeriesDetailSnapshot>;
   getUsage(input: UsageFilterInput): Promise<UsageSnapshot>;
+  getCalendarPeriodUsage(
+    input: CalendarPeriodUsageInput,
+  ): Promise<CalendarPeriodUsageSnapshot>;
   exportUsage(
     input: UsageFilterInput,
     format: "csv" | "json",
@@ -413,9 +420,13 @@ export interface FakeBackendOptions {
   limitSeries?: LimitSeriesSnapshot[];
   limitSeriesDetails?: Record<string, LimitSeriesDetailSnapshot>;
   usage?: UsageSnapshot;
+  calendarPeriodUsage?: CalendarPeriodUsageSnapshot;
   onGetUsage?: (
     input: UsageFilterInput,
   ) => Promise<UsageSnapshot> | UsageSnapshot;
+  onGetCalendarPeriodUsage?: (
+    input: CalendarPeriodUsageInput,
+  ) => Promise<CalendarPeriodUsageSnapshot> | CalendarPeriodUsageSnapshot;
   dataManagementState?: DataManagementStateSnapshot;
   onGetOverview?: (
     privacyMode: boolean,
@@ -582,6 +593,38 @@ export const emptyUsageSnapshot: UsageSnapshot = {
   breakdown: [],
   nativeAmounts: [],
   evidence: [],
+  unallocatedObservationCount: 0,
+  unallocatedTokens: 0,
+  unallocatedApiCostUsd: 0,
+  unallocatedApiCostUsdText: "0",
+};
+
+export const emptyCalendarPeriodUsage: CalendarPeriodUsageSnapshot = {
+  displayTimeZone: "UTC",
+  day: {
+    available: false,
+    periodKind: "day",
+    periodKey: "",
+    tokens: 0,
+    apiCostUsd: 0,
+    apiCostUsdText: "0",
+    latestObservedAt: "",
+    oldestObservedAt: "",
+    deviceCount: 0,
+    unavailableReason: "未取得",
+  },
+  month: {
+    available: false,
+    periodKind: "month",
+    periodKey: "",
+    tokens: 0,
+    apiCostUsd: 0,
+    apiCostUsdText: "0",
+    latestObservedAt: "",
+    oldestObservedAt: "",
+    deviceCount: 0,
+    unavailableReason: "未取得",
+  },
 };
 
 function fakeUsageExport(
@@ -745,6 +788,10 @@ export function createFakeBackend(
     },
     getUsage: async (input) =>
       options.onGetUsage?.(input) ?? options.usage ?? emptyUsageSnapshot,
+    getCalendarPeriodUsage: async (input) =>
+      options.onGetCalendarPeriodUsage?.(input) ??
+      options.calendarPeriodUsage ??
+      emptyCalendarPeriodUsage,
     exportUsage: async (input, format) =>
       fakeUsageExport(options.usage ?? emptyUsageSnapshot, input, format),
     beginUsageExport: (input, format) => {
@@ -1632,6 +1679,8 @@ export function createProductionBackend(
     getLimitSeriesDetail: (seriesID) =>
       asPromise(EstimationService.GetLimitSeriesDetail(seriesID)),
     getUsage: (input) => asPromise(UsageService.GetUsage(input)),
+    getCalendarPeriodUsage: (input) =>
+      asPromise(UsageService.GetCalendarPeriodUsage(input)),
     exportUsage: (input, format) =>
       asPromise(UsageService.ExportUsage(input, format)),
     beginUsageExport: (input, format) => {

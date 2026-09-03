@@ -70,7 +70,7 @@ func (l *Lifecycle) CompleteNormalization(ctx context.Context, snapshotID string
 	return nil
 }
 
-func recordActiveNormalizationTx(ctx context.Context, tx *sql.Tx, costs []CostObservation, usage []UsageObservation, limits []LimitObservation) error {
+func recordActiveNormalizationTx(ctx context.Context, tx *sql.Tx, costs []CostObservation, usage []UsageObservation, limits []LimitObservation, periods []UsagePeriodObservation) error {
 	var snapshotID, rule, logic string
 	var generation int64
 	if len(costs) > 0 {
@@ -79,6 +79,8 @@ func recordActiveNormalizationTx(ctx context.Context, tx *sql.Tx, costs []CostOb
 		snapshotID, generation, rule, logic = usage[0].SnapshotID, usage[0].NormalizationGeneration, usage[0].NormalizationRuleVersion, usage[0].NormalizationLogicVersion
 	} else if len(limits) > 0 {
 		snapshotID, generation, rule, logic = limits[0].SnapshotID, limits[0].NormalizationGeneration, limits[0].NormalizationRuleVersion, limits[0].NormalizationLogicVersion
+	} else if len(periods) > 0 {
+		snapshotID, generation, rule, logic = periods[0].SnapshotID, periods[0].NormalizationGeneration, periods[0].NormalizationRuleVersion, periods[0].NormalizationLogicVersion
 	}
 	if snapshotID == "" || generation <= 0 || rule == "" || logic == "" {
 		return nil
@@ -89,7 +91,10 @@ func recordActiveNormalizationTx(ctx context.Context, tx *sql.Tx, costs []CostOb
 		UNION SELECT snapshot_id, normalization_generation, normalization_rule_version, normalization_logic_version, 'superseded', ?, ?
 		FROM usage_analysis_observations WHERE snapshot_id = ? AND normalization_generation <> ?
 		UNION SELECT snapshot_id, normalization_generation, normalization_rule_version, normalization_logic_version, 'superseded', ?, ?
-		FROM usage_limit_observations WHERE snapshot_id = ? AND normalization_generation <> ?`,
+		FROM usage_limit_observations WHERE snapshot_id = ? AND normalization_generation <> ?
+		UNION SELECT snapshot_id, normalization_generation, normalization_rule_version, normalization_logic_version, 'superseded', ?, ?
+		FROM usage_period_observations WHERE snapshot_id = ? AND normalization_generation <> ?`,
+		utcText(time.Now().UTC()), utcText(time.Now().UTC()), snapshotID, generation,
 		utcText(time.Now().UTC()), utcText(time.Now().UTC()), snapshotID, generation,
 		utcText(time.Now().UTC()), utcText(time.Now().UTC()), snapshotID, generation,
 		utcText(time.Now().UTC()), utcText(time.Now().UTC()), snapshotID, generation); err != nil {

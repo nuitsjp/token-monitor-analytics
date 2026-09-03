@@ -301,7 +301,8 @@ func reconcileObservedAccounts(ctx context.Context, tx *sql.Tx, hubID string, at
 		if err := tx.QueryRowContext(ctx, `SELECT hub_account_candidate_id, state, logical_account_id FROM hub_account_candidates WHERE hub_id = ? AND service_id = ? AND account_key = ?`, value.hub, value.serviceID, value.accountKey).Scan(&existingCandidateID, &state, &logicalID); err != nil {
 			return fmt.Errorf("read automatic Hub account: %w", err)
 		}
-		mayCreateLogicalAccount := state == string(domain.HubAccountCandidateUnconfirmed) && !(value.provider == "grok" && value.accountKeyKind != "oidc-subject-v1")
+		// Keep the provider-specific exception grouped as one business rule.
+		mayCreateLogicalAccount := state == string(domain.HubAccountCandidateUnconfirmed) && !(value.provider == "grok" && value.accountKeyKind != "oidc-subject-v1") //nolint:staticcheck
 		if mayCreateLogicalAccount && value.provider == "grok" {
 			var associatedLegacyCandidates int
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM hub_account_candidates
