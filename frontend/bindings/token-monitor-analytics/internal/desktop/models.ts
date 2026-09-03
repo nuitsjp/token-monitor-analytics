@@ -421,8 +421,6 @@ export interface EstimationResultSnapshot {
     "observationPointCount": number;
     "differenceRowCount": number;
     "rank": number;
-    "absoluteErrorRatio": number;
-    "absoluteErrorRatioLabel": string;
     "maxTimeDelta": string;
     "calculationLogicVersion": string;
     "matchingRuleVersion": string;

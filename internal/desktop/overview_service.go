@@ -404,7 +404,7 @@ func mapOverviewStatusCounts(counts map[string]int) ([]OverviewStatusCountSnapsh
 	order := []string{
 		"connected", "not_checked", "unreachable", "timeout", "tls_error", "authentication_failed", "unsupported_contract", "invalid_json",
 		"collection_succeeded", "collection_started", "collection_idle", "collection_failed", "collection_skipped", "collection_not_run",
-		"verified", "provisional", "insufficient_observations", "unidentifiable", "model_mismatch", "uncomputed", "not_applicable",
+		"estimated", "insufficient_observations", "unidentifiable", "model_mismatch", "uncomputed", "not_applicable",
 	}
 	result := make([]OverviewStatusCountSnapshot, 0, len(counts))
 	for _, code := range order {

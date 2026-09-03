@@ -92,12 +92,12 @@ func (l *Lifecycle) SaveDerivedResult(ctx context.Context, result domain.Derived
 		INSERT INTO estimation_results
 			(estimation_result_id, result_set_key, service_id, limit_definition_id, cycle_type,
 			 calculation_interval_ids_json, valid_from, valid_to, status, reasons_json, limits_json,
-			 observation_point_count, difference_row_count, rank, absolute_error_ratio, max_time_delta_ns,
+			 observation_point_count, difference_row_count, rank, max_time_delta_ns,
 			 calculation_logic_version, matching_rule_version, input_fingerprint, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		result.ID, result.ResultSetKey, result.ServiceID, result.LimitDefinitionID, result.CycleType,
 		string(intervalIDs), catalogPeriodText(result.ValidFrom), catalogPeriodText(result.ValidTo), result.Status, string(reasons), string(limits),
-		len(result.Points), len(result.DifferenceRows), result.Rank, result.AbsoluteErrorRatio, result.MaxTimeDelta.Nanoseconds(),
+		len(result.Points), len(result.DifferenceRows), result.Rank, result.MaxTimeDelta.Nanoseconds(),
 		result.CalculationLogicVersion, matchingVersion, result.InputFingerprint, utcText(result.CreatedAt), utcText(result.UpdatedAt)); err != nil {
 		return fmt.Errorf("insert estimation result: %w", err)
 	}
@@ -376,7 +376,7 @@ func (l *Lifecycle) ListEstimationResults(ctx context.Context, serviceID string)
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT estimation_result_id, result_set_key, service_id, limit_definition_id, cycle_type, calculation_interval_ids_json, valid_from, valid_to, status, reasons_json, limits_json, observation_point_count, difference_row_count, rank, absolute_error_ratio, max_time_delta_ns, calculation_logic_version, matching_rule_version, input_fingerprint, created_at, updated_at FROM estimation_results`
+	query := `SELECT estimation_result_id, result_set_key, service_id, limit_definition_id, cycle_type, calculation_interval_ids_json, valid_from, valid_to, status, reasons_json, limits_json, observation_point_count, difference_row_count, rank, max_time_delta_ns, calculation_logic_version, matching_rule_version, input_fingerprint, created_at, updated_at FROM estimation_results`
 	args := []any{}
 	if strings.TrimSpace(serviceID) != "" {
 		query += ` WHERE service_id = ?`
@@ -415,7 +415,7 @@ func (l *Lifecycle) GetEstimationResult(ctx context.Context, resultSetKey string
 	if err != nil {
 		return domain.DerivedResult{}, err
 	}
-	row := database.QueryRowContext(ctx, `SELECT estimation_result_id, result_set_key, service_id, limit_definition_id, cycle_type, calculation_interval_ids_json, valid_from, valid_to, status, reasons_json, limits_json, observation_point_count, difference_row_count, rank, absolute_error_ratio, max_time_delta_ns, calculation_logic_version, matching_rule_version, input_fingerprint, created_at, updated_at FROM estimation_results WHERE result_set_key = ?`, resultSetKey)
+	row := database.QueryRowContext(ctx, `SELECT estimation_result_id, result_set_key, service_id, limit_definition_id, cycle_type, calculation_interval_ids_json, valid_from, valid_to, status, reasons_json, limits_json, observation_point_count, difference_row_count, rank, max_time_delta_ns, calculation_logic_version, matching_rule_version, input_fingerprint, created_at, updated_at FROM estimation_results WHERE result_set_key = ?`, resultSetKey)
 	item, err := scanDerivedResultRow(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -434,7 +434,7 @@ func scanDerivedResultRow(scanner rowScanner) (domain.DerivedResult, error) {
 	var intervalJSON, reasonsJSON, limitsJSON string
 	var from, to, created, updated string
 	var maxDelta int64
-	if err := scanner.Scan(&item.ID, &item.ResultSetKey, &item.ServiceID, &item.LimitDefinitionID, &item.CycleType, &intervalJSON, &from, &to, &item.Status, &reasonsJSON, &limitsJSON, &item.Rows, &item.DifferenceRowCount, &item.Rank, &item.AbsoluteErrorRatio, &maxDelta, &item.CalculationLogicVersion, &item.MatchingRuleVersion, &item.InputFingerprint, &created, &updated); err != nil {
+	if err := scanner.Scan(&item.ID, &item.ResultSetKey, &item.ServiceID, &item.LimitDefinitionID, &item.CycleType, &intervalJSON, &from, &to, &item.Status, &reasonsJSON, &limitsJSON, &item.Rows, &item.DifferenceRowCount, &item.Rank, &maxDelta, &item.CalculationLogicVersion, &item.MatchingRuleVersion, &item.InputFingerprint, &created, &updated); err != nil {
 		return domain.DerivedResult{}, err
 	}
 	if err := json.Unmarshal([]byte(intervalJSON), &item.CalculationIntervalIDs); err != nil {
@@ -571,7 +571,7 @@ func (l *Lifecycle) ListFallbackResults(ctx context.Context, serviceID, definiti
 	if err != nil {
 		return nil, err
 	}
-	rows, err := database.QueryContext(ctx, `SELECT r.estimation_result_id, s.estimation_result_series_id, s.logical_account_id, s.plan_version_id, r.valid_from, r.valid_to, r.status FROM estimation_results r JOIN estimation_result_series s ON s.estimation_result_id = r.estimation_result_id WHERE r.service_id = ? AND r.limit_definition_id = ? AND r.cycle_type = ? AND r.status IN ('provisional', 'verified') AND r.valid_to <= ? ORDER BY s.logical_account_id, s.plan_version_id, r.valid_to DESC, r.estimation_result_id DESC`, serviceID, definitionID, cycle, utcText(currentFrom))
+	rows, err := database.QueryContext(ctx, `SELECT r.estimation_result_id, s.estimation_result_series_id, s.logical_account_id, s.plan_version_id, r.valid_from, r.valid_to, r.status FROM estimation_results r JOIN estimation_result_series s ON s.estimation_result_id = r.estimation_result_id WHERE r.service_id = ? AND r.limit_definition_id = ? AND r.cycle_type = ? AND r.status = 'estimated' AND r.valid_to <= ? ORDER BY s.logical_account_id, s.plan_version_id, r.valid_to DESC, r.estimation_result_id DESC`, serviceID, definitionID, cycle, utcText(currentFrom))
 	if err != nil {
 		return nil, err
 	}
@@ -779,7 +779,7 @@ func (l *Lifecycle) Recalculate(ctx context.Context, request domain.Recalculatio
 	}
 
 	conditions := []string{"valid_from < ?", "? < valid_to"}
-	args := []any{utcText(request.IntervalEnd), utcText(request.IntervalStart)}
+	args := []any{catalogPeriodText(request.IntervalEnd), catalogPeriodText(request.IntervalStart)}
 	for _, filter := range []struct {
 		values []string
 		column string
@@ -833,88 +833,154 @@ func (l *Lifecycle) Recalculate(ctx context.Context, request domain.Recalculatio
 		if fbErr != nil {
 			return fmt.Errorf("list fallback recalculation intervals: %w", fbErr)
 		}
-		defer func() {
-			if closeErr := fbRows.Close(); closeErr != nil && err == nil {
-				err = fmt.Errorf("close fallback recalculation interval rows: %w", closeErr)
+		fallbackErr := func() (err error) {
+			defer func() {
+				if closeErr := fbRows.Close(); closeErr != nil && err == nil {
+					err = fmt.Errorf("close fallback recalculation interval rows: %w", closeErr)
+				}
+			}()
+			for fbRows.Next() {
+				var id string
+				if scanErr := fbRows.Scan(&id); scanErr != nil {
+					return fmt.Errorf("scan fallback recalculation interval: %w", scanErr)
+				}
+				intervalIDs = append(intervalIDs, id)
 			}
+			if rowsErr := fbRows.Err(); rowsErr != nil {
+				return fmt.Errorf("read fallback recalculation intervals: %w", rowsErr)
+			}
+			return nil
 		}()
-		for fbRows.Next() {
-			var id string
-			if scanErr := fbRows.Scan(&id); scanErr != nil {
-				return fmt.Errorf("scan fallback recalculation interval: %w", scanErr)
-			}
-			intervalIDs = append(intervalIDs, id)
-		}
-		if rowsErr := fbRows.Err(); rowsErr != nil {
-			return fmt.Errorf("read fallback recalculation intervals: %w", rowsErr)
+		if fallbackErr != nil {
+			return fallbackErr
 		}
 	}
 	for _, intervalID := range sortedUnique(intervalIDs) {
-		points, err := l.ListEstimationPoints(ctx, intervalID)
-		if err != nil {
+		if err := l.recalculateInterval(ctx, intervalID); err != nil {
 			return err
 		}
-		input, err := l.ListEstimationInput(ctx, intervalID)
-		if err != nil {
-			return err
+	}
+	return nil
+}
+
+func (l *Lifecycle) recalculateInterval(ctx context.Context, intervalID string) error {
+	allIntervals, err := l.ListCalculationIntervals(ctx, "")
+	if err != nil {
+		return err
+	}
+	interval, err := l.findCalculationInterval(allIntervals, intervalID)
+	if err != nil {
+		return err
+	}
+
+	points, err := l.rebuildEstimationPoints(ctx, interval)
+	if err != nil {
+		return err
+	}
+	input, err := l.estimationInputForPoints(ctx, intervalID, points)
+	if err != nil {
+		return err
+	}
+	estimate, err := domain.EstimateFromPoints(input)
+	if err != nil {
+		return fmt.Errorf("recalculate estimation result: %w", err)
+	}
+	now := time.Now().UTC()
+	result := domain.DerivedResult{ID: uuid.NewString(), ServiceID: interval.ServiceID, LimitDefinitionID: interval.LimitDefinitionID, CycleType: interval.CycleType, CalculationIntervalIDs: []string{interval.ID}, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo, EstimationResult: estimate, Points: points, Intervals: input.Intervals, Series: estimationResultSeries(input, estimate, interval), CreatedAt: now, UpdatedAt: now}
+	if err := l.SaveDerivedResult(ctx, result, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
+func estimationResultSeries(input domain.EstimationInput, estimate domain.EstimationResult, interval domain.CalculationInterval) []domain.EstimationResultSeries {
+	series := make([]domain.EstimationResultSeries, 0, len(input.Intervals))
+	for index, item := range input.Intervals {
+		var limit *float64
+		if index < len(estimate.Limits) && estimate.Limits[index] > 0 {
+			value := estimate.Limits[index]
+			limit = &value
 		}
-		estimate, err := domain.EstimateFromPoints(input)
-		if err != nil {
-			return fmt.Errorf("recalculate estimation result: %w", err)
+		series = append(series, domain.EstimationResultSeries{
+			ID:                    uuid.NewString(),
+			UsageLimitSourceID:    item.UsageLimitSourceID,
+			LogicalAccountID:      item.LogicalAccountID,
+			PlanVersionID:         item.PlanVersionID,
+			CalculationIntervalID: item.ID,
+			EstimatedLimit:        limit,
+		})
+	}
+	if len(series) == 0 {
+		var limit *float64
+		if len(estimate.Limits) > 0 && estimate.Limits[0] > 0 {
+			value := estimate.Limits[0]
+			limit = &value
 		}
-		interval, err := l.findCalculationInterval(input.Intervals, intervalID)
-		if err != nil {
-			return err
-		}
-		var seriesList []domain.EstimationResultSeries
-		for idx, inter := range input.Intervals {
-			var limitVal *float64
-			if idx < len(estimate.Limits) && estimate.Limits[idx] > 0 {
-				val := estimate.Limits[idx]
-				limitVal = &val
+		series = append(series, domain.EstimationResultSeries{
+			ID:                    uuid.NewString(),
+			UsageLimitSourceID:    interval.UsageLimitSourceID,
+			LogicalAccountID:      interval.LogicalAccountID,
+			PlanVersionID:         interval.PlanVersionID,
+			CalculationIntervalID: interval.ID,
+			EstimatedLimit:        limit,
+		})
+	}
+	return series
+}
+
+// rebuildEstimationPoints regenerates current calculation points from the
+// immutable observations and associations. Persisted points are derived data,
+// so a stale calculation logic version must never be relabeled in place.
+func (l *Lifecycle) rebuildEstimationPoints(ctx context.Context, interval domain.CalculationInterval) ([]domain.EstimationPoint, error) {
+	if interval.State != domain.CalculationEstimable {
+		return nil, l.removeStaleEstimationPoints(ctx, interval.ID)
+	}
+	inputs, err := l.ListCalculationMatchingInputs(ctx, domain.CalculationBuildRequest{ServiceID: interval.ServiceID, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo})
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	points := make([]domain.EstimationPoint, 0)
+	for _, input := range inputs {
+		containsInterval := false
+		for _, id := range input.CalculationIntervalIDs {
+			if id == interval.ID {
+				containsInterval = true
+				break
 			}
-			seriesList = append(seriesList, domain.EstimationResultSeries{
-				ID:                    uuid.NewString(),
-				UsageLimitSourceID:    inter.UsageLimitSourceID,
-				LogicalAccountID:      inter.LogicalAccountID,
-				PlanVersionID:         inter.PlanVersionID,
-				CalculationIntervalID: inter.ID,
-				EstimatedLimit:        limitVal,
-			})
 		}
-		if len(seriesList) == 0 {
-			var limitVal *float64
-			if len(estimate.Limits) > 0 && estimate.Limits[0] > 0 {
-				val := estimate.Limits[0]
-				limitVal = &val
-			}
-			seriesList = append(seriesList, domain.EstimationResultSeries{
-				ID:                    uuid.NewString(),
-				UsageLimitSourceID:    interval.UsageLimitSourceID,
-				LogicalAccountID:      interval.LogicalAccountID,
-				PlanVersionID:         interval.PlanVersionID,
-				CalculationIntervalID: interval.ID,
-				EstimatedLimit:        limitVal,
-			})
+		if !containsInterval {
+			continue
 		}
-		result := domain.DerivedResult{
-			ID:                     uuid.NewString(),
-			ServiceID:              interval.ServiceID,
-			LimitDefinitionID:      interval.LimitDefinitionID,
-			CycleType:              interval.CycleType,
-			CalculationIntervalIDs: []string{interval.ID},
-			ValidFrom:              interval.ValidFrom,
-			ValidTo:                interval.ValidTo,
-			EstimationResult:       estimate,
-			Points:                 points,
-			Intervals:              input.Intervals,
-			Series:                 seriesList,
-			CreatedAt:              time.Now().UTC(),
-			UpdatedAt:              time.Now().UTC(),
+		derived, err := domain.BuildEstimationPoints(input, uuid.NewString, now)
+		if err != nil {
+			return nil, fmt.Errorf("rebuild estimation points: %w", err)
 		}
-		if err := l.SaveDerivedResult(ctx, result, nil); err != nil {
-			return err
+		points = append(points, derived...)
+	}
+	if len(points) > 0 {
+		if err := l.SaveEstimationPoints(ctx, points); err != nil {
+			return nil, err
 		}
+	}
+	if err := l.removeStaleEstimationPoints(ctx, interval.ID); err != nil {
+		return nil, err
+	}
+	return l.ListEstimationPoints(ctx, interval.ID)
+}
+
+func (l *Lifecycle) removeStaleEstimationPoints(ctx context.Context, intervalID string) error {
+	database, err := l.DB()
+	if err != nil {
+		return err
+	}
+	if _, err := database.ExecContext(ctx, `
+		DELETE FROM estimation_points
+		WHERE calculation_logic_version <> ?
+		  AND (calculation_interval_id = ? OR EXISTS (
+			SELECT 1 FROM json_each(estimation_points.calculation_interval_ids_json) WHERE json_each.value = ?
+		  ))`, domain.CalculationLogicVersion, intervalID, intervalID); err != nil {
+		return fmt.Errorf("remove stale estimation points: %w", err)
 	}
 	return nil
 }
@@ -978,4 +1044,57 @@ func normalizedDetails(value string) string {
 		return "{}"
 	}
 	return value
+}
+
+// RecalculateStaleDerivedResults recomputes any calculation intervals that lack an
+// estimation result or have an estimation result with a stale CalculationLogicVersion.
+func (l *Lifecycle) RecalculateStaleDerivedResults(ctx context.Context) (err error) {
+	database, err := l.DB()
+	if err != nil {
+		return err
+	}
+	rows, queryErr := database.QueryContext(ctx, `
+		SELECT ci.calculation_interval_id
+		FROM calculation_intervals ci
+		ORDER BY ci.valid_from, ci.calculation_interval_id
+	`)
+	if queryErr != nil {
+		return fmt.Errorf("list calculation intervals for stale check: %w", queryErr)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close stale check rows: %w", closeErr)
+		}
+	}()
+	var candidateIntervalIDs []string
+	for rows.Next() {
+		var id string
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return scanErr
+		}
+		candidateIntervalIDs = append(candidateIntervalIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read stale check rows: %w", err)
+	}
+
+	for _, intervalID := range candidateIntervalIDs {
+		var count int
+		checkErr := database.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM estimation_results
+			WHERE calculation_logic_version = ?
+			  AND calculation_interval_ids_json LIKE ?
+		`, domain.CalculationLogicVersion, "%\""+intervalID+"\"%").Scan(&count)
+		if checkErr != nil {
+			return fmt.Errorf("check existing estimation result for interval %s: %w", intervalID, checkErr)
+		}
+		if count > 0 {
+			continue
+		}
+		if err := l.recalculateInterval(ctx, intervalID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

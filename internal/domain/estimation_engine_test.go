@@ -20,7 +20,7 @@ func TestT032EstimateFromPointsAppliesPlanMultiplierAndTracesSeries(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != EstimationProvisional || len(result.Limits) != 1 || len(result.SeriesLimits) != 2 {
+	if result.Status != EstimationEstimated || len(result.Limits) != 1 || len(result.SeriesLimits) != 2 {
 		t.Fatalf("result = %#v", result)
 	}
 	closeEnough(t, result.Limits[0], 100)
@@ -67,12 +67,12 @@ func TestT032BaselinePlanIDAllowsMultipleVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != EstimationProvisional || len(result.SeriesMultipliers) != 2 || result.SeriesMultipliers[0] != 1 || result.SeriesMultipliers[1] != 1 {
+	if result.Status != EstimationEstimated || len(result.SeriesMultipliers) != 2 || result.SeriesMultipliers[0] != 1 || result.SeriesMultipliers[1] != 1 {
 		t.Fatalf("result = %#v", result)
 	}
 }
 
-func TestT032EstimateFromPointsClassifiesSevenStates(t *testing.T) {
+func TestT032EstimateFromPointsClassifiesSixStates(t *testing.T) {
 	cases := []struct {
 		name   string
 		input  EstimationInput
@@ -81,9 +81,8 @@ func TestT032EstimateFromPointsClassifiesSevenStates(t *testing.T) {
 		{name: "not applicable", input: EstimationInput{Points: t032SinglePoints([]float64{0.1}, []float64{0.2}, 0, 10), Intervals: []CalculationInterval{{State: CalculationExcluded, ExclusionReason: ExclusionCompletenessUnconfirmed}}}, status: EstimationNotApplicable},
 		{name: "insufficient", input: EstimationInput{Points: t032SinglePoints([]float64{0.1}, []float64{0.2}, 0, 10)[:1]}, status: EstimationInsufficient},
 		{name: "unidentifiable", input: EstimationInput{Points: t032SinglePoints([]float64{0.1}, []float64{0.1}, 10, 20)}, status: EstimationUnidentifiable},
-		{name: "provisional", input: EstimationInput{Points: t032SinglePoints([]float64{0.1}, []float64{0.2}, 0, 10)}, status: EstimationProvisional},
-		{name: "verified", input: EstimationInput{Points: t032SingleThreePoints([]float64{0, 0.1, 0.2}, []float64{0, 10, 20})}, status: EstimationVerified},
-		{name: "model mismatch", input: EstimationInput{Points: t032SingleThreePoints([]float64{0, 0.1, 0.2}, []float64{0, 10, 30})}, status: EstimationModelMismatch},
+		{name: "estimated 2 points", input: EstimationInput{Points: t032SinglePoints([]float64{0.1}, []float64{0.2}, 0, 10)}, status: EstimationEstimated},
+		{name: "estimated 3 points", input: EstimationInput{Points: t032SingleThreePoints([]float64{0, 0.1, 0.2}, []float64{0, 10, 20})}, status: EstimationEstimated},
 		{name: "uncomputed", input: EstimationInput{Points: func() []EstimationPoint {
 			points := t032SinglePoints([]float64{0.1}, []float64{0.2}, 0, 10)
 			points[1].CalculationLogicVersion = "old"

@@ -195,8 +195,7 @@ function FilterBar({
           <option value="insufficient_observations">観測不足</option>
           <option value="unidentifiable">識別不能</option>
           <option value="model_mismatch">モデル不適合</option>
-          <option value="provisional">暫定推定</option>
-          <option value="verified">検証済み推定</option>
+          <option value="estimated">推定済み</option>
         </Select>
       </Field>
       <Field label="プラン版">
@@ -515,7 +514,6 @@ function QualityTab({ detail }: { detail: LimitSeriesDetailSnapshot }) {
         <Body1>観測点数: {result?.observationPointCount ?? 0}</Body1>
         <Body1>差分行数: {result?.differenceRowCount ?? 0}</Body1>
         <Body1>階数: {result?.rank ?? 0}</Body1>
-        <Body1>総絶対誤差率: {result?.absoluteErrorRatioLabel || "—"}</Body1>
         <Body1>最大時刻差: {result?.maxTimeDelta || "—"}</Body1>
         <Body1>計算論理版: {result?.calculationLogicVersion || "—"}</Body1>
       </div>

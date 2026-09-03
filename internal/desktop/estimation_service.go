@@ -135,8 +135,6 @@ type EstimationResultSnapshot struct {
 	ObservationPointCount   int                               `json:"observationPointCount"`
 	DifferenceRowCount      int                               `json:"differenceRowCount"`
 	Rank                    int                               `json:"rank"`
-	AbsoluteErrorRatio      float64                           `json:"absoluteErrorRatio"`
-	AbsoluteErrorRatioLabel string                            `json:"absoluteErrorRatioLabel"`
 	MaxTimeDelta            string                            `json:"maxTimeDelta"`
 	CalculationLogicVersion string                            `json:"calculationLogicVersion"`
 	MatchingRuleVersion     string                            `json:"matchingRuleVersion"`
@@ -339,7 +337,7 @@ func applyIntervalValue(snapshot *CalculationIntervalSnapshot, interval domain.C
 	var estimatedLimit *float64
 	for resultIndex := range results {
 		result := &results[resultIndex]
-		if result.Status != domain.EstimationProvisional && result.Status != domain.EstimationVerified {
+		if result.Status != domain.EstimationEstimated {
 			continue
 		}
 		containsInterval := false
@@ -468,7 +466,7 @@ func limitSeriesSnapshot(row domain.LimitSeriesView, state domain.EstimationStat
 	item.State, _ = statusPresentation(string(state))
 	if result != nil {
 		item.Result = estimationResultSnapshot(result)
-		if state == domain.EstimationProvisional || state == domain.EstimationVerified {
+		if state == domain.EstimationEstimated {
 			for _, series := range result.Series {
 				if series.UsageLimitSourceID == row.UsageLimitSourceID && series.LogicalAccountID == row.LogicalAccountID && series.PlanVersionID == row.PlanVersionID {
 					item.EstimatedLimit = series.EstimatedLimit
@@ -555,9 +553,7 @@ func estimationReasonLabel(code string) string {
 		"insufficient_differences":           "推定に必要な差分行が不足しています。",
 		"rank_deficient":                     "差分行の独立性が不足しています。",
 		"zero_cost_signal":                   "利用額の変化がなく識別できません。",
-		"exactly_identified":                 "必要最小限の差分行で暫定推定しました。",
-		"residual_within_ten_percent":        "余分な差分行を許容誤差内で説明できました。",
-		"residual_over_ten_percent":          "差分行の誤差が許容範囲を超えています。",
+		"positive_unique_solution":           "有限かつ正の一意解が得られました。",
 		"non_positive_solution":              "正の利用上限を得られませんでした。",
 		"target_set_mismatch":                "計算対象集合が一致しません。",
 		"non_finite_value":                   "有限な数値でない観測を含みます。",
@@ -597,7 +593,7 @@ func fallbackForSeries(row domain.LimitSeriesView, results []domain.DerivedResul
 	var selected *domain.DerivedResult
 	for index := range results {
 		candidate := &results[index]
-		if candidate.LimitDefinitionID != row.LimitDefinitionID || candidate.CycleType != row.CycleType || candidate.ValidTo.After(cutoff) || (candidate.Status != domain.EstimationProvisional && candidate.Status != domain.EstimationVerified) {
+		if candidate.LimitDefinitionID != row.LimitDefinitionID || candidate.CycleType != row.CycleType || candidate.ValidTo.After(cutoff) || candidate.Status != domain.EstimationEstimated {
 			continue
 		}
 		matched := false
@@ -637,7 +633,7 @@ func estimationResultSnapshot(result *domain.DerivedResult) *EstimationResultSna
 	item := &EstimationResultSnapshot{
 		ID: result.ID, ResultSetKey: result.ResultSetKey, Status: state, StatusReasonCode: reason, StatusReason: estimationReasonLabel(reason),
 		Limits: append([]float64(nil), result.Limits...), ObservationPointCount: result.Rows,
-		DifferenceRowCount: result.DifferenceRowCount, Rank: result.Rank, AbsoluteErrorRatio: result.AbsoluteErrorRatio, AbsoluteErrorRatioLabel: fmt.Sprintf("%.2f%%", result.AbsoluteErrorRatio*100),
+		DifferenceRowCount: result.DifferenceRowCount, Rank: result.Rank,
 		MaxTimeDelta: result.MaxTimeDelta.String(), CalculationLogicVersion: result.CalculationLogicVersion,
 		MatchingRuleVersion: result.MatchingRuleVersion, InputFingerprint: result.InputFingerprint,
 		CalculationIntervalIDs: append([]string(nil), result.CalculationIntervalIDs...),
@@ -730,7 +726,7 @@ func limitSeriesLess(left, right LimitSeriesSnapshot, sortBy string) bool {
 	case "latestObservationAt":
 		return nullableStringLess(left.LatestObservationAt, right.LatestObservationAt)
 	default:
-		statusOrder := map[string]int{"not_applicable": 0, "uncomputed": 1, "insufficient_observations": 2, "unidentifiable": 3, "model_mismatch": 4, "provisional": 5, "verified": 6}
+		statusOrder := map[string]int{"not_applicable": 0, "uncomputed": 1, "insufficient_observations": 2, "unidentifiable": 3, "model_mismatch": 4, "estimated": 5}
 		return statusOrder[left.State.Code] < statusOrder[right.State.Code]
 	}
 }

@@ -42,7 +42,7 @@ func TestEstimationServiceKeepsUncomputedSeriesAndUsesGoDisplayValues(t *testing
 			{ID: "series-1", ServiceID: "service-1", ServiceName: "Service", LogicalAccountID: "account-1", LogicalAccountName: "Account", LimitDefinitionID: "definition-1", LimitDefinitionName: "Weekly", CycleType: "weekly", UsageLimitSourceID: "source-1", NormalizedMetric: "percent", PlanVersionID: "plan-version-1", PlanVersionName: "Plan", PlanLimitRuleID: "rule-1", PlanLimit: &planLimit, UsedPercent: &used, RemainingPercent: &remaining, LatestObservationAt: timePointer(now.Add(-time.Minute)), Interval: interval},
 			{ID: "series-2", ServiceID: "service-1", ServiceName: "Service", LogicalAccountID: "account-2", LogicalAccountName: "Account 2", LimitDefinitionID: "definition-1", LimitDefinitionName: "Weekly", CycleType: "weekly", UsageLimitSourceID: "source-2", NormalizedMetric: "percent", PlanVersionID: "plan-version-1", PlanVersionName: "Plan", PlanLimitRuleID: "rule-1", Interval: interval},
 		},
-		results: []domain.DerivedResult{{ID: "result-1", ServiceID: "service-1", LimitDefinitionID: "definition-1", CycleType: "weekly", CalculationIntervalIDs: []string{"interval-1"}, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo, EstimationResult: domain.EstimationResult{Status: domain.EstimationProvisional, Reasons: []string{"exactly_identified"}, Limits: []float64{123}}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "source-1", LogicalAccountID: "account-1", PlanVersionID: "plan-version-1", EstimatedLimit: floatPointer(123)}}}},
+		results: []domain.DerivedResult{{ID: "result-1", ServiceID: "service-1", LimitDefinitionID: "definition-1", CycleType: "weekly", CalculationIntervalIDs: []string{"interval-1"}, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo, EstimationResult: domain.EstimationResult{Status: domain.EstimationEstimated, Reasons: []string{"positive_unique_solution"}, Limits: []float64{123}}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "source-1", LogicalAccountID: "account-1", PlanVersionID: "plan-version-1", EstimatedLimit: floatPointer(123)}}}},
 		prices:  map[string][]domain.StandardPrice{"plan-version-1": {{ID: "price-1", PlanVersionID: "plan-version-1", USDMonthlyPerSeat: 10, SourceURL: "https://vendor.example/prices", ValidFrom: now.Add(-2 * time.Hour), CreatedAt: now}}},
 	}
 	service, err := NewEstimationServiceWithDependencies(reader, fixedClock{value: now})
@@ -69,7 +69,7 @@ func TestEstimationServiceKeepsUncomputedSeriesAndUsesGoDisplayValues(t *testing
 	if uncomputed.State.Code != "insufficient_observations" || uncomputed.StateReason == "" {
 		t.Fatalf("insufficient series = %#v", uncomputed)
 	}
-	if computed.State.Code != "provisional" || computed.RemainingLabel != "74.5%" || computed.EstimatedLimitLabel != "123.00" {
+	if computed.State.Code != "estimated" || computed.StateReason != "有限かつ正の一意解が得られました。" || computed.RemainingLabel != "74.5%" || computed.EstimatedLimitLabel != "123.00" {
 		t.Fatalf("computed display = %#v", computed)
 	}
 	if computed.MonthlyEquivalentLimit == nil || computed.ValueMultiplier == nil || computed.StandardPriceSourceURL != "https://vendor.example/prices" || computed.StandardPriceValidFrom == "" || computed.ValueReasonCode != string(domain.ValueReasonComputed) {
@@ -89,7 +89,7 @@ func TestEstimationServiceStatePrecedenceFallbackAndFilters(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	rows := make([]domain.LimitSeriesView, 0, 8)
 	results := make([]domain.DerivedResult, 0, 5)
-	for index, status := range []domain.EstimationStatus{domain.EstimationNotApplicable, domain.EstimationUncomputed, domain.EstimationInsufficient, domain.EstimationUnidentifiable, domain.EstimationModelMismatch, domain.EstimationProvisional, domain.EstimationVerified} {
+	for index, status := range []domain.EstimationStatus{domain.EstimationNotApplicable, domain.EstimationUncomputed, domain.EstimationInsufficient, domain.EstimationUnidentifiable, domain.EstimationModelMismatch, domain.EstimationEstimated} {
 		interval := &domain.CalculationIntervalView{ID: "state-interval-" + string(rune('a'+index)), ServiceID: "state-service", LogicalAccountID: "state-account-" + string(rune('a'+index)), UsageLimitSourceID: "state-source-" + string(rune('a'+index)), LimitDefinitionID: "state-definition", CycleType: "weekly", ValidFrom: now.Add(-time.Hour), ValidTo: now.Add(time.Hour), State: "estimable"}
 		row := domain.LimitSeriesView{ID: "state-series-" + string(rune('a'+index)), ServiceID: "state-service", ServiceName: "State", LogicalAccountID: interval.LogicalAccountID, LogicalAccountName: interval.LogicalAccountID, LimitDefinitionID: "state-definition", LimitDefinitionName: "State", CycleType: "weekly", UsageLimitSourceID: interval.UsageLimitSourceID, NormalizedMetric: "percent", PlanVersionID: "state-plan", PlanLimitRuleID: "state-rule", UsedPercent: floatPointer(20), RemainingPercent: floatPointer(80), LatestObservationAt: timePointer(now.Add(-time.Minute)), Interval: interval}
 		if status == domain.EstimationNotApplicable {
@@ -111,9 +111,9 @@ func TestEstimationServiceStatePrecedenceFallbackAndFilters(t *testing.T) {
 	}
 	refInterval := &domain.CalculationIntervalView{ID: "ref-current", ServiceID: "state-service", LogicalAccountID: "ref-account", UsageLimitSourceID: "ref-source", LimitDefinitionID: "state-definition", CycleType: "weekly", ValidFrom: now.Add(-time.Hour), ValidTo: now.Add(time.Hour), State: "estimable"}
 	rows = append(rows, domain.LimitSeriesView{ID: "ref-series", ServiceID: "state-service", ServiceName: "State", LogicalAccountID: "ref-account", LogicalAccountName: "Reference", LimitDefinitionID: "state-definition", LimitDefinitionName: "State", CycleType: "weekly", UsageLimitSourceID: "ref-source", NormalizedMetric: "percent", PlanVersionID: "state-plan", PlanLimitRuleID: "state-rule", UsedPercent: floatPointer(10), RemainingPercent: floatPointer(90), LatestObservationAt: timePointer(now.Add(-time.Minute)), Interval: refInterval})
-	results = append(results, domain.DerivedResult{ID: "old-ref", ServiceID: "state-service", LimitDefinitionID: "state-definition", CycleType: "weekly", ValidFrom: now.Add(-400 * 24 * time.Hour), ValidTo: now.Add(-399 * 24 * time.Hour), EstimationResult: domain.EstimationResult{Status: domain.EstimationVerified}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "ref-source", LogicalAccountID: "ref-account", PlanVersionID: "state-plan"}}})
-	results = append(results, domain.DerivedResult{ID: "wrong-plan", ServiceID: "state-service", LimitDefinitionID: "state-definition", CycleType: "weekly", ValidFrom: now.Add(-3 * time.Hour), ValidTo: now.Add(-time.Hour), EstimationResult: domain.EstimationResult{Status: domain.EstimationVerified}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "ref-source", LogicalAccountID: "ref-account", PlanVersionID: "other-plan"}}})
-	results = append(results, domain.DerivedResult{ID: "wrong-definition", ServiceID: "state-service", LimitDefinitionID: "other-definition", CycleType: "weekly", ValidFrom: now.Add(-3 * time.Hour), ValidTo: now.Add(-time.Hour), EstimationResult: domain.EstimationResult{Status: domain.EstimationVerified}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "ref-source", LogicalAccountID: "ref-account", PlanVersionID: "state-plan"}}})
+	results = append(results, domain.DerivedResult{ID: "old-ref", ServiceID: "state-service", LimitDefinitionID: "state-definition", CycleType: "weekly", ValidFrom: now.Add(-400 * 24 * time.Hour), ValidTo: now.Add(-399 * 24 * time.Hour), EstimationResult: domain.EstimationResult{Status: domain.EstimationEstimated}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "ref-source", LogicalAccountID: "ref-account", PlanVersionID: "state-plan"}}})
+	results = append(results, domain.DerivedResult{ID: "wrong-plan", ServiceID: "state-service", LimitDefinitionID: "state-definition", CycleType: "weekly", ValidFrom: now.Add(-3 * time.Hour), ValidTo: now.Add(-time.Hour), EstimationResult: domain.EstimationResult{Status: domain.EstimationEstimated}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "ref-source", LogicalAccountID: "ref-account", PlanVersionID: "other-plan"}}})
+	results = append(results, domain.DerivedResult{ID: "wrong-definition", ServiceID: "state-service", LimitDefinitionID: "other-definition", CycleType: "weekly", ValidFrom: now.Add(-3 * time.Hour), ValidTo: now.Add(-time.Hour), EstimationResult: domain.EstimationResult{Status: domain.EstimationEstimated}, Series: []domain.EstimationResultSeries{{UsageLimitSourceID: "ref-source", LogicalAccountID: "ref-account", PlanVersionID: "state-plan"}}})
 	reader := &estimationServiceReader{series: rows, results: results}
 	service, err := NewEstimationServiceWithDependencies(reader, fixedClock{value: now})
 	if err != nil {
@@ -130,7 +130,7 @@ func TestEstimationServiceStatePrecedenceFallbackAndFilters(t *testing.T) {
 			t.Fatal("model mismatch candidate became a primary estimated limit")
 		}
 	}
-	want := []string{"not_applicable", "uncomputed", "insufficient_observations", "unidentifiable", "model_mismatch", "provisional", "verified"}
+	want := []string{"not_applicable", "uncomputed", "insufficient_observations", "unidentifiable", "model_mismatch", "estimated"}
 	for index, value := range want {
 		if states["state-series-"+string(rune('a'+index))] != value {
 			t.Fatalf("state %d = %q, want %q", index, states["state-series-"+string(rune('a'+index))], value)
@@ -145,7 +145,7 @@ func TestEstimationServiceStatePrecedenceFallbackAndFilters(t *testing.T) {
 	if reference.LatestValidReference == nil || reference.LatestValidReference.ResultID != "old-ref" {
 		t.Fatalf("fallback reference = %#v", reference.LatestValidReference)
 	}
-	t.Run("P1-EST-23 only provisional and verified values reach primary display", func(t *testing.T) {
+	t.Run("P1-EST-23 only estimated values reach primary display", func(t *testing.T) {
 		for _, item := range items {
 			if item.State.Code == "model_mismatch" && item.EstimatedLimit != nil {
 				t.Fatalf("model mismatch candidate became primary value: %#v", item)
@@ -165,11 +165,11 @@ func TestEstimationServiceStatePrecedenceFallbackAndFilters(t *testing.T) {
 			t.Fatalf("fallback age was not exposed: %#v", reference.LatestValidReference)
 		}
 	})
-	filtered, err := service.GetLimitSeries(context.Background(), LimitSeriesFilterInput{Status: "verified", PlanVersionID: "state-plan", SortBy: "remainingPercent"})
+	filtered, err := service.GetLimitSeries(context.Background(), LimitSeriesFilterInput{Status: "estimated", PlanVersionID: "state-plan", SortBy: "remainingPercent"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(filtered) != 1 || filtered[0].ID != "state-series-g" {
+	if len(filtered) != 1 || filtered[0].ID != "state-series-f" {
 		t.Fatalf("filtered/sorted series = %#v", filtered)
 	}
 }
@@ -199,7 +199,7 @@ func TestEstimationServiceHistoryValueSnapshots(t *testing.T) {
 			results: []domain.DerivedResult{{
 				ID: "result-history", ServiceID: "service-1", LimitDefinitionID: "definition-1", CycleType: domain.LimitCycleWeekly,
 				CalculationIntervalIDs: []string{historical.ID}, ValidFrom: historical.ValidFrom, ValidTo: historical.ValidTo,
-				EstimationResult: domain.EstimationResult{Status: domain.EstimationVerified},
+				EstimationResult: domain.EstimationResult{Status: domain.EstimationEstimated},
 				Series:           []domain.EstimationResultSeries{{UsageLimitSourceID: "source-1", LogicalAccountID: "account-1", PlanVersionID: "plan-version-1", EstimatedLimit: &historicalLimit}},
 			}},
 			history: []domain.CalculationIntervalView{historical, *current},

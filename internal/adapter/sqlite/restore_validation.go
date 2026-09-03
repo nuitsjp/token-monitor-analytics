@@ -108,7 +108,7 @@ var restoreEnumContracts = map[string]map[string][]string{
 		"observation_role": {"limit", "cost"},
 	},
 	"estimation_results": {
-		"status": {"insufficient_observations", "unidentifiable", "provisional", "verified", "model_mismatch", "not_applicable", "uncomputed"},
+		"status": {"insufficient_observations", "unidentifiable", "estimated", "model_mismatch", "not_applicable", "uncomputed"},
 	},
 	"estimation_result_evidence": {
 		"evidence_kind": {"point", "matched_observation", "snapshot", "association", "completeness", "plan_history"},
@@ -719,7 +719,7 @@ func validateRestoreRecalculation(ctx context.Context, database *sql.DB, path st
 		}
 		if stored.Status != recalculated.Status || !reflect.DeepEqual(stored.Reasons, recalculated.Reasons) ||
 			!equalFloats(stored.Limits, recalculated.Limits) || stored.Rank != recalculated.Rank ||
-			stored.AbsoluteErrorRatio != recalculated.AbsoluteErrorRatio || stored.CalculationLogicVersion != recalculated.CalculationLogicVersion ||
+			stored.CalculationLogicVersion != recalculated.CalculationLogicVersion ||
 			stored.MaxTimeDelta != recalculated.MaxTimeDelta || stored.Rows != len(input.Points) ||
 			stored.DifferenceRowCount != len(recalculated.DifferenceRows) {
 			return restoreError(domain.RestoreValidationRecalculation, fmt.Errorf("restore estimation result %q is not reproducible", stored.ID))

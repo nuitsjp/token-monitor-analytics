@@ -38,7 +38,7 @@ func TestEstimationUsecaseEstimatesPersistedInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.id != "interval" || result.Status != domain.EstimationProvisional {
+	if store.id != "interval" || result.Status != domain.EstimationEstimated {
 		t.Fatalf("id=%q result=%#v", store.id, result)
 	}
 }
@@ -80,7 +80,7 @@ func TestEstimationUsecaseRecalculationIsReproducible(t *testing.T) {
 		if !reflect.DeepEqual(first, second) {
 			t.Fatalf("recalculation changed the result: first=%#v second=%#v", first, second)
 		}
-		if first.Status != domain.EstimationProvisional || len(first.PointIDs) != 2 || len(first.DifferenceRows) != 1 || len(first.Limits) != 1 {
+		if first.Status != domain.EstimationEstimated || len(first.PointIDs) != 2 || len(first.DifferenceRows) != 1 || len(first.Limits) != 1 {
 			t.Fatalf("recalculation result is incomplete: %#v", first)
 		}
 	})

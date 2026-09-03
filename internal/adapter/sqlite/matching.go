@@ -840,6 +840,10 @@ func (l *Lifecycle) ListEstimationInput(ctx context.Context, calculationInterval
 	if err != nil {
 		return domain.EstimationInput{}, err
 	}
+	return l.estimationInputForPoints(ctx, calculationIntervalID, points)
+}
+
+func (l *Lifecycle) estimationInputForPoints(ctx context.Context, calculationIntervalID string, points []domain.EstimationPoint) (domain.EstimationInput, error) {
 	allIntervals, err := l.ListCalculationIntervals(ctx, "")
 	if err != nil {
 		return domain.EstimationInput{}, err

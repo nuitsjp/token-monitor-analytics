@@ -2,3 +2,8 @@ title = "token-monitor-analytics gitleaks configuration"
 
 [extend]
 useDefault = true
+
+[allowlist]
+description = "Known non-secret account key kind identifier"
+regexTarget = "secret"
+regexes = ['''^oidc-subject-v1$''']

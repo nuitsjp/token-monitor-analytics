@@ -129,27 +129,26 @@ type EstimationPoint struct {
 }
 
 type EstimationResult struct {
-	EstimationResultID         string  `json:"estimation_result_id"`
-	ResultSetKey               string  `json:"result_set_key"`
-	ServiceID                  string  `json:"service_id"`
-	LimitDefinitionID          string  `json:"limit_definition_id"`
-	CycleType                  string  `json:"cycle_type"`
-	CalculationIntervalIdsJson string  `json:"calculation_interval_ids_json"`
-	ValidFrom                  string  `json:"valid_from"`
-	ValidTo                    string  `json:"valid_to"`
-	Status                     string  `json:"status"`
-	ReasonsJson                string  `json:"reasons_json"`
-	LimitsJson                 string  `json:"limits_json"`
-	ObservationPointCount      int64   `json:"observation_point_count"`
-	DifferenceRowCount         int64   `json:"difference_row_count"`
-	Rank                       int64   `json:"rank"`
-	AbsoluteErrorRatio         float64 `json:"absolute_error_ratio"`
-	MaxTimeDeltaNs             int64   `json:"max_time_delta_ns"`
-	CalculationLogicVersion    string  `json:"calculation_logic_version"`
-	MatchingRuleVersion        string  `json:"matching_rule_version"`
-	InputFingerprint           string  `json:"input_fingerprint"`
-	CreatedAt                  string  `json:"created_at"`
-	UpdatedAt                  string  `json:"updated_at"`
+	EstimationResultID         string `json:"estimation_result_id"`
+	ResultSetKey               string `json:"result_set_key"`
+	ServiceID                  string `json:"service_id"`
+	LimitDefinitionID          string `json:"limit_definition_id"`
+	CycleType                  string `json:"cycle_type"`
+	CalculationIntervalIdsJson string `json:"calculation_interval_ids_json"`
+	ValidFrom                  string `json:"valid_from"`
+	ValidTo                    string `json:"valid_to"`
+	Status                     string `json:"status"`
+	ReasonsJson                string `json:"reasons_json"`
+	LimitsJson                 string `json:"limits_json"`
+	ObservationPointCount      int64  `json:"observation_point_count"`
+	DifferenceRowCount         int64  `json:"difference_row_count"`
+	Rank                       int64  `json:"rank"`
+	MaxTimeDeltaNs             int64  `json:"max_time_delta_ns"`
+	CalculationLogicVersion    string `json:"calculation_logic_version"`
+	MatchingRuleVersion        string `json:"matching_rule_version"`
+	InputFingerprint           string `json:"input_fingerprint"`
+	CreatedAt                  string `json:"created_at"`
+	UpdatedAt                  string `json:"updated_at"`
 }
 
 type EstimationResultDifferenceRow struct {
