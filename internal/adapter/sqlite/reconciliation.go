@@ -227,7 +227,7 @@ func ensureCatalogBinding(ctx context.Context, tx *sql.Tx, entityType, catalogKe
 }
 
 func reconcileObservedAccounts(ctx context.Context, tx *sql.Tx, hubID string, at time.Time, planIDs, planVersions map[string]string, summary *domain.ReconciliationSummary) error {
-	query := `SELECT o.hub_id, o.raw_service_identifier, o.account_key, o.provider_updated_at, o.plan_label, m.service_id
+	query := `SELECT o.hub_id, o.raw_service_identifier, o.account_key, o.account_key_kind, o.account_display_name, o.account_email, o.provider_updated_at, o.plan_label, m.service_id
 		FROM usage_limit_observations o JOIN service_identifier_mappings m ON m.identifier_kind = 'usage_limit' AND m.raw_identifier = o.raw_service_identifier
 		 AND m.valid_from <= o.provider_updated_at AND (m.valid_to IS NULL OR o.provider_updated_at < m.valid_to)
 		LEFT JOIN normalization_runs nr ON nr.snapshot_id = o.snapshot_id AND nr.normalization_generation = o.normalization_generation
@@ -243,18 +243,27 @@ func reconcileObservedAccounts(ctx context.Context, tx *sql.Tx, hubID string, at
 		return fmt.Errorf("list observed accounts: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	type row struct{ hub, provider, accountKey, first, last, planLabel, planFirst, serviceID string }
+	type row struct{ hub, provider, accountKey, accountKeyKind, accountDisplayName, accountEmail, first, last, planLabel, planFirst, serviceID string }
 	valuesByKey := make(map[string]*row)
 	for rows.Next() {
-		var hub, provider, accountKey, observedAt, planLabel, serviceID string
-		if err := rows.Scan(&hub, &provider, &accountKey, &observedAt, &planLabel, &serviceID); err != nil {
+		var hub, provider, accountKey, accountKeyKind, accountDisplayName, accountEmail, observedAt, planLabel, serviceID string
+		if err := rows.Scan(&hub, &provider, &accountKey, &accountKeyKind, &accountDisplayName, &accountEmail, &observedAt, &planLabel, &serviceID); err != nil {
 			return fmt.Errorf("scan observed account: %w", err)
 		}
 		key := hub + "\x1f" + serviceID + "\x1f" + accountKey
 		value := valuesByKey[key]
 		if value == nil {
-			value = &row{hub: hub, provider: provider, accountKey: accountKey, first: observedAt, last: observedAt, serviceID: serviceID}
+			value = &row{hub: hub, provider: provider, accountKey: accountKey, accountKeyKind: accountKeyKind, accountDisplayName: accountDisplayName, accountEmail: accountEmail, first: observedAt, last: observedAt, serviceID: serviceID}
 			valuesByKey[key] = value
+		}
+		if accountKeyKind != "" {
+			value.accountKeyKind = accountKeyKind
+		}
+		if accountDisplayName != "" {
+			value.accountDisplayName = accountDisplayName
+		}
+		if accountEmail != "" {
+			value.accountEmail = accountEmail
 		}
 		value.last = observedAt
 		if planLabel != "" && planLabel != value.planLabel {
@@ -276,11 +285,14 @@ func reconcileObservedAccounts(ctx context.Context, tx *sql.Tx, hubID string, at
 	})
 	for _, value := range values {
 		candidateID := stableReconciliationID("hub-account", value.hub, value.serviceID, value.accountKey)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO hub_account_candidates (hub_account_candidate_id, hub_id, service_id, account_key, state, first_observed_at, last_observed_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, 'unconfirmed', ?, ?, ?, ?) ON CONFLICT(hub_id, service_id, account_key) DO UPDATE SET
+		if _, err := tx.ExecContext(ctx, `INSERT INTO hub_account_candidates (hub_account_candidate_id, hub_id, service_id, account_key, account_key_kind, display_name, email, state, first_observed_at, last_observed_at, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 'unconfirmed', ?, ?, ?, ?) ON CONFLICT(hub_id, service_id, account_key) DO UPDATE SET
+			account_key_kind = CASE WHEN excluded.account_key_kind <> '' THEN excluded.account_key_kind ELSE hub_account_candidates.account_key_kind END,
+			display_name = CASE WHEN excluded.display_name <> '' THEN excluded.display_name ELSE hub_account_candidates.display_name END,
+			email = CASE WHEN excluded.email <> '' THEN excluded.email ELSE hub_account_candidates.email END,
 			first_observed_at = MIN(hub_account_candidates.first_observed_at, excluded.first_observed_at),
 			last_observed_at = MAX(hub_account_candidates.last_observed_at, excluded.last_observed_at), updated_at = excluded.updated_at`,
-			candidateID, value.hub, value.serviceID, value.accountKey, value.first, value.last, value.first, utcText(at)); err != nil {
+			candidateID, value.hub, value.serviceID, value.accountKey, value.accountKeyKind, value.accountDisplayName, value.accountEmail, value.first, value.last, value.first, utcText(at)); err != nil {
 			return fmt.Errorf("upsert automatic Hub account: %w", err)
 		}
 		var state string
@@ -289,7 +301,17 @@ func reconcileObservedAccounts(ctx context.Context, tx *sql.Tx, hubID string, at
 		if err := tx.QueryRowContext(ctx, `SELECT hub_account_candidate_id, state, logical_account_id FROM hub_account_candidates WHERE hub_id = ? AND service_id = ? AND account_key = ?`, value.hub, value.serviceID, value.accountKey).Scan(&existingCandidateID, &state, &logicalID); err != nil {
 			return fmt.Errorf("read automatic Hub account: %w", err)
 		}
-		if state == string(domain.HubAccountCandidateUnconfirmed) {
+		mayCreateLogicalAccount := state == string(domain.HubAccountCandidateUnconfirmed) && !(value.provider == "grok" && value.accountKeyKind != "oidc-subject-v1")
+		if mayCreateLogicalAccount && value.provider == "grok" {
+			var associatedLegacyCandidates int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM hub_account_candidates
+				WHERE hub_id = ? AND service_id = ? AND account_key_kind = 'legacy-credential-fingerprint'
+				AND state = 'associated' AND logical_account_id IS NOT NULL`, value.hub, value.serviceID).Scan(&associatedLegacyCandidates); err != nil {
+				return fmt.Errorf("count associated legacy Grok accounts: %w", err)
+			}
+			mayCreateLogicalAccount = associatedLegacyCandidates == 0
+		}
+		if mayCreateLogicalAccount {
 			accountID := stableReconciliationID("logical-account", value.hub, value.serviceID, value.accountKey)
 			result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO logical_accounts (logical_account_id, service_id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`, accountID, value.serviceID, value.provider+" "+value.accountKey, value.first, utcText(at))
 			if err != nil {

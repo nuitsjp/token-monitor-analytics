@@ -63,7 +63,7 @@ func TestAutomaticReconciliationBuildsDeterministicCodexConfiguration(t *testing
 	}
 }
 
-func TestAutomaticReconciliationKeepsUnknownGrokPlanAndCrossHubAccountsSeparate(t *testing.T) {
+func TestAutomaticReconciliationDoesNotCreateLogicalAccountsForLegacyGrok(t *testing.T) {
 	lifecycle := openTestLifecycle(t)
 	ctx := context.Background()
 	now := time.Date(2026, 9, 2, 6, 0, 0, 0, time.UTC)
@@ -84,8 +84,83 @@ func TestAutomaticReconciliationKeepsUnknownGrokPlanAndCrossHubAccountsSeparate(
 	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_limit_source_links`).Scan(&links); err != nil {
 		t.Fatal(err)
 	}
-	if accounts != 2 || histories != 0 || links != 2 {
+	if accounts != 0 || histories != 0 || links != 0 {
 		t.Fatalf("accounts=%d histories=%d links=%d", accounts, histories, links)
+	}
+	var candidates int
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM hub_account_candidates WHERE state = 'unconfirmed' AND account_key_kind = 'legacy-credential-fingerprint'`).Scan(&candidates); err != nil {
+		t.Fatal(err)
+	}
+	if candidates != 2 {
+		t.Fatalf("legacy Grok candidates = %d, want 2", candidates)
+	}
+}
+
+func TestAutomaticReconciliationLeavesStableGrokCandidateUnconfirmedDuringLegacyTransition(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 2, 6, 30, 0, 0, time.UTC)
+	hubID, snapshotID := insertReconciliationObservationFixture(t, lifecycle, uuid.NewString(), "grok", "legacy-token", "", now)
+	if _, err := lifecycle.ReconcileObservedConfiguration(ctx, hubID, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	database, _ := lifecycle.DB()
+	var serviceID string
+	if err := database.QueryRowContext(ctx, `SELECT service_id FROM services WHERE official_key = 'grok'`).Scan(&serviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO logical_accounts (logical_account_id, service_id, display_name, created_at, updated_at) VALUES ('legacy-logical', ?, 'Grok', ?, ?)`, serviceID, utcText(now), utcText(now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE hub_account_candidates SET state = 'associated', logical_account_id = 'legacy-logical' WHERE hub_id = ? AND service_id = ? AND account_key = 'legacy-token'`, hubID, serviceID); err != nil {
+		t.Fatal(err)
+	}
+	stableAt := now.Add(2 * time.Minute)
+	stable := LimitObservation{ObservationID: "stable-grok-observation", UsageLimitSourceID: "stable-grok-source", HubAccountCandidateID: "stable-grok-candidate", IdentificationCandidateID: "stable-grok-identification", SnapshotID: snapshotID, HubID: hubID, DeviceID: "device", RawServiceIdentifier: "grok", AccountKey: "stable-subject", AccountKeyKind: "oidc-subject-v1", ProviderUpdatedAt: stableAt, WindowKey: "limit-id\x1fweekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", UsedPercent: float64Pointer(25), ResetsAt: timePointer(stableAt.Add(7 * 24 * time.Hour)), SyncUploadIntervalMS: int64Pointer(0), LimitsRefreshMS: int64Pointer(300000), AnalyticsIntervalSeconds: 300, NormalizationGeneration: 2, NormalizationRuleVersion: "api-stats-v1-device-updated-at", NormalizationLogicVersion: "t012-normalize-v2", JSONPath: "$.stable", DedupeKey: "stable-grok-dedupe", ValueFingerprint: "stable-grok-value"}
+	if err := lifecycle.InsertLimitObservations(ctx, []LimitObservation{stable}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := lifecycle.ReconcileObservedConfiguration(ctx, hubID, stableAt.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.AccountsCreated != 0 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	var accounts, unconfirmedStable int
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM logical_accounts WHERE service_id = ?`, serviceID).Scan(&accounts); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM hub_account_candidates WHERE hub_id = ? AND service_id = ? AND account_key = 'stable-subject' AND state = 'unconfirmed' AND logical_account_id IS NULL`, hubID, serviceID).Scan(&unconfirmedStable); err != nil {
+		t.Fatal(err)
+	}
+	if accounts != 1 || unconfirmedStable != 1 {
+		t.Fatalf("logical accounts=%d unconfirmed stable candidates=%d", accounts, unconfirmedStable)
+	}
+}
+
+func TestAutomaticReconciliationCreatesLogicalAccountForGrokOIDCSubject(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 2, 7, 0, 0, 0, time.UTC)
+	hubID, _ := insertReconciliationObservationFixture(t, lifecycle, uuid.NewString(), "grok", "oidc-account", "", now)
+	database, _ := lifecycle.DB()
+	if _, err := database.ExecContext(ctx, `UPDATE usage_limit_observations SET account_key_kind = 'oidc-subject-v1' WHERE hub_id = ?`, hubID); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := lifecycle.ReconcileObservedConfiguration(ctx, hubID, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.AccountsCreated != 1 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	var accounts int
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM logical_accounts la JOIN services s ON s.service_id = la.service_id WHERE s.official_key = 'grok'`).Scan(&accounts); err != nil {
+		t.Fatal(err)
+	}
+	if accounts != 1 {
+		t.Fatalf("Grok OIDC logical accounts = %d, want 1", accounts)
 	}
 }
 
@@ -152,7 +227,11 @@ func insertReconciliationObservationFixture(t *testing.T, lifecycle *Lifecycle, 
 		t.Fatal(err)
 	}
 	cost := CostObservation{ObservationID: "cost-observation-" + hubID, UsageCostSourceID: "cost-source-" + hubID, SnapshotID: snapshotID, HubID: hubID, DeviceID: "device", RawServiceIdentifier: provider, UsageUpdatedAt: now, CostUSDText: "1", SyncUploadIntervalMS: int64Pointer(0), AnalyticsIntervalSeconds: 300, NormalizationGeneration: 2, NormalizationRuleVersion: "api-stats-v1-device-updated-at", NormalizationLogicVersion: "t012-normalize-v2", JSONPath: "$.cost", DedupeKey: "cost-" + hubID, ValueFingerprint: "cost-value"}
-	limit := LimitObservation{ObservationID: "limit-observation-" + hubID, UsageLimitSourceID: "limit-source-" + hubID, HubAccountCandidateID: "candidate-" + hubID, IdentificationCandidateID: "identification-" + hubID, SnapshotID: snapshotID, HubID: hubID, DeviceID: "device", RawServiceIdentifier: provider, AccountKey: accountKey, ProviderUpdatedAt: now, WindowKey: "limit-id\x1fweekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", PlanLabel: planLabel, UsedPercent: float64Pointer(25), ResetsAt: timePointer(now.Add(7 * 24 * time.Hour)), SyncUploadIntervalMS: int64Pointer(0), LimitsRefreshMS: int64Pointer(300000), AnalyticsIntervalSeconds: 300, NormalizationGeneration: 2, NormalizationRuleVersion: "api-stats-v1-device-updated-at", NormalizationLogicVersion: "t012-normalize-v2", JSONPath: "$.limit", DedupeKey: "limit-" + hubID, ValueFingerprint: "limit-value"}
+	accountKeyKind := ""
+	if provider == "grok" {
+		accountKeyKind = "legacy-credential-fingerprint"
+	}
+	limit := LimitObservation{ObservationID: "limit-observation-" + hubID, UsageLimitSourceID: "limit-source-" + hubID, HubAccountCandidateID: "candidate-" + hubID, IdentificationCandidateID: "identification-" + hubID, SnapshotID: snapshotID, HubID: hubID, DeviceID: "device", RawServiceIdentifier: provider, AccountKey: accountKey, AccountKeyKind: accountKeyKind, ProviderUpdatedAt: now, WindowKey: "limit-id\x1fweekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", PlanLabel: planLabel, UsedPercent: float64Pointer(25), ResetsAt: timePointer(now.Add(7 * 24 * time.Hour)), SyncUploadIntervalMS: int64Pointer(0), LimitsRefreshMS: int64Pointer(300000), AnalyticsIntervalSeconds: 300, NormalizationGeneration: 2, NormalizationRuleVersion: "api-stats-v1-device-updated-at", NormalizationLogicVersion: "t012-normalize-v2", JSONPath: "$.limit", DedupeKey: "limit-" + hubID, ValueFingerprint: "limit-value"}
 	if err := lifecycle.InsertObservations(ctx, []CostObservation{cost}, []LimitObservation{limit}); err != nil {
 		t.Fatal(err)
 	}

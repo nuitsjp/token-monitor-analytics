@@ -57,6 +57,9 @@ type NormalizedLimitObservation struct {
 	DeviceID              string
 	RawServiceIdentifier  string
 	AccountKey            string
+	AccountKeyKind        string
+	AccountLabel          string
+	AccountEmail          string
 	ProviderUpdatedAt     time.Time
 	WindowKey             string
 	NormalizedKind        string
@@ -247,6 +250,9 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 				return NormalizedStats{}, errors.New("stats provider is missing")
 			}
 			accountKey, _ := stringValue(provider["accountKey"])
+			accountKeyKind, _ := stringValue(provider["accountKeyKind"])
+			accountLabel, _ := stringValue(provider["accountLabel"])
+			accountEmail, _ := stringValue(provider["accountEmail"])
 			providerUpdated, updatedPresent, updatedValid := timestampValue(provider["updatedAt"])
 			if !updatedPresent || !updatedValid {
 				return NormalizedStats{}, errors.New("stats provider updatedAt is required")
@@ -302,6 +308,7 @@ func NormalizeStats(raw []byte) (NormalizedStats, error) {
 				path := fmt.Sprintf("$.devices[%d].limits.providers[%d].windows[%d]", deviceIndex, providerIndex, windowIndex)
 				result.Limits = append(result.Limits, NormalizedLimitObservation{
 					DeviceID: deviceID, RawServiceIdentifier: providerID, AccountKey: accountKey,
+					AccountKeyKind: accountKeyKind, AccountLabel: accountLabel, AccountEmail: accountEmail,
 					ProviderUpdatedAt: providerUpdated, WindowKey: windowKey,
 					NormalizedKind: normalizedKind, NormalizedMetric: normalizedMetric, NormalizedLabel: normalizedLabel,
 					PlanLabel: planLabel(providerID, provider), AbsoluteUsedText: absoluteUsed, AbsoluteLimitText: absoluteLimit,

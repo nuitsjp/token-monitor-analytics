@@ -26,6 +26,7 @@ type HubAccountCandidate struct {
 	HubID            string
 	ServiceID        string
 	AccountKey       string
+	AccountKeyKind   string
 	DisplayName      string
 	Email            string
 	WorkspaceName    string

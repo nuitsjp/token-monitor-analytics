@@ -79,7 +79,7 @@ func collectionHubAPIDependencies() CollectionDependencies {
 				normalized.Usage = append(normalized.Usage, NormalizedUsageObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, UsageUpdatedAt: item.UsageUpdatedAt, TokenCount: item.TokenCount, APICostUSDText: item.APICostUSDText, ModelTokens: item.ModelTokens, ModelCosts: item.ModelCosts, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint})
 			}
 			for _, item := range result.Limits {
-				normalized.Limits = append(normalized.Limits, NormalizedLimitObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
+				normalized.Limits = append(normalized.Limits, NormalizedLimitObservation{DeviceID: item.DeviceID, RawServiceIdentifier: item.RawServiceIdentifier, AccountKey: item.AccountKey, AccountKeyKind: item.AccountKeyKind, AccountLabel: item.AccountLabel, AccountEmail: item.AccountEmail, ProviderUpdatedAt: item.ProviderUpdatedAt, WindowKey: item.WindowKey, NormalizedKind: item.NormalizedKind, NormalizedMetric: item.NormalizedMetric, NormalizedLabel: item.NormalizedLabel, PlanLabel: item.PlanLabel, UsedPercent: item.UsedPercent, AbsoluteUsedText: item.AbsoluteUsedText, AbsoluteLimitText: item.AbsoluteLimitText, AbsoluteRemainingText: item.AbsoluteRemainingText, Currency: item.Currency, ResetsAt: item.ResetsAt, SyncUploadIntervalMS: item.SyncUploadIntervalMS, LimitsRefreshMS: item.LimitsRefreshMS, SourceTimezone: item.SourceTimezone, SourceLocalDate: item.SourceLocalDate, JSONPath: item.JSONPath, DedupeKey: item.DedupeKey, ValueFingerprint: item.ValueFingerprint, WindowKeyConflict: item.WindowKeyConflict})
 			}
 			return normalized, nil
 		},
@@ -109,6 +109,21 @@ type blockingCollectionClient struct {
 	entered chan struct{}
 	release chan struct{}
 	calls   atomic.Int32
+}
+
+func TestBuildObservationBatchCarriesLimitIdentityMetadata(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	batch := buildObservationBatch(NormalizedStats{Limits: []NormalizedLimitObservation{{
+		DeviceID: "device", RawServiceIdentifier: "grok", AccountKey: "subject-1", AccountKeyKind: "oidc-subject-v1", AccountLabel: "Grok Personal", AccountEmail: "person@example.test", ProviderUpdatedAt: now,
+		JSONPath: "$.limit", DedupeKey: "dedupe", ValueFingerprint: "fingerprint",
+	}}}, "snapshot", "hub", 300, &collectionTestIDs{}, CollectionDependencies{NormalizationGeneration: 1, NormalizationRuleVersion: "rule", NormalizationLogicVersion: "logic"})
+	if len(batch.limits) != 1 {
+		t.Fatalf("limits = %+v", batch.limits)
+	}
+	limit := batch.limits[0]
+	if limit.AccountKeyKind != "oidc-subject-v1" || limit.AccountDisplayName != "Grok Personal" || limit.AccountEmail != "person@example.test" {
+		t.Fatalf("limit identity metadata = %+v", limit)
+	}
 }
 
 func (c *blockingCollectionClient) FetchStats(context.Context, string) (CollectionResult, error) {

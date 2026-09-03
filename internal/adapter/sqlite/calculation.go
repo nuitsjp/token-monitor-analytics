@@ -346,6 +346,16 @@ func (l *Lifecycle) SaveCalculationIntervals(ctx context.Context, intervals []Ca
 		return fmt.Errorf("begin calculation interval save: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := saveCalculationIntervalsTx(ctx, tx, intervals, boundaries, true); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit calculation interval save: %w", err)
+	}
+	return nil
+}
+
+func saveCalculationIntervalsTx(ctx context.Context, tx *sql.Tx, intervals []CalculationInterval, boundaries []CalculationBoundary, emitRequest bool) error {
 	boundaryIDs := make(map[string]string, len(boundaries))
 	for _, boundary := range boundaries {
 		if err := boundary.Validate(); err != nil {
@@ -408,13 +418,12 @@ func (l *Lifecycle) SaveCalculationIntervals(ctx context.Context, intervals []Ca
 			string(interval.ExclusionReason), string(boundaryJSON), utcText(interval.CreatedAt), utcText(interval.UpdatedAt)); err != nil {
 			return fmt.Errorf("upsert calculation interval: %w", err)
 		}
-		mutation := catalogMutationForPeriod(action, "calculation_interval", existingID, interval.UpdatedAt, interval.ValidFrom, &interval.ValidTo)
-		if err := appendCatalogAuditAndRequest(ctx, tx, mutation, nil, interval); err != nil {
-			return err
+		if emitRequest {
+			mutation := catalogMutationForPeriod(action, "calculation_interval", existingID, interval.UpdatedAt, interval.ValidFrom, &interval.ValidTo)
+			if err := appendCatalogAuditAndRequest(ctx, tx, mutation, nil, interval); err != nil {
+				return err
+			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit calculation interval save: %w", err)
 	}
 	return nil
 }

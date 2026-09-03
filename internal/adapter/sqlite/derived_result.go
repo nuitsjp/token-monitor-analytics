@@ -96,7 +96,7 @@ func (l *Lifecycle) SaveDerivedResult(ctx context.Context, result domain.Derived
 			 calculation_logic_version, matching_rule_version, input_fingerprint, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		result.ID, result.ResultSetKey, result.ServiceID, result.LimitDefinitionID, result.CycleType,
-		string(intervalIDs), utcText(result.ValidFrom), utcText(result.ValidTo), result.Status, string(reasons), string(limits),
+		string(intervalIDs), catalogPeriodText(result.ValidFrom), catalogPeriodText(result.ValidTo), result.Status, string(reasons), string(limits),
 		len(result.Points), len(result.DifferenceRows), result.Rank, result.MaxTimeDelta.Nanoseconds(),
 		result.CalculationLogicVersion, matchingVersion, result.InputFingerprint, utcText(result.CreatedAt), utcText(result.UpdatedAt)); err != nil {
 		return fmt.Errorf("insert estimation result: %w", err)
@@ -709,8 +709,77 @@ func (l *Lifecycle) Recalculate(ctx context.Context, request domain.Recalculatio
 	if len(scope.CostSourceIDs) != 0 && len(scope.ServiceIDs) == 0 && len(scope.DefinitionIDs) == 0 && len(scope.AccountIDs) == 0 && len(scope.LimitSourceIDs) == 0 && len(scope.IntervalIDs) == 0 {
 		return nil
 	}
+
+	servicesToBuild := append([]string(nil), scope.ServiceIDs...)
+	if len(servicesToBuild) == 0 && len(scope.IntervalIDs) == 0 {
+		for _, accountID := range scope.AccountIDs {
+			var sid string
+			if err := database.QueryRowContext(ctx, `SELECT service_id FROM logical_accounts WHERE logical_account_id = ?`, accountID).Scan(&sid); err == nil && sid != "" {
+				servicesToBuild = append(servicesToBuild, sid)
+			}
+		}
+		for _, defID := range scope.DefinitionIDs {
+			var sid string
+			if err := database.QueryRowContext(ctx, `SELECT service_id FROM limit_definitions WHERE limit_definition_id = ?`, defID).Scan(&sid); err == nil && sid != "" {
+				servicesToBuild = append(servicesToBuild, sid)
+			}
+		}
+		for _, sourceID := range scope.LimitSourceIDs {
+			var sid string
+			if err := database.QueryRowContext(ctx, `SELECT la.service_id FROM usage_limit_source_links l JOIN logical_accounts la ON la.logical_account_id = l.logical_account_id WHERE l.usage_limit_source_id = ? LIMIT 1`, sourceID).Scan(&sid); err == nil && sid != "" {
+				servicesToBuild = append(servicesToBuild, sid)
+			}
+		}
+	}
+	servicesToBuild = sortedUnique(servicesToBuild)
+	now := time.Now().UTC()
+	for _, serviceID := range servicesToBuild {
+		buildReq := domain.CalculationBuildRequest{
+			ServiceID: serviceID,
+			ValidFrom: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+			ValidTo:   now.Add(30 * 24 * time.Hour),
+		}
+		series, err := l.ListCalculationSeries(ctx, buildReq)
+		if err != nil {
+			continue
+		}
+		var intervals []CalculationInterval
+		var boundaries []CalculationBoundary
+		for _, item := range series {
+			derived, derivedBoundaries, err := domain.DeriveCalculationIntervals(item, buildReq, uuid.NewString, now)
+			if err != nil {
+				continue
+			}
+			intervals = append(intervals, derived...)
+			boundaries = append(boundaries, derivedBoundaries...)
+		}
+		if len(intervals) > 0 || len(boundaries) > 0 {
+			tx, err := database.BeginTx(ctx, nil)
+			if err == nil {
+				if err := saveCalculationIntervalsTx(ctx, tx, intervals, boundaries, false); err == nil {
+					_ = tx.Commit()
+				} else {
+					_ = tx.Rollback()
+				}
+			}
+		}
+		matchingInputs, mErr := l.ListCalculationMatchingInputs(ctx, buildReq)
+		if mErr == nil {
+			var allPoints []domain.EstimationPoint
+			for _, input := range matchingInputs {
+				derivedPoints, pErr := domain.BuildEstimationPoints(input, uuid.NewString, now)
+				if pErr == nil {
+					allPoints = append(allPoints, derivedPoints...)
+				}
+			}
+			if len(allPoints) > 0 {
+				_ = l.SaveEstimationPoints(ctx, allPoints)
+			}
+		}
+	}
+
 	conditions := []string{"valid_from < ?", "? < valid_to"}
-	args := []any{utcText(request.IntervalEnd), utcText(request.IntervalStart)}
+	args := []any{catalogPeriodText(request.IntervalEnd), catalogPeriodText(request.IntervalStart)}
 	for _, filter := range []struct {
 		values []string
 		column string
@@ -751,15 +820,35 @@ func (l *Lifecycle) Recalculate(ctx context.Context, request domain.Recalculatio
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read recalculation intervals: %w", err)
 	}
+
+	if len(intervalIDs) == 0 && len(scope.IntervalIDs) == 0 && len(servicesToBuild) > 0 {
+		placeholders := make([]string, len(servicesToBuild))
+		sArgs := make([]any, len(servicesToBuild))
+		for i, sid := range servicesToBuild {
+			placeholders[i] = "?"
+			sArgs[i] = sid
+		}
+		fallbackQuery := `SELECT calculation_interval_id FROM calculation_intervals WHERE service_id IN (` + strings.Join(placeholders, ",") + `) AND state = 'estimable' ORDER BY valid_from DESC, calculation_interval_id LIMIT 10`
+		fbRows, fbErr := database.QueryContext(ctx, fallbackQuery, sArgs...)
+		if fbErr == nil {
+			defer fbRows.Close()
+			for fbRows.Next() {
+				var id string
+				if err := fbRows.Scan(&id); err == nil {
+					intervalIDs = append(intervalIDs, id)
+				}
+			}
+		}
+	}
 	for _, intervalID := range sortedUnique(intervalIDs) {
-		if err := l.recalculateInterval(ctx, intervalID, false); err != nil {
+		if err := l.recalculateInterval(ctx, intervalID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (l *Lifecycle) recalculateInterval(ctx context.Context, intervalID string, rebuildPoints bool) error {
+func (l *Lifecycle) recalculateInterval(ctx context.Context, intervalID string) error {
 	allIntervals, err := l.ListCalculationIntervals(ctx, "")
 	if err != nil {
 		return err
@@ -769,12 +858,7 @@ func (l *Lifecycle) recalculateInterval(ctx context.Context, intervalID string, 
 		return err
 	}
 
-	var points []domain.EstimationPoint
-	if rebuildPoints {
-		points, err = l.rebuildEstimationPoints(ctx, interval)
-	} else {
-		points, err = l.ListEstimationPoints(ctx, intervalID)
-	}
+	points, err := l.rebuildEstimationPoints(ctx, interval)
 	if err != nil {
 		return err
 	}
@@ -787,11 +871,46 @@ func (l *Lifecycle) recalculateInterval(ctx context.Context, intervalID string, 
 		return fmt.Errorf("recalculate estimation result: %w", err)
 	}
 	now := time.Now().UTC()
-	result := domain.DerivedResult{ID: uuid.NewString(), ServiceID: interval.ServiceID, LimitDefinitionID: interval.LimitDefinitionID, CycleType: interval.CycleType, CalculationIntervalIDs: []string{interval.ID}, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo, EstimationResult: estimate, Points: points, Intervals: input.Intervals, CreatedAt: now, UpdatedAt: now}
+	result := domain.DerivedResult{ID: uuid.NewString(), ServiceID: interval.ServiceID, LimitDefinitionID: interval.LimitDefinitionID, CycleType: interval.CycleType, CalculationIntervalIDs: []string{interval.ID}, ValidFrom: interval.ValidFrom, ValidTo: interval.ValidTo, EstimationResult: estimate, Points: points, Intervals: input.Intervals, Series: estimationResultSeries(input, estimate, interval), CreatedAt: now, UpdatedAt: now}
 	if err := l.SaveDerivedResult(ctx, result, nil); err != nil {
 		return err
 	}
 	return nil
+}
+
+func estimationResultSeries(input domain.EstimationInput, estimate domain.EstimationResult, interval domain.CalculationInterval) []domain.EstimationResultSeries {
+	series := make([]domain.EstimationResultSeries, 0, len(input.Intervals))
+	for index, item := range input.Intervals {
+		var limit *float64
+		if index < len(estimate.Limits) && estimate.Limits[index] > 0 {
+			value := estimate.Limits[index]
+			limit = &value
+		}
+		series = append(series, domain.EstimationResultSeries{
+			ID:                    uuid.NewString(),
+			UsageLimitSourceID:    item.UsageLimitSourceID,
+			LogicalAccountID:      item.LogicalAccountID,
+			PlanVersionID:         item.PlanVersionID,
+			CalculationIntervalID: item.ID,
+			EstimatedLimit:        limit,
+		})
+	}
+	if len(series) == 0 {
+		var limit *float64
+		if len(estimate.Limits) > 0 && estimate.Limits[0] > 0 {
+			value := estimate.Limits[0]
+			limit = &value
+		}
+		series = append(series, domain.EstimationResultSeries{
+			ID:                    uuid.NewString(),
+			UsageLimitSourceID:    interval.UsageLimitSourceID,
+			LogicalAccountID:      interval.LogicalAccountID,
+			PlanVersionID:         interval.PlanVersionID,
+			CalculationIntervalID: interval.ID,
+			EstimatedLimit:        limit,
+		})
+	}
+	return series
 }
 
 // rebuildEstimationPoints regenerates current calculation points from the
@@ -958,7 +1077,7 @@ func (l *Lifecycle) RecalculateStaleDerivedResults(ctx context.Context) (err err
 		if count > 0 {
 			continue
 		}
-		if err := l.recalculateInterval(ctx, intervalID, true); err != nil {
+		if err := l.recalculateInterval(ctx, intervalID); err != nil {
 			return err
 		}
 	}

@@ -148,6 +148,9 @@ type LimitObservation struct {
 	DeviceID                  string
 	RawServiceIdentifier      string
 	AccountKey                string
+	AccountKeyKind            string
+	AccountDisplayName        string
+	AccountEmail              string
 	ProviderUpdatedAt         time.Time
 	WindowKey                 string
 	NormalizedKind            string

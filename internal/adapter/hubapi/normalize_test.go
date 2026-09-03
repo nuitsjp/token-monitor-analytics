@@ -8,7 +8,7 @@ import (
 )
 
 func TestNormalizeStatsUsesContractPathsAndMetadata(t *testing.T) {
-	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":" WEEKLY ","metric":"PER CENT","label":" Cafe\u0301 ","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
+	raw := `{"devices":[{"deviceId":"device-1","updatedAt":"2026-08-25T11:36:00Z","periodWindows":{"timeZone":"Asia/Tokyo","today":{"key":"2026-08-25"}},"periods":{"allTime":{"clientCosts":{"codex":1.0}}},"syncUploadIntervalMs":0,"limits":{"refreshMs":300000,"providers":[{"provider":"codex","accountKey":"account","accountKeyKind":"oidc-subject-v1","accountLabel":"Personal","accountEmail":"person@example.test","planLabel":"Plus","updatedAt":"2026-08-25T11:35:00Z","windows":[{"kind":" WEEKLY ","metric":"PER CENT","label":" Cafe\u0301 ","usedPercent":42,"resetsAt":"2026-09-01T00:00:00Z"}]}]}}]}`
 	result, err := NormalizeStats([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +55,12 @@ func TestNormalizeStatsUsesContractPathsAndMetadata(t *testing.T) {
 	t.Run("API-LIMIT-02 uses provider identifier", func(t *testing.T) {
 		if result.Limits[0].RawServiceIdentifier != "codex" {
 			t.Fatalf("provider identifier = %q", result.Limits[0].RawServiceIdentifier)
+		}
+	})
+	t.Run("API-LIMIT-09 preserves account identity metadata as evidence", func(t *testing.T) {
+		limit := result.Limits[0]
+		if limit.AccountKeyKind != "oidc-subject-v1" || limit.AccountLabel != "Personal" || limit.AccountEmail != "person@example.test" {
+			t.Fatalf("account identity metadata = %+v", limit)
 		}
 	})
 	t.Run("API-LIMIT-03 uses provider updatedAt", func(t *testing.T) {

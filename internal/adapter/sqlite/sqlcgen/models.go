@@ -226,6 +226,7 @@ type HubAccountCandidate struct {
 	LastObservedAt        sql.NullString `json:"last_observed_at"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
+	AccountKeyKind        string         `json:"account_key_kind"`
 }
 
 type HubConnectionAttempt struct {
@@ -610,6 +611,9 @@ type UsageLimitObservation struct {
 	LastSeenAt                sql.NullString  `json:"last_seen_at"`
 	RepresentativeSnapshotID  sql.NullString  `json:"representative_snapshot_id"`
 	LatestSnapshotID          sql.NullString  `json:"latest_snapshot_id"`
+	AccountKeyKind            string          `json:"account_key_kind"`
+	AccountDisplayName        string          `json:"account_display_name"`
+	AccountEmail              string          `json:"account_email"`
 }
 
 type UsageLimitObservationOccurrence struct {

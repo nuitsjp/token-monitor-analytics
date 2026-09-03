@@ -82,7 +82,7 @@ func (l *Lifecycle) ListHubAccountCandidates(ctx context.Context, serviceID stri
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT hub_account_candidate_id, hub_id, service_id, account_key, display_name, email,
+	query := `SELECT hub_account_candidate_id, hub_id, service_id, account_key, account_key_kind, display_name, email,
 		workspace_name, device_name, state, logical_account_id, first_observed_at, last_observed_at,
 		created_at, updated_at FROM hub_account_candidates WHERE 1 = 1`
 	args := make([]any, 0, 2)
@@ -271,7 +271,7 @@ func (l *Lifecycle) CreateLogicalAccountFromHubAccountCandidate(ctx context.Cont
 	}
 	defer func() { _ = tx.Rollback() }()
 	var candidate HubAccountCandidate
-	if err := scanHubAccountCandidate(tx.QueryRowContext(ctx, `SELECT hub_account_candidate_id, hub_id, service_id, account_key, display_name, email, workspace_name, device_name, state, logical_account_id, first_observed_at, last_observed_at, created_at, updated_at FROM hub_account_candidates WHERE hub_account_candidate_id = ?`, candidateID), &candidate); err != nil {
+	if err := scanHubAccountCandidate(tx.QueryRowContext(ctx, `SELECT hub_account_candidate_id, hub_id, service_id, account_key, account_key_kind, display_name, email, workspace_name, device_name, state, logical_account_id, first_observed_at, last_observed_at, created_at, updated_at FROM hub_account_candidates WHERE hub_account_candidate_id = ?`, candidateID), &candidate); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrHubAccountCandidateNotFound
 		}
@@ -330,7 +330,7 @@ func (l *Lifecycle) AssociateHubAccountCandidate(ctx context.Context, candidateI
 	}
 	defer func() { _ = tx.Rollback() }()
 	var candidate HubAccountCandidate
-	if err := scanHubAccountCandidate(tx.QueryRowContext(ctx, `SELECT hub_account_candidate_id, hub_id, service_id, account_key, display_name, email, workspace_name, device_name, state, logical_account_id, first_observed_at, last_observed_at, created_at, updated_at FROM hub_account_candidates WHERE hub_account_candidate_id = ?`, candidateID), &candidate); err != nil {
+	if err := scanHubAccountCandidate(tx.QueryRowContext(ctx, `SELECT hub_account_candidate_id, hub_id, service_id, account_key, account_key_kind, display_name, email, workspace_name, device_name, state, logical_account_id, first_observed_at, last_observed_at, created_at, updated_at FROM hub_account_candidates WHERE hub_account_candidate_id = ?`, candidateID), &candidate); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrHubAccountCandidateNotFound
 		}
@@ -386,7 +386,7 @@ func (l *Lifecycle) SetHubAccountCandidateState(ctx context.Context, candidateID
 	}
 	defer func() { _ = tx.Rollback() }()
 	var before HubAccountCandidate
-	if err := scanHubAccountCandidate(tx.QueryRowContext(ctx, `SELECT hub_account_candidate_id, hub_id, service_id, account_key, display_name, email, workspace_name, device_name, state, logical_account_id, first_observed_at, last_observed_at, created_at, updated_at FROM hub_account_candidates WHERE hub_account_candidate_id = ?`, candidateID), &before); err != nil {
+	if err := scanHubAccountCandidate(tx.QueryRowContext(ctx, `SELECT hub_account_candidate_id, hub_id, service_id, account_key, account_key_kind, display_name, email, workspace_name, device_name, state, logical_account_id, first_observed_at, last_observed_at, created_at, updated_at FROM hub_account_candidates WHERE hub_account_candidate_id = ?`, candidateID), &before); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrHubAccountCandidateNotFound
 		}
@@ -643,10 +643,10 @@ func insertHubAccountCandidateTx(ctx context.Context, tx *sql.Tx, candidate HubA
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO hub_account_candidates
-			(hub_account_candidate_id, hub_id, service_id, account_key, display_name, email, workspace_name, device_name,
+			(hub_account_candidate_id, hub_id, service_id, account_key, account_key_kind, display_name, email, workspace_name, device_name,
 			 state, logical_account_id, first_observed_at, last_observed_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		candidate.ID, candidate.HubID, candidate.ServiceID, candidate.AccountKey, candidate.DisplayName, candidate.Email,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		candidate.ID, candidate.HubID, candidate.ServiceID, candidate.AccountKey, candidate.AccountKeyKind, candidate.DisplayName, candidate.Email,
 		candidate.WorkspaceName, candidate.DeviceName, state, optionalID(candidate.LogicalAccountID),
 		optionalPeriodText(candidate.FirstObservedAt), optionalPeriodText(candidate.LastObservedAt), utcText(candidate.CreatedAt), utcText(candidate.UpdatedAt)); err != nil {
 		return fmt.Errorf("insert Hub account candidate: %w", err)
@@ -661,7 +661,7 @@ func insertHubAccountCandidateTx(ctx context.Context, tx *sql.Tx, candidate HubA
 func upsertHubAccountCandidateTx(ctx context.Context, tx *sql.Tx, candidate HubAccountCandidate) error {
 	var existing HubAccountCandidate
 	err := scanHubAccountCandidate(tx.QueryRowContext(ctx, `
-		SELECT hub_account_candidate_id, hub_id, service_id, account_key, display_name, email,
+		SELECT hub_account_candidate_id, hub_id, service_id, account_key, account_key_kind, display_name, email,
 			workspace_name, device_name, state, logical_account_id, first_observed_at,
 			last_observed_at, created_at, updated_at
 		FROM hub_account_candidates WHERE hub_id = ? AND service_id = ? AND account_key = ?`,
@@ -688,10 +688,10 @@ func upsertHubAccountCandidateTx(ctx context.Context, tx *sql.Tx, candidate HubA
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE hub_account_candidates SET display_name = ?, email = ?, workspace_name = ?, device_name = ?,
+		UPDATE hub_account_candidates SET account_key_kind = ?, display_name = ?, email = ?, workspace_name = ?, device_name = ?,
 			state = ?, logical_account_id = ?, first_observed_at = ?, last_observed_at = ?, updated_at = ?
 		WHERE hub_account_candidate_id = ?`,
-		merged.DisplayName, merged.Email, merged.WorkspaceName, merged.DeviceName, merged.State,
+		merged.AccountKeyKind, merged.DisplayName, merged.Email, merged.WorkspaceName, merged.DeviceName, merged.State,
 		optionalID(merged.LogicalAccountID), optionalPeriodText(merged.FirstObservedAt), optionalPeriodText(merged.LastObservedAt),
 		utcText(merged.UpdatedAt), merged.ID); err != nil {
 		return fmt.Errorf("update Hub account candidate in transaction upsert: %w", err)
@@ -721,7 +721,7 @@ type rowScanner interface {
 func scanHubAccountCandidate(row rowScanner, candidate *HubAccountCandidate) error {
 	var state string
 	var logicalID, first, last, created, updated sql.NullString
-	if err := row.Scan(&candidate.ID, &candidate.HubID, &candidate.ServiceID, &candidate.AccountKey, &candidate.DisplayName, &candidate.Email,
+	if err := row.Scan(&candidate.ID, &candidate.HubID, &candidate.ServiceID, &candidate.AccountKey, &candidate.AccountKeyKind, &candidate.DisplayName, &candidate.Email,
 		&candidate.WorkspaceName, &candidate.DeviceName, &state, &logicalID, &first, &last, &created, &updated); err != nil {
 		return fmt.Errorf("scan Hub account candidate: %w", err)
 	}
@@ -806,6 +806,9 @@ func scanPlanHistory(row rowScanner, history *PlanHistory) error {
 
 func mergeHubAccountCandidate(existing, incoming HubAccountCandidate) HubAccountCandidate {
 	merged := existing
+	if incoming.AccountKeyKind != "" {
+		merged.AccountKeyKind = incoming.AccountKeyKind
+	}
 	merged.DisplayName = incoming.DisplayName
 	merged.Email = incoming.Email
 	merged.WorkspaceName = incoming.WorkspaceName
@@ -855,7 +858,7 @@ func logicalAccountArchivedTx(ctx context.Context, tx *sql.Tx, accountID *string
 func candidateAuditValue(candidate HubAccountCandidate) map[string]any {
 	return map[string]any{
 		"id": candidate.ID, "hub_id": candidate.HubID, "service_id": candidate.ServiceID,
-		"account_key": candidate.AccountKey, "display_name": candidate.DisplayName, "email": candidate.Email,
+		"account_key": candidate.AccountKey, "account_key_kind": candidate.AccountKeyKind, "display_name": candidate.DisplayName, "email": candidate.Email,
 		"workspace_name": candidate.WorkspaceName, "device_name": candidate.DeviceName, "state": candidate.State,
 		"logical_account_id": optionalID(candidate.LogicalAccountID), "first_observed_at": optionalAuditTime(candidate.FirstObservedAt),
 		"last_observed_at": optionalAuditTime(candidate.LastObservedAt),

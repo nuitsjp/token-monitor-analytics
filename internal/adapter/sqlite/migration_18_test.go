@@ -14,10 +14,10 @@ import (
 	"token-monitor-analytics/internal/domain"
 )
 
-func TestMigration17RebuildsV16DerivedDataFromSourceFacts(t *testing.T) {
+func TestMigration18RebuildsV17DerivedDataFromSourceFacts(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "migration17.sqlite3")
+	dbPath := filepath.Join(dir, "migration18.sqlite3")
 	if file, err := os.Create(dbPath); err != nil {
 		t.Fatalf("create database file: %v", err)
 	} else if err := file.Close(); err != nil {
@@ -26,7 +26,7 @@ func TestMigration17RebuildsV16DerivedDataFromSourceFacts(t *testing.T) {
 
 	db, err := sql.Open("sqlite", sqliteReadWriteDSN(dbPath))
 	if err != nil {
-		t.Fatalf("open v16 database: %v", err)
+		t.Fatalf("open v17 database: %v", err)
 	}
 	db.SetMaxOpenConns(1)
 	migrationMu.Lock()
@@ -36,10 +36,10 @@ func TestMigration17RebuildsV16DerivedDataFromSourceFacts(t *testing.T) {
 		_ = db.Close()
 		t.Fatalf("set migration dialect: %v", err)
 	}
-	if err := goose.UpToContext(ctx, db, "migrations", 16); err != nil {
+	if err := goose.UpToContext(ctx, db, "migrations", 17); err != nil {
 		migrationMu.Unlock()
 		_ = db.Close()
-		t.Fatalf("migrate fixture to v16: %v", err)
+		t.Fatalf("migrate fixture to v17: %v", err)
 	}
 	migrationMu.Unlock()
 
@@ -50,7 +50,7 @@ func TestMigration17RebuildsV16DerivedDataFromSourceFacts(t *testing.T) {
 	legacyMatching := "legacy-matching-v1"
 
 	// Catalog, source links, complete facts, and plan history are the immutable
-	// inputs from which v17 must regenerate points.
+	// inputs from which v18 must regenerate points.
 	mustExec(t, db, `INSERT INTO services (service_id, provider, name, official_key, created_at, updated_at) VALUES ('s1', 'p1', 'Service 1', 's1.official', ?, ?)`, utcText(now), utcText(now))
 	mustExec(t, db, `INSERT INTO limit_definitions (limit_definition_id, service_id, cycle_type, meaning, unit, billing_confirmation, created_at, updated_at) VALUES ('def1', 's1', 'weekly', 'tokens', 'percent', 'not_applicable', ?, ?)`, utcText(now), utcText(now))
 	mustExec(t, db, `INSERT INTO logical_accounts (logical_account_id, service_id, display_name, created_at, updated_at) VALUES ('acc1', 's1', 'Account 1', ?, ?)`, utcText(now), utcText(now))
@@ -65,7 +65,7 @@ func TestMigration17RebuildsV16DerivedDataFromSourceFacts(t *testing.T) {
 	mustExec(t, db, `INSERT INTO usage_cost_source_completeness (completeness_id, usage_cost_source_id, valid_from, valid_to, state, logical_account_ids_json, excluded_activity_json, created_at, updated_at) VALUES ('complete1', 'cs1', ?, ?, 'confirmed', '["acc1"]', '[]', ?, ?)`, catalogPeriodText(start), catalogPeriodText(end), utcText(now), utcText(now))
 
 	// These are the original observations. Their values produce a positive
-	// least-squares candidate of 150 after v17 regenerates all three points.
+	// least-squares candidate of 150 after v18 regenerates all three points.
 	mustExec(t, db, `INSERT INTO collection_attempts (attempt_id, hub_id, trigger, state, started_at, completed_at, analytics_interval_seconds) VALUES ('attempt1', 'hub1', 'manual', 'succeeded', ?, ?, 300)`, utcText(now), utcText(now))
 	mustExec(t, db, `INSERT INTO raw_snapshots (snapshot_id, attempt_id, hub_id, response_kind, received_started_at, received_completed_at, http_status, api_contract, body) VALUES ('snapshot1', 'attempt1', 'hub1', 'stats', ?, ?, 200, 'contract-v1', ?)`, utcText(now), utcText(now), []byte("{}"))
 	for index, item := range []struct {
@@ -91,8 +91,8 @@ func TestMigration17RebuildsV16DerivedDataFromSourceFacts(t *testing.T) {
 	intInsufficientEnd := intInsufficientStart.Add(time.Hour)
 	mustExec(t, db, `INSERT INTO calculation_intervals (calculation_interval_id, service_id, logical_account_id, usage_limit_source_id, limit_definition_id, cycle_type, valid_from, valid_to, state, exclusion_reason, boundary_ids_json, created_at, updated_at) VALUES ('int-insufficient', 's1', 'acc1', 'ls1', 'def1', 'weekly', ?, ?, 'estimable', '', '[]', ?, ?)`, catalogPeriodText(intInsufficientStart), catalogPeriodText(intInsufficientEnd), utcText(now), utcText(now))
 
-	// v16 derived data: only two legacy points, a result with the old logic,
-	// and a residual reason that v17 must not preserve as model_mismatch.
+	// v17 derived data: only two legacy points, a result with the old logic,
+	// and a residual reason that v18 must not preserve as model_mismatch.
 	for index, item := range []struct {
 		id    string
 		at    time.Time
@@ -122,25 +122,18 @@ func TestMigration17RebuildsV16DerivedDataFromSourceFacts(t *testing.T) {
 		"audits":             mustCount(t, db, `SELECT count(*) FROM configuration_audits`),
 	}
 	if err := db.Close(); err != nil {
-		t.Fatalf("close v16 database: %v", err)
+		t.Fatalf("close v17 database: %v", err)
 	}
 
 	reopened := &Lifecycle{}
 	if err := reopened.Open(ctx, dbPath); err != nil {
-		t.Fatalf("open v16 database through v17: %v", err)
+		t.Fatalf("open v17 database through v18: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
 	reopenedDB, err := reopened.DB()
 	if err != nil {
 		t.Fatal(err)
 	}
-	matchingInputs, matchingErr := reopened.ListCalculationMatchingInputs(ctx, domain.CalculationBuildRequest{ServiceID: "s1", ValidFrom: start, ValidTo: end})
-	t.Logf("matching inputs after migration: %#v, err=%v", matchingInputs, matchingErr)
-	var sourceCount int
-	if logErr := reopenedDB.QueryRowContext(ctx, `SELECT count(*) FROM usage_limit_observations`).Scan(&sourceCount); logErr == nil {
-		t.Logf("limit source count after migration: %d", sourceCount)
-	}
-
 	var status, logicVersion, reasonsJSON, limitsJSON string
 	var obsCount int
 	err = reopenedDB.QueryRowContext(ctx, `SELECT status, calculation_logic_version, reasons_json, limits_json, observation_point_count FROM estimation_results WHERE calculation_interval_ids_json = '["int-estimable"]'`).Scan(&status, &logicVersion, &reasonsJSON, &limitsJSON, &obsCount)
@@ -178,6 +171,16 @@ func TestMigration17RebuildsV16DerivedDataFromSourceFacts(t *testing.T) {
 	}
 	if insufficientStatus != string(domain.EstimationInsufficient) {
 		t.Fatalf("insufficient result status = %s", insufficientStatus)
+	}
+	for intervalID, status := range map[string]domain.EstimationStatus{
+		"int-estimable":    domain.EstimationEstimated,
+		"int-excluded":     domain.EstimationNotApplicable,
+		"int-insufficient": domain.EstimationInsufficient,
+	} {
+		seriesCount := mustCount(t, reopenedDB, `SELECT count(*) FROM estimation_result_series WHERE estimation_result_id = (SELECT estimation_result_id FROM estimation_results WHERE calculation_interval_ids_json = ? AND status = ?)`, `[`+`"`+intervalID+`"`+`]`, string(status))
+		if seriesCount != 1 {
+			t.Fatalf("%s result series count = %d, want 1", intervalID, seriesCount)
+		}
 	}
 
 	currentPointCount := mustCount(t, reopenedDB, `SELECT count(*) FROM estimation_points WHERE calculation_logic_version = ?`, domain.CalculationLogicVersion)

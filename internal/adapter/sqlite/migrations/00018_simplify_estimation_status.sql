@@ -50,7 +50,7 @@ ALTER TABLE estimation_results_new RENAME TO estimation_results;
 CREATE INDEX estimation_results_lookup
     ON estimation_results (service_id, limit_definition_id, cycle_type, valid_from, valid_to);
 
-UPDATE schema_metadata SET schema_version = 17 WHERE singleton = 1;
+UPDATE schema_metadata SET schema_version = 18 WHERE singleton = 1;
 
 -- +goose Down
-UPDATE schema_metadata SET schema_version = 16 WHERE singleton = 1;
+UPDATE schema_metadata SET schema_version = 17 WHERE singleton = 1;

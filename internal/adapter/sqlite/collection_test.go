@@ -41,6 +41,46 @@ func TestInsertObservationsRollsBackBothKindsTogether(t *testing.T) {
 	}
 }
 
+func TestLimitObservationPersistsGrokIdentityEvidenceOnObservationAndCandidate(t *testing.T) {
+	lifecycle := openTestLifecycle(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	hubID := uuid.NewString()
+	if err := lifecycle.CreateHub(ctx, Hub{ID: hubID, DisplayName: "Hub", URL: "https://hub.example.test/identity", CollectionEnabled: true, CollectionIntervalSeconds: 300, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lifecycle.ReconcileObservedConfiguration(ctx, hubID, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.CreateCollectionAttempt(ctx, CollectionAttempt{AttemptID: "identity-attempt", HubID: hubID, Trigger: "manual", State: "started", StartedAt: now, AnalyticsIntervalSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.SaveRawSnapshot(ctx, RawSnapshot{SnapshotID: "identity-stats", AttemptID: "identity-attempt", HubID: hubID, ResponseKind: "stats", ReceivedStartedAt: now, ReceivedCompletedAt: now, HTTPStatus: 200, Body: []byte(`{"devices":[]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	limit := LimitObservation{
+		ObservationID: "identity-limit", UsageLimitSourceID: "identity-source", HubAccountCandidateID: "identity-candidate", SnapshotID: "identity-stats", HubID: hubID, DeviceID: "device", RawServiceIdentifier: "grok", AccountKey: "subject-1", AccountKeyKind: "oidc-subject-v1", AccountDisplayName: "Grok Personal", AccountEmail: "person@example.test", ProviderUpdatedAt: now,
+		WindowKey: "weekly\x1fpercent\x1fWeekly", NormalizedKind: "weekly", NormalizedMetric: "percent", NormalizedLabel: "Weekly", PlanLabel: "", UsedPercent: float64Pointer(25), ResetsAt: timePointer(now.Add(7 * 24 * time.Hour)), SyncUploadIntervalMS: int64Pointer(0), LimitsRefreshMS: int64Pointer(300000), AnalyticsIntervalSeconds: 300, NormalizationGeneration: 1, NormalizationRuleVersion: "rule", NormalizationLogicVersion: "logic", JSONPath: "$.limit", DedupeKey: "identity-key", ValueFingerprint: "identity-value",
+	}
+	if err := lifecycle.InsertLimitObservations(ctx, []LimitObservation{limit}); err != nil {
+		t.Fatal(err)
+	}
+	observations, err := lifecycle.ListLimitObservations(ctx, hubID)
+	if err != nil || len(observations) != 1 {
+		t.Fatalf("observations=%+v err=%v", observations, err)
+	}
+	if observations[0].AccountKeyKind != limit.AccountKeyKind || observations[0].AccountDisplayName != limit.AccountDisplayName || observations[0].AccountEmail != limit.AccountEmail {
+		t.Fatalf("observation identity evidence=%+v", observations[0])
+	}
+	candidates, err := lifecycle.ListHubAccountCandidates(ctx, "", "")
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates=%+v err=%v", candidates, err)
+	}
+	if candidates[0].AccountKeyKind != limit.AccountKeyKind || candidates[0].DisplayName != limit.AccountDisplayName || candidates[0].Email != limit.AccountEmail {
+		t.Fatalf("candidate identity evidence=%+v", candidates[0])
+	}
+}
+
 func TestInsertAllObservationsPersistsPhaseTwoUsageAndNativeAmounts(t *testing.T) {
 	lifecycle := openTestLifecycle(t)
 	ctx := context.Background()
