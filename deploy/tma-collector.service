@@ -1,0 +1,27 @@
+[Unit]
+Description=Token Monitor Analytics SSE Collector
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=tma-collector
+Group=tma-collector
+WorkingDirectory=/var/lib/token-monitor-analytics
+StateDirectory=token-monitor-analytics
+StateDirectoryMode=0700
+EnvironmentFile=/etc/token-monitor-analytics/collector.env
+ExecStart=/opt/token-monitor-analytics/tma-collector -config /etc/token-monitor-analytics/collector.json
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

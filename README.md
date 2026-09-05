@@ -1,166 +1,155 @@
 # Token Monitor Analytics
 
-Token Monitor Analytics は、[Token Monitor](https://github.com/Javis603/token-monitor) が収集した AI ツールの利用実績とプラン利用率を長期保存し、論理アカウントごとの API 換算利用上限と利用価値を分析する、非公式のコンパニオンアプリケーションです。
+**AIサブスクリプションで実質どれくらいのAPI金額相当を利用できるか。その推定値の変化を記録するWebアプリです。**
 
-目標製品は Windows 向けのローカルファーストな Wails v3 デスクトップアプリです。現在はルートの `frontend/` と `internal/desktop/` に本実装を開発中で、Phase 1 の主要画面・サービスは実装済みの部分がありますが、Phase 1 の受入ゲートは未完了です。`poc/` は旧検証用実装として退避しています。
+Windowsで開発し、Go製CollectorをUbuntuで常駐運用します。AnalyticsのWeb画面・履歴保存・推定処理はCloudflareへ配置します。**デスクトップアプリではありません。Wails、WebView2、Dockerは使いません。**
 
-## 解決する問題
+> 0.2.0 starter / 2026-09-05。ソースコード一式です。実Cloudflareへのデプロイ・Windows/Ubuntu実機の受入試験は未実施です。実行した検証と未検証事項は [VERIFICATION](docs/VERIFICATION.md) に分けて記載しています。
 
-Token Monitor は、トークン数、API 換算利用額、モデル内訳、アカウント別の利用率、リセット日時などを取得できます。ただし、API 換算利用額と利用率は同じ単位で識別されません。
-
-- **利用額ソース**は、Hub 端末レコードと生利用額サービス識別子ごとの累積 API 換算利用額です。複数アカウントの活動が混在する場合があります。
-- **利用枠ソース**は、Hub 端末レコード、Hub アカウント、生利用枠サービス識別子、利用枠ウィンドウごとの利用率です。
-- **取得元期間観測**は、Hub が期間キーとタイムゾーン付きで報告した当日・当月の暦期間値です。概要とコンパクト表示の Today／Month の正本であり、累積値の差分ではありません。
-- **観測間増分**は、同じ利用額ソースの隣接する累積観測の差です。任意期間の増分として使い、日付境界をまたぐ差分を一方の日へ全量計上しません。
-- 利用額ソースと利用枠ソースを正式なサービス、論理アカウント、利用枠定義へ別々に関連付け、同じ計算区間の観測だけを推定に使用します。
-
-一つでも未確認・未関連付け・対象外・アーカイブ後未確認の活動が利用額ソースへ混在する可能性がある区間では、既知アカウント分だけを推定しません。その利用額は、アカウントへ按分せず、全体の共有観測利用額として一度だけ保持します。
-
-## 中心となる推定
-
-同じ計算区間にある推定観測点を時刻順に並べ、隣接する二点の差分だけから次の関係を解きます。
+## 構成
 
 ```text
-ΔA = Σ_i C_i × Δu_i
+Cloudflare Account A: Hub A ──SSE──┐
+                                  ├─ Ubuntu: Go Collector（1プロセス）
+Cloudflare Account B: Hub B ──SSE──┘         │ HTTPS POST
+                                            ▼
+Cloudflare Account C: Analytics Worker → LiveRoom → D1
+                                            │
+                                Hibernation WebSocket
+                                            ▼
+                                     Webブラウザー
 ```
 
-`A` は重複排除した累積 API 換算利用額、`C_i` は論理アカウントに有効な `プラン版 × 利用枠定義` の利用上限、`u_i` は `usedPercent / 100` です。同じプラン版の等値関係と、ユーザーが公式根拠付きで登録した利用上限倍率を制約に使い、正の解が一意になる場合だけ推定します。
+Hubごとに1アカウント、Analyticsは別アカウントです。既存Hubは改変しません。LiveRoomは短い保存トランザクションを直列化し、閲覧中のブラウザーに更新を通知する1つのDurable Objectです。HubのSSEをCloudflare上から購読するObjectではありません。**履歴の正本はD1のみ**です。
 
-必要十分な独立した差分から有限かつ正の一意解が得られた場合は推定済みです。正の一意解は計算可能な推定であり、外部の正解値に対して検証済みであることを意味しません。観測不足、階数不足、ゼロ信号、モデル不適合では、均等配分、補間、外挿、外れ値の自動除外を行いません。
+## 含まれる実装
 
-### 利用額の観測時刻に関する前提
+| 部分 | 初期実装 |
+|---|---|
+| Go Collector | 複数HubのSSE購読、Bearer認証、ハートビート監視、再接続、イベントの小型化 |
+| 送信 | 最大2件/バッチ、通常は最大約2秒の送信待ち、ローカルファイルoutbox、確認応答後の削除 |
+| Analytics | TypeScript Worker、D1マイグレーション、重複防止、順序逆転の保護 |
+| 推定 | 対象アカウントと利用額を明示的に紐付け、同一リセット期間の差分から推定 |
+| Web | Overview / Daily history / Connections、日次表・簡易グラフ、ライブ更新通知 |
+| 認証 | 閲覧はCloudflare Access JWTを検証、Collector送信は独立したBearerトークン |
+| Ubuntu | systemd unit、env例、クロスビルド手順 |
+| 開発 | 模擬Hub、Goテスト、TypeScript/SQLiteテスト、CI |
 
-現行の Token Monitor API では、利用枠だけの更新時にも Hub 端末レコードの `updatedAt` が進み、以前の `periods` が引き継がれることがあります。そのため `devices[].updatedAt` は、累積 API 換算利用額の観測時刻として使用できません。
+モデル単価の管理・料金再計算、Hub間の自動名寄せ、AIサービスへの直接接続、設定編集画面、過去Hubイベントの再取得は実装しません。API換算額は**Token Monitorが算出した値**であり、実際の請求額とは区別します。
 
-対応する node-hub 契約では、利用実績が最後に実測更新された端末単位の時刻として `devices[].updatedAt` を使用します。API 最上位の `updatedAt`、受信時刻、Analytics の取得完了時刻は利用実績時刻として使用しません。基準にした現行 API 構造は、Token Monitor の固定リビジョン [`5ecc60535168f919d8ce5d6d1aaa14c87d11f52b`](https://github.com/Javis603/token-monitor/blob/5ecc60535168f919d8ce5d6d1aaa14c87d11f52b/docs/API.md) です。
+## 1. Windowsの開発環境
 
-本実装の収集対応条件は `schemaVersion=1`、`runtime=node-hub`、`coreRevision>=18` です。`coreBuildId` と `runtimeBuildId` は取得元ビルドの追跡情報として保存しますが、互換性判定には使用しません。将来の更新で API 契約に互換性がなくなった場合は、実装を新契約へ対応させたうえで最低 core revision を引き上げます。
+PowerShell 7、保守中のGo、Node.js LTS、Gitを用意してください。Goは**1.26系の最新パッチ**、Node.jsは**24系LTSの最新パッチ**を推奨します。ソースのGo言語要件は1.23以上、Nodeのテスト要件は22.16以上です。運用バイナリーは古い検証用Goではなく、保守中のGoでビルドしてください。
 
-## 開発段階
+```powershell
+cd C:\src\token-monitor-analytics
+.\scripts\bootstrap.ps1
+```
 
-| 段階 | 範囲 | 現在の状態 |
-| --- | --- | --- |
-| Phase 1 | 複数 Hub の収集、ローカル観測正本、識別・関連付け、差分推定、履歴、明示パージ、バックアップと復元 | 本実装あり、受入未完了 |
-| Phase 2 | 標準価格との比較、利用実績分析、可視化、CSV・JSON エクスポート | 実装済み、Phase 2 の32受入項目は合格。Phase 1 完了ゲート待ち |
-| クラウド複製 | ローカル観測正本からの一方向複製 | Phase 1 / Phase 2 の対象外 |
+Go Collectorに外部依存はないため`go.sum`は不要です。Web側の直接開発依存はTypeScript 5.8.3、Wrangler 4.126.0に固定しています。このZIP作成環境ではnpmレジストリーへ接続できなかったため、**package-lock.jsonは未生成**です。bootstrapが生成する`analytics/package-lock.json`を確認し、Gitへ追加してください。以後は`npm ci`を使います。
 
-Phase 1 と Phase 2 には別々の完了ゲートがあります。試作機能が存在するだけでは、どちらの完了ともみなしません。クラウド同期・クラウド保存・サーバー実装は Phase 2 の機能ではなく、初期リリースの対象外です。
+## 2. まずローカルで一通り動かす
 
-## 表示と UI の契約
+3つのPowerShellを同じリポジトリールートで開きます。
 
-- 画面と Tooltip の USD は小数 2 桁とします。ゲージに併記する割合は通常画面 1 桁、詳細画面・Tooltip・出力 2 桁、倍率は 2 桁です。保存と再計算は丸めず、CSV・JSON の数値には表示丸めを適用しません。
-- `remainingPercent` と鮮度状態は Go の表示 DTO が返し、UI は `usedPercent` から再計算したり、経過時間から鮮度を独自判定したりしません。
-- 選択可能な表示タイムゾーンは IANA 識別子のまま保持します。タイムゾーン名を常時表示するのは M02 の期間指定箇所だけで、設定値の確認と変更は M11 で行います。
-- M11 は `light`、`dark`、`system` を保存し、`system` の OS 変更を T01 と M00 へ同期します。プライバシーモードのマスクは visible text、Tooltip、`title`、`aria-label`、アクセシブル説明、クリップボード、タスクバーのサムネイルへ同じ規則を適用します。
+**A: 模擬Hub**
 
-## データと安全性
+```powershell
+.\scripts\run-mock.ps1
+```
 
-- 原 JSON スナップショット、正規化した元観測、派生計算結果、設定変更監査履歴を分離します。
-- 元観測と監査履歴を自動削除せず、物理削除は Hub と取得期間を確認する明示パージだけで行います。
-- 既存データベースのスキーマを更新する場合は、更新前に同じアプリデータディレクトリへ `元名.pre-migration-v{旧版}.sqlite3` を自動作成し、完全性を確認できなければ更新を開始しません。この退避はマイグレーション事故用であり、端末外バックアップの代替ではありません。
-- Hub 資格情報は、不変の Hub 識別子をキーとして Windows Credential Manager に保存し、データベース、ログ、バックアップへ含めません。
-- Phase 1 のバックアップは、マニフェストと SQLite データベースを含む ZIP 成果物であり、アプリ内暗号化を行いません。原 JSON、アカウント識別情報、利用履歴を含むため、端末外では保存時暗号化された場所へ保管する必要があります。
-- 同じ端末や同じ媒体にだけ残したバックアップでは、媒体故障、端末の紛失・盗難、ランサムウェアから復旧できません。端末外へのコピーは利用者が行います。
-- 復元前に形式、版、SHA-256、SQLite の完全性、参照整合性、意味上の制約を一時データベースで検証し、失敗時は現在のローカル正本を変更しません。
-- RPO は、端末外の暗号化保存先へコピーし、復元試験に合格した最後のバックアップ作成時点です。固定の RTO は保証しません。資格情報は復元後に再登録します。
+**B: Analytics（ローカルWorkers/D1/DO）**
+
+```powershell
+cd analytics
+npm run dev
+```
+
+**C: Go Collector**
+
+```powershell
+.\scripts\run-collector.ps1 -Demo
+```
+
+ブラウザーで **http://127.0.0.1:8787** を開きます。すべてループバックで通信し、Cloudflareへのログインやデプロイは必要ありません。模擬データが3秒ごとに変わり、少数回の更新後に期間枠`$160`、月換算約`$695.70`という**合成値**が出ることを確認します。デモの料金・利用枠は実サービスの値ではありません。
+
+`Hub B`が未受信でも正常です。デモはHub Aのみを送ります。ローカル設定を本番へデプロイしないでください。デモのoutboxは`data/demo-outbox/`、ローカルD1は`analytics/.wrangler/`に保存されます。
+
+## 3. テストとWindows→Linuxビルド
+
+```powershell
+.\scripts\test.ps1
+.\scripts\build-collector.ps1
+```
+
+`bin/`にWindows amd64、Linux amd64、Linux arm64のCollectorを生成します。Ubuntuへ持っていくのはLinux用の1ファイルだけです。Ubuntuで`uname -m`が`x86_64`ならamd64、`aarch64`ならarm64です。Ubuntu上にGoやNode.jsをインストールする必要はありません。
+
+## 4. AnalyticsをCloudflareへ配置する
+
+詳細は [Cloudflare導入](docs/CLOUDFLARE.md) です。**Account C（Analytics用）**を明示し、次の順序で進めます。
+
+1. Wranglerへログインし、Analytics用アカウントを選ぶ。
+2. D1を1つ作成し、`analytics/wrangler.jsonc`の`database_id`へ設定する。
+3. `analytics/src/settings.ts`へHub IDと契約定義を設定する。初回の`contracts: []`は正常。
+4. `INGEST_TOKEN`をWorker Secretへ設定する。
+5. D1のremoteマイグレーションとWorkerデプロイを実施する。
+6. AnalyticsサイトをCloudflare Accessで保護し、team domainとAudienceを設定して再デプロイする。
+
+閲覧APIはAccess設定が不完全なら**拒否**します。`/api/ingest`は独立したBearer認証なので、Accessのログイン要求に遮られない専用ポリシーを設定します。Hub共有シークレット、送信トークン、Cloudflareの管理用API Tokenはそれぞれ別物です。
+
+## 5. Windowsから実Hubに接続する
+
+```powershell
+Copy-Item .\collector\configs\collector.example.json .\collector\config.local.json
+```
+
+`analytics_url`、`hubs[].url`を実際のoriginへ変更します。`/api`などのパスは付けません。Hubが1つなら、2つ目の要素を削除します。Hub IDは`analytics/src/settings.ts`と一致させます。
+
+```powershell
+$env:TMA_HUB_A_SECRET = Read-Host -MaskInput 'Hub A shared secret'
+$env:TMA_HUB_B_SECRET = Read-Host -MaskInput 'Hub B shared secret'
+$env:TMA_INGEST_TOKEN = Read-Host -MaskInput 'Analytics ingest token'
+.\scripts\run-collector.ps1
+```
+
+出力が`SSE connected`→`uploaded`となり、Web画面の最終観測時刻が更新されることを確認してください。WindowsとUbuntuで**同じHubを収集するCollectorを同時稼働させないでください**。切替時はWindows版を終了します。
+
+## 6. Ubuntuで常駐させる
+
+[Ubuntu運用](docs/UBUNTU.md) にコピー・初回設定・systemd登録の完全なコマンドを記載しています。
+
+```bash
+sudo systemctl enable --now tma-collector
+sudo systemctl status tma-collector
+sudo journalctl -u tma-collector -f
+```
+
+Ubuntuは外向きのSSE/HTTPSだけを使用します。ポート開放、Cloudflare Tunnel、Docker、常駐DBサーバーは不要です。設定/環境変数を変えたら`sudo systemctl restart tma-collector`を実行します。
+
+## 7. 契約を紐付けて推定を有効にする
+
+最初は観測値だけを保存して構いません。アカウントハッシュ・deviceId・clientIdは、Access認証済みブラウザーで`/api/state`を開くかConnections画面で確認します。
+
+`docs/contract.example.ts`を参考に`analytics/src/settings.ts`へ定義を追加します。**そのデバイス/クライアントの金額が、その契約の対象利用だけを過不足なく表す**と確認できた場合だけ、`attributionConfirmed: true`へ変更します。API従量利用や別アカウントを混ぜた値からは推定しません。
+
+```text
+期間枠の参考推定 = API換算額の増分 ÷ (利用率の増分 / 100)
+月換算・参考 = 期間枠の参考推定 × (平均月時間 / 制限枠時間)
+```
+
+モデル構成、制限の仕組み、計測漏れに依存する参考値であり、保証される利用可能額ではありません。リセット、再接続、カウンター減少、観測の欠落があれば基準を作り直します。詳しくは [推定仕様](docs/ESTIMATION.md)。
+
+## 8. Gitリポジトリーとして開始する
+
+```powershell
+git init -b main
+git status --short
+git add .
+git commit -m "chore: initialize web analytics and Go collector"
+```
+
+ZIPには`.git`、実アカウントID、秘密情報、ビルド済みexeは含めません。GitHubへのリポジトリー作成やpush、Cloudflareリソース作成は行っていません。公開ライセンスは未選択です。
 
 ## 文書
 
-- [要件定義](docs/requirements.md): 唯一の規範仕様です。API 契約、計算規則、バックアップ形式、Phase 1/2 の受入条件を定義します。
-- [画面構成](docs/screen-design.md): 常駐するコンパクトトップと、左側メニューを持つメイン画面の表示内容、操作、遷移を定義します。
-- [デザインシステム](docs/design-system.md): 数値書式、色、部品、状態、マスク、テーマ、アクセシビリティの共通規則を定義します。要件定義に従属します。
-- [アーキテクチャ設計](docs/architecture.md): Go、React、SQLite、Wails の責務と DTO・同期境界を定義します。要件定義に従属します。
-- [実装計画](PLAN.md): 実装順、検証、受入れで要件・画面・デザインシステムを追跡します。要件定義に従属します。
-- [プロジェクト用語](CONTEXT.md): 実装詳細を含まない共有用語集です。
-- [Token Monitor API](https://github.com/Javis603/token-monitor/blob/5ecc60535168f919d8ce5d6d1aaa14c87d11f52b/docs/API.md): 現行フィールド構造の参照元です。目標要件で追加を要求する利用額専用観測時刻は、この固定リビジョンにはまだありません。
-
-## 退避済み PoC
-
-`poc/` は、技術選定とデータ経路を検証した Windows 向け Wails v3 アプリです。主に次を実装しています。
-
-- 単一 Hub の URL と共有シークレットの設定
-- 認証済み `GET /api/stats` の手動・定期取得
-- 原 JSON スナップショットと、その取得時に算出した観測結果の SQLite 保存
-- Hub とクラウド試作の共有シークレットを Windows Credential Manager へ保存
-- 月次ダッシュボード、単一点式による簡易推定、履歴グラフ
-- JSON・CSV エクスポート、JSON バックアップと復元
-- 初期スコープ外である自己ホスト型クラウド同期の試作
-
-既定のデータベースは `%APPDATA%\Token Monitor Analytics\data.db` です。開発とテストでは `TOKEN_MONITOR_ANALYTICS_DB` で保存先を変更できます。Hub 共有シークレットは Generic Credential `TokenMonitorAnalytics/Hub/default` に保存されるため、登録した Windows ユーザーとアプリを実行するユーザーを同じにする必要があります。
-
-Phase 1 は `localhost`、ループバック IP、またはプライベート IP のリテラルに HTTP と HTTPS の両方を受け入れます。HTTP では共有シークレットが平文で送信されるため、利用者が管理する信頼済み LAN に限定してください。公開ネットワークでは証明書検証が成功する HTTPS を必須とし、この制約をアプリ側で強制します。
-
-PoC には、複数 Hub、不変の Hub 識別子、正式サービスと利用枠定義、論理アカウントの期間付き関連付け、活動主体の完全性確認、利用額専用観測時刻、推定観測点、隣接差分、非負最小二乗法、階数判定、Phase 1 の原子的なデータベース復元は実装されていません。
-
-### PoC の簡易分析
-
-PoC のダッシュボードは、最新の原 JSON スナップショットにあるトップレベルの `periods.month` を Tool・Model・Device 別に表示します。履歴作成では、利用枠の `kind` に対応する費用期間を探し、現在の Hub API に存在する `billing` 対応の `month` では、同一スナップショットの API 換算利用額を利用率で除す旧単一点式を使います。
-
-現在の Hub API に通常は存在しない週次・セッション専用費用期間がなければ、`today` の費用を参考値として保存するだけで推定しません。`allTime` は PoC の簡易推定には使用しません。同じ provider に複数アカウントがある場合や `clientCosts` がない場合も推定しません。この処理は目標仕様ではなく、Phase 1 の差分推定へ置き換える対象です。
-
-PoC の JSON・CSV エクスポート対象は `subscriptions` の設定と保存済み観測です。原 JSON スナップショットやダッシュボードの全内訳を出力する機能ではありません。
-
-### PoC のバックアップと復元
-
-PoC のバックアップ JSON は、非秘密設定、原 JSON スナップショット、それに保存された算出観測、`subscriptions` を含み、資格情報を含みません。版と SHA-256 はデータ置換前に検証します。各スナップショットの JSON と登録価格の意味検証は SQLite トランザクション内で置換を開始した後に行いますが、失敗時はロールバックします。
-
-この方式は、目標要件の SQLite 完全性検証、一時データベースでの全体意味検証、ファイルの原子的な入替えを実装していません。PoC のバックアップも未暗号化の機微データとして扱ってください。
-
-### PoC のクラウド同期
-
-クラウド試作は、端末 ID とローカルスナップショット ID の組で増分を重複排除し、Bearer 認証された `POST /api/v1/sync` で SQLite サーバーへ保存します。ブラウザーダッシュボードの月次内訳は、クラウド上の全端末を合算せず、アップロードされた最新一件の原 JSON スナップショットから作ります。保存済み観測は直近 500 件を表示します。
-
-クラウドからローカルへの復元、クラウド上の設定編集、双方向同期、同じ Hub を複数端末が同時収集した場合の競合管理はありません。クラウド試作は Phase 1 と Phase 2 の受入対象外です。
-
-## モック Hub での画面確認
-
-実 Hub や資格情報を使わず、Hub、利用枠、観測、監査記録などのサンプルデータでフロントエンドを起動できます。
-
-```powershell
-mise run mock
-```
-
-起動後は `http://localhost:9245/` を開きます。開発サーバーはリモート接続先からも確認できるように全インターフェースで待ち受けます。実データを使う通常起動には影響しません。
-
-同じサンプルデータのスクリーンショットは次のタスクで `artifacts/screenshots/` に生成できます。
-
-```powershell
-mise run mock:screenshots
-```
-
-## PoC の起動方法
-
-### 必要な環境
-
-- Windows 10 または 11 と WebView2
-- Go 1.25.0 以降
-- Node.js 20 系の 20.19.0 以降、または 22.12.0 以降
-- npm
-- Wails v3 CLI `v3.0.0-beta.12`
-
-### 開発起動
-
-```powershell
-git clone --recurse-submodules https://github.com/nuitsjp/token-monitor-analytics.git
-cd token-monitor-analytics\poc
-go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.12
-wails3 doctor
-npm --prefix frontend ci
-wails3 dev
-```
-
-アプリ画面で Token Monitor Hub の URL と共有シークレットを保存し、「今すぐ取得」または定期取得を開始します。PoC の既定収集間隔は 300 秒です。
-
-### ビルド
-
-```powershell
-cd token-monitor-analytics\poc
-npm --prefix frontend ci
-wails3 build
-```
-
-生成物の配置と必要なランタイムは、`wails3 build` の出力で確認してください。
-
-## 位置付け
-
-Token Monitor は利用状況と利用枠を収集します。Token Monitor Analytics は、その観測を正本として蓄積し、推定・比較・分析へつなげます。本プロジェクトは Token Monitor 本体および開発者による公式製品ではありません。
+[構成と責務](docs/ARCHITECTURE.md) / [Cloudflare](docs/CLOUDFLARE.md) / [Ubuntu](docs/UBUNTU.md) / [プロトコル](docs/PROTOCOL.md) / [推定](docs/ESTIMATION.md) / [運用と無料枠](docs/OPERATIONS.md) / [検証](docs/VERIFICATION.md) / [一次資料](docs/SOURCES.md) / [開発指針](AGENTS.md)

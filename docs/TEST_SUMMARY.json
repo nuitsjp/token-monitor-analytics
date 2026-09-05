@@ -1,0 +1,17 @@
+{
+  "go_top_level_tests_passed": 23,
+  "web_tests_passed": 29,
+  "go_race_test": true,
+  "go_vet": true,
+  "typecheck": true,
+  "cross_compile": [
+    "windows/amd64",
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "http_mock_to_worker_sqlite_adapter": true,
+  "offline_upload_retry": true,
+  "ui_fixture_only": true,
+  "actual_cloudflare_runtime_tested": false,
+  "real_hub_tested": false
+}

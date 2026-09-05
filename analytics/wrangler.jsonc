@@ -1,0 +1,50 @@
+// Production: set the Analytics account through CLOUDFLARE_ACCOUNT_ID, then replace database_id.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "token-monitor-analytics",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "token-monitor-analytics",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "LIVE",
+        "class_name": "LiveRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "LiveRoom"
+      ]
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "17 * * * *"
+    ]
+  },
+  "vars": {
+    "AUTH_MODE": "access",
+    "ACCESS_TEAM_DOMAIN": "REPLACE.cloudflareaccess.com",
+    "ACCESS_AUD": "REPLACE_WITH_ANALYTICS_APP_AUD"
+  }
+}

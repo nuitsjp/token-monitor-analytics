@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Token Monitor Analytics</title><link rel="stylesheet" href="/styles.css"><script type="module" src="/app.js"></script></head>
+<body>
+<aside><a class="brand" href="/"><span class="mark">T</span><span>Token Monitor<br><strong>Analytics</strong></span></a>
+<p class="eyebrow">WORKSPACE</p><nav aria-label="メイン"><button data-view="dashboard" aria-current="page">Overview</button><button data-view="history">Daily history</button><button data-view="settings">Connections</button></nav>
+<div class="aside-foot"><span class="dot" id="dot"></span><span id="live">接続準備中</span><small>SSE → Collector → Analytics<br>観測値と参考推定を区別します。</small></div></aside>
+<main><header><div><p class="eyebrow">SUBSCRIPTION INTELLIGENCE</p><h1 id="title">Overview</h1><p class="lead">利用額と、契約で使える金額の推定推移。</p></div><button id="refresh" class="outline">更新</button></header>
+<div id="notice" role="status" hidden></div>
+<section id="dashboard" class="view">
+<div class="section-heading"><h2>Hubの観測値</h2><label>表示対象 <select id="hub-select" aria-label="表示するHub"></select></label></div>
+<div class="metrics"><article><p>今日のAPI換算額</p><strong id="today">—</strong><small>Token Monitorの観測値</small></article><article><p>当月のAPI換算額</p><strong id="month">—</strong><small>契約の請求額ではありません</small></article><article><p>累計API換算額</p><strong id="alltime">—</strong><small>複数Hubを自動合算しません</small></article></div>
+<p class="timestamp" id="observed">まだ観測データがありません。</p>
+<div class="section-heading"><h2>利用枠の参考推定</h2><span class="muted">同一リセット期間の増分から算出</span></div>
+<div id="estimates" class="estimate-grid"></div>
+<div class="section-heading"><h2>アカウントの利用率</h2></div>
+<div class="table-wrap"><table><thead><tr><th>サービス / アカウント</th><th>制限枠</th><th>消費割合</th><th>リセット予定</th><th>状態</th></tr></thead><tbody id="limits"></tbody></table></div>
+</section>
+<section id="history" class="view" hidden><div class="section-heading"><h2>日次の推定履歴</h2><select id="contract-select" aria-label="履歴の契約"></select></div><p class="muted">その日の最後の有効推定を保存します。最新判定と推定の観測時刻を別々に表示します。</p><div id="chart" class="chart"></div><div class="table-wrap"><table><thead><tr><th>日付</th><th>月換算・参考</th><th>期間枠・参考</th><th>推定の観測時刻</th><th>その日の最新判定</th></tr></thead><tbody id="daily"></tbody></table></div></section>
+<section id="settings" class="view" hidden><h2>接続と契約の設定</h2><p class="muted">初期版では設定ファイルを編集します。Hubシークレットや送信用トークンは、この画面へ送信しません。</p><div id="connections"></div><div class="callout"><strong>収集と閲覧は独立しています。</strong><p>ブラウザーを閉じてもUbuntuのCollectorが収集を継続します。画面のライブ接続状態は、HubやCollectorの稼働状態を意味しません。最終観測時刻も確認してください。</p></div><p>Collector: <code>collector/config.local.json</code><br>契約の紐付け: <code>analytics/src/settings.ts</code></p><p class="muted">新しい実体のHubや契約には新しいIDを割り当ててください。</p></section>
+<footer>Token Monitor Analytics · 0.2.0 starter <span>履歴の正本: Cloudflare D1</span></footer></main></body></html>

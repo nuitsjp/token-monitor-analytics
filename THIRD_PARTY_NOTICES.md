@@ -1,0 +1,9 @@
+# Dependencies and licensing
+
+Go Collectorは標準ライブラリーのみを利用します。Go本体のライセンスはGo公式配布に従います。
+
+Webアプリの開発依存はTypeScriptとCloudflare Wranglerです。これらのパッケージ本体はZIPに同梱していません。npm install後、各パッケージのライセンスとlockfileを確認してください。
+
+Token Monitorの上流コード本体は含みません。確認したAPIのフィールドとイベント形式に合わせて独自のクライアントを実装しています。
+
+この生成リポジトリー自体の公開ライセンスは未選択です。OSSとして公開する前に、リポジトリー所有者が選択してください。

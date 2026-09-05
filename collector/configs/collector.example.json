@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "analytics_url": "https://REPLACE-ANALYTICS.workers.dev",
+  "ingest_token_env": "TMA_INGEST_TOKEN",
+  "spool_dir": "../data/outbox",
+  "max_spool_bytes": 268435456,
+  "flush_seconds": 2,
+  "batch_size": 2,
+  "idle_seconds": 90,
+  "hubs": [
+    {
+      "id": "hub-a",
+      "url": "https://REPLACE-HUB-A.workers.dev",
+      "secret_env": "TMA_HUB_A_SECRET"
+    },
+    {
+      "id": "hub-b",
+      "url": "https://REPLACE-HUB-B.workers.dev",
+      "secret_env": "TMA_HUB_B_SECRET"
+    }
+  ]
+}
