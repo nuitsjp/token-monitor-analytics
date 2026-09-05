@@ -1,4 +1,4 @@
-import type {Observation} from './protocol.js';
+import type {Observation} from './protocol.ts';
 export interface Contract {
  id:string; label:string; hubId:string; provider:string; accountKey:string;
  clientIds:string[]; deviceIds:string[]; windowKind:string; windowHours:number;

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 8787
+  },
+  "publicOrigin": "http://127.0.0.1:8787",
+  "databasePath": "/var/lib/tma-analytics/analytics.db",
+  "timeZone": "Asia/Tokyo",
+  "detailRetentionDays": 7,
+  "ingestTokenEnv": "TMA_INGEST_TOKEN",
+  "viewerAuth": {
+    "mode": "basic",
+    "userEnv": "TMA_VIEWER_USER",
+    "passwordEnv": "TMA_VIEWER_PASSWORD"
+  },
+  "hubs": [
+    {
+      "id": "hub-a",
+      "label": "Hub A"
+    },
+    {
+      "id": "hub-b",
+      "label": "Hub B"
+    }
+  ],
+  "contracts": [],
+  "demo": false
+}

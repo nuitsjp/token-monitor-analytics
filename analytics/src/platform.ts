@@ -1,5 +1,5 @@
-// Deliberately small structural interfaces for the platform methods we use.
-// Runtime contracts: docs/SOURCES.md. These are NOT replacements for full generated Cloudflare types.
+// Small storage boundary shared by the pure analytics core and native SQLite adapter.
+// Analytics runs as a single process. The caller owns a transaction around ingest.
 export interface DBResult<T = Record<string, unknown>> { results: T[]; success: boolean; meta: { changes?: number } }
 export interface Statement {
  bind(...values: unknown[]): Statement;
@@ -8,23 +8,3 @@ export interface Statement {
  run(): Promise<DBResult>;
 }
 export interface Database { prepare(sql: string): Statement; batch(statements: Statement[]): Promise<DBResult[]> }
-export interface CFSocket extends WebSocket { serializeAttachment(value: unknown): void; deserializeAttachment(): unknown }
-export interface ObjectContext {
- blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T>;
- acceptWebSocket(socket: CFSocket): void;
- getWebSockets(): CFSocket[];
- setWebSocketAutoResponse(pair: unknown): void;
-}
-export interface Env {
- DB: Database;
- LIVE: { idFromName(name: string): unknown; get(id: unknown): { fetch(request: Request): Promise<Response> } };
- ASSETS: { fetch(request: Request): Promise<Response> };
- AUTH_MODE?: string;
- INGEST_TOKEN?: string;
- ACCESS_TEAM_DOMAIN?: string;
- ACCESS_AUD?: string;
-}
-declare global {
- var WebSocketPair: {new(): {0: CFSocket; 1: CFSocket}};
- var WebSocketRequestResponsePair: {new(request: string, response: string): unknown};
-}

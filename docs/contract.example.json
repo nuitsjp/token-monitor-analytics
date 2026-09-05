@@ -1,0 +1,20 @@
+{
+  "id": "claude-weekly",
+  "label": "Claude / weekly",
+  "hubId": "hub-a",
+  "provider": "claude",
+  "accountKey": "REPLACE-ACCOUNT-KEY",
+  "clientIds": [
+    "claude"
+  ],
+  "deviceIds": [
+    "REPLACE-DEVICE-ID"
+  ],
+  "windowKind": "weekly",
+  "windowHours": 168,
+  "monthlyFeeUsd": null,
+  "attributionConfirmed": false,
+  "minDeltaPercent": 5,
+  "maxSourceSkewSeconds": 120,
+  "maxGapSeconds": 1800
+}

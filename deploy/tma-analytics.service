@@ -1,0 +1,28 @@
+[Unit]
+Description=Token Monitor Analytics (native Node.js + SQLite)
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=6
+
+[Service]
+Type=simple
+User=tma-analytics
+Group=tma-analytics
+WorkingDirectory=/opt/token-monitor-analytics/analytics
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/token-monitor-analytics/analytics.env
+ExecStart=/usr/bin/node --experimental-strip-types /opt/token-monitor-analytics/analytics/runtime/server.mjs --config /etc/token-monitor-analytics/analytics.json
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=15
+StateDirectory=tma-analytics
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

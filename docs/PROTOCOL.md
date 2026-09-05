@@ -8,7 +8,7 @@ LF/CRLF/CR、複数data行、BOM、コメントに対応。不完全なEOFフレ
 
 ## Collector → Analytics
 
-`POST /api/ingest`、`Content-Type: application/json`、`Authorization: Bearer <INGEST_TOKEN>`。
+`POST /api/ingest`、`Content-Type: application/json`、`Authorization: Bearer <TMA_INGEST_TOKEN>`。
 
 ```json
 {
@@ -41,7 +41,9 @@ LF/CRLF/CR、複数data行、BOM、コメントに対応。不完全なEOFフレ
 
 `GET /api/history?contract=id`: その契約の最新90観測日の最新判定と最後の有効推定。
 
-`GET /api/live`: 同一originのWebSocket Upgrade。Access JWTを検証後に接続。`ready`と`updated`は再取得通知で、履歴イベントログではない。ping/pongはWebSocket Hibernationの自動応答を使う。[S1]
+`GET /api/live`: 同一originのSSE。Content-Typeはtext/event-stream。`event: ready`と`event: updated`は再取得通知で、履歴イベントログではない。再接続はEventSourceに任せ、readyで最新状態を再取得する。25秒ごとのコメントheartbeatを送信する。[S3]
+
+閲覧は設定に応じてloopback限定またはBasic認証。CollectorのBearer認証とは独立。POSTはCOMMIT後のみ成功ACKを返す。
 
 `GET /api/health`: 秘密情報を含まない固定ヘルス情報。DB/Hubの疎通を保証しない。
 

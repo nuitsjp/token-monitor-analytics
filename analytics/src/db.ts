@@ -1,9 +1,9 @@
-import type {Database,Statement} from './platform.js';
-import type {Batch} from './protocol.js';
-import {advance,dayKey,type State,type Contract} from './estimate.js';
+import type {Database,Statement} from './platform.ts';
+import type {Batch} from './protocol.ts';
+import {advance,dayKey,type State,type Contract} from './estimate.ts';
 interface Latest {hub_id:string;event_id:string;observed_at:string}
-// Caller serializes this short transaction in LiveRoom.blockConcurrencyWhile.
-// D1 is the ONLY persistent authority. The DO never stores a second history copy.
+// The native server serializes operations and wraps the entire call (including reads)
+// in BEGIN IMMEDIATE. SQLite is the only persistent history authority.
 export async function ingest(db:Database,batch:Batch,contracts:Contract[],timeZone:string):Promise<string[]>{
  const latestRows=await db.prepare('SELECT hub_id,event_id,observed_at FROM hub_latest').all<Latest>();
  const stateRows=await db.prepare('SELECT contract_id,state_json FROM contract_state').all<{contract_id:string;state_json:string}>();
@@ -34,7 +34,7 @@ export async function ingest(db:Database,batch:Batch,contracts:Contract[],timeZo
     .bind(c.id,dayKey(o.observedAt,timeZone),o.observedAt,r.status,r.reason,r.status==='estimated'?o.observedAt:null,r.windowCapacityUsd,r.monthlyCapacityUsd,r.status==='estimated'?JSON.stringify(r):null));
   }
  }
- // <= 40 SQL queries including SELECTs with 2 events / <=8 contract definitions.
+ // Batch writes participate in the caller-owned transaction.
  if(statements.length)await db.batch(statements);
  return [...changed];
 }

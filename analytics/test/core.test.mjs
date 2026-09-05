@@ -1,8 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {advance,dayKey,validateContracts} from '../.test-build/estimate.js';
-import {parseBatch,readLimited} from '../.test-build/protocol.js';
+import {advance,dayKey,validateContracts} from '../src/estimate.ts';
+import {parseBatch,readLimited} from '../src/protocol.ts';
 import {database,contract as c,observation as o} from './adapter.mjs';
-import {ingest,dashboard,history,prune} from '../.test-build/db.js';
+import {ingest,dashboard,history,prune} from '../src/db.ts';
 const run=(a,b,cc=c)=>advance(cc,b,advance(cc,a,null));
 test('same-window deltas use 0..100 percentage correctly',()=>{const s=run(o(),o(1));assert.equal(s.result.windowCapacityUsd,160);assert.ok(Math.abs(s.result.monthlyCapacityUsd-695.7)<0.01)});
 test('small percentage changes accumulate from baseline',()=>{let s=advance(c,o(),null);const a=o(1);a.stats.limits.providers[0].windows[0].usedPercent=11;s=advance(c,a,s);assert.equal(s.result.status,'observing');s=advance(c,o(2),s);assert.equal(s.result.windowCapacityUsd,160)});
@@ -18,11 +18,11 @@ for(const [name,change,reason] of [
 ])test(name,()=>{const x=o(1),cc=structuredClone(c);change(x,cc);assert.equal(run(o(),x,cc).result.reason,reason)});
 test('configuration change resets baseline',()=>{const a=advance(c,o(),null),cc={...c,label:'Changed'};assert.equal(advance(cc,o(1),a).result.reason,'baseline_started')});
 test('JST day boundary is explicit',()=>assert.equal(dayKey('2026-09-04T16:00:00Z','Asia/Tokyo'),'2026-09-05'));
-test('definition limit guards query budget',()=>assert.throws(()=>validateContracts(Array(9).fill(c),['hub-a'])));
+test('definition limit remains explicit',()=>assert.throws(()=>validateContracts(Array(9).fill(c),['hub-a'])));
 test('protocol accepts legitimate batch and canonicalizes dates',()=>{const b=parseBatch({schemaVersion:1,events:[o()]},['hub-a']);assert.equal(b.events[0].observedAt,'2026-09-05T00:00:00.000Z')});
 test('protocol rejects unknown hub / invalid percent / future clock',()=>{assert.throws(()=>parseBatch({schemaVersion:1,events:[o()]},[]));const x=o();x.stats.limits.providers[0].windows[0].usedPercent=101;assert.throws(()=>parseBatch({schemaVersion:1,events:[x]},['hub-a']));assert.throws(()=>parseBatch({schemaVersion:1,events:[o()]},['hub-a'],0))});
 test('oversized body rejected',async()=>{await assert.rejects(readLimited(new Request('https://test',{method:'POST',body:'123456'}),5))});
-test('D1 adapter transaction, dedupe, daily last-valid retention',async()=>{
+test('SQLite transaction, dedupe, daily last-valid retention',async()=>{
  const db=database();await ingest(db,{events:[o(),o(1)]},[c],'Asia/Tokyo');assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,2);
  await ingest(db,{events:[o(1)]},[c],'Asia/Tokyo');assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,2);
  let rows=await history(db,c.id);assert.equal(rows[0].window_capacity_usd,160);

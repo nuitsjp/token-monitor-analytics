@@ -1,155 +1,175 @@
 # Token Monitor Analytics
 
-**AIサブスクリプションで実質どれくらいのAPI金額相当を利用できるか。その推定値の変化を記録するWebアプリです。**
+**API金額換算の利用額とサブスクリプション利用枠の参考推定を継続保存するWebアプリ。**
 
-Windowsで開発し、Go製CollectorをUbuntuで常駐運用します。AnalyticsのWeb画面・履歴保存・推定処理はCloudflareへ配置します。**デスクトップアプリではありません。Wails、WebView2、Dockerは使いません。**
+**0.3.0 / self-hosted first / 2026-09-05**。前回の0.2.0 Web＋Ubuntu版を修正したリポジトリーです。**初期運用はUbuntu上にCollectorとAnalyticsを同居。開発中はWindows上に両方を起動**します。デスクトップGUIではありません。
 
-> 0.2.0 starter / 2026-09-05。ソースコード一式です。実Cloudflareへのデプロイ・Windows/Ubuntu実機の受入試験は未実施です。実行した検証と未検証事項は [VERIFICATION](docs/VERIFICATION.md) に分けて記載しています。
-
-## 構成
+## 今回の構成
 
 ```text
-Cloudflare Account A: Hub A ──SSE──┐
-                                  ├─ Ubuntu: Go Collector（1プロセス）
-Cloudflare Account B: Hub B ──SSE──┘         │ HTTPS POST
-                                            ▼
-Cloudflare Account C: Analytics Worker → LiveRoom → D1
-                                            │
-                                Hibernation WebSocket
-                                            ▼
-                                     Webブラウザー
+Cloudflare Hub A ──SSE──┐
+Cloudflare Hub B ──SSE──┤
+                       ▼
+             Windows（開発）/ Ubuntu（運用）
+             ┌──────────────────────────────────┐
+             │ Go Collector                     │
+             │   ├─ 複数Hub購読・再接続          │
+             │   └─ 未送信outbox                 │
+             │          │ HTTP POST / loopback  │
+             │          ▼                       │
+             │ Analytics / Node.js              │
+             │   ├─ SQLite：観測・推定の正本     │
+             │   ├─ Web画面 / 閲覧API            │
+             │   └─ SSE：ブラウザーへ更新通知    │
+             └────────────────┬─────────────────┘
+                              ▼
+                         Webブラウザー
 ```
 
-Hubごとに1アカウント、Analyticsは別アカウントです。既存Hubは改変しません。LiveRoomは短い保存トランザクションを直列化し、閲覧中のブラウザーに更新を通知する1つのDurable Objectです。HubのSSEをCloudflare上から購読するObjectではありません。**履歴の正本はD1のみ**です。
+**Hubは既存Cloudflare環境のまま**です。Analytics用のCloudflareアカウント、Worker、D1、Durable Objects、Wrangler、Accessは不要になりました。React、Docker、DBサーバー、Redisも追加していません。
 
-## 含まれる実装
+CollectorはGo標準ライブラリーのみ。Analyticsは既存のTypeScript推定処理を残し、Node.js組込みのHTTP・SQLite・TypeScript実行を使います。**Analyticsは事前ビルドもnpm installもせず起動できます**。npmパッケージは型検査用のTypeScriptだけです。[S1][S2]
 
-| 部分 | 初期実装 |
-|---|---|
-| Go Collector | 複数HubのSSE購読、Bearer認証、ハートビート監視、再接続、イベントの小型化 |
-| 送信 | 最大2件/バッチ、通常は最大約2秒の送信待ち、ローカルファイルoutbox、確認応答後の削除 |
-| Analytics | TypeScript Worker、D1マイグレーション、重複防止、順序逆転の保護 |
-| 推定 | 対象アカウントと利用額を明示的に紐付け、同一リセット期間の差分から推定 |
-| Web | Overview / Daily history / Connections、日次表・簡易グラフ、ライブ更新通知 |
-| 認証 | 閲覧はCloudflare Access JWTを検証、Collector送信は独立したBearerトークン |
-| Ubuntu | systemd unit、env例、クロスビルド手順 |
-| 開発 | 模擬Hub、Goテスト、TypeScript/SQLiteテスト、CI |
+## 1. Windowsでローカルデモを確認
 
-モデル単価の管理・料金再計算、Hub間の自動名寄せ、AIサービスへの直接接続、設定編集画面、過去Hubイベントの再取得は実装しません。API換算額は**Token Monitorが算出した値**であり、実際の請求額とは区別します。
+前回の3プロセスはCtrl+Cで停止し、**新しいフォルダーへ展開**してください。同じ8787/8765ポートを使うため、旧版と同時起動しません。既存フォルダーの`.wrangler`や設定を削除する必要はありません。
 
-## 1. Windowsの開発環境
+必要なものは**PowerShell 7、Go、Node.js 24 LTSの最新パッチ**です。Goは保守中のパッチを使ってください。コードの最低要件はGo 1.23、Node.js 22.16です。Node 22.16では型除去/SQLiteのexperimental警告が出ます。運用はNode 24 LTSを基準にしてください。[S1][S2][S5][S9]
 
-PowerShell 7、保守中のGo、Node.js LTS、Gitを用意してください。Goは**1.26系の最新パッチ**、Node.jsは**24系LTSの最新パッチ**を推奨します。ソースのGo言語要件は1.23以上、Nodeのテスト要件は22.16以上です。運用バイナリーは古い検証用Goではなく、保守中のGoでビルドしてください。
+展開後のリポジトリールートで:
 
 ```powershell
 cd C:\src\token-monitor-analytics
 .\scripts\bootstrap.ps1
 ```
 
-Go Collectorに外部依存はないため`go.sum`は不要です。Web側の直接開発依存はTypeScript 5.8.3、Wrangler 4.126.0に固定しています。このZIP作成環境ではnpmレジストリーへ接続できなかったため、**package-lock.jsonは未生成**です。bootstrapが生成する`analytics/package-lock.json`を確認し、Gitへ追加してください。以後は`npm ci`を使います。
+3つのPowerShellを同じフォルダーで開きます。
 
-## 2. まずローカルで一通り動かす
-
-3つのPowerShellを同じリポジトリールートで開きます。
-
-**A: 模擬Hub**
+**ターミナルA — 模擬Hub**
 
 ```powershell
 .\scripts\run-mock.ps1
 ```
 
-**B: Analytics（ローカルWorkers/D1/DO）**
+**ターミナルB — Analytics**
 
 ```powershell
-cd analytics
-npm run dev
+.\scripts\run-analytics.ps1 -Demo
 ```
 
-**C: Go Collector**
+**ターミナルC — Collector**
 
 ```powershell
 .\scripts\run-collector.ps1 -Demo
 ```
 
-ブラウザーで **http://127.0.0.1:8787** を開きます。すべてループバックで通信し、Cloudflareへのログインやデプロイは必要ありません。模擬データが3秒ごとに変わり、少数回の更新後に期間枠`$160`、月換算約`$695.70`という**合成値**が出ることを確認します。デモの料金・利用枠は実サービスの値ではありません。
+ブラウザーで **http://127.0.0.1:8787** を開きます。前回と同じ3画面・利用額・日次履歴・ライブ更新が利用できます。模擬Hubは3秒ごとに合成値を送信し、少数回の更新で期間枠`$160`、月換算`$695.70`という参考推定になります。Hub Bが未受信なのは、標準デモがHub Aだけを送るためです。
 
-`Hub B`が未受信でも正常です。デモはHub Aのみを送ります。ローカル設定を本番へデプロイしないでください。デモのoutboxは`data/demo-outbox/`、ローカルD1は`analytics/.wrangler/`に保存されます。
+AnalyticsのデモDBは**`data/demo/analytics.db`**、Collectorの未送信データは**`data/demo-outbox/`**。以前のローカルD1（`.wrangler/`）とは別の保存先です。初回起動時にDBとテーブルを自動作成し、起動し直しても保存済みの履歴が残ります。
 
-## 3. テストとWindows→Linuxビルド
+従来の`cd analytics; npm run dev`も使えます。今回はWranglerではなく、同じネイティブAnalyticsサーバーが起動します。
 
-```powershell
-.\scripts\test.ps1
-.\scripts\build-collector.ps1
-```
+## 2. Windows上で実Hubへ切り替える
 
-`bin/`にWindows amd64、Linux amd64、Linux arm64のCollectorを生成します。Ubuntuへ持っていくのはLinux用の1ファイルだけです。Ubuntuで`uname -m`が`x86_64`ならamd64、`aarch64`ならarm64です。Ubuntu上にGoやNode.jsをインストールする必要はありません。
-
-## 4. AnalyticsをCloudflareへ配置する
-
-詳細は [Cloudflare導入](docs/CLOUDFLARE.md) です。**Account C（Analytics用）**を明示し、次の順序で進めます。
-
-1. Wranglerへログインし、Analytics用アカウントを選ぶ。
-2. D1を1つ作成し、`analytics/wrangler.jsonc`の`database_id`へ設定する。
-3. `analytics/src/settings.ts`へHub IDと契約定義を設定する。初回の`contracts: []`は正常。
-4. `INGEST_TOKEN`をWorker Secretへ設定する。
-5. D1のremoteマイグレーションとWorkerデプロイを実施する。
-6. AnalyticsサイトをCloudflare Accessで保護し、team domainとAudienceを設定して再デプロイする。
-
-閲覧APIはAccess設定が不完全なら**拒否**します。`/api/ingest`は独立したBearer認証なので、Accessのログイン要求に遮られない専用ポリシーを設定します。Hub共有シークレット、送信トークン、Cloudflareの管理用API Tokenはそれぞれ別物です。
-
-## 5. Windowsから実Hubに接続する
+デモの3プロセスを止め、リポジトリールートで設定を作成します。
 
 ```powershell
+Copy-Item .\analytics\configs\analytics.example.json .\analytics\config.local.json
 Copy-Item .\collector\configs\collector.example.json .\collector\config.local.json
 ```
 
-`analytics_url`、`hubs[].url`を実際のoriginへ変更します。`/api`などのパスは付けません。Hubが1つなら、2つ目の要素を削除します。Hub IDは`analytics/src/settings.ts`と一致させます。
+`collector/config.local.json`の`hubs[].url`を実Hubのoriginへ変更します。**`analytics_url`は`http://127.0.0.1:8787`のまま**です。Hubが1つなら、Collector設定からHub Bを削除します。Analyticsの`hubs`のIDとCollectorのIDは一致させます。
+
+本番用の共通送信トークンを1つ生成して安全に保管します（例: `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`）。デモトークンは本番設定では拒否します。
+
+**Analytics用PowerShell**:
 
 ```powershell
-$env:TMA_HUB_A_SECRET = Read-Host -MaskInput 'Hub A shared secret'
-$env:TMA_HUB_B_SECRET = Read-Host -MaskInput 'Hub B shared secret'
-$env:TMA_INGEST_TOKEN = Read-Host -MaskInput 'Analytics ingest token'
+$env:TMA_INGEST_TOKEN = Read-Host -MaskInput 'Analytics送信用トークン'
+.\scripts\run-analytics.ps1
+```
+
+**Collector用PowerShell**:
+
+```powershell
+$env:TMA_HUB_A_SECRET = Read-Host -MaskInput 'Hub A共有シークレット'
+$env:TMA_HUB_B_SECRET = Read-Host -MaskInput 'Hub B共有シークレット（使用時のみ）'
+$env:TMA_INGEST_TOKEN = Read-Host -MaskInput '同じAnalytics送信用トークン'
 .\scripts\run-collector.ps1
 ```
 
-出力が`SSE connected`→`uploaded`となり、Web画面の最終観測時刻が更新されることを確認してください。WindowsとUbuntuで**同じHubを収集するCollectorを同時稼働させないでください**。切替時はWindows版を終了します。
+`SSE connected`、`uploaded`、Web画面の最終観測時刻を確認します。デモと本番は別DBになり、同一DBへの混在も起動時に拒否します。例を指定位置へコピーした場合、本番DBは`data/local/analytics.db`です。相対パスは常に**設定ファイルの場所が基準**です。
 
-## 6. Ubuntuで常駐させる
+## 3. 契約を紐付けて推定を有効にする
 
-[Ubuntu運用](docs/UBUNTU.md) にコピー・初回設定・systemd登録の完全なコマンドを記載しています。
+最初は`analytics/config.local.json`の`contracts: []`で受信・保存を確認できます。Connections画面のaccountKey / deviceId / clientIdを使い、[契約設定例](docs/contract.example.json)を`contracts`配列へ追加してください。
 
-```bash
-sudo systemctl enable --now tma-collector
-sudo systemctl status tma-collector
-sudo journalctl -u tma-collector -f
-```
+対象device/clientの金額がその契約だけに過不足なく対応する場合に限り、`attributionConfirmed: true`にします。設定変更後は**Analyticsだけ再起動**します。設定にHub IDを追加する場合は、Analyticsを先に再起動してからCollectorを変更します。
 
-Ubuntuは外向きのSSE/HTTPSだけを使用します。ポート開放、Cloudflare Tunnel、Docker、常駐DBサーバーは不要です。設定/環境変数を変えたら`sudo systemctl restart tma-collector`を実行します。
+計算式・null/0・欠測の扱いは[推定仕様](docs/ESTIMATION.md)。金額はToken Monitorの算出額を使用し、Analytics側でモデル単価から再計算しません。
 
-## 7. 契約を紐付けて推定を有効にする
+## 4. UbuntuへCollectorとAnalyticsを移す
 
-最初は観測値だけを保存して構いません。アカウントハッシュ・deviceId・clientIdは、Access認証済みブラウザーで`/api/state`を開くかConnections画面で確認します。
-
-`docs/contract.example.ts`を参考に`analytics/src/settings.ts`へ定義を追加します。**そのデバイス/クライアントの金額が、その契約の対象利用だけを過不足なく表す**と確認できた場合だけ、`attributionConfirmed: true`へ変更します。API従量利用や別アカウントを混ぜた値からは推定しません。
-
-```text
-期間枠の参考推定 = API換算額の増分 ÷ (利用率の増分 / 100)
-月換算・参考 = 期間枠の参考推定 × (平均月時間 / 制限枠時間)
-```
-
-モデル構成、制限の仕組み、計測漏れに依存する参考値であり、保証される利用可能額ではありません。リセット、再接続、カウンター減少、観測の欠落があれば基準を作り直します。詳しくは [推定仕様](docs/ESTIMATION.md)。
-
-## 8. Gitリポジトリーとして開始する
+Windowsで運用用パッケージを作成します。
 
 ```powershell
-git init -b main
-git status --short
-git add .
-git commit -m "chore: initialize web analytics and Go collector"
+.\scripts\package-ubuntu.ps1 -Architecture amd64
 ```
 
-ZIPには`.git`、実アカウントID、秘密情報、ビルド済みexeは含めません。GitHubへのリポジトリー作成やpush、Cloudflareリソース作成は行っていません。公開ライセンスは未選択です。
+`dist/tma-ubuntu-amd64.tar.gz`が生成されます。Ubuntuで`uname -m`が`aarch64`なら`arm64`を選択します。パッケージに**ローカル設定・シークレット・DB・node_modulesは含めません**。
 
-## 文書
+Ubuntuに必要な追加ランタイムは**Node.js 24 LTS**です。CollectorはLinux用Goバイナリーなので、Ubuntu上にGoの開発環境は不要です。Analyticsのnpm install/ビルドも不要です。2つのsystemd unit・初回配置・環境ファイルの手順は[Ubuntu導入](docs/UBUNTU.md)に記載しています。
 
-[構成と責務](docs/ARCHITECTURE.md) / [Cloudflare](docs/CLOUDFLARE.md) / [Ubuntu](docs/UBUNTU.md) / [プロトコル](docs/PROTOCOL.md) / [推定](docs/ESTIMATION.md) / [運用と無料枠](docs/OPERATIONS.md) / [検証](docs/VERIFICATION.md) / [一次資料](docs/SOURCES.md) / [開発指針](AGENTS.md)
+配置・設定後:
+
+```bash
+sudo systemctl enable --now tma-analytics tma-collector
+sudo systemctl status tma-analytics tma-collector --no-pager
+sudo journalctl -u tma-analytics -u tma-collector -f
+```
+
+同じ実Hubを収集するWindows Collectorは切替前に停止します。Ubuntu側では両プロセスが独立して常駐し、Analytics停止中でもCollectorは受信済みデータをoutboxへ保留します。
+
+## 5. WindowsのブラウザーからUbuntu版を閲覧
+
+初期設定はUbuntuの`127.0.0.1:8787`だけで待ち受けます。まずはSSH転送を使用し、8787番を外部公開しません。[S8]
+
+WindowsのローカルAnalyticsを止めて、次を開いたままにします。
+
+```powershell
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:8787:127.0.0.1:8787 USER@UBUNTU
+```
+
+ブラウザーで`http://127.0.0.1:8787`へアクセスし、Ubuntuの`analytics.env`に設定した閲覧用ユーザー名・パスワードを入力します。**同じURLでも、今回はSSH経由でUbuntuの画面を見ています**。ブラウザー/SSHを閉じても、収集と保存はUbuntu上で続きます。
+
+LAN/インターネットから直接公開する構成は初期設定に含めません。必要になった段階でHTTPSリバースプロキシ等を前置します。[公開と認証](docs/SECURITY.md)を参照してください。
+
+## 6. テスト・型検査・バックアップ
+
+```powershell
+# Go/Node単体・ネイティブHTTP/SQLite/SSEテスト（npm install不要）
+.\scripts\test.ps1
+
+# 型検査も行う場合だけ、開発依存を取得
+.\scripts\bootstrap.ps1 -InstallDevTools
+.\scripts\test.ps1 -Typecheck
+
+# 実Go Collectorを含む2 Hub結合・停止/復旧・バックアップ試験
+node --experimental-strip-types .\tools\integration.mjs
+```
+
+Node.jsのTypeScript実行は型検査を行いません。変更後は型検査も実施してください。[S2]
+
+SQLiteのオンラインバックアップ例:
+
+```powershell
+node --experimental-strip-types .\analytics\runtime\backup.mjs --config .\analytics\config.local.json --output .\backups\analytics-20260905.db
+```
+
+既存バックアップを上書きしません。稼働中の`.db`ファイルだけを単純コピーするのではなく、このコマンドを使います。[S1][S4] バックアップも私的な利用情報として保護してください。
+
+## この版の範囲
+
+履歴の正本はAnalyticsのSQLiteだけです。Collectorのoutboxとの双方向同期はしません。Hubの上流イベントは再送保証がないため、Ubuntu全体が停止していた間を復元できるとは扱いません。旧Cloudflare版データの自動移行、外部公開、クラウド版との切替機能、設定編集画面は今回含めません。
+
+[変更履歴](CHANGELOG.md) / [旧版からの移行](docs/MIGRATION.md) / [構成](docs/ARCHITECTURE.md) / [運用](docs/OPERATIONS.md) / [検証結果](docs/VERIFICATION.md) / [一次資料](docs/SOURCES.md)

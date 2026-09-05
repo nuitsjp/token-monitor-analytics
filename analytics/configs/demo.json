@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 8787
+  },
+  "publicOrigin": "http://127.0.0.1:8787",
+  "databasePath": "../../data/demo/analytics.db",
+  "timeZone": "Asia/Tokyo",
+  "detailRetentionDays": 7,
+  "ingestTokenEnv": "TMA_INGEST_TOKEN",
+  "viewerAuth": {
+    "mode": "loopback"
+  },
+  "hubs": [
+    {
+      "id": "hub-a",
+      "label": "Hub A"
+    },
+    {
+      "id": "hub-b",
+      "label": "Hub B"
+    }
+  ],
+  "contracts": [
+    {
+      "id": "demo-weekly",
+      "label": "DEMO / weekly",
+      "hubId": "hub-a",
+      "provider": "claude",
+      "accountKey": "demo-account",
+      "clientIds": [
+        "claude"
+      ],
+      "deviceIds": [
+        "demo-pc"
+      ],
+      "windowKind": "weekly",
+      "windowHours": 168,
+      "monthlyFeeUsd": 200,
+      "attributionConfirmed": true,
+      "minDeltaPercent": 5,
+      "maxSourceSkewSeconds": 120,
+      "maxGapSeconds": 1800
+    }
+  ],
+  "demo": true
+}

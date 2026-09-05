@@ -1,12 +1,10 @@
-# テスト補助
+# 開発・検証ツール
 
-`local-platform.mjs`はNode.js組込みSQLiteで、実Worker/LiveRoomハンドラーをHTTPから呼ぶテスト専用ホストです。WebSocket、DO休止、Cloudflareの認証ゲート、課金を再現しません。代替の本番アーキテクチャや自動フォールバックではありません。通常の開発にはREADMEどおりWranglerを使用します。
+- `check-runtime.mjs`: Node.jsの最低版、組込みSQLite、TypeScriptコアの直接importを確認。
+- `integration.mjs`: 一時ディレクトリーへGo模擬Hub/Collectorをビルドして2 Hubの実HTTP結合を検査。Analytics停止中のoutbox、復旧後の再送、重複防止、再接続、SQLiteバックアップを検証する。GoとNode.jsが必要でnpm installは不要。固定本番設定や実Hubを使用せず、終了時に子プロセスと一時データを片付ける。
 
-```bash
-cd analytics
-npm run build:test
-cd ..
-node tools/local-platform.mjs
+```powershell
+node --experimental-strip-types .\tools\integration.mjs
 ```
 
-別ターミナルで模擬HubとDemo Collectorを動かせます。ループバック8787だけに待受けます。WebSocketは意図的に未実装です。`TMA_TEST_DB`でテスト用SQLiteファイルを指定でき、未指定はメモリーDBです。実データや本番認証情報を渡さないでください。
+Windows/Ubuntu両方のCIへ含めていますが、CI実行済みではありません。今回の実行範囲は[検証結果](../docs/VERIFICATION.md)を参照してください。
