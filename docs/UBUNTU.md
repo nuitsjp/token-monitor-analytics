@@ -1,54 +1,115 @@
 # UbuntuでCollector＋Analyticsを常駐運用
 
-systemdを利用できるUbuntuが対象。**Node.js 24 LTSの最新パッチをシステム上へ導入済み**であることを前提にします。標準APTのnodejsが古い場合、そのまま使用しません。公式配布は[SOURCES](SOURCES.md)のS5を参照してください。
+systemdを利用できるUbuntuを対象にします。配布パッケージのAnalyticsは、miseの開発用Nodeではなく**システムにインストールしたNode.js 24 LTS**で起動します。unitの`ExecStart`は`/usr/bin/node`という絶対パスを使います。
+
+systemd unitには`ProtectHome=true`が設定されています。`/home`配下はサービスから見えないため、miseの`~/.local/share/mise/installs/node/...`やnvmのNodeをサービスの実行Nodeに使えません。miseはWindows/Linuxの開発・パッケージ作成に使い、Ubuntuの常駐サービスには`/usr/bin/node`などのシステムパスに置いたNodeを使います。`/usr/local/bin/node`へ配置する場合は、初回配置後に下記のsystemd drop-inで実行パスを変更します。ホーム配下へのシンボリックリンクも使いません。
+
+Ubuntuで初回配置する前に、NodeのパスとCPUアーキテクチャを確認します。
 
 ```bash
-node --version
+/usr/bin/node --version
 command -v node
 uname -m
 ```
 
-unitは`/usr/bin/node`を想定。`/usr/local/bin/node`等へ配置した場合は、配置前に`deploy/tma-analytics.service`のExecStartを変更します。ホームディレクトリー内のnvm用Nodeは`ProtectHome=true`のサービスから利用できないので、システム用のパスへインストールしてください。
+シェルの`command -v node`だけではサービス用Nodeの確認になりません。実際にunitで使う絶対パスのNodeが24系であることを確認します。以下の`/usr/bin/node`は、別のシステムパスを選んだ場合はそのパスへ読み替えてください。Collectorは配布済みのLinux用Goバイナリーで動くため、Ubuntu側にGo、npm、TypeScriptコンパイラーは必要ありません。
 
-## 1. Windowsで運用パッケージを作り、転送
+## 1. パッケージを作成する
 
-```powershell
-.\scripts\package-ubuntu.ps1 -Architecture amd64
-scp .\dist\tma-ubuntu-amd64.tar.gz USER@UBUNTU:/tmp/
+リポジトリーのルートで、miseを公式手順で導入してから設定を信頼し、固定ツールを取得します。WindowsのPowerShellとLinuxのBashで同じタスク名を使えます。シェルの`mise activate`は必要ありません。作成端末にはOSの`tar`も必要です（Windows標準の`tar.exe`、Ubuntuの`tar`）。mise導入とLinuxのraceテスト用Cコンパイラーの準備は[README](../README.md)を参照してください。
+
+```text
+mise trust
+mise install
 ```
 
-Ubuntuがaarch64ならarm64を選びます。WindowsでGoバイナリーをクロスビルドし、Analyticsのソースと静的ファイルを同梱します。UbuntuにGo/npm/TypeScriptコンパイラーは不要です。
+対象アーキテクチャに応じて、次のいずれかを実行します。
 
-## 2. Ubuntuに配置（初回）
+```text
+# リリース用: setup → check → integration → パッケージ作成 → SHA-256
+mise run release:ubuntu:amd64
+mise run release:ubuntu:arm64
 
-以下のファイル名はamd64の例です。既存版を更新する場合は先に両サービスを停止し、バックアップを作成してください。
+# パッケージ作成と内容検査だけを確認する場合（setup/check/integrationは実行しない）
+mise run package:ubuntu:amd64
+mise run package:ubuntu:arm64
+```
+
+`uname -m`が`x86_64`なら`amd64`、`aarch64`なら`arm64`を選びます。タスクは次の成果物を`dist/`へ作成します（amd64の例）。
+
+```text
+dist/tma-ubuntu-amd64.tar.gz
+dist/tma-ubuntu-amd64.tar.gz.sha256
+```
+
+SHA-256ファイルは同じディレクトリーに置かれ、チェック行はアーカイブのファイル名を参照します。`package:*`はアーカイブ作成後にチェックサム、私有ファイル・旧Workerの混入、CollectorのLinux ELFターゲット、展開したAnalyticsのHTTP/SQLite起動を検査します。`release:*`は環境確認、Go/Nodeのテスト・型検査、結合試験がすべて成功した後にパッケージを作成します。いずれかの検査が失敗した場合、`release:*`はそこで停止します。`package:*`の成功は全テスト・結合試験の合格を意味しません。arm64バイナリー自体の実行試験も含みません。同名の成果物は再作成時に置き換わります。releaseの事前チェックが失敗した場合は既存成果物が残るため、以前のファイルを今回のリリース成功と取り違えないでください。
+
+## 2. 転送してUbuntuでハッシュを検証する
+
+作成したアーカイブと`.sha256`を、リポジトリールートからUbuntuの一時ディレクトリーへ転送します。`scp`の呼び出しはWindowsとLinuxで共通です。
+
+```text
+scp dist/tma-ubuntu-amd64.tar.gz USER@UBUNTU:/tmp/
+scp dist/tma-ubuntu-amd64.tar.gz.sha256 USER@UBUNTU:/tmp/
+```
+
+Ubuntu上では展開前に検証します。
 
 ```bash
-STAGE=$(mktemp -d)
-tar -xzf /tmp/tma-ubuntu-amd64.tar.gz -C "$STAGE"
+cd /tmp
+sha256sum --check --strict tma-ubuntu-amd64.tar.gz.sha256
+```
+
+`tma-ubuntu-amd64.tar.gz: OK`を確認してから配置へ進みます。`FAILED`、`no properly formatted checksum lines found`、ファイル名の不一致が出た場合は展開せず、成果物と`.sha256`を同じリリースから再転送してください。arm64の場合はファイル名の`amd64`を`arm64`へ置き換えます。
+
+## 3. Ubuntuへ初回配置する
+
+初回配置ではサービスをまだ有効化していないため、停止・バックアップ操作は不要です。以下はamd64の例です。ハッシュ検証済みのアーカイブだけを使います。
+
+```bash
+(
+set -euo pipefail
+TMA_RELEASE_ARCH=amd64
+TMA_RELEASE_STAGE=$(mktemp -d /tmp/token-monitor-analytics.XXXXXX)
+trap 'rm -rf "$TMA_RELEASE_STAGE"' EXIT
+tar -xzf "/tmp/tma-ubuntu-${TMA_RELEASE_ARCH}.tar.gz" -C "$TMA_RELEASE_STAGE"
 
 id tma-analytics >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/tma-analytics --shell /usr/sbin/nologin tma-analytics
 id tma-collector >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/tma-collector --shell /usr/sbin/nologin tma-collector
 
 sudo install -d -m 0755 /opt/token-monitor-analytics/analytics
-sudo cp -R "$STAGE/analytics/." /opt/token-monitor-analytics/analytics/
+sudo cp -R "$TMA_RELEASE_STAGE/analytics/." /opt/token-monitor-analytics/analytics/
 sudo chmod -R a+rX /opt/token-monitor-analytics/analytics
-sudo install -m 0755 "$STAGE/tma-collector" /opt/token-monitor-analytics/tma-collector
+sudo install -m 0755 "$TMA_RELEASE_STAGE/tma-collector" /opt/token-monitor-analytics/tma-collector
+
 sudo install -d -m 0755 /etc/token-monitor-analytics
 sudo install -d -m 0700 -o tma-analytics -g tma-analytics /var/lib/tma-analytics
+sudo install -d -m 0700 -o tma-analytics -g tma-analytics /var/lib/tma-analytics/backups
 sudo install -d -m 0700 -o tma-collector -g tma-collector /var/lib/tma-collector
+sudo install -d -m 0700 -o tma-collector -g tma-collector /var/lib/tma-collector/outbox
 
-# 以下の4ファイルは初回だけ配置。更新時は既存設定を上書きしない。
-sudo install -m 0640 -o root -g tma-analytics "$STAGE/deploy/analytics.ubuntu.json" /etc/token-monitor-analytics/analytics.json
-sudo install -m 0640 -o root -g tma-collector "$STAGE/deploy/collector.ubuntu.json" /etc/token-monitor-analytics/collector.json
-sudo install -m 0600 -o root -g root "$STAGE/deploy/analytics.env.example" /etc/token-monitor-analytics/analytics.env
-sudo install -m 0600 -o root -g root "$STAGE/deploy/collector.env.example" /etc/token-monitor-analytics/collector.env
+# 次の4ファイルは初回だけ配置する。更新時は既存ファイルを上書きしない。
+sudo install -m 0640 -o root -g tma-analytics "$TMA_RELEASE_STAGE/deploy/analytics.ubuntu.json" /etc/token-monitor-analytics/analytics.json
+sudo install -m 0640 -o root -g tma-collector "$TMA_RELEASE_STAGE/deploy/collector.ubuntu.json" /etc/token-monitor-analytics/collector.json
+sudo install -m 0600 -o root -g root "$TMA_RELEASE_STAGE/deploy/analytics.env.example" /etc/token-monitor-analytics/analytics.env
+sudo install -m 0600 -o root -g root "$TMA_RELEASE_STAGE/deploy/collector.env.example" /etc/token-monitor-analytics/collector.env
 
-sudo install -m 0644 "$STAGE/deploy/tma-analytics.service" /etc/systemd/system/tma-analytics.service
-sudo install -m 0644 "$STAGE/deploy/tma-collector.service" /etc/systemd/system/tma-collector.service
+sudo install -m 0644 "$TMA_RELEASE_STAGE/deploy/tma-analytics.service" /etc/systemd/system/tma-analytics.service
+sudo install -m 0644 "$TMA_RELEASE_STAGE/deploy/tma-collector.service" /etc/systemd/system/tma-collector.service
+)
 ```
 
-## 3. 設定と認証
+`/usr/bin/node`以外を使う場合は、unit配置後に`sudo systemctl edit tma-analytics.service`で次のdrop-inを保存します（例は`/usr/local/bin/node`）。この上書き設定はunit本体の更新後も保持されます。
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/node --experimental-strip-types /opt/token-monitor-analytics/analytics/runtime/server.mjs --config /etc/token-monitor-analytics/analytics.json
+```
+
+初回配置後に、`/etc/token-monitor-analytics`の設定と認証を編集します。
+
+## 4. 設定と認証を編集する
 
 ```bash
 sudoedit /etc/token-monitor-analytics/analytics.json
@@ -57,56 +118,102 @@ sudoedit /etc/token-monitor-analytics/analytics.env
 sudoedit /etc/token-monitor-analytics/collector.env
 ```
 
-- `collector.json`: HubのURL。`analytics_url`は`http://127.0.0.1:8787`を維持。Hubが1つならHub Bを削除。
-- `analytics.json`: 同じHub ID、必要な契約定義、タイムゾーン。最初は`contracts: []`でよい。
-- `analytics.env`: `TMA_INGEST_TOKEN`、閲覧用`TMA_VIEWER_USER`、`TMA_VIEWER_PASSWORD`。
-- `collector.env`: **同じ**`TMA_INGEST_TOKEN`、Hub A/Bそれぞれの共有シークレット。
+- `collector.json`: HubのURL。`analytics_url`は`http://127.0.0.1:8787`を維持します。Hubが1つならHub Bを削除します。
+- `analytics.json`: `collector.json`と同じHub ID、必要な契約定義、タイムゾーンを設定します。最初は`contracts: []`で受信・保存を確認できます。
+- `analytics.env`: `TMA_INGEST_TOKEN`、閲覧用の`TMA_VIEWER_USER`、`TMA_VIEWER_PASSWORD`を設定します。
+- `collector.env`: `analytics.env`と**同じ**`TMA_INGEST_TOKEN`、Hub A/Bそれぞれの共有シークレットを設定します。閲覧パスワードは設定しません。
 
-ランダム値の生成例（出力は安全に保管し、公開しない）:
+ランダム値はシステムNodeの絶対パスで生成します。出力をログやリポジトリーへ保存しないでください。
 
 ```bash
-node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+/usr/bin/node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-送信トークンと閲覧パスワードは別々に生成します。送信トークンは32文字以上、閲覧パスワードは16文字以上。`REPLACE_`で始まる例示値は拒否します。EnvironmentFileはシェルスクリプトではないので`export`やコマンド置換を書かないでください。Hub Secretに特殊文字がある場合はsystemdのEnvironmentFileの引用規則に従います。[S7]
+送信トークンと閲覧パスワードは別々に生成します。送信トークンは32文字以上、閲覧パスワードは16文字以上にします。`REPLACE_`で始まる例示値は使用しません。EnvironmentFileはシェルスクリプトではないため、`export`やコマンド置換を書かないでください。Hub Secretに特殊文字がある場合はsystemdのEnvironmentFileの引用規則に従います。[S7](SOURCES.md)
 
-## 4. 起動
+## 5. 初回起動と確認
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now tma-analytics tma-collector
-sudo systemctl status tma-analytics tma-collector --no-pager
-sudo journalctl -u tma-analytics -u tma-collector -n 80 --no-pager
+sudo systemctl enable --now tma-analytics.service tma-collector.service
+sudo systemctl status tma-analytics.service tma-collector.service --no-pager
+sudo journalctl -u tma-analytics.service -u tma-collector.service -n 80 --no-pager
 curl -fsS http://127.0.0.1:8787/api/health
 ```
 
-Analyticsの`Analytics ready`、Collectorの`SSE connected`と`uploaded`を確認。Nodeの実行パス、設定、認証に問題があれば修正して再起動してください。短時間に起動失敗を繰り返しstart-limitへ到達した場合は、修正後に`sudo systemctl reset-failed tma-analytics tma-collector`を実行します。
+ログの`Analytics ready`、Collectorの`SSE connected`と`uploaded`、`/api/health`の成功を確認します。Nodeの実行パス、設定、認証に問題があれば修正してから再起動します。短時間に起動失敗を繰り返してstart-limitへ到達した場合は、修正後に次を実行します。
 
-Collector unitはAnalytics起動後に起動を試みますが、**Analyticsの実際の起動完了を依存関係だけでは保証しません**。一時的な接続失敗はoutbox＋再試行で処理します。Analyticsが停止してもCollectorを連動停止させる`Requires`/`PartOf`は設けていません。
+```bash
+sudo systemctl reset-failed tma-analytics.service tma-collector.service
+sudo systemctl restart tma-analytics.service tma-collector.service
+```
 
-## 5. Windowsから閲覧
+Collector unitはAnalytics起動後に起動を試みますが、**Analyticsの実際の起動完了を依存関係だけでは保証しません**。一時的な接続失敗はoutboxと再試行で処理します。Analyticsが停止してもCollectorを連動停止させる`Requires`/`PartOf`は設けていません。
 
-WindowsでローカルAnalyticsを止め、SSH転送を開始します。
+## 6. Windowsから閲覧する
+
+WindowsでローカルAnalyticsを停止し、SSH転送を開始します。
 
 ```powershell
 ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:8787:127.0.0.1:8787 USER@UBUNTU
 ```
 
-`http://127.0.0.1:8787`を開き、閲覧用認証を入力します。SSHサーバーがポート転送を許可している必要があります。SSHを閉じてもUbuntuの2サービスは動き続けます。[S8]
+`http://127.0.0.1:8787`を開き、閲覧用認証を入力します。SSHサーバーがポート転送を許可している必要があります。SSHを閉じてもUbuntuの2サービスは動き続けます。[S8](SOURCES.md)
 
-初期版は`http://UBUNTU_IP:8787`ではアクセスできません。これはloopbackだけへbindする意図した設定です。LANへ直接開放する前に[SECURITY](SECURITY.md)を確認してください。
+初期設定では`http://UBUNTU_IP:8787`からアクセスできません。Analyticsはloopbackだけへbindします。LANへ直接開放する前に[SECURITY](SECURITY.md)を確認してください。
 
-## 6. バックアップと更新
+## 7. 更新する
+
+更新では、設定・環境ファイル・SQLite DB・Collectorのoutboxを保持します。停止前にバックアップを採ると実行中のDBを整合したコピーにできますが、コード交換のための更新手順では**サービス停止後にバックアップを採る順序**に統一します。これにより、バックアップ完了後に古いプロセスが書き込むことがありません。
+
+ハッシュ検証済みの新しいアーカイブを`/tmp`へ置いた状態で、次を実行します。
 
 ```bash
+(
+set -euo pipefail
+TMA_RELEASE_ARCH=amd64
+TMA_RELEASE_STAMP=$(date +%Y%m%d-%H%M%S)
+sudo systemctl stop tma-collector.service
+sudo systemctl stop tma-analytics.service
+
+# 停止後に、更新前のSQLiteをバックアップする。
+sudo install -d -m 0700 -o tma-analytics -g tma-analytics /var/lib/tma-analytics/backups
 sudo -u tma-analytics /usr/bin/node --experimental-strip-types \
   /opt/token-monitor-analytics/analytics/runtime/backup.mjs \
   --config /etc/token-monitor-analytics/analytics.json \
-  --output /var/lib/tma-analytics/backups/analytics-$(date +%Y%m%d-%H%M%S).db
+  --output "/var/lib/tma-analytics/backups/analytics-${TMA_RELEASE_STAMP}.db"
+
+TMA_RELEASE_STAGE=$(mktemp -d /tmp/token-monitor-analytics.XXXXXX)
+trap 'rm -rf "$TMA_RELEASE_STAGE"' EXIT
+tar -xzf "/tmp/tma-ubuntu-${TMA_RELEASE_ARCH}.tar.gz" -C "$TMA_RELEASE_STAGE"
+
+# 旧コードを残し、新しいディレクトリーへ交換する（削除済みファイルを混在させない）。
+sudo mv /opt/token-monitor-analytics/analytics "/opt/token-monitor-analytics/analytics.previous-${TMA_RELEASE_STAMP}"
+sudo cp -p /opt/token-monitor-analytics/tma-collector "/opt/token-monitor-analytics/tma-collector.previous-${TMA_RELEASE_STAMP}"
+sudo install -d -m 0755 /opt/token-monitor-analytics/analytics
+sudo cp -R "$TMA_RELEASE_STAGE/analytics/." /opt/token-monitor-analytics/analytics/
+sudo chmod -R a+rX /opt/token-monitor-analytics/analytics
+sudo install -m 0755 "$TMA_RELEASE_STAGE/tma-collector" /opt/token-monitor-analytics/tma-collector
+
+# unitは更新する。設定・env・DB・outboxはここではコピーしない。
+sudo install -m 0644 "$TMA_RELEASE_STAGE/deploy/tma-analytics.service" /etc/systemd/system/tma-analytics.service
+sudo install -m 0644 "$TMA_RELEASE_STAGE/deploy/tma-collector.service" /etc/systemd/system/tma-collector.service
+
+sudo systemctl daemon-reload
+sudo systemctl start tma-analytics.service
+sudo systemctl start tma-collector.service
+sudo systemctl status tma-analytics.service tma-collector.service --no-pager
+sudo journalctl -u tma-analytics.service -u tma-collector.service -n 80 --no-pager
+curl -fsS http://127.0.0.1:8787/api/health
+)
 ```
 
-SQLiteバックアップAPIで稼働中のDBから整合したコピーを作成します。同じ名前は上書きしません。DBとバックアップは自動的に遠隔地へ複製されません。端末自体の故障に備えるには、このファイルを別媒体へ保管してください。[S1][S4]
+途中で失敗した場合は後続の起動を行わず、原因を確認してください。保存した旧コードとDBバックアップは受入確認が終わるまで保持します。マイグレーション後のDBを旧コードでそのまま開けるとは限らないため、コードだけ戻す自動ロールバックは行いません。
 
-コード更新は、バックアップ→`sudo systemctl stop tma-collector tma-analytics`→コード/バイナリー交換→`sudo systemctl start tma-analytics tma-collector`です。`/etc/token-monitor-analytics`、`/var/lib/tma-analytics`、`/var/lib/tma-collector`は上書き・削除しません。適用済みSQLファイルを変更するのではなく、新しいマイグレーションを追加します。
+`/etc/token-monitor-analytics/analytics.json`、`collector.json`、`analytics.env`、`collector.env`、`/var/lib/tma-analytics/analytics.db`、`/var/lib/tma-analytics/backups/`、`/var/lib/tma-collector/outbox/`は更新時に上書き・削除しません。`analytics/migrations`は起動時に適用されるため、適用済みSQLファイルを変更せず、新しいマイグレーションを追加します。起動後は初回と同じログ、ヘルス、Hub接続、送信状態を確認します。
 
-停止/起動、OS再起動、24時間連続、実Hubの料金・利用率対応は利用者の環境で受入確認してください。作成環境でsystemd常駐を実行済みという意味ではありません。
+## 8. 受入確認と範囲
+
+この手順はUbuntu/systemd実機での受入試験を代替しません。停止・起動、OS再起動、24時間連続、実Hubの料金・利用率対応、バックアップからの復元は、利用者のUbuntuで実行して結果を記録してください。今回の作業ではリモートUbuntuへの`scp`、サービス操作、systemd常駐を実行していません。
+
+`mise run package:ubuntu:*`でアーカイブとハッシュの作成だけを検証できても、Ubuntu上のサービス起動成功や実Hub接続成功とは記録しません。[S7](SOURCES.md)

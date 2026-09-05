@@ -1,10 +1,10 @@
 #requires -Version 7.0
 param([switch]$Typecheck)
-$ErrorActionPreference='Stop'; $Root=Split-Path $PSScriptRoot -Parent
-Push-Location "$Root/collector"
-try { & go test ./...; if($LASTEXITCODE -ne 0){throw 'Go tests failed.'}; & go vet ./...; if($LASTEXITCODE -ne 0){throw 'go vet failed.'} } finally { Pop-Location }
-Push-Location "$Root/analytics"
+$ErrorActionPreference='Stop'
+# Compatibility switch: check now always includes type checking.
+$Root=Split-Path $PSScriptRoot -Parent
+Push-Location $Root
 try {
- & npm test; if($LASTEXITCODE -ne 0){throw 'Web/server tests failed.'}
- if($Typecheck){& npm run typecheck; if($LASTEXITCODE -ne 0){throw 'Type checking failed; bootstrap.ps1 -InstallDevTools installs tsc.'}}
+ & mise run check
+ if($LASTEXITCODE -ne 0){throw 'Checks failed. Run mise run setup first to install development tools.'}
 } finally { Pop-Location }

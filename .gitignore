@@ -1,4 +1,6 @@
 # Local private configuration and data
+.mise.local.toml
+mise.local.toml
 **/config.local.json
 **/*.env
 !**/*.env.example

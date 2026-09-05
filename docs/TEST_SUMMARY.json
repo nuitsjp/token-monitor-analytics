@@ -1,47 +1,45 @@
 {
   "version": "0.3.0",
   "date": "2026-09-05",
-  "base_archive": "token-monitor-analytics-web-ubuntu-starter-20260905.zip",
-  "base_sha256": "a05eab42d361a0d922830f9f2dde0d39ebce39a91e93eb0add3a25cfeec9d3cd",
   "environment": {
     "os": "Linux amd64 container",
-    "go": "1.23.2",
-    "node": "22.16.0",
+    "mise": "2026.9.1",
+    "go": "1.26.8",
+    "node": "24.20.0",
     "typescript": "5.8.3"
   },
+  "command": "mise run 'release:ubuntu:*'",
+  "exit_code": 0,
+  "setup": "npm ci --include=dev and native runtime checks passed",
   "go_tests": {
-    "top_level_passed": 23,
-    "including_subtests_passed": 26,
+    "status": "passed",
     "race": true,
-    "vet": "passed"
+    "vet": "passed",
+    "gofmt": "passed"
   },
   "node_tests": {
-    "passed": 38,
+    "passed": 43,
     "failed": 0,
     "sqlite": "native node:sqlite",
     "http": "native node:http"
   },
   "typecheck": "passed",
-  "integration": "two mock Hubs / actual Go Collector / native Analytics / SQLite / SSE / restart retry / backup passed",
+  "integration": "two mock Hubs / Go Collector / native Analytics / SQLite / SSE / restart retry / backup passed",
   "cross_build": [
-    "windows/amd64",
     "linux/amd64",
     "linux/arm64"
   ],
-  "package_smoke": "linux amd64 tar creation, allowlist, extraction, Node startup and SQLite migration passed",
-  "browser": {
-    "renderer_fixture": "passed",
-    "real_http": "blocked by environment policy ERR_BLOCKED_BY_ADMINISTRATOR"
-  },
+  "package_smoke": "both architectures: SHA-256 / private file exclusion / ELF target / extracted Analytics HTTP and SQLite passed",
   "not_executed": [
     "Windows runtime",
     "PowerShell",
+    "GitHub Actions",
     "Ubuntu systemd",
     "SSH forwarding",
-    "Node 24 runtime",
+    "arm64 binary execution",
     "real upstream Hub",
+    "browser UI",
     "24h soak",
-    "npm ci download",
     "Cloudflare D1 data import"
   ]
 }

@@ -2,7 +2,7 @@
 
 - 0.2.0 Web/Ubuntu版を元に修正。Go Collector・SSE購読・outbox・推定ステートマシン・3画面を継承。
 - AnalyticsをNode.js HTTPサーバー＋ローカルSQLiteへ変更。Windows/Ubuntu共通ランタイム。
-- D1/Worker/LiveRoom/Cloudflare Access/Wranglerを初期実装から削除。
+- D1/Worker/LiveRoom/Cloudflare Access/Wranglerを削除。残っていた旧エントリーポイント・設定・検証ホストを整理し、認証テストをネイティブNode版へ移行。
 - ブラウザーのライブ通知をWebSocketからSSEへ変更。Hub側のSSEは変更なし。
 - SQLiteの起動時マイグレーション・取込み全体のトランザクション・バックアップを追加。
 - 設定をTypeScriptソースからJSONへ移動。環境変数でシークレットを供給。

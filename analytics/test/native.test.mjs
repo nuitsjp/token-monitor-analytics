@@ -104,6 +104,25 @@ test('concurrent requests are serialized without losing latest state or duplicat
  assert.ok(responses.every(r=>r.status===200));assert.equal(f.app.db.sql.prepare('SELECT count(*) n FROM observations').get().n,5);
  const state=await (await f.request('/api/state')).json();assert.equal(state.hubs[0].eventId,observation(4).eventId);
 });
+test('failed HTTP ingest sends no ACK or update; retry notifies only after COMMIT',async t=>{
+ const f=await serverFixture(t),observer=new DatabaseSync(f.c.databasePath,{readOnly:true});
+ cleanup(t,()=>observer.close());
+ const notifiedCounts=[],updated=f.app.live.updated.bind(f.app.live);
+ f.app.live.updated=ids=>{
+  // A separate SQLite connection can see these rows only after the writer commits.
+  notifiedCounts.push(observer.prepare('SELECT count(*) n FROM observations').get().n);
+  updated(ids);
+ };
+ f.app.db.sql.exec("CREATE TRIGGER fail_daily BEFORE INSERT ON daily_estimates BEGIN SELECT RAISE(ABORT, 'test failure'); END;");
+ const event=observation(),failed=await f.request('/api/ingest',post([event]));
+ assert.equal(failed.status,500);assert.deepEqual(await failed.json(),{error:'internal_error'});
+ assert.deepEqual(notifiedCounts,[]);
+ assert.equal(observer.prepare('SELECT count(*) n FROM observations').get().n,0);
+ f.app.db.sql.exec('DROP TRIGGER fail_daily');
+ const retry=await f.request('/api/ingest',post([event]));
+ assert.equal(retry.status,200);assert.deepEqual(await retry.json(),{ok:true,acked:[event.eventId]});
+ assert.deepEqual(notifiedCounts,[1]);
+});
 test('schema errors, unknown hubs, wrong methods, body sizes are rejected',async t=>{
  const f=await serverFixture(t);assert.equal((await f.request('/api/ingest')).status,405);
  assert.equal((await f.request('/api/ingest',post([{...observation(),hubId:'unknown'}]))).status,400);
