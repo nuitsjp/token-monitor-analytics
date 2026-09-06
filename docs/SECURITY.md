@@ -16,7 +16,7 @@ Basic認証はユーザー/権限管理機構ではなく、単一の閲覧資�
 
 ## 明示的なTailscale閲覧
 
-[Ubuntu発行タスク](PUBLICATION.md)はTailscale IPv4へ閲覧専用HTTP待受を追加します。接続はTailscale内で暗号化され、Basic認証を維持します。loopback側だけが取込みを受け付けます。閲覧用待受は有効な取込みトークンやX-Forwarded-*ヘッダーがあっても取込みを拒否します。両待受は同一のSQLite・直列化処理・SSE通知を共有します。
+[Ubuntu発行タスク](PUBLICATION.md)はTailscale IPv4へ閲覧専用HTTP待受を追加します。接続はTailscale内で暗号化されます。明示的な`viewerAuth.mode=tailscale`ではTailscaleを認証境界とし、アプリの閲覧認証を要求しません。このモードは専用tailnet待受がある場合だけ使用できます。loopback側だけが取込みを受け付けます。閲覧用待受は有効な取込みトークンやX-Forwarded-*ヘッダーがあっても取込みを拒否します。両待受は同一のSQLite・直列化処理・SSE通知を共有します。
 
 `tailnetViewer`は明示設定でのみ有効になり、起動時に指定IPがTailscaleインターフェースへ割り当て済みであることを確認します。0.0.0.0やLAN IPでは起動しません。一般インターネット公開、Serve、Funnelは設定しません。通常の非loopback bindに対するHTTPS/Basic必須条件は維持します。
 

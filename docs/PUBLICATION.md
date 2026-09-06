@@ -1,6 +1,6 @@
 # Ubuntuの環境構築と通常ユーザーによる発行
 
-Tailscaleに接続した端末からHTTPで閲覧します。Analyticsはloopbackの取込み用待受と、Tailscale IPv4だけの閲覧用待受を持ち、同じSQLiteとSSEを共有します。閲覧側の`/api/ingest`は遮断し、閲覧にはBasic認証を使います。通信経路はTailscaleで暗号化されます。一般インターネットへの匿名公開ではありません。
+Tailscaleに接続した端末からHTTPで閲覧します。Analyticsはloopbackの取込み用待受と、Tailscale IPv4だけの閲覧用待受を持ち、同じSQLiteとSSEを共有します。閲覧側の`/api/ingest`は遮断し、閲覧はTailscaleを認証境界とし、アプリのID・パスワードを要求しません。通信経路はTailscaleで暗号化されます。一般インターネットへの匿名公開ではありません。
 
 | タスク | 権限・役割 |
 | --- | --- |
@@ -45,7 +45,7 @@ unset TMA_INPUT_SECRET
 
 URLは実HubのHTTPS originに置き換えます。複数Hubの場合は0600のJSONファイルに`[{"id":"hub-a","url":"https://YOUR-HUB.example","secretFile":"/absolute/private/hub-secret"}]`の形式で記載し、`--hubs-file /absolute/private/hubs.json`で渡します。
 
-TailscaleのIPとDNS名を検出し、既定ポート8788を使います。変更には`--port 8789`などを指定します。閲覧パスワードと取込みトークンを別々に生成し、再実行時は既存値を保持します。Hub未指定でもネットワーク・認証の準備を保存しますが、Hub設定が完成するまで非ゼロで終了します。Hubを差し替える場合、既存契約が参照するHubの削除は拒否します。
+TailscaleのIPとDNS名を検出し、既定ポート8788を使います。変更には`--port 8789`などを指定します。取込みトークンは再実行時に保持します。閲覧モードは`tailscale`に揃えます。以前の閲覧資格情報がenvに残っていても使用しません。Hub未指定でもネットワーク・認証の準備を保存しますが、Hub設定が完成するまで非ゼロで終了します。Hubを差し替える場合、既存契約が参照するHubの削除は拒否します。
 
 | 配置先 | 内容 |
 | --- | --- |
@@ -57,7 +57,7 @@ TailscaleのIPとDNS名を検出し、既定ポート8788を使います。変�
 | `~/.config/systemd/user/tma-{analytics,collector}.service` | ユーザーサービス定義 |
 | `/var/lib/tma-lock/deploy.lock` | 構築・設定・発行の共通排他ロック |
 
-閲覧資格情報は`/var/lib/tma-deploy/config/analytics.env`を手元で確認します。契約定義などは同じディレクトリーの`analytics.json`を編集します。デモDB・認証を流用しません。
+閲覧資格情報の入力は不要です。契約定義などは同じディレクトリーの`analytics.json`を編集します。デモDB・認証を流用しません。
 
 ## 発行と確認
 
@@ -70,7 +70,7 @@ mise run status:ubuntu
 
 変更があればCollector→Analyticsの順で停止し、既存SQLiteをバックアップして内容ハッシュ付きリリースへ`current`を原子的に交換します。設定・DB・outboxを保持します。同一内容ならコード交換・バックアップ・稼働中アプリの再起動をスキップします。停止中サービスは復旧します。
 
-active/enabled、正式DBモード、Tailscale DNS経由のHTTP、Basic認証、閲覧側ingest遮断、SSEを確認して成功を記録します。失敗時は非ゼロで終了し、成功記録を更新しません。DB移行後のコードだけの自動ロールバックは行いません。
+active/enabled、正式DBモード、Tailscale DNS経由のHTTP、認証入力なしでの閲覧、閲覧側ingest遮断、SSEを確認して成功を記録します。失敗時は非ゼロで終了し、成功記録を更新しません。DB移行後のコードだけの自動ロールバックは行いません。
 
 `status:ubuntu`は実際に疎通したURLだけをVerifiedとして表示します。このホストの予定URLは`http://home-ubuntu.tail1bf795.ts.net:8788`です。別のTailscale端末での到達性と実Hubの受信も確認してください。OS再起動試験は別途実施し、linger/enable検査だけで再起動試験成功とは扱いません。
 

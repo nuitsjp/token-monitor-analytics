@@ -16,7 +16,7 @@ async function main(){
   try{
    const plan=readJSON(`${destination}/connection.json`),config=validateConfiguration(plan,selectConfiguration({}));
    check('configured address matches Tailscale',identity?.tailnetIP===plan.tailnetIP&&identity?.hostname===plan.hostname);
-   const response=await fetch(plan.publicOrigin+'/api/state',{headers:{Authorization:'Basic '+Buffer.from(config.auth.user+':'+config.auth.password).toString('base64')},signal:AbortSignal.timeout(5000)});
+   const response=await fetch(plan.publicOrigin+'/api/state',{headers:config.analytics.viewerAuth.mode==='basic'?{Authorization:'Basic '+Buffer.from(config.auth.user+':'+config.auth.password).toString('base64')}:{},signal:AbortSignal.timeout(5000)});
    check('tailnet viewer HTTP',response.status===200);
    if(response.status===200){const state=await response.json();console.log(`Verified viewer URL: ${plan.publicOrigin}`);check('Hub observations received',state.hubs?.length>0);}
   }catch{check('valid configuration and reachable viewer',false);}

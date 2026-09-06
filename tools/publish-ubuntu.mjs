@@ -35,14 +35,14 @@ function viewerRequest(plan,route,{authorization,local=false,sse=false}={}){
 }
 async function verify(plan,config){
  for(const unit of units){if(!active(unit)||systemctl('is-enabled',unit).trim()!=='enabled')throw new Error('A published service is not active and enabled.');}
- const authorization=`Basic ${Buffer.from(`${config.auth.user}:${config.auth.password}`).toString('base64')}`;
+ const authorization=config.analytics.viewerAuth.mode==='basic'?`Basic ${Buffer.from(`${config.auth.user}:${config.auth.password}`).toString('base64')}`:undefined;
  for(const local of [false]){
-  for(const [route,auth,expected] of [['/api/state',undefined,401],['/api/ingest',undefined,404],['/',authorization,200],['/api/state',authorization,200]]){
+  for(const [route,auth,expected] of [['/api/state',undefined,authorization?401:200],['/api/ingest',undefined,404],['/',authorization,200],['/api/state',authorization,200]]){
    if(await viewerRequest(plan,route,{authorization:auth,local})!==expected)throw new Error('Tailnet authentication/routing verification failed.');
   }
   if(await viewerRequest(plan,'/api/live',{authorization,local,sse:true})!==200)throw new Error('Tailnet SSE verification failed.');
  }
- console.log('PASS: user services active/enabled, tailnet HTTP, Basic auth, private ingest, SSE.');
+ console.log('PASS: user services active/enabled, tailnet HTTP, configured viewer access, private ingest, SSE.');
 }
 async function apply(architecture){
  if(process.getuid()===0)throw new Error('Publish as the configured ordinary user; root publication is prohibited.');
@@ -91,7 +91,8 @@ async function apply(architecture){
    for(const unit of [units[1],units[0]])if(systemctl('show','--property=LoadState','--value',unit).trim()!=='not-found')systemctl('stop',unit);
    if(fs.existsSync(config.analytics.databasePath)){
     const backup=`/var/lib/tma-analytics/backups/before-${Date.now()}-${releaseId.slice(0,12)}.db`;
-    const backupRuntime=currentRelease??stage;
+    // The staged reader understands the newly configured viewer mode.
+    const backupRuntime=stage;
     run(`${stage}/node`,['--experimental-strip-types',`${backupRuntime}/analytics/runtime/backup.mjs`,'--config',`${destination}/analytics.json`,'--output',backup]);
     fs.chmodSync(backup,0o600);
    }

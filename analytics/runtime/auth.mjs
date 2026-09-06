@@ -4,6 +4,7 @@ const digest=value=>createHash('sha256').update(String(value)).digest();
 export const equalSecret=(a,b)=>typeof a==='string'&&typeof b==='string'&&timingSafeEqual(digest(a),digest(b));
 export function canIngest(request,auth){return equalSecret(request.headers.authorization,`Bearer ${auth.ingest}`);}
 export function canView(request,config,auth){
+ if(config.viewerAuth.mode==='tailscale')return !!config.tailnetViewer&&(request.socket.localAddress===config.tailnetViewer.host||isLoopback(request.socket.remoteAddress));
  if(config.viewerAuth.mode==='loopback')return isLoopback(request.socket.remoteAddress);
  const header=request.headers.authorization;
  if(typeof header!=='string'||!header.startsWith('Basic ')||header.length>4096)return false;

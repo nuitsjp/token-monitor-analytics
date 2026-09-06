@@ -29,7 +29,7 @@ export function loadConfig(filename) {
  new Intl.DateTimeFormat('en',{timeZone:raw.timeZone});
  if (!envName(raw.ingestTokenEnv)) throw new Error('Invalid ingestTokenEnv');
  keys(raw.viewerAuth,['mode','userEnv','passwordEnv'],'viewerAuth');
- if (!['loopback','basic'].includes(raw.viewerAuth.mode)) throw new Error('viewerAuth mode must be loopback or basic');
+ if (!['loopback','basic','tailscale'].includes(raw.viewerAuth.mode)) throw new Error('viewerAuth mode must be loopback, basic or tailscale');
  if (raw.viewerAuth.mode === 'basic' && (!envName(raw.viewerAuth.userEnv) || !envName(raw.viewerAuth.passwordEnv))) throw new Error('Basic auth environment names required');
  // No plaintext non-loopback listener. Remote publication requires an explicit HTTPS reverse proxy origin.
  if (!isLoopback(host) && (raw.viewerAuth.mode !== 'basic' || origin.protocol !== 'https:')) throw new Error('Non-loopback listener requires basic auth and an HTTPS reverse proxy origin');
@@ -37,8 +37,9 @@ export function loadConfig(filename) {
  if (raw.demo && (!isLoopback(host) || raw.viewerAuth.mode !== 'loopback' || origin.protocol !== 'http:')) throw new Error('Demo must remain loopback-only');
  if(raw.tailnetViewer!==undefined){
   keys(raw.tailnetViewer,['host','port'],'tailnetViewer');
-  if(!isTailnetIPv4(raw.tailnetViewer.host)||!Number.isInteger(raw.tailnetViewer.port)||raw.tailnetViewer.port<1024||raw.tailnetViewer.port>65535||host!=='127.0.0.1'||raw.demo||raw.viewerAuth.mode!=='basic'||origin.protocol!=='http:'||!origin.hostname.endsWith('.ts.net')||Number(origin.port||80)!==raw.tailnetViewer.port)throw new Error('Tailnet viewer requires an explicit Tailscale IPv4, HTTP ts.net origin, Basic auth, REAL data and loopback ingest.');
+  if(!isTailnetIPv4(raw.tailnetViewer.host)||!Number.isInteger(raw.tailnetViewer.port)||raw.tailnetViewer.port<1024||raw.tailnetViewer.port>65535||host!=='127.0.0.1'||raw.demo||!['basic','tailscale'].includes(raw.viewerAuth.mode)||origin.protocol!=='http:'||!origin.hostname.endsWith('.ts.net')||Number(origin.port||80)!==raw.tailnetViewer.port)throw new Error('Tailnet viewer requires an explicit Tailscale IPv4, HTTP ts.net origin, basic/tailscale mode, REAL data and loopback ingest.');
  }
+ if(raw.viewerAuth.mode==='tailscale'&&!raw.tailnetViewer)throw new Error('Tailscale viewer mode requires a dedicated tailnet listener.');
  if (!Array.isArray(raw.hubs) || raw.hubs.length < 1 || raw.hubs.length > 16) throw new Error('Configure 1..16 hubs');
  const ids = new Set();
  for (const hub of raw.hubs) {

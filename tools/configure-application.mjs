@@ -19,7 +19,7 @@ export function configureApplication({dir,identity,port=8788,hubs}){
  aEnv.TMA_INGEST_TOKEN=token;cEnv.TMA_INGEST_TOKEN=token;
  aEnv.TMA_VIEWER_USER??='viewer';aEnv.TMA_VIEWER_PASSWORD??=randomBytes(24).toString('hex');
  const oldA=json('analytics.json'),oldC=json('collector.json');
- if(oldA&&(oldA.ingestTokenEnv!=='TMA_INGEST_TOKEN'||oldA.viewerAuth.userEnv!=='TMA_VIEWER_USER'||oldA.viewerAuth.passwordEnv!=='TMA_VIEWER_PASSWORD'))throw new Error('Existing custom credential names require explicit migration.');
+ if(oldA&&(oldA.ingestTokenEnv!=='TMA_INGEST_TOKEN'||(oldA.viewerAuth.mode==='basic'&&(oldA.viewerAuth.userEnv!=='TMA_VIEWER_USER'||oldA.viewerAuth.passwordEnv!=='TMA_VIEWER_PASSWORD'))))throw new Error('Existing custom credential names require explicit migration.');
  let configuredHubs=oldC?.hubs;
  if(hubs){
   if(!Array.isArray(hubs)||hubs.length<1||hubs.length>8)throw new Error('Configure 1..8 real Hubs.');
@@ -35,6 +35,7 @@ export function configureApplication({dir,identity,port=8788,hubs}){
  const outputs=[['analytics.env',envText(aEnv)],['collector.env',envText(cEnv)],['connection.json',JSON.stringify(plan,null,2)+'\n']];
  if(configuredHubs?.length){
   const analytics={version:1,listen:{host:'127.0.0.1',port},publicOrigin:plan.publicOrigin,databasePath:'/var/lib/tma-analytics/analytics.db',timeZone:'Asia/Tokyo',detailRetentionDays:7,ingestTokenEnv:'TMA_INGEST_TOKEN',viewerAuth:{mode:'basic',userEnv:'TMA_VIEWER_USER',passwordEnv:'TMA_VIEWER_PASSWORD'},contracts:[],...oldA,demo:false,tailnetViewer:{host:identity.tailnetIP,port}};
+  analytics.viewerAuth={mode:'tailscale'};
   analytics.listen={host:'127.0.0.1',port};analytics.publicOrigin=plan.publicOrigin;
   analytics.hubs=configuredHubs.map(h=>({id:h.id,label:oldA?.hubs.find(a=>a.id===h.id)?.label??h.id}));
   if(analytics.contracts.some(c=>!configuredHubs.some(h=>h.id===c.hubId)))throw new Error('A removed Hub is still referenced by a contract; no configuration was changed.');

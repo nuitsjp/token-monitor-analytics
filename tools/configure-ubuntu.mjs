@@ -26,6 +26,6 @@ async function main(){
  const result=configureApplication({dir:destination,identity:tailnetIdentity(),port:Number(values.port??old?.port??8788),hubs});
  console.log(result.changed?'Private configuration saved.':'SKIP: configuration already matches.');
  if(!result.ready)throw new Error('Network and viewer credentials are ready, but Hub input is missing. Rerun configure:ubuntu -- --hub-url HTTPS_ORIGIN --hub-secret SECRET (or --hub-secret-file PRIVATE_FILE). No app was published.');
- console.log(`Configuration ready for ${result.publicOrigin}; not published yet. Viewer credentials are in ${destination}/analytics.env (0600).`);
+ console.log(`Configuration ready for ${result.publicOrigin}; not published yet. Viewer access uses the Tailscale boundary without an application password.`);
 }
 main().catch(report);

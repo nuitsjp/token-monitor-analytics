@@ -40,8 +40,8 @@ export function validateConfiguration(plan,selected){
  const analytics=loadConfig(selected.analyticsConfig),collector=readJSON(selected.collectorConfig);
  const analyticsEnv=readEnvironment(selected.analyticsEnv),collectorEnv=readEnvironment(selected.collectorEnv);
  if(readJSON(selected.analyticsConfig).databasePath!=='/var/lib/tma-analytics/analytics.db'||!analytics.tailnetViewer||analytics.tailnetViewer.host!==plan.tailnetIP||analytics.tailnetViewer.port!==plan.port)throw new Error('Use the absolute production DB path and matching tailnet viewer settings.');
- if(analytics.demo||analytics.viewerAuth.mode!=='basic'||analytics.listen.host!=='127.0.0.1'||analytics.publicOrigin!==plan.publicOrigin||analytics.databasePath!=='/var/lib/tma-analytics/analytics.db'){
-  throw new Error('Publication requires REAL mode, Basic auth, 127.0.0.1, matching HTTP tailnet origin and /var/lib/tma-analytics/analytics.db.');
+ if(analytics.demo||!['basic','tailscale'].includes(analytics.viewerAuth.mode)||analytics.listen.host!=='127.0.0.1'||analytics.publicOrigin!==plan.publicOrigin||analytics.databasePath!=='/var/lib/tma-analytics/analytics.db'){
+  throw new Error('Publication requires REAL mode, basic/tailscale viewer, 127.0.0.1, matching HTTP tailnet origin and /var/lib/tma-analytics/analytics.db.');
  }
  const auth=credentials(analytics,analyticsEnv);
  if(collector.analytics_url!==`http://127.0.0.1:${analytics.listen.port}`||collector.spool_dir!=='/var/lib/tma-collector/outbox'||collectorEnv[collector.ingest_token_env]!==auth.ingest){
