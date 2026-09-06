@@ -402,3 +402,51 @@ test('UpdateManager coalesces concurrent checkUpdate calls and broadcasts state 
   }
 });
 
+test('readUpdateState does not overwrite completed status if runner finishes during service check', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-reconcile-race-'));
+  const statePath = path.join(dir, 'update-state.json');
+
+  try {
+    const runningJob = {
+      jobId: 'job-race-1',
+      targetCommitSha: '0123456789abcdef0123456789abcdef01234567',
+      targetCommitDate: '2026-09-06T12:00:00Z',
+      targetMessage: 'Test message',
+      status: 'running',
+      stage: 'deploying',
+      errorCode: null,
+      startedAt: '2026-09-06T12:00:00Z',
+      finishedAt: null
+    };
+    saveUpdateState(statePath, runningJob);
+
+    // Simulate race: checkServiceActive is called, and during that check the runner saves completed/success
+    const result = readUpdateState(statePath, {
+      checkServiceActive: () => {
+        saveUpdateState(statePath, {
+          ...runningJob,
+          status: 'completed',
+          stage: 'success',
+          finishedAt: '2026-09-06T12:02:00Z'
+        });
+        return false;
+      },
+      now: () => '2026-09-06T12:05:00Z'
+    });
+
+    // Should preserve completed state and NOT overwrite with aborted
+    assert.equal(result.status, 'completed');
+    assert.equal(result.stage, 'success');
+    assert.equal(result.finishedAt, '2026-09-06T12:02:00Z');
+
+    // Verify state on disk remains completed
+    const onDisk = readUpdateState(statePath, {checkServiceActive: () => false});
+    assert.equal(onDisk.status, 'completed');
+    assert.equal(onDisk.stage, 'success');
+    assert.equal(onDisk.finishedAt, '2026-09-06T12:02:00Z');
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+

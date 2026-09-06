@@ -184,20 +184,24 @@ async function main() {
   }
 }
 
-if (process.argv.includes('--apply')) {
-  runUpdate().catch(err => {
-    const state = readUpdateState(updateStateFile, {checkServiceActive: () => false});
-    if (state && state.status === 'running') {
-      saveUpdateState(updateStateFile, {
-        ...state,
-        status: 'failed',
-        stage: 'failed',
-        errorCode: 'unknown_error',
-        finishedAt: new Date().toISOString()
-      });
-    }
-    report(err);
-  });
-} else {
-  main().catch(report);
+const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isMainModule) {
+  if (process.argv.includes('--apply')) {
+    runUpdate().catch(err => {
+      const state = readUpdateState(updateStateFile, {checkServiceActive: () => false});
+      if (state && state.status === 'running') {
+        saveUpdateState(updateStateFile, {
+          ...state,
+          status: 'failed',
+          stage: 'failed',
+          errorCode: 'unknown_error',
+          finishedAt: new Date().toISOString()
+        });
+      }
+      report(err);
+    });
+  } else {
+    main().catch(report);
+  }
 }

@@ -4,7 +4,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 import {readJSON,writeChanged} from './publish-config.mjs';
-import {prefix,destination,appUnits,managedUnits,updaterDir,repoDir,infrastructureFile,userUnit,unitDigest} from './ubuntu-layout.mjs';
+import {prefix,destination,appUnits,managedUnits,updaterDir,repoDir,infrastructureFile,userUnit,unitDigest,updaterRunnerFiles} from './ubuntu-layout.mjs';
 import {run,inherit,report} from './ubuntu-common.mjs';
 const systemctl=(...args)=>run('/usr/bin/systemctl',args);
 function noLink(p){try{if(fs.lstatSync(p).isSymbolicLink())throw new Error('Managed paths must not be symlinks.');}catch(e){if(e.code!=='ENOENT')throw e;}}
@@ -48,14 +48,7 @@ async function main(){
  // Ensure updater directory has dedicated node binary and runner
  const updaterNode=path.join(updaterDir,'node');
  fs.copyFileSync(process.execPath,updaterNode);fs.chmodSync(updaterNode,0o755);fs.chownSync(updaterNode,uid,gid);
- const runnerFiles=[
-  'tools/update-runner.mjs',
-  'tools/ubuntu-layout.mjs',
-  'tools/publish-config.mjs',
-  'tools/ubuntu-common.mjs',
-  'analytics/runtime/update-state.mjs'
- ];
- for(const rel of runnerFiles){
+ for(const rel of updaterRunnerFiles){
   const src=path.join(root,rel),dst=path.join(updaterDir,rel);
   fs.mkdirSync(path.dirname(dst),{recursive:true,mode:0o755});
   fs.copyFileSync(src,dst);fs.chmodSync(dst,0o755);fs.chownSync(dst,uid,gid);

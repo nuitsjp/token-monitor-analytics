@@ -63,6 +63,29 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
     const isGracePeriod = Number.isFinite(elapsedMs) && elapsedMs < 10000;
     const isActive = checkServiceActive('tma-update.service');
     if (!isActive && !isGracePeriod) {
+      // Re-read latest state file from disk to avoid overwriting a completion saved by the runner while checkServiceActive was executing.
+      let latestRaw = null;
+      try {
+        latestRaw = JSON.parse(fs.readFileSync(statePath, 'utf8').replace(/^\uFEFF/, ''));
+      } catch {}
+
+      if (latestRaw && typeof latestRaw === 'object' && latestRaw.jobId === jobId) {
+        if (latestRaw.status !== 'running') {
+          // Runner already saved terminal status (completed/failed/aborted); do not overwrite!
+          return {
+            jobId,
+            targetCommitSha: typeof latestRaw.targetCommitSha === 'string' ? latestRaw.targetCommitSha : targetCommitSha,
+            targetCommitDate: latestRaw.targetCommitDate || null,
+            targetMessage: latestRaw.targetMessage || null,
+            status: VALID_STATUSES.has(latestRaw.status) ? latestRaw.status : 'aborted',
+            stage: VALID_STAGES.has(latestRaw.stage) ? latestRaw.stage : 'aborted',
+            errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
+            startedAt: typeof latestRaw.startedAt === 'string' ? latestRaw.startedAt : startedAt,
+            finishedAt: typeof latestRaw.finishedAt === 'string' ? latestRaw.finishedAt : null
+          };
+        }
+      }
+
       status = 'aborted';
       stage = 'aborted';
       errorCode = errorCode || 'job_aborted';

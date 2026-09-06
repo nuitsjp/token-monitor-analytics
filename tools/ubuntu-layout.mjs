@@ -10,6 +10,18 @@ export const updaterDir='/var/lib/tma-deploy/updater';
 export const repoDir='/var/lib/tma-deploy/repo';
 export const updateStateFile='/var/lib/tma-deploy/update-state.json';
 export const infrastructureFile='/etc/token-monitor-analytics/infrastructure.json';
+export const updaterRunnerFiles=[
+ 'analytics/package.json',
+ 'tools/update-runner.mjs',
+ 'tools/ubuntu-layout.mjs',
+ 'tools/publish-config.mjs',
+ 'tools/ubuntu-common.mjs',
+ 'analytics/runtime/update-state.mjs',
+ 'analytics/runtime/config.mjs',
+ 'analytics/runtime/hubs.mjs',
+ 'analytics/src/estimate.ts',
+ 'analytics/src/hubs.ts'
+];
 export const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function userUnit(name){
  if(name===updateUnit){
