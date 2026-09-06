@@ -10,6 +10,8 @@ CollectorはGo標準ライブラリー。AnalyticsはNode組込みHTTP/SQLite、
 
 Hub→CollectorはSSE、Collector→同居Analyticsはloopback HTTP POST、Analytics→ブラウザーはSSE。黙ってポーリングへ変えない。履歴の正本はSQLite1つ。outboxは未送信バッファだけで、DB同期ではない。外部キュー・Redis・クラウドへの自動フォールバック・プラグイン層は不要。
 
+計画中のHub管理UIは`docs/HUB_MANAGEMENT_PLAN.md`に従う。Collectorによるローカル設定ファイルの定期確認は合意済みであり、観測のSSE経路は維持する。Analytics→Collectorの設定通知SSEは追加しない。Hub Secretは通常設定から別ファイルへ分離し、今回は暗号化せずOS権限で保護する。管理モードではAnalyticsの管理処理とCollectorがSecretを扱い、UIへ保存済み値や設定ファイル全体を返さない。
+
 ## 正しさと安全
 
 1 Analytics、1 Collector、1 outbox writerが初期運用。ingest全体をSQLite transactionで直列化し、COMMIT後だけACKと通知を出す。未知/欠測はnull。金額の独自再計算やアカウントの推測帰属はしない。利用率と金額の対象・期間を一致させる。デモDBと本番DBを混ぜない。

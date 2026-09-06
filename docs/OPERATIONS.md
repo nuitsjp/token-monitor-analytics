@@ -6,6 +6,8 @@ Tailscale経由の閲覧ではID・パスワード入力は不要です。環境
 
 `status:ubuntu`の「Hub observations received」は保存済み観測の存在を示し、継続受信や鮮度を保証しません。閲覧URLが疎通していてもこの項目がMISSINGなら、Collectorの接続とHubのURL・DNS・認証を確認します。
 
+Hubの日常管理をUIへ移す[実装計画](HUB_MANAGEMENT_PLAN.md)を作成しています。未実装のため、現時点では上記のCLI手順を使用します。移行後はAnalyticsが設定を保存し、Collectorがファイルの定期確認で反映する予定です。停止・削除で履歴や未送信outboxは消去しません。
+
 ## 費用とデータの所在
 
 AnalyticsはUbuntu上のNode/SQLiteで動くため、Analytics用CloudflareのWorker/D1/DO枠は使いません。Ubuntu本体・電力・ストレージ・バックアップの維持は必要です。Hub側は引き続きCloudflareでSSEを配信するため、その利用量評価まで不要になったわけではありません。

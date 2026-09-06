@@ -224,6 +224,8 @@ mise exec -- node --experimental-strip-types .\analytics\runtime\backup.mjs --co
 
 履歴の正本はAnalyticsのSQLiteだけです。Collectorのoutboxとの双方向同期はしません。Hubの上流イベントは再送保証がないため、Ubuntu全体が停止していた間を復元できるとは扱いません。旧Cloudflare版データの自動移行、外部公開、クラウド版との切替機能、設定編集画面は今回含めません。
 
+次の改善として[Hub管理UIの実装計画](docs/HUB_MANAGEMENT_PLAN.md)をまとめています（未実装）。AnalyticsからHubを管理し、Collectorは設定ファイルを定期確認します。Secretは通常設定から分離した平文ファイルをOS権限で保護し、今回は暗号化しません。既存の観測SSE・loopback POST・ブラウザーSSEを維持します。
+
 [変更履歴](CHANGELOG.md) / [旧版からの移行](docs/MIGRATION.md) / [構成](docs/architecture.md) / [運用](docs/OPERATIONS.md) / [検証結果](docs/VERIFICATION.md) / [一次資料](docs/SOURCES.md)
 
 ## UbuntuのHTTPS公開と自動起動

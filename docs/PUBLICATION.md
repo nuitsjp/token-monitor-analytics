@@ -32,6 +32,8 @@ mise run provision:ubuntu
 
 ## アプリ設定
 
+以下は現在のCLI手順です。[Hub管理UIの実装計画](HUB_MANAGEMENT_PLAN.md)では、初回移行後のHub更新をAnalyticsに集約し、通常設定とSecretを別ファイルへ分離します。まだ移行機能はありません。計画のファイルを手作業で配置しても現行プログラムは読み込みません。
+
 Hub Secretは`--hub-secret`引数で渡せます。タスクは値をログへ表示せず、`/var/lib/tma-deploy/config/collector.env`へ0600で保存します。同じ入力で再実行しても認証を再生成しません。引数は実行中のプロセス一覧から見える可能性があります。シェル履歴への値の保存とmiseのコマンド表示を避けるには、Bashで次のように入力します。
 
 ```bash

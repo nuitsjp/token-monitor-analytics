@@ -35,3 +35,7 @@ outboxはwrite→fsync→rename後に送信対象とするが、rename後のデ�
 ## 拡張の境界
 
 小さなDatabase/Statementインターフェースと純粋な推定ロジックを維持する。ただしCloudflare/クラウドStoreの実装、クラウドへの自動切替、DB同期は含めない。実要件が発生する前から複数運用形態を抱え込まない。
+
+## 計画中のHub管理UI（未実装）
+
+AnalyticsをHub設定の更新窓口とし、Collectorが共有設定ファイルを定期確認する。[Hub管理UIの実装計画](HUB_MANAGEMENT_PLAN.md)を参照。Analytics→CollectorのSSEは追加せず、既存の観測・ブラウザー通知経路を維持する。通常設定と平文の秘密情報は別ファイルに置き、OS権限で保護する。状態表示のためのCollector→Analyticsのloopback POSTは新規追加として計画する。
