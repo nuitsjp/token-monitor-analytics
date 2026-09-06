@@ -272,3 +272,133 @@ test('HTTP Management API protects /api/manage/update endpoints and handles chec
     fs.rmSync(dir, {recursive: true, force: true});
   }
 });
+
+test('readUpdateState preserves running status during grace period even if service initially reports inactive', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-grace-period-'));
+  const statePath = path.join(dir, 'update-state.json');
+
+  try {
+    const job = {
+      jobId: 'job-grace',
+      targetCommitSha: '0123456789abcdef0123456789abcdef01234567',
+      status: 'running',
+      stage: 'accepted',
+      startedAt: '2026-09-06T12:00:00.000Z',
+      finishedAt: null
+    };
+    saveUpdateState(statePath, job);
+
+    // Within grace period (3 seconds after startedAt), inactive service does NOT abort
+    const duringGrace = readUpdateState(statePath, {
+      checkServiceActive: () => false,
+      now: () => '2026-09-06T12:00:03.000Z'
+    });
+    assert.equal(duringGrace.status, 'running');
+    assert.equal(duringGrace.stage, 'accepted');
+
+    // After grace period (15 seconds after startedAt), inactive service reconciles to aborted
+    const afterGrace = readUpdateState(statePath, {
+      checkServiceActive: () => false,
+      now: () => '2026-09-06T12:00:15.000Z'
+    });
+    assert.equal(afterGrace.status, 'aborted');
+    assert.equal(afterGrace.stage, 'aborted');
+    assert.equal(afterGrace.errorCode, 'job_aborted');
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('UpdateManager coalesces concurrent checkUpdate calls and broadcasts state changes via pollJobState', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-coalesce-'));
+  const statePath = path.join(dir, 'update-state.json');
+  const pubPath = path.join(dir, 'publication.json');
+
+  fs.writeFileSync(pubPath, JSON.stringify({
+    releaseId: 'rel-1',
+    commitSha: '1111111111111111111111111111111111111111'
+  }));
+
+  let fetchCount = 0;
+  const config = {
+    demo: false,
+    management: {enabled: true},
+    update: {
+      enabled: true,
+      repositoryUrl: 'https://github.com/nuitsjp/token-monitor-analytics.git',
+      branch: 'main',
+      statePath,
+      publicationPath: pubPath
+    }
+  };
+
+  const broadcastEvents = [];
+  const mockLive = {
+    broadcast: (event, payload) => {
+      broadcastEvents.push({event, payload});
+    }
+  };
+
+  const mgr = new UpdateManager(config, mockLive, {
+    fetchRemoteCommit: async () => {
+      fetchCount++;
+      await new Promise(r => setTimeout(r, 50));
+      return {
+        commitSha: '2222222222222222222222222222222222222222',
+        commitDate: '2026-09-06T12:00:00Z',
+        message: 'Commit msg'
+      };
+    },
+    readState: p => readUpdateState(p, {checkServiceActive: () => true}),
+    saveState: saveUpdateState,
+    startService: () => {},
+    isServiceActive: () => true
+  });
+  mgr.isSupported = () => true;
+  mgr.getSupportReason = () => null;
+
+  try {
+    // 1. Concurrent checkUpdate calls coalesce into single remote fetch
+    const [c1, c2, c3] = await Promise.all([
+      mgr.checkUpdate(),
+      mgr.checkUpdate(),
+      mgr.checkUpdate()
+    ]);
+    assert.equal(fetchCount, 1);
+    assert.equal(c1.targetCommitSha, '2222222222222222222222222222222222222222');
+    assert.equal(c2.targetCommitSha, '2222222222222222222222222222222222222222');
+    assert.equal(c3.targetCommitSha, '2222222222222222222222222222222222222222');
+
+    // 2. pollJobState detects external runner state transitions and broadcasts SSE
+    const jobState = {
+      jobId: 'job-ext-1',
+      targetCommitSha: '2222222222222222222222222222222222222222',
+      status: 'running',
+      stage: 'verifying',
+      errorCode: null,
+      startedAt: '2026-09-06T12:00:00Z',
+      finishedAt: null
+    };
+    saveUpdateState(statePath, jobState);
+
+    mgr.pollJobState();
+    assert.equal(broadcastEvents.length, 2); // 1 candidate updated + 1 job changed
+    assert.equal(broadcastEvents[1].event, 'update_job_changed');
+    assert.equal(broadcastEvents[1].payload.job.stage, 'verifying');
+
+    // Polling again without change does not emit duplicate broadcast
+    mgr.pollJobState();
+    assert.equal(broadcastEvents.length, 2);
+
+    // Stage advance to deploying emits new broadcast
+    jobState.stage = 'deploying';
+    saveUpdateState(statePath, jobState);
+    mgr.pollJobState();
+    assert.equal(broadcastEvents.length, 3);
+    assert.equal(broadcastEvents[2].payload.job.stage, 'deploying');
+  } finally {
+    mgr.close();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+

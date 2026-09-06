@@ -24,8 +24,10 @@ export const VALID_STATUSES = new Set([
 function defaultCheckServiceActive(unitName = 'tma-update.service') {
   if (process.platform !== 'linux') return false;
   try {
-    const res = spawnSync('/usr/bin/systemctl', ['--user', 'is-active', '--quiet', unitName]);
-    return res.status === 0;
+    const res = spawnSync('/usr/bin/systemctl', ['--user', 'show', '--property=ActiveState', '--value', unitName], {encoding: 'utf8'});
+    if (res.status !== 0 || !res.stdout) return false;
+    const activeState = res.stdout.trim();
+    return activeState === 'active' || activeState === 'activating';
   } catch {
     return false;
   }
@@ -57,8 +59,10 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
 
   // Reconcile running status against systemd
   if (status === 'running') {
+    const elapsedMs = Math.abs(Date.parse(now()) - Date.parse(startedAt));
+    const isGracePeriod = Number.isFinite(elapsedMs) && elapsedMs < 10000;
     const isActive = checkServiceActive('tma-update.service');
-    if (!isActive) {
+    if (!isActive && !isGracePeriod) {
       status = 'aborted';
       stage = 'aborted';
       errorCode = errorCode || 'job_aborted';

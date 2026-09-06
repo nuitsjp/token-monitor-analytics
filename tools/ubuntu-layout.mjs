@@ -21,7 +21,7 @@ After=network.target
 Type=oneshot
 WorkingDirectory=/var/lib/tma-deploy
 EnvironmentFile=${destination}/analytics.env
-ExecStart=${updaterDir}/node --experimental-strip-types ${updaterDir}/update-runner.mjs
+ExecStart=${updaterDir}/node --experimental-strip-types ${updaterDir}/tools/update-runner.mjs
 UMask=0077
 NoNewPrivileges=true
 `;

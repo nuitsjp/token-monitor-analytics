@@ -44,7 +44,7 @@ async function verify(plan,config){
  }
  console.log('PASS: user services active/enabled, tailnet HTTP, configured viewer access, private ingest, SSE.');
 }
-async function apply(architecture){
+async function apply(architecture,commitInfo={commitSha:null,commitDate:null}){
  if(process.getuid()===0)throw new Error('Publish as the configured ordinary user; root publication is prohibited.');
  assertInfrastructureFile();
  const infrastructure=readJSON(infrastructureFile);

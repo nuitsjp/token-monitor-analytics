@@ -92,53 +92,71 @@ async function runUpdate() {
   // 2. Stage: Verifying
   setStage('verifying', {targetCommitDate: commitDate, targetMessage: commitMessage});
   const verifyDir = fs.mkdtempSync('/var/lib/tma-deploy/.verify-');
+  const architecture = process.arch === 'x64' ? 'amd64' : 'arm64';
+  const mise = path.join(process.env.HOME ?? '/home/ubuntu', '.local/bin/mise');
+  const hasMise = fs.existsSync(mise);
+  const miseBinDir = hasMise ? path.dirname(mise) : null;
+  const envWithMise = miseBinDir ? {
+    ...process.env,
+    PATH: `${miseBinDir}:${process.env.PATH ?? '/usr/bin:/bin'}`
+  } : process.env;
+
   try {
     // Extract exact commit snapshot
     const archive = run('/usr/bin/git', ['archive', '--format=tar', targetCommitSha], {cwd: repoDir, encoding: 'buffer'});
     run('/usr/bin/tar', ['-xf', '-'], {cwd: verifyDir, input: archive});
 
-    const architecture = process.arch === 'x64' ? 'amd64' : 'arm64';
     // Run verification gates
-    const mise = path.join(process.env.HOME ?? '/home/ubuntu', '.local/bin/mise');
-    const hasMise = fs.existsSync(mise);
-    const execCmd = hasMise ? mise : 'npm';
-    const miseArgs = sub => hasMise ? ['run', sub] : ['run', sub];
-
     if (hasMise) {
-      run(mise, ['trust'], {cwd: verifyDir});
-      run(mise, ['exec', '--', 'bash', '-c', 'cd collector && go test ./... && go vet ./...'], {cwd: verifyDir});
-      run(mise, ['exec', '--', 'npm', '--prefix', 'analytics', 'test'], {cwd: verifyDir});
-      run(mise, ['exec', '--', 'npm', '--prefix', 'analytics', 'run', 'typecheck'], {cwd: verifyDir});
-      run(mise, ['exec', '--', 'node', '--experimental-strip-types', 'tools/integration.mjs'], {cwd: verifyDir});
-      run(mise, ['run', `release:ubuntu:${architecture}`], {cwd: verifyDir});
+      run(mise, ['trust'], {cwd: verifyDir, env: envWithMise});
+      run(mise, ['exec', '--', 'npm', '--prefix', 'analytics', 'ci'], {cwd: verifyDir, env: envWithMise});
+      run(mise, ['exec', '--', 'bash', '-c', 'cd collector && go test ./... && go vet ./...'], {cwd: verifyDir, env: envWithMise});
+      run(mise, ['exec', '--', 'npm', '--prefix', 'analytics', 'test'], {cwd: verifyDir, env: envWithMise});
+      run(mise, ['exec', '--', 'npm', '--prefix', 'analytics', 'run', 'typecheck'], {cwd: verifyDir, env: envWithMise});
+      run(mise, ['exec', '--', 'node', '--experimental-strip-types', 'tools/integration.mjs'], {cwd: verifyDir, env: envWithMise});
+      run(mise, ['run', `release:ubuntu:${architecture}`], {cwd: verifyDir, env: envWithMise});
     } else {
       // Fallback if mise wrapper not present in path
+      run('npm', ['--prefix', 'analytics', 'ci'], {cwd: verifyDir});
       run('go', ['test', './...'], {cwd: path.join(verifyDir, 'collector')});
       run('go', ['vet', './...'], {cwd: path.join(verifyDir, 'collector')});
       run('npm', ['--prefix', 'analytics', 'test'], {cwd: verifyDir});
+      run('npm', ['--prefix', 'analytics', 'run', 'typecheck'], {cwd: verifyDir});
       run('node', ['--experimental-strip-types', 'tools/integration.mjs'], {cwd: verifyDir});
     }
+  } catch (err) {
+    setStage('failed', {status: 'failed', errorCode: 'verification_failed', targetCommitDate: commitDate, targetMessage: commitMessage});
+    fs.rmSync(verifyDir, {recursive: true, force: true});
+    return;
+  }
 
-    // 3. Stage: Deploying & Restarting
-    setStage('deploying', {targetCommitDate: commitDate, targetMessage: commitMessage});
+  // 3. Stage: Deploying & Restarting
+  setStage('deploying', {targetCommitDate: commitDate, targetMessage: commitMessage});
+  const publishScript = path.join(verifyDir, 'tools/publish-ubuntu.mjs');
+  const nodeBin = process.execPath;
+  const publishArgs = [
+    '--experimental-strip-types',
+    publishScript,
+    '--apply',
+    '--commit-sha',
+    targetCommitSha,
+    '--commit-date',
+    commitDate ?? ''
+  ];
 
-    const publishScript = path.join(verifyDir, 'tools/publish-ubuntu.mjs');
-    const nodeBin = process.execPath;
-    run(nodeBin, [
-      '--experimental-strip-types',
-      publishScript,
-      '--apply',
-      '--commit-sha',
-      targetCommitSha,
-      '--commit-date',
-      commitDate ?? ''
-    ], {cwd: verifyDir});
+  try {
+    if (hasMise) {
+      run(mise, ['exec', '--', nodeBin, ...publishArgs], {cwd: verifyDir, env: envWithMise});
+    } else {
+      run(nodeBin, publishArgs, {cwd: verifyDir});
+    }
 
     // 4. Stage: Success
     setStage('success', {status: 'completed', targetCommitDate: commitDate, targetMessage: commitMessage});
   } catch (err) {
-    // If deploy failed after stopping services or verifying
-    setStage('failed', {status: 'failed', errorCode: 'verification_failed', targetCommitDate: commitDate, targetMessage: commitMessage});
+    const isHealthCheck = err?.message?.toLowerCase().includes('health');
+    const errorCode = isHealthCheck ? 'health_check_failed' : 'deploy_failed';
+    setStage('failed', {status: 'failed', errorCode, targetCommitDate: commitDate, targetMessage: commitMessage});
   } finally {
     fs.rmSync(verifyDir, {recursive: true, force: true});
   }

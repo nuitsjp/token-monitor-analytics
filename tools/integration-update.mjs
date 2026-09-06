@@ -112,7 +112,24 @@ async function main() {
       body: JSON.stringify({targetCommitSha: 'invalid-sha'})
     });
     assert.equal(badApply.status, 400);
-    console.log('PASS: Invalid targetCommitSha rejected with 400');
+    // 5. Test SSE real-time broadcast upon state update
+    const jobState = {
+      jobId: 'job-integ-1',
+      targetCommitSha: targetSha,
+      status: 'running',
+      stage: 'verifying',
+      errorCode: null,
+      startedAt: new Date().toISOString(),
+      finishedAt: null
+    };
+    const {saveUpdateState} = await import('../analytics/runtime/update-state.mjs');
+    saveUpdateState(statePath, jobState);
+    app.updateManager.pollJobState();
+
+    // Allow SSE buffer to flush
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.ok(sseEvents.includes('update_job_changed'), 'SSE should include update_job_changed event');
+    console.log('PASS: update_job_changed broadcasted via SSE');
 
     console.log('UPDATE INTEGRATION OK');
   } finally {

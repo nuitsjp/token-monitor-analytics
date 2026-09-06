@@ -44,9 +44,22 @@ async function main(){
  }else console.log('SKIP: Tailscale installed; existing connection and Serve settings retained.');
  systemctl('enable','--now','tailscaled.service');
  for(const p of [prefix,`${prefix}/releases`,'/var/lib/tma-deploy',destination,'/var/lib/tma-analytics','/var/lib/tma-analytics/backups','/var/lib/tma-collector','/var/lib/tma-collector/outbox',updaterDir,repoDir])directory(p,uid,gid,p.startsWith('/var/')?0o700:0o755);
+ const root=path.resolve(fileURLToPath(import.meta.url),'../..');
  // Ensure updater directory has dedicated node binary and runner
  const updaterNode=path.join(updaterDir,'node');
  fs.copyFileSync(process.execPath,updaterNode);fs.chmodSync(updaterNode,0o755);fs.chownSync(updaterNode,uid,gid);
+ const runnerFiles=[
+  'tools/update-runner.mjs',
+  'tools/ubuntu-layout.mjs',
+  'tools/publish-config.mjs',
+  'tools/ubuntu-common.mjs',
+  'analytics/runtime/update-state.mjs'
+ ];
+ for(const rel of runnerFiles){
+  const src=path.join(root,rel),dst=path.join(updaterDir,rel);
+  fs.mkdirSync(path.dirname(dst),{recursive:true,mode:0o755});
+  fs.copyFileSync(src,dst);fs.chmodSync(dst,0o755);fs.chownSync(dst,uid,gid);
+ }
  const userDir=path.join(home,'.config/systemd/user');
  for(const p of [path.join(home,'.config'),path.join(home,'.config/systemd'),userDir]){noLink(p);if(!fs.existsSync(p))directory(p,uid,gid,0o700);}
  let changed=false;

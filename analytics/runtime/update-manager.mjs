@@ -1,7 +1,11 @@
-import {execFileSync, spawn} from 'node:child_process';
+import {execFile, spawn, spawnSync} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
+import {promisify} from 'node:util';
 import {readUpdateState, saveUpdateState} from './update-state.mjs';
+
+const execFileAsync = promisify(execFile);
 
 function defaultReadPublication(pubPath) {
   if (!pubPath || !fs.existsSync(pubPath)) return null;
@@ -20,13 +24,13 @@ function defaultReadPublication(pubPath) {
   }
 }
 
-function defaultFetchRemoteCommit({repositoryUrl, branch}) {
-  const output = execFileSync('git', ['ls-remote', repositoryUrl, `refs/heads/${branch}`], {
+async function defaultFetchRemoteCommit({repositoryUrl, branch}) {
+  const {stdout} = await execFileAsync('git', ['ls-remote', repositoryUrl, `refs/heads/${branch}`], {
     encoding: 'utf8',
     timeout: 15000,
     stdio: ['ignore', 'pipe', 'ignore']
   });
-  const match = /^([0-9a-f]{40})\s+/m.exec(output);
+  const match = /^([0-9a-f]{40})\s+/m.exec(stdout);
   if (!match) throw new Error('Cannot find branch reference in remote repository');
   return {
     commitSha: match[1],
@@ -47,10 +51,12 @@ function defaultStartService(unitName = 'tma-update.service') {
 function defaultIsServiceActive(unitName = 'tma-update.service') {
   if (process.platform !== 'linux') return false;
   try {
-    const res = execFileSync('/usr/bin/systemctl', ['--user', 'is-active', '--quiet', unitName], {
-      stdio: 'ignore'
+    const res = spawnSync('/usr/bin/systemctl', ['--user', 'show', '--property=ActiveState', '--value', unitName], {
+      encoding: 'utf8'
     });
-    return true;
+    if (res.status !== 0 || !res.stdout) return false;
+    const activeState = res.stdout.trim();
+    return activeState === 'active' || activeState === 'activating';
   } catch {
     return false;
   }
@@ -60,8 +66,12 @@ export class UpdateManager {
   #config;
   #live;
   #timer = null;
+  #watchTimer = null;
+  #fileWatcher = null;
   #candidate = null;
   #lastCheckedAt = null;
+  #checkingPromise = null;
+  #lastJobKey = null;
   #fetchRemoteCommit;
   #readPublication;
   #readState;
@@ -115,6 +125,22 @@ export class UpdateManager {
     setTimeout(() => {
       this.checkUpdate().catch(() => {});
     }, 2000).unref();
+
+    // Monitor update state file for real-time SSE updates
+    const statePath = this.#config.update?.statePath ?? '/var/lib/tma-deploy/update-state.json';
+    try {
+      const dir = path.dirname(statePath);
+      if (fs.existsSync(dir)) {
+        this.#fileWatcher = fs.watch(dir, () => {
+          this.pollJobState();
+        });
+      }
+    } catch {}
+
+    this.#watchTimer = setInterval(() => {
+      this.pollJobState();
+    }, 1000);
+    this.#watchTimer.unref();
   }
 
   close() {
@@ -122,13 +148,46 @@ export class UpdateManager {
       clearInterval(this.#timer);
       this.#timer = null;
     }
+    if (this.#fileWatcher) {
+      try { this.#fileWatcher.close(); } catch {}
+      this.#fileWatcher = null;
+    }
+    if (this.#watchTimer) {
+      clearInterval(this.#watchTimer);
+      this.#watchTimer = null;
+    }
+  }
+
+  pollJobState() {
+    const statePath = this.#config.update?.statePath ?? '/var/lib/tma-deploy/update-state.json';
+    const job = this.#readState(statePath, {checkServiceActive: this.#isServiceActive});
+    const key = job ? `${job.jobId}:${job.status}:${job.stage}:${job.errorCode}` : null;
+    if (key !== this.#lastJobKey) {
+      this.#lastJobKey = key;
+      if (this.#live && job) {
+        this.#live.broadcast('update_job_changed', {
+          type: 'update_job_changed',
+          job
+        });
+      }
+    }
+    return job;
   }
 
   async checkUpdate() {
     if (!this.isSupported() || !this.#config.update?.enabled) {
       return null;
     }
+    if (this.#checkingPromise) {
+      return this.#checkingPromise;
+    }
+    this.#checkingPromise = this.#performCheckUpdate().finally(() => {
+      this.#checkingPromise = null;
+    });
+    return this.#checkingPromise;
+  }
 
+  async #performCheckUpdate() {
     const {repositoryUrl, branch, publicationPath} = this.#config.update;
     const pub = this.#readPublication(publicationPath);
     const currentSha = pub?.commitSha ?? null;
@@ -241,6 +300,8 @@ export class UpdateManager {
       this.#saveState(statePath, newJob);
       throw Object.assign(new Error(`Failed to trigger update service: ${err.message}`), {status: 500});
     }
+
+    this.#lastJobKey = `${newJob.jobId}:${newJob.status}:${newJob.stage}:${newJob.errorCode}`;
 
     if (this.#live) {
       this.#live.broadcast('update_job_changed', {
