@@ -44,7 +44,7 @@ async function verify(plan,config){
  }
  console.log('PASS: user services active/enabled, tailnet HTTP, configured viewer access, private ingest, SSE.');
 }
-async function apply(architecture){
+async function apply(architecture,commitInfo={commitSha:null,commitDate:null}){
  if(process.getuid()===0)throw new Error('Publish as the configured ordinary user; root publication is prohibited.');
  assertInfrastructureFile();
  const infrastructure=readJSON(infrastructureFile);
@@ -118,23 +118,37 @@ async function apply(architecture){
   // Allow services to report startup errors and the tailnet listener to become ready.
   await new Promise(resolve=>setTimeout(resolve,1500));
   await verify(plan,config);
-  writeChanged(recordPath,`${JSON.stringify({releaseId,configurationId,publicOrigin:plan.publicOrigin},null,2)}\n`,0o600);
+  writeChanged(recordPath,`${JSON.stringify({releaseId,configurationId,publicOrigin:plan.publicOrigin,commitSha:commitInfo.commitSha,commitDate:commitInfo.commitDate,publishedAt:new Date().toISOString()},null,2)}\n`,0o600);
   console.log(appChanged?'Published Ubuntu release. Existing settings, SQLite and outbox preserved.':'Publication already current; service enablement and tailnet HTTP verified.');
  }finally{fs.rmSync(container,{recursive:true,force:true});}
 }
+function resolveCommitInfo(values){
+ let sha=values['commit-sha']??null,date=values['commit-date']??null;
+ if(!sha){
+  try{
+   sha=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8',cwd:root,stdio:['ignore','pipe','ignore']}).trim();
+   date=execFileSync('git',['log','-1','--format=%cI'],{encoding:'utf8',cwd:root,stdio:['ignore','pipe','ignore']}).trim();
+  }catch{}
+ }
+ return {commitSha:sha||null,commitDate:date||null};
+}
 async function main(){
- const {values}=parseArgs({options:{apply:{type:'boolean',default:false}},strict:true});
+ const {values}=parseArgs({options:{apply:{type:'boolean',default:false},'commit-sha':{type:'string'},'commit-date':{type:'string'}},strict:true});
  userEnvironment();
  if(!['x64','arm64'].includes(process.arch))throw new Error('Publication supports Ubuntu amd64/arm64.');
  const architecture=process.arch==='x64'?'amd64':'arm64';
  if(!fs.existsSync(infrastructureFile))throw new Error('Infrastructure is not provisioned. Run provision:ubuntu first.');
  assertInfrastructureFile();validateInfrastructure(readJSON(infrastructureFile),process.getuid());
  if(!fs.existsSync(`${destination}/analytics.json`)||!fs.existsSync(`${destination}/collector.json`))throw new Error('Application configuration is incomplete. Run configure:ubuntu with real Hub input.');
+ const commitInfo=resolveCommitInfo(values);
  if(values.apply){
   // The lock covers build, verification and placement of the same snapshot.
   run('mise',['run',`release:ubuntu:${architecture}`],{cwd:root,stdio:'inherit'});
-  await apply(architecture);return;
+  await apply(architecture,commitInfo);return;
  }
- inherit('/usr/bin/flock',['--nonblock','-E','75','/var/lib/tma-lock/deploy.lock',process.execPath,'--experimental-strip-types',fileURLToPath(import.meta.url),'--apply'],{lock:true});
+ const extraArgs=[];
+ if(values['commit-sha'])extraArgs.push('--commit-sha',values['commit-sha']);
+ if(values['commit-date'])extraArgs.push('--commit-date',values['commit-date']);
+ inherit('/usr/bin/flock',['--nonblock','-E','75','/var/lib/tma-lock/deploy.lock',process.execPath,'--experimental-strip-types',fileURLToPath(import.meta.url),'--apply',...extraArgs],{lock:true});
 }
 main().catch(report);

@@ -10,6 +10,7 @@ import {parseBatch} from '../src/protocol.ts';
 import {ingest,dashboard,history,prune} from '../src/db.ts';
 import {CollectorStatusTracker, createManagementHandler} from './management.mjs';
 import {readHubsConfig} from './hubs.mjs';
+import {UpdateManager} from './update-manager.mjs';
 
 const commonHeaders={
  'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer',
@@ -46,7 +47,9 @@ export async function startServer(config,{env=process.env,logger=console,mainten
  }
  const getIngestHubIds=()=>ingestHubIds;
  const setIngestHubIds=ids=>{ingestHubIds=ids;};
- const management=createManagementHandler({config,auth,db,live,tracker,getIngestHubIds,setIngestHubIds,exclusive});
+ const updateManager=new UpdateManager(config,live);
+ updateManager.start();
+ const management=createManagementHandler({config,auth,db,live,tracker,getIngestHubIds,setIngestHubIds,exclusive,updateManager});
  const assets=new Map(['/','/index.html','/app.js','/styles.css'].map(route=>{
   const file=route==='/'?'index.html':route.slice(1);
   return [route,{bytes:fs.readFileSync(new URL(`../public/${file}`,import.meta.url)),type:file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'}];
@@ -65,6 +68,9 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    }
    if(url.pathname.startsWith('/api/manage/hubs')){
     await management.handleManage(request,response,url);return;
+   }
+   if(url.pathname.startsWith('/api/manage/update')){
+    await management.handleUpdate(request,response,url);return;
    }
    if(url.pathname==='/api/ingest'){
     if(viewerOnly){json(response,{error:'not_found'},404);return;}
@@ -130,9 +136,9 @@ export async function startServer(config,{env=process.env,logger=console,mainten
  maintenance.unref();
  logger.info(`Analytics ready at ${config.publicOrigin} (${config.demo?'DEMO':'REAL'}; SQLite; browser SSE)`);
  return {
-  server,viewerServer,db,live,
+  server,viewerServer,db,live,updateManager,
   async close(){
-   if(closing)return;closing=true;clearInterval(maintenance);live.close();
+   if(closing)return;closing=true;clearInterval(maintenance);live.close();updateManager.close();
    const force=setTimeout(()=>{for(const socket of sockets)socket.destroy();},5000);force.unref();
    await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))));clearTimeout(force);
    await tail;db.close();
