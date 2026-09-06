@@ -19,7 +19,8 @@ type Hub struct {
 }
 type Config struct {
 	Version        int    `json:"version"`
-	Hubs           []Hub  `json:"hubs"`
+	Hubs           []Hub  `json:"hubs,omitempty"`
+	HubsPath       string `json:"hubs_path,omitempty"`
 	AnalyticsURL   string `json:"analytics_url"`
 	IngestTokenEnv string `json:"ingest_token_env"`
 	SpoolDir       string `json:"spool_dir"`
@@ -69,28 +70,48 @@ func Load(path string) (Config, error) {
 	if e = d.Decode(&extra); e != io.EOF {
 		return c, errors.New("config must contain exactly one JSON object")
 	}
-	if c.Version != 1 || len(c.Hubs) == 0 || len(c.Hubs) > 8 {
-		return c, errors.New("version must be 1; configure 1..8 hubs")
+	if c.Version != 1 {
+		return c, errors.New("version must be 1")
+	}
+	if len(c.Hubs) > 0 && c.HubsPath != "" {
+		return c, errors.New("cannot specify both hubs and hubs_path")
+	}
+	if len(c.Hubs) == 0 && c.HubsPath == "" {
+		return c, errors.New("either hubs or hubs_path is required")
 	}
 	if e = ValidateBaseURL(c.AnalyticsURL); e != nil {
 		return c, fmt.Errorf("analytics_url: %w", e)
 	}
-	ids, urls := map[string]bool{}, map[string]bool{}
-	for _, h := range c.Hubs {
-		if !ValidID(h.ID) || ids[h.ID] {
-			return c, errors.New("invalid or duplicate hub id")
+	if c.HubsPath != "" {
+		if filepath.IsAbs(c.HubsPath) {
+			return c, errors.New("hubs_path must be a relative path")
 		}
-		ids[h.ID] = true
-		if e = ValidateBaseURL(h.URL); e != nil {
-			return c, fmt.Errorf("hub %s: %w", h.ID, e)
+		a, err := filepath.Abs(path)
+		if err != nil {
+			return c, err
 		}
-		key := strings.ToLower(strings.TrimSuffix(h.URL, "/"))
-		if urls[key] {
-			return c, errors.New("duplicate hub URL")
+		c.HubsPath = filepath.Join(filepath.Dir(a), c.HubsPath)
+	} else {
+		if len(c.Hubs) > 8 {
+			return c, errors.New("configure 1..8 hubs")
 		}
-		urls[key] = true
-		if _, e = Secret(h.SecretEnv); e != nil {
-			return c, e
+		ids, urls := map[string]bool{}, map[string]bool{}
+		for _, h := range c.Hubs {
+			if !ValidID(h.ID) || ids[h.ID] {
+				return c, errors.New("invalid or duplicate hub id")
+			}
+			ids[h.ID] = true
+			if e = ValidateBaseURL(h.URL); e != nil {
+				return c, fmt.Errorf("hub %s: %w", h.ID, e)
+			}
+			key := strings.ToLower(strings.TrimSuffix(h.URL, "/"))
+			if urls[key] {
+				return c, errors.New("duplicate hub URL")
+			}
+			urls[key] = true
+			if _, e = Secret(h.SecretEnv); e != nil {
+				return c, e
+			}
 		}
 	}
 	if _, e = Secret(c.IngestTokenEnv); e != nil {

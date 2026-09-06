@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "secretsPath": "./hub-secrets.json",
+  "hubs": [
+    {
+      "id": "hub-a",
+      "label": "Hub A",
+      "url": "https://hub-a.workers.dev",
+      "status": "active",
+      "secretRef": "sec-a1"
+    }
+  ]
+}

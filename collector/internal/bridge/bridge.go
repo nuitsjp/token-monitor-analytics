@@ -45,7 +45,7 @@ func jitter(d time.Duration) time.Duration {
 	return d
 }
 
-// Run owns exactly one spool and one subscriber per Hub. It never opens an inbound port.
+// Run owns exactly one spool and subscribers. It never opens an inbound port.
 func Run(ctx context.Context, c config.Config, log *slog.Logger) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -55,7 +55,13 @@ func Run(ctx context.Context, c config.Config, log *slog.Logger) error {
 	}
 	client := hub.NewHTTPClient()
 	defer client.CloseIdleConnections()
-	errs := make(chan error, len(c.Hubs)+1)
+
+	token, e := config.Secret(c.IngestTokenEnv)
+	if e != nil {
+		return e
+	}
+
+	errs := make(chan error, len(c.Hubs)+2)
 	var wg sync.WaitGroup
 	start := func(fn func() error) {
 		wg.Add(1)
@@ -69,9 +75,15 @@ func Run(ctx context.Context, c config.Config, log *slog.Logger) error {
 			}
 		}()
 	}
-	for _, h := range c.Hubs {
-		h := h
-		start(func() error { return subscribe(ctx, c, h, client, box, log) })
+
+	if c.HubsPath != "" {
+		mgr := NewHubManager(c.HubsPath, c.AnalyticsURL, token, c.IdleSeconds, box, client, log)
+		start(func() error { return mgr.Run(ctx) })
+	} else {
+		for _, h := range c.Hubs {
+			h := h
+			start(func() error { return subscribe(ctx, c, h, client, box, log) })
+		}
 	}
 	start(func() error { return upload(ctx, c, client, box, log) })
 	select {

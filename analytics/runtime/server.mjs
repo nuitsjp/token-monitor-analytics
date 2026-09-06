@@ -8,6 +8,8 @@ import {canIngest,canView,allowedRequest} from './auth.mjs';
 import {LiveFeed} from './live.mjs';
 import {parseBatch} from '../src/protocol.ts';
 import {ingest,dashboard,history,prune} from '../src/db.ts';
+import {CollectorStatusTracker, createManagementHandler} from './management.mjs';
+import {readHubsConfig} from './hubs.mjs';
 
 const commonHeaders={
  'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer',
@@ -32,6 +34,19 @@ export async function startServer(config,{env=process.env,logger=console,mainten
  let tail=Promise.resolve();
  const exclusive=callback=>{const next=tail.then(callback);tail=next.catch(()=>{});return next;};
  const live=new LiveFeed({heartbeatMs});
+ const tracker=new CollectorStatusTracker();
+ let ingestHubIds = [];
+ if (config.hubsPath) {
+   try {
+     const {hubsFile} = readHubsConfig(config.hubsPath);
+     ingestHubIds = hubsFile.hubs.map(h => h.id);
+   } catch {}
+ } else if (Array.isArray(config.hubs)) {
+   ingestHubIds = config.hubs.map(h => h.id);
+ }
+ const getIngestHubIds=()=>ingestHubIds;
+ const setIngestHubIds=ids=>{ingestHubIds=ids;};
+ const management=createManagementHandler({config,auth,db,live,tracker,getIngestHubIds,setIngestHubIds,exclusive});
  const assets=new Map(['/','/index.html','/app.js','/styles.css'].map(route=>{
   const file=route==='/'?'index.html':route.slice(1);
   return [route,{bytes:fs.readFileSync(new URL(`../public/${file}`,import.meta.url)),type:file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'}];
@@ -44,13 +59,20 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    if(!allowedRequest(request,config)){json(response,{error:'origin_rejected'},403);return;}
    const url=new URL(request.url,config.publicOrigin);
    if(url.pathname==='/api/health'&&request.method==='GET'){json(response,{ok:true,service:'token-monitor-analytics',version:'0.3.0',storage:'sqlite',demo:config.demo});return;}
+   if(url.pathname==='/api/collector/status'){
+    if(viewerOnly){json(response,{error:'not_found'},404);return;}
+    await management.handleCollectorStatus(request,response);return;
+   }
+   if(url.pathname.startsWith('/api/manage/hubs')){
+    await management.handleManage(request,response,url);return;
+   }
    if(url.pathname==='/api/ingest'){
     if(viewerOnly){json(response,{error:'not_found'},404);return;}
     if(request.method!=='POST'){json(response,{error:'method_not_allowed'},405);return;}
     if(!canIngest(request,auth)){json(response,{error:'unauthorized'},401);return;}
     if((request.headers['content-type']??'').split(';')[0].trim().toLowerCase()!=='application/json'){json(response,{error:'json_required'},415);return;}
     let batch;
-    try{batch=parseBatch(await body(request),config.hubs.map(h=>h.id));}
+    try{batch=parseBatch(await body(request),ingestHubIds);}
     catch(error){if(!response.destroyed)json(response,{error:'invalid_batch'},error.status===413?413:400);return;}
     const changed=await exclusive(()=>db.transaction(()=>ingest(db,batch,config.contracts,config.timeZone)));
     // Notify and acknowledge only after the SQLite COMMIT succeeded.
@@ -68,7 +90,14 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    }
    if(url.pathname==='/api/state'){
     const state=await exclusive(()=>dashboard(db,config.contracts));
-    json(response,{...state,serverTime:new Date().toISOString(),demo:config.demo,configuredHubs:config.hubs,contracts:config.contracts,timeZone:config.timeZone,storage:'sqlite',runtime:'native-node'});return;
+    let currentHubs=config.hubs;
+    if(config.hubsPath&&fs.existsSync(config.hubsPath)){
+     try{
+      const {hubsFile}=readHubsConfig(config.hubsPath);
+      currentHubs=hubsFile.hubs.filter(h=>h.status!=='archived').map(h=>({id:h.id,label:h.label}));
+     }catch{}
+    }
+    json(response,{...state,serverTime:new Date().toISOString(),demo:config.demo,configuredHubs:currentHubs,contracts:config.contracts,timeZone:config.timeZone,storage:'sqlite',runtime:'native-node',management:{enabled:Boolean(config.management?.enabled)}});return;
    }
    if(url.pathname==='/api/history'){
     const id=url.searchParams.get('contract')??'';

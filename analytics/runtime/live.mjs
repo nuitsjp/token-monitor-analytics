@@ -17,6 +17,7 @@ export class LiveFeed {
   response.write('retry: 2000\nevent: ready\ndata: {"type":"ready"}\n\n');
  }
  updated(hubIds){this.#broadcast(`event: updated\ndata: ${JSON.stringify({type:'updated',hubIds})}\n\n`);}
+ broadcast(event, data){this.#broadcast(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);}
  #broadcast(frame){
   for(const response of this.#clients){
    if(response.destroyed){this.#clients.delete(response);continue;}

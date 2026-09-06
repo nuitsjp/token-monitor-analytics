@@ -2,7 +2,7 @@
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Token Monitor Analytics</title><link rel="stylesheet" href="/styles.css"><script type="module" src="/app.js"></script></head>
 <body>
 <aside><a class="brand" href="/"><span class="mark">T</span><span>Token Monitor<br><strong>Analytics</strong></span></a>
-<p class="eyebrow">WORKSPACE</p><nav aria-label="メイン"><button data-view="dashboard" aria-current="page">Overview</button><button data-view="history">Daily history</button><button data-view="settings">Connections</button></nav>
+<p class="eyebrow">WORKSPACE</p><nav aria-label="メイン"><button data-view="dashboard" aria-current="page">Overview</button><button data-view="history">Daily history</button><button data-view="settings">Connections</button><button data-view="manage" id="nav-manage" hidden>Hubs</button></nav>
 <div class="aside-foot"><span class="dot" id="dot"></span><span id="live">接続準備中</span><small>SSE → Collector → Analytics<br>観測値と参考推定を区別します。</small></div></aside>
 <main><header><div><p class="eyebrow">SUBSCRIPTION INTELLIGENCE</p><h1 id="title">Overview</h1><p class="lead">利用額と、契約で使える金額の推定推移。</p></div><button id="refresh" class="outline">更新</button></header>
 <div id="notice" role="status" hidden></div>
@@ -17,4 +17,28 @@
 </section>
 <section id="history" class="view" hidden><div class="section-heading"><h2>日次の推定履歴</h2><select id="contract-select" aria-label="履歴の契約"></select></div><p class="muted">その日の最後の有効推定を保存します。最新判定と推定の観測時刻を別々に表示します。</p><div id="chart" class="chart"></div><div class="table-wrap"><table><thead><tr><th>日付</th><th>月換算・参考</th><th>期間枠・参考</th><th>推定の観測時刻</th><th>その日の最新判定</th></tr></thead><tbody id="daily"></tbody></table></div></section>
 <section id="settings" class="view" hidden><h2>接続と契約の設定</h2><p class="muted">初期版では設定ファイルを編集します。Hubシークレットや送信用トークンは、この画面へ送信しません。</p><div id="connections"></div><div class="callout"><strong>収集と閲覧は独立しています。</strong><p>ブラウザーを閉じてもUbuntuのCollectorが収集を継続します。画面のライブ接続状態は、HubやCollectorの稼働状態を意味しません。最終観測時刻も確認してください。</p></div><p>Collector: <code>collector/config.local.json</code><br>契約の紐付け: <code>analytics/config.local.json</code></p><p class="muted">新しい実体のHubや契約には新しいIDを割り当ててください。</p></section>
+<section id="manage" class="view" hidden>
+<div class="section-heading"><h2>Hubの管理</h2><button id="btn-add-hub" class="outline primary">+ Hubを追加</button></div>
+<div id="manage-status" class="manage-status-bar"></div>
+<div id="manage-empty" class="empty" hidden>登録されているHubがありません。「+ Hubを追加」から最初のHubを登録してください。</div>
+<div id="manage-table-wrap" class="table-wrap"><table><thead><tr><th>Hub ID / 表示名</th><th>Hub URL</th><th>設定状態</th><th>Collector反映</th><th>Hub接続</th><th>操作</th></tr></thead><tbody id="manage-hubs-body"></tbody></table></div>
+<dialog id="hub-dialog"><form id="hub-form" method="dialog">
+<h3 id="dialog-title">Hubを追加</h3>
+<div id="dialog-error" class="dialog-error" hidden></div>
+<label>Hub ID <small>(英数字・ハイフン・アンダースコア、変更不可)</small><input type="text" id="input-hub-id" required pattern="^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$" placeholder="hub-example"></label>
+<label>表示名<input type="text" id="input-hub-label" required maxlength="128" placeholder="メイン開発環境"></label>
+<label>Hub URL <small>(https:// またはローカルhttp://)</small><input type="url" id="input-hub-url" required placeholder="https://hub.example.com"></label>
+<div id="status-group" hidden><label>収集状態<select id="select-hub-status"><option value="active">有効 (active)</option><option value="disabled">停止 (disabled)</option></select></label></div>
+<div id="secret-replace-group" hidden><label class="inline-label"><input type="checkbox" id="check-replace-secret"> Secretを差し替える</label></div>
+<div id="secret-input-group"><label>Hub Secret <small id="secret-hint">(平文で保存されCollectorが読み込みます)</small><input type="password" id="input-hub-secret" placeholder="••••••••"></label></div>
+<div class="dialog-actions"><button type="button" id="btn-dialog-cancel" class="outline">キャンセル</button><button type="submit" id="btn-dialog-submit" class="outline primary">保存</button></div>
+</form></dialog>
+<dialog id="hub-delete-dialog"><form id="hub-delete-form" method="dialog">
+<h3>Hubの削除（アーカイブ）</h3>
+<div id="delete-dialog-error" class="dialog-error" hidden></div>
+<p>Hub <strong id="del-hub-name"></strong> のデータ収集を停止し、アーカイブします。</p>
+<p class="muted">過去の観測履歴や未送信バッチは消去されず保持されます。契約が紐付いているHubは削除できません（停止をご利用ください）。</p>
+<div class="dialog-actions"><button type="button" id="btn-del-cancel" class="outline">キャンセル</button><button type="submit" id="btn-del-confirm" class="outline danger">削除（アーカイブ）</button></div>
+</form></dialog>
+</section>
 <footer>Token Monitor Analytics · 0.3.0 self-hosted <span>履歴の正本: AnalyticsサーバーのSQLite</span></footer></main></body></html>

@@ -3,6 +3,7 @@ import path from 'node:path';
 import {isIP} from 'node:net';
 import {networkInterfaces} from 'node:os';
 import {validateContracts} from '../src/estimate.ts';
+import {readHubsConfig} from './hubs.mjs';
 
 const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const safeId = x => typeof x === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(x);
@@ -15,7 +16,7 @@ export function loadConfig(filename) {
  const absolute = path.resolve(filename);
  if (fs.statSync(absolute).size > 262144) throw new Error('Config too large');
  const raw = JSON.parse(fs.readFileSync(absolute,'utf8').replace(/^\uFEFF/,''));
- keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','ingestTokenEnv','viewerAuth','hubs','contracts','demo','tailnetViewer'],'configuration');
+ keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','ingestTokenEnv','viewerAuth','hubs','hubsPath','contracts','demo','tailnetViewer','management'],'configuration');
  if (raw.version !== 1 || typeof raw.demo !== 'boolean') throw new Error('version=1 and explicit demo boolean are required');
  keys(raw.listen,['host','port'],'listen');
  const {host,port} = raw.listen;
@@ -40,13 +41,41 @@ export function loadConfig(filename) {
   if(!isTailnetIPv4(raw.tailnetViewer.host)||!Number.isInteger(raw.tailnetViewer.port)||raw.tailnetViewer.port<1024||raw.tailnetViewer.port>65535||host!=='127.0.0.1'||raw.demo||!['basic','tailscale'].includes(raw.viewerAuth.mode)||origin.protocol!=='http:'||!origin.hostname.endsWith('.ts.net')||Number(origin.port||80)!==raw.tailnetViewer.port)throw new Error('Tailnet viewer requires an explicit Tailscale IPv4, HTTP ts.net origin, basic/tailscale mode, REAL data and loopback ingest.');
  }
  if(raw.viewerAuth.mode==='tailscale'&&!raw.tailnetViewer)throw new Error('Tailscale viewer mode requires a dedicated tailnet listener.');
- if (!Array.isArray(raw.hubs) || raw.hubs.length < 1 || raw.hubs.length > 16) throw new Error('Configure 1..16 hubs');
- const ids = new Set();
- for (const hub of raw.hubs) {
-  keys(hub,['id','label'],'hub');
-  if (!safeId(hub.id) || ids.has(hub.id) || typeof hub.label !== 'string' || !hub.label || hub.label.length > 128) throw new Error('Invalid/duplicate hub');
-  ids.add(hub.id);
+ if (raw.management !== undefined) {
+  keys(raw.management, ['enabled'], 'management');
+  if (typeof raw.management.enabled !== 'boolean') throw new Error('management.enabled must be a boolean');
  }
+ const managementEnabled = Boolean(raw.management?.enabled);
+ if (raw.hubs !== undefined && raw.hubsPath !== undefined) {
+  throw new Error('Cannot specify both hubs and hubsPath');
+ }
+ if (raw.hubs === undefined && raw.hubsPath === undefined) {
+  throw new Error('Either hubs or hubsPath is required');
+ }
+ if (managementEnabled && !raw.hubsPath) {
+  throw new Error('Management mode requires hubsPath');
+ }
+
+ const ids = new Set();
+ let resolvedHubsPath = null;
+ if (raw.hubsPath !== undefined) {
+  if (typeof raw.hubsPath !== 'string' || !raw.hubsPath.trim()) throw new Error('hubsPath must be a non-empty string');
+  if (path.isAbsolute(raw.hubsPath)) throw new Error('hubsPath must be a relative path');
+  resolvedHubsPath = path.resolve(path.dirname(absolute), raw.hubsPath);
+  const {hubsFile} = readHubsConfig(resolvedHubsPath);
+  raw.hubs = hubsFile.hubs.map(h => ({id: h.id, label: h.label}));
+  for (const hub of raw.hubs) {
+   ids.add(hub.id);
+  }
+ } else {
+  if (!Array.isArray(raw.hubs) || raw.hubs.length < 1 || raw.hubs.length > 16) throw new Error('Configure 1..16 hubs');
+  for (const hub of raw.hubs) {
+   keys(hub,['id','label'],'hub');
+   if (!safeId(hub.id) || ids.has(hub.id) || typeof hub.label !== 'string' || !hub.label || hub.label.length > 128) throw new Error('Invalid/duplicate hub');
+   ids.add(hub.id);
+  }
+ }
+
  if (!Array.isArray(raw.contracts)) throw new Error('contracts must be an array');
  const contractFields=['id','label','hubId','provider','accountKey','clientIds','deviceIds','windowKind','windowHours','monthlyFeeUsd','attributionConfirmed','minDeltaPercent','maxSourceSkewSeconds','maxGapSeconds'];
  for (const c of raw.contracts) {
@@ -54,7 +83,7 @@ export function loadConfig(filename) {
   if (!safeId(c.id) || typeof c.attributionConfirmed !== 'boolean' || !Array.isArray(c.clientIds) || !Array.isArray(c.deviceIds) || ![...c.clientIds,...c.deviceIds].every(x=>typeof x==='string'&&x.length>0&&x.length<=256) || ![c.label,c.hubId,c.provider,c.accountKey,c.windowKind].every(x=>typeof x==='string'&&x.length>0&&x.length<=256)) throw new Error('Invalid contract identity');
  }
  validateContracts(raw.contracts,[...ids]);
- return {...raw,publicOrigin:origin.origin,databasePath:path.resolve(path.dirname(absolute),raw.databasePath),configFile:absolute};
+ return {...raw,publicOrigin:origin.origin,databasePath:raw.databasePath.startsWith('/')?raw.databasePath:path.resolve(path.dirname(absolute),raw.databasePath),configFile:absolute,hubsPath:resolvedHubsPath,management:{enabled:managementEnabled}};
 }
 export function credentials(config, env=process.env) {
  const secret = (name,min) => {

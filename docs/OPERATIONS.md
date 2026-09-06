@@ -6,7 +6,7 @@ Tailscale経由の閲覧ではID・パスワード入力は不要です。環境
 
 `status:ubuntu`の「Hub observations received」は保存済み観測の存在を示し、継続受信や鮮度を保証しません。閲覧URLが疎通していてもこの項目がMISSINGなら、Collectorの接続とHubのURL・DNS・認証を確認します。
 
-Hubの日常管理をUIへ移す[実装計画](HUB_MANAGEMENT_PLAN.md)を作成しています。未実装のため、現時点では上記のCLI手順を使用します。移行後はAnalyticsが設定を保存し、Collectorがファイルの定期確認で反映する予定です。停止・削除で履歴や未送信outboxは消去しません。
+Hubの日常管理をWeb UIから行う機能が利用できます（詳細は[HUB_MANAGEMENT_PLAN.md](HUB_MANAGEMENT_PLAN.md)）。管理モード（`management.enabled: true`）では、Analyticsが設定（`hubs.json`）および秘密情報（`hub-secrets.json`）をアトミックに保存し、Collectorがファイルの定期確認（2秒間隔）で動的に反映します。プロセスの再起動は不要です。Hubの停止・削除（アーカイブ）を行っても、過去の観測履歴や未送信outboxは消去されません。
 
 ## 費用とデータの所在
 
