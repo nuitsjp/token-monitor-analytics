@@ -13,7 +13,7 @@ run = ["go version", "node --experimental-strip-types tools/check-runtime.mjs", 
 
 [tasks.check]
 description = "Run Go formatting/tests/vet, Analytics tests and TypeScript checks"
-depends = ["check:go", "check:analytics", "typecheck"]
+depends = ["check:go", "check:analytics", "check:publication", "typecheck"]
 
 [tasks."check:go"]
 dir = "{{config_root}}/collector"
@@ -71,3 +71,27 @@ run = ["node tools/package-ubuntu.mjs amd64", "node --experimental-strip-types t
 description = "Package Ubuntu arm64 only (does not certify release checks)"
 dir = "{{config_root}}"
 run = ["node tools/package-ubuntu.mjs arm64", "node --experimental-strip-types tools/check-package.mjs arm64"]
+
+[tasks."check:publication"]
+dir = "{{config_root}}"
+run = "node --experimental-strip-types --test tools/test/*.test.mjs"
+
+[tasks."publish:ubuntu"]
+description = "Validate and publish as the configured user without sudo (requires provision:ubuntu)"
+dir = "{{config_root}}"
+run = "node --experimental-strip-types tools/publish-ubuntu.mjs"
+
+[tasks."provision:ubuntu"]
+description = "Administrator bootstrap: OS, Tailscale, publication permissions and boot persistence"
+dir = "{{config_root}}"
+run = "node --experimental-strip-types tools/provision-ubuntu.mjs"
+
+[tasks."configure:ubuntu"]
+description = "Configure tailnet access and private Hub credentials as the publication user"
+dir = "{{config_root}}"
+run = "node --experimental-strip-types tools/configure-ubuntu.mjs"
+
+[tasks."status:ubuntu"]
+description = "Read environment, application and tailnet viewer status"
+dir = "{{config_root}}"
+run = "node --experimental-strip-types tools/status-ubuntu.mjs"

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import {parseArgs} from 'node:util';
 import {pathToFileURL} from 'node:url';
 import {loadConfig} from './config.mjs';
@@ -9,4 +10,4 @@ async function main(){
  await backupDatabase(config.databasePath,values.output);
  console.log('SQLite backup completed. Protect this file as private usage data.');
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(error=>{console.error(error.message);process.exitCode=1;});
+if(process.argv[1]&&fs.existsSync(process.argv[1])&&import.meta.url===pathToFileURL(fs.realpathSync(process.argv[1])).href)main().catch(error=>{console.error(error.message);process.exitCode=1;});

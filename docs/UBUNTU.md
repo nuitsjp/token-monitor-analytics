@@ -1,5 +1,7 @@
 # UbuntuでCollector＋Analyticsを常駐運用
 
+Tailscale経由の閲覧と冪等な自動配置は[環境構築・発行タスク](PUBLICATION.md)の`provision:ubuntu`（管理者）と`publish:ubuntu`（通常ユーザー）を使います。以下はSSH転送を使う手動配置手順です。
+
 systemdを利用できるUbuntuを対象にします。配布パッケージのAnalyticsは、miseの開発用Nodeではなく**システムにインストールしたNode.js 24 LTS**で起動します。unitの`ExecStart`は`/usr/bin/node`という絶対パスを使います。
 
 systemd unitには`ProtectHome=true`が設定されています。`/home`配下はサービスから見えないため、miseの`~/.local/share/mise/installs/node/...`やnvmのNodeをサービスの実行Nodeに使えません。miseはWindows/Linuxの開発・パッケージ作成に使い、Ubuntuの常駐サービスには`/usr/bin/node`などのシステムパスに置いたNodeを使います。`/usr/local/bin/node`へ配置する場合は、初回配置後に下記のsystemd drop-inで実行パスを変更します。ホーム配下へのシンボリックリンクも使いません。

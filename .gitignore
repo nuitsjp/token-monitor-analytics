@@ -15,3 +15,8 @@ analytics/.test-build/
 **/*.sqlite
 **/*.sqlite-*
 *.log
+
+# Editor recovery files can contain private configuration
+*.swp
+*.swo
+*~

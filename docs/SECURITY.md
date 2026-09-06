@@ -14,13 +14,11 @@ Basic認証はユーザー/権限管理機構ではなく、単一の閲覧資�
 
 `Host`と`Origin`を検査し、想定外のHost（DNS rebinding等）とクロスサイト要求を拒否します。CORSは許可しません。静的ファイルは固定allowlistから配信し、設定・DB・envは配信対象になりません。ログへペイロードや認証値を出しません。
 
-## 後から直接Web公開する場合
+## 明示的なTailscale閲覧
 
-別のHTTPSリバースプロキシを前置する設計にできますが、今回はプロキシ製品の導入・設定を含めません。推奨はAnalyticsを引き続きloopbackにbindし、プロキシだけで外部TLSを終端する形です。
+[Ubuntu発行タスク](PUBLICATION.md)はTailscale IPv4へ閲覧専用HTTP待受を追加します。接続はTailscale内で暗号化され、Basic認証を維持します。loopback側だけが取込みを受け付けます。閲覧用待受は有効な取込みトークンやX-Forwarded-*ヘッダーがあっても取込みを拒否します。両待受は同一のSQLite・直列化処理・SSE通知を共有します。
 
-その際は`viewerAuth.mode=basic`、`publicOrigin=https://実際のホスト名`を設定し、プロキシが元のHost/Authorizationを保持して渡すようにします。`/api/live`はレスポンスをbufferingせず、25秒heartbeatより長いread timeoutを設定します。アプリはX-Forwarded-*の申告を認証の根拠にしません。リバースプロキシ越しの公開は未検証です。
-
-非loopback bindはBasic認証とHTTPSのpublicOriginが設定されない限り起動を拒否します。ただしアプリ自身がTLSを終端するわけではありません。HTTPSの文字列を設定するだけでは暗号化されないため、必ず実際のTLSプロキシとFWで平文のバックエンドを保護してください。
+`tailnetViewer`は明示設定でのみ有効になり、起動時に指定IPがTailscaleインターフェースへ割り当て済みであることを確認します。0.0.0.0やLAN IPでは起動しません。一般インターネット公開、Serve、Funnelは設定しません。通常の非loopback bindに対するHTTPS/Basic必須条件は維持します。
 
 ## ファイル
 

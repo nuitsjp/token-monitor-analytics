@@ -225,3 +225,7 @@ mise exec -- node --experimental-strip-types .\analytics\runtime\backup.mjs --co
 履歴の正本はAnalyticsのSQLiteだけです。Collectorのoutboxとの双方向同期はしません。Hubの上流イベントは再送保証がないため、Ubuntu全体が停止していた間を復元できるとは扱いません。旧Cloudflare版データの自動移行、外部公開、クラウド版との切替機能、設定編集画面は今回含めません。
 
 [変更履歴](CHANGELOG.md) / [旧版からの移行](docs/MIGRATION.md) / [構成](docs/architecture.md) / [運用](docs/OPERATIONS.md) / [検証結果](docs/VERIFICATION.md) / [一次資料](docs/SOURCES.md)
+
+## UbuntuのHTTPS公開と自動起動
+
+`mise run provision:ubuntu`でOS・Tailscale・配置権限・ユーザーサービスとlingerを準備し、通常ユーザーが`mise run configure:ubuntu`で設定、`mise run publish:ubuntu`で発行します。Tailscale IPv4の閲覧専用HTTP待受を使います。発行はsudo不要で、設定・DB・outboxを保持します。同一内容の再発行ではコード交換や稼働中アプリの再起動を行いません。[環境構築・発行・自動化の手順](docs/PUBLICATION.md)を参照してください。

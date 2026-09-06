@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
-import {loadConfig,credentials} from './config.mjs';
+import {loadConfig,credentials,validateTailnetBinding} from './config.mjs';
 import {openDatabase} from './sqlite.mjs';
 import {canIngest,canView,allowedRequest} from './auth.mjs';
 import {LiveFeed} from './live.mjs';
@@ -26,6 +26,7 @@ async function body(request){
  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 export async function startServer(config,{env=process.env,logger=console,maintenanceMs=300000,heartbeatMs=25000}={}){
+ validateTailnetBinding(config);
  const auth=credentials(config,env);
  const db=openDatabase(config.databasePath,{demo:config.demo});
  let tail=Promise.resolve();
@@ -36,7 +37,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   return [route,{bytes:fs.readFileSync(new URL(`../public/${file}`,import.meta.url)),type:file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'}];
  }));
  let closing=false;
- const server=http.createServer({maxHeaderSize:16384,requestTimeout:30000,headersTimeout:10000,keepAliveTimeout:5000},async(request,response)=>{
+ const handler=viewerOnly=>async(request,response)=>{
   for(const [name,value] of Object.entries(commonHeaders))response.setHeader(name,value);
   try{
    if(closing){json(response,{error:'shutting_down'},503);return;}
@@ -44,6 +45,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    const url=new URL(request.url,config.publicOrigin);
    if(url.pathname==='/api/health'&&request.method==='GET'){json(response,{ok:true,service:'token-monitor-analytics',version:'0.3.0',storage:'sqlite',demo:config.demo});return;}
    if(url.pathname==='/api/ingest'){
+    if(viewerOnly){json(response,{error:'not_found'},404);return;}
     if(request.method!=='POST'){json(response,{error:'method_not_allowed'},405);return;}
     if(!canIngest(request,auth)){json(response,{error:'unauthorized'},401);return;}
     if((request.headers['content-type']??'').split(';')[0].trim().toLowerCase()!=='application/json'){json(response,{error:'json_required'},415);return;}
@@ -80,23 +82,30 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    logger.error('Request failed; sensitive details omitted. Check disk space and SQLite permissions.');
    if(!response.headersSent&&!response.destroyed)json(response,{error:'internal_error'},500);else response.destroy();
   }
- });
+ };
+ const options={maxHeaderSize:16384,requestTimeout:30000,headersTimeout:10000,keepAliveTimeout:5000};
+ const server=http.createServer(options,handler(false));
+ const viewerServer=config.tailnetViewer?http.createServer(options,handler(true)):null;
+ const servers=viewerServer?[server,viewerServer]:[server];
  const sockets=new Set();
+ for(const server of servers){
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
  server.on('clientError',(_error,socket)=>{if(socket.writable)socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');});
+ }
  try{
   await exclusive(()=>prune(db,config.detailRetentionDays));
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.listen.port,config.listen.host,resolve);});
- }catch(error){live.close();db.close();throw error;}
+  if(viewerServer)await new Promise((resolve,reject)=>{viewerServer.once('error',reject);viewerServer.listen(config.tailnetViewer.port,config.tailnetViewer.host,resolve);});
+ }catch(error){live.close();for(const socket of sockets)socket.destroy();await Promise.all(servers.map(s=>new Promise(r=>s.close(r))));db.close();throw error;}
  const maintenance=setInterval(()=>exclusive(()=>prune(db,config.detailRetentionDays)).catch(()=>logger.error('Retention maintenance failed; inspect disk/database')),maintenanceMs);
  maintenance.unref();
  logger.info(`Analytics ready at ${config.publicOrigin} (${config.demo?'DEMO':'REAL'}; SQLite; browser SSE)`);
  return {
-  server,db,live,
+  server,viewerServer,db,live,
   async close(){
    if(closing)return;closing=true;clearInterval(maintenance);live.close();
    const force=setTimeout(()=>{for(const socket of sockets)socket.destroy();},5000);force.unref();
-   await new Promise(resolve=>server.close(resolve));clearTimeout(force);
+   await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))));clearTimeout(force);
    await tail;db.close();
   }
  };
@@ -113,6 +122,6 @@ async function main(){
   try{await app.close();process.exitCode=0;}catch{process.exitCode=1;}
  });
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
+if(process.argv[1]&&fs.existsSync(process.argv[1])&&import.meta.url===pathToFileURL(fs.realpathSync(process.argv[1])).href){
  main().catch(error=>{console.error(`Analytics startup failed: ${error.message}`);process.exitCode=1;});
 }

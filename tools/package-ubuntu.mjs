@@ -16,7 +16,7 @@ const files=[
  ...['index.html','app.js','styles.css'].map(n=>`analytics/public/${n}`),
  ...['analytics.example.json','demo.json'].map(n=>`analytics/configs/${n}`),
  ...['analytics.ubuntu.json','collector.ubuntu.json','analytics.env.example','collector.env.example','tma-analytics.service','tma-collector.service'].map(n=>`deploy/${n}`),
- ...['UBUNTU.md','OPERATIONS.md','SECURITY.md','SOURCES.md','PROTOCOL.md','ESTIMATION.md','MIGRATION.md','VERIFICATION.md','architecture.md','contract.example.json'].map(n=>`docs/${n}`),
+ ...['UBUNTU.md','PUBLICATION.md','OPERATIONS.md','SECURITY.md','SOURCES.md','PROTOCOL.md','ESTIMATION.md','MIGRATION.md','VERIFICATION.md','architecture.md','contract.example.json'].map(n=>`docs/${n}`),
  ...fs.readdirSync(path.join(root,'analytics/migrations')).filter(n=>/^\d+_.+\.sql$/.test(n)).sort().map(n=>`analytics/migrations/${n}`)
 ];
 // Check tools before creating any output. No shell interpolation, including on Windows.

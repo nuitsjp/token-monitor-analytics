@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {isIP} from 'node:net';
+import {networkInterfaces} from 'node:os';
 import {validateContracts} from '../src/estimate.ts';
 
 const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -14,7 +15,7 @@ export function loadConfig(filename) {
  const absolute = path.resolve(filename);
  if (fs.statSync(absolute).size > 262144) throw new Error('Config too large');
  const raw = JSON.parse(fs.readFileSync(absolute,'utf8').replace(/^\uFEFF/,''));
- keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','ingestTokenEnv','viewerAuth','hubs','contracts','demo'],'configuration');
+ keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','ingestTokenEnv','viewerAuth','hubs','contracts','demo','tailnetViewer'],'configuration');
  if (raw.version !== 1 || typeof raw.demo !== 'boolean') throw new Error('version=1 and explicit demo boolean are required');
  keys(raw.listen,['host','port'],'listen');
  const {host,port} = raw.listen;
@@ -34,6 +35,10 @@ export function loadConfig(filename) {
  if (!isLoopback(host) && (raw.viewerAuth.mode !== 'basic' || origin.protocol !== 'https:')) throw new Error('Non-loopback listener requires basic auth and an HTTPS reverse proxy origin');
  if (raw.viewerAuth.mode === 'loopback' && (!isLoopback(host) || !['localhost','127.0.0.1','[::1]'].includes(origin.hostname))) throw new Error('Loopback viewer mode is local-only');
  if (raw.demo && (!isLoopback(host) || raw.viewerAuth.mode !== 'loopback' || origin.protocol !== 'http:')) throw new Error('Demo must remain loopback-only');
+ if(raw.tailnetViewer!==undefined){
+  keys(raw.tailnetViewer,['host','port'],'tailnetViewer');
+  if(!isTailnetIPv4(raw.tailnetViewer.host)||!Number.isInteger(raw.tailnetViewer.port)||raw.tailnetViewer.port<1024||raw.tailnetViewer.port>65535||host!=='127.0.0.1'||raw.demo||raw.viewerAuth.mode!=='basic'||origin.protocol!=='http:'||!origin.hostname.endsWith('.ts.net')||Number(origin.port||80)!==raw.tailnetViewer.port)throw new Error('Tailnet viewer requires an explicit Tailscale IPv4, HTTP ts.net origin, Basic auth, REAL data and loopback ingest.');
+ }
  if (!Array.isArray(raw.hubs) || raw.hubs.length < 1 || raw.hubs.length > 16) throw new Error('Configure 1..16 hubs');
  const ids = new Set();
  for (const hub of raw.hubs) {
@@ -64,4 +69,13 @@ export function credentials(config, env=process.env) {
   return {ingest,user,password};
  }
  return {ingest};
+}
+
+export function isTailnetIPv4(ip){
+ if(isIP(ip)!==4)return false;
+ const parts=ip.split('.').map(Number);return parts[0]===100&&parts[1]>=64&&parts[1]<=127;
+}
+export function validateTailnetBinding(config,interfaces=networkInterfaces()){
+ if(!config.tailnetViewer)return;
+ if(!isTailnetIPv4(config.tailnetViewer.host)||!Object.entries(interfaces).some(([name,addresses])=>/^tailscale/i.test(name)&&addresses?.some(a=>a.address===config.tailnetViewer.host)))throw new Error('Configured Tailscale address is not assigned to a Tailscale interface; wait for Tailscale or rerun configure:ubuntu.');
 }

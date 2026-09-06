@@ -59,14 +59,8 @@ mise exec -- bash scripts/run-analytics.sh --demo
 
 新しい作業では、OSごとに引数を変えるスクリプトより共通の`mise run setup`、`mise run check`、`mise run integration`、`mise run demo:*`を優先します。`mise exec --`の詳細は[mise exec](https://mise.jdx.dev/cli/exec.html)、タスクの詳細は[mise run](https://mise.jdx.dev/cli/run.html)を参照してください。
 
-## リリースパッケージ
+## Ubuntuへの正式発行
 
-`package-ubuntu.mjs`はGo・Node・OSの`tar`を使い、必要な実行ファイル・設定例・文書を明示リストから同梱します。ローカル設定が同じディレクトリーにあってもディレクトリーごとコピーしません。新しい実行時モジュールを追加する場合は、このリストも更新してください。SQLマイグレーションは番号付きの`.sql`をすべて同梱します。
+`mise run provision:ubuntu`はsudoを使うOS・Tailscale・権限・ユーザーサービス・lingerの環境構築です。`configure:ubuntu`は通常ユーザーによる設定、`publish:ubuntu`はsudo不要の検証・配置・再起動、`status:ubuntu`は読取り専用確認です。[手順](../docs/PUBLICATION.md)を参照してください。`release:ubuntu:*`はアーカイブ作成専用です。
 
-パッケージタスクは`check-package.mjs`も実行し、SHA-256、私的ファイルの混入、Linux ELFの対象CPU、空白を含む一時パスへの展開とAnalyticsのHTTP/SQLite起動を検査します。arm64バイナリーの実行試験ではありません。既存の同名アーカイブとチェックサムは再作成時に置き換わります。
-
-転送・systemdへの配置・更新は[Ubuntu手順](../docs/UBUNTU.md)に従います。miseタスクはSSH接続やサービス停止を実行しません。
-
-## 実行結果の扱い
-
-`integration.mjs`は、実行した環境の終了コードとログを確認して結果を記録します。Windows実機で未実行の手順をWindows成功とは記録せず、LinuxのRace Detectorも`build-essential`がない環境では成功と扱いません。環境構築・テスト・パッケージ生成・実機運用の結果を分けて記録してください。
+`check:publication`は設定・認証保持・冪等性と、Linuxで通常ユーザーの実systemdサービス起動を検証します。AnalyticsテストはTailscaleインターフェースがある場合、実際の二つの待受で認証・取込み遮断・共有SQLite/SSEを検証します。実OS再起動試験は含みません。
