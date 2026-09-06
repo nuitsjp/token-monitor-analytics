@@ -72,6 +72,6 @@ mise run status:ubuntu
 
 active/enabled、正式DBモード、Tailscale DNS経由のHTTP、認証入力なしでの閲覧、閲覧側ingest遮断、SSEを確認して成功を記録します。失敗時は非ゼロで終了し、成功記録を更新しません。DB移行後のコードだけの自動ロールバックは行いません。
 
-`status:ubuntu`は実際に疎通したURLだけをVerifiedとして表示します。このホストの予定URLは`http://home-ubuntu.tail1bf795.ts.net:8788`です。別のTailscale端末での到達性と実Hubの受信も確認してください。OS再起動試験は別途実施し、linger/enable検査だけで再起動試験成功とは扱いません。
+`status:ubuntu`は実際に疎通したURLだけをVerifiedとして表示します。このホストで発行・疎通確認済みのURLは`http://home-ubuntu.tail1bf795.ts.net:8788`です。別のTailscale端末での到達性と実Hubの受信も確認してください。OS再起動試験は別途実施し、linger/enable検査だけで再起動試験成功とは扱いません。
 
 更新自動化は同じ発行ユーザーで`mise run publish:ubuntu`を実行します。各タスクはユーザーsystemdバスの環境変数を未設定時に補います。サービス定義変更やOS環境の修復時だけ`provision:ubuntu`を再実行します。

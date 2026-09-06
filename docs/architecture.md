@@ -6,6 +6,8 @@
 
 Hubは既存のCloudflare版を使用し、1 Hub = 1 Cloudflareアカウントという前提を変更しない。Analytics側のCloudflareアカウント・Worker・D1・Durable Objects・Access・Wranglerは使用しない。
 
+Ubuntuの発行構成では、Analyticsの同一プロセスがloopback取込み用とTailscale IPv4閲覧用の二つの待受を持つ。SQLiteと取込み直列化・ライブ通知は共有する。Tailscaleを閲覧の認証境界とし、アプリの閲覧資格情報を要求しない。閲覧側のingestは遮断し、loopback取込みのBearer認証は維持する。環境構築はsudoを使う`provision:ubuntu`、設定・発行は通常ユーザーの`configure:ubuntu`・`publish:ubuntu`に分離する。
+
 ## 責務
 
 Go CollectorはHubのSSEを購読し、API金額・利用率などの必要な観測値だけを取り出す。ファイルoutboxに記録したイベントを短いHTTP POSTでAnalyticsに送り、保存確認後だけ削除する。API料金の再計算、推定、履歴照会、Web配信はしない。

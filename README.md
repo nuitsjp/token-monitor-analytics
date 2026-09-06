@@ -196,7 +196,7 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:8787:127.0.0.1:8787 USER@UBUNTU
 
 ブラウザーで`http://127.0.0.1:8787`へアクセスし、Ubuntuの`analytics.env`に設定した閲覧用ユーザー名・パスワードを入力します。**同じURLでも、今回はSSH経由でUbuntuの画面を見ています**。ブラウザー/SSHを閉じても、収集と保存はUbuntu上で続きます。
 
-LAN/インターネットから直接公開する構成は初期設定に含めません。必要になった段階でHTTPSリバースプロキシ等を前置します。[公開と認証](docs/SECURITY.md)を参照してください。
+LAN/インターネットから直接公開する構成は初期設定に含めません。現在のUbuntu発行では、明示的なTailscale専用待受を追加し、Tailscaleを閲覧の認証境界とします。[公開と認証](docs/SECURITY.md)を参照してください。
 
 ## 7. テスト・型検査・バックアップ
 
@@ -228,4 +228,4 @@ mise exec -- node --experimental-strip-types .\analytics\runtime\backup.mjs --co
 
 ## UbuntuのHTTPS公開と自動起動
 
-`mise run provision:ubuntu`でOS・Tailscale・配置権限・ユーザーサービスとlingerを準備し、通常ユーザーが`mise run configure:ubuntu`で設定、`mise run publish:ubuntu`で発行します。Tailscale IPv4の閲覧専用HTTP待受を使います。発行はsudo不要で、設定・DB・outboxを保持します。同一内容の再発行ではコード交換や稼働中アプリの再起動を行いません。[環境構築・発行・自動化の手順](docs/PUBLICATION.md)を参照してください。
+`mise run provision:ubuntu`でOS・Tailscale・配置権限・ユーザーサービスとlingerを準備し、通常ユーザーが`mise run configure:ubuntu`で設定、`mise run publish:ubuntu`で発行します。Tailscale IPv4の閲覧専用HTTP待受を使い、閲覧用ID・パスワードは要求しません。取込みはloopback側のBearer認証を維持し、閲覧側からは遮断します。発行はsudo不要で、設定・DB・outboxを保持します。同一内容の再発行ではコード交換や稼働中アプリの再起動を行いません。[環境構築・発行・自動化の手順](docs/PUBLICATION.md)を参照してください。

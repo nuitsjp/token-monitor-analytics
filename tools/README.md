@@ -63,4 +63,4 @@ mise exec -- bash scripts/run-analytics.sh --demo
 
 `mise run provision:ubuntu`はsudoを使うOS・Tailscale・権限・ユーザーサービス・lingerの環境構築です。`configure:ubuntu`は通常ユーザーによる設定、`publish:ubuntu`はsudo不要の検証・配置・再起動、`status:ubuntu`は読取り専用確認です。[手順](../docs/PUBLICATION.md)を参照してください。`release:ubuntu:*`はアーカイブ作成専用です。
 
-`check:publication`は設定・認証保持・冪等性と、Linuxで通常ユーザーの実systemdサービス起動を検証します。AnalyticsテストはTailscaleインターフェースがある場合、実際の二つの待受で認証・取込み遮断・共有SQLite/SSEを検証します。実OS再起動試験は含みません。
+`check:publication`は設定・認証保持・冪等性と、Linuxで通常ユーザーの実systemdサービス起動を検証します。AnalyticsテストはTailscaleインターフェースがある場合、実際の二つの待受でTailscale境界による認証入力なしの閲覧・取込み遮断・共有SQLite/SSEを検証します。実OS再起動試験は含みません。

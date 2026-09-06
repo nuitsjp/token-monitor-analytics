@@ -43,7 +43,7 @@ LF/CRLF/CR、複数data行、BOM、コメントに対応。不完全なEOFフレ
 
 `GET /api/live`: 同一originのSSE。Content-Typeはtext/event-stream。`event: ready`と`event: updated`は再取得通知で、履歴イベントログではない。再接続はEventSourceに任せ、readyで最新状態を再取得する。25秒ごとのコメントheartbeatを送信する。[S3]
 
-閲覧は設定に応じてloopback限定またはBasic認証。CollectorのBearer認証とは独立。POSTはCOMMIT後のみ成功ACKを返す。
+閲覧は設定に応じてloopback限定、Basic認証、または専用Tailscale待受を認証境界とする認証入力不要モード。Tailscale閲覧側ではingestを常に拒否する。CollectorのBearer認証とは独立。POSTはCOMMIT後のみ成功ACKを返す。
 
 `GET /api/health`: 秘密情報を含まない固定ヘルス情報。DB/Hubの疎通を保証しない。
 

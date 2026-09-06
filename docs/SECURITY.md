@@ -2,7 +2,7 @@
 
 ## 初期の公開範囲
 
-開発・運用とも`127.0.0.1:8787`で待ち受けます。Windowsの開発デモはloopback内の閲覧だけ認証なし。UbuntuのサンプルはBasic認証を有効にし、閲覧経路をSSHポート転送内に閉じます。Hub→CollectorはHTTPSのSSE、Collector→同居Analyticsはloopback HTTPです。
+既定の開発・手動配置サンプルは`127.0.0.1:8787`で待ち受けます。現在のUbuntu発行構成は後述のTailscale閲覧を使用します。Windowsの開発デモはloopback内の閲覧だけ認証なし。UbuntuのサンプルはBasic認証を有効にし、閲覧経路をSSHポート転送内に閉じます。Hub→CollectorはHTTPSのSSE、Collector→同居Analyticsはloopback HTTPです。
 
 外部公開を暗黙には行いません。UbuntuのFWで8787番を開ける、`host`を0.0.0.0へ変更する、認証を無効にすることは初期手順に含みません。loopback閲覧モードはローカルユーザーを信頼する方式であり、同じ端末の他ユーザーからも閲覧され得ます。
 

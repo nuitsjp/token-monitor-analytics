@@ -16,7 +16,7 @@ CollectorのJSON形式はv1のまま。`analytics_url`を`http://127.0.0.1:8787`
 
 契約定義は旧`analytics/src/settings.ts`から新`analytics/config.local.json`の`contracts`へ、Hub定義は`hubs`へ移します。新しい本番設定では`demo: false`にします。JSONなのでコメント・TypeScriptの型注釈・末尾カンマは使えません。
 
-新Analyticsに対する送信トークンを設定します。デモ用tokenは本番で拒否します。ブラウザー認証はCloudflare Accessではなく、localhost限定またはBasic認証です。
+新Analyticsに対する送信トークンを設定します。デモ用tokenは本番で拒否します。ブラウザー認証はCloudflare Accessではなく、localhost限定、Basic認証、または明示的なTailscale境界モードです。現在のUbuntu発行タスクはTailscale境界モードを使用し、閲覧資格情報の入力は不要です。
 
 ## 0.3.0のWindows本番データをUbuntuへ引継ぐ場合
 

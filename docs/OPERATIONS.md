@@ -1,5 +1,11 @@
 # 同居版の運用
 
+## 現在のUbuntu運用
+
+Tailscale経由の閲覧ではID・パスワード入力は不要です。環境変更は`mise run provision:ubuntu`、Hub設定変更は`mise run configure:ubuntu`、更新発行は`mise run publish:ubuntu`、状態確認は`mise run status:ubuntu`を使います。sudoが必要なのは環境構築です。[詳細手順](PUBLICATION.md)を参照してください。
+
+`status:ubuntu`の「Hub observations received」は保存済み観測の存在を示し、継続受信や鮮度を保証しません。閲覧URLが疎通していてもこの項目がMISSINGなら、Collectorの接続とHubのURL・DNS・認証を確認します。
+
 ## 費用とデータの所在
 
 AnalyticsはUbuntu上のNode/SQLiteで動くため、Analytics用CloudflareのWorker/D1/DO枠は使いません。Ubuntu本体・電力・ストレージ・バックアップの維持は必要です。Hub側は引き続きCloudflareでSSEを配信するため、その利用量評価まで不要になったわけではありません。

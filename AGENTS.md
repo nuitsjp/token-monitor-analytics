@@ -14,7 +14,7 @@ Hub→CollectorはSSE、Collector→同居Analyticsはloopback HTTP POST、Analy
 
 1 Analytics、1 Collector、1 outbox writerが初期運用。ingest全体をSQLite transactionで直列化し、COMMIT後だけACKと通知を出す。未知/欠測はnull。金額の独自再計算やアカウントの推測帰属はしない。利用率と金額の対象・期間を一致させる。デモDBと本番DBを混ぜない。
 
-既定はloopbackのみで待受、Ubuntuからの閲覧はSSH転送＋Basic認証。Hub Secretとingest/viewer認証を分離。設定・env・DB・outboxをフロント/Git/ログに出さない。外部公開はTLSプロキシ等の明示的な別要件として扱う。
+既定はloopbackのみで待受、Ubuntuからの閲覧はSSH転送＋Basic認証。Hub Secretとingest/viewer認証を分離。設定・env・DB・outboxをフロント/Git/ログに出さない。外部公開は明示的な別要件として扱う。承認済みのUbuntu発行構成ではTailscaleを閲覧の認証境界とし、`viewerAuth.mode=tailscale`でアプリの閲覧認証を省略する。専用Tailscale IP待受と外部ingest遮断、loopback ingestのBearer認証は維持する。sudoを使う環境構築は`provision:ubuntu`、通常ユーザーの設定は`configure:ubuntu`、sudo不要の発行は`publish:ubuntu`に分離し、冪等性を維持する。
 
 ## 検証
 
