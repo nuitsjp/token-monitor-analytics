@@ -2,7 +2,7 @@
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Token Monitor Analytics</title><link rel="stylesheet" href="/styles.css"><script type="module" src="/app.js"></script></head>
 <body>
 <aside><a class="brand" href="/"><span class="mark">T</span><span>Token Monitor<br><strong>Analytics</strong></span></a>
-<p class="eyebrow">WORKSPACE</p><nav aria-label="メイン"><button data-view="dashboard" aria-current="page">Overview</button><button data-view="history">Daily history</button><button data-view="settings">Connections</button><button data-view="manage" id="nav-manage" hidden>Hubs</button></nav>
+<p class="eyebrow">WORKSPACE</p><nav aria-label="メイン"><button data-view="dashboard" aria-current="page">Overview</button><button data-view="history">Daily history</button><button data-view="settings">Connections</button><button data-view="manage" id="nav-manage" hidden>Hubs</button><button data-view="update" id="nav-update" hidden>Update</button></nav>
 <div class="aside-foot"><span class="dot" id="dot"></span><span id="live">接続準備中</span><small>SSE → Collector → Analytics<br>観測値と参考推定を区別します。</small></div></aside>
 <main><header><div><p class="eyebrow">SUBSCRIPTION INTELLIGENCE</p><h1 id="title">Overview</h1><p class="lead">利用額と、契約で使える金額の推定推移。</p></div><button id="refresh" class="outline">更新</button></header>
 <div id="notice" role="status" hidden></div>
@@ -40,5 +40,78 @@
 <p class="muted">過去の観測履歴や未送信バッチは消去されず保持されます。契約が紐付いているHubは削除できません（停止をご利用ください）。</p>
 <div class="dialog-actions"><button type="button" id="btn-del-cancel" class="outline">キャンセル</button><button type="submit" id="btn-del-confirm" class="outline danger">削除（アーカイブ）</button></div>
 </form></dialog>
+</section>
+<section id="update" class="view" hidden>
+<div class="section-heading"><h2>システム更新</h2><button id="btn-check-update" class="outline">更新を確認</button></div>
+<div id="update-unsupported-banner" class="callout warning" hidden></div>
+<div class="update-grid">
+<article class="card">
+<h3>現在のバージョン</h3>
+<dl class="meta-dl">
+<dt>コミット</dt><dd id="current-commit">—</dd>
+<dt>コミット日時</dt><dd id="current-commit-date">—</dd>
+<dt>リリースID</dt><dd id="current-release-id">—</dd>
+</dl>
+</article>
+<article class="card">
+<div class="card-heading">
+<h3>更新候補 (main)</h3>
+<span id="candidate-badge" class="badge">—</span>
+</div>
+<div id="candidate-info">
+<dl class="meta-dl">
+<dt>対象コミット</dt><dd id="candidate-commit">—</dd>
+<dt>コミット日時</dt><dd id="candidate-date">—</dd>
+<dt>メッセージ</dt><dd id="candidate-message">—</dd>
+<dt>最終確認</dt><dd id="candidate-checked-at">—</dd>
+</dl>
+<div class="candidate-actions">
+<a id="candidate-compare-link" class="outline-link" target="_blank" rel="noopener" hidden>GitHubで変更を確認 ↗</a>
+<button id="btn-apply-update" class="outline primary" disabled>このバージョンへ更新</button>
+</div>
+</div>
+</article>
+</div>
+<div class="section-heading"><h2>更新ジョブの状況</h2></div>
+<div id="update-job-card" class="card">
+<div class="job-status-bar">
+<div>
+<strong>ジョブID:</strong> <span id="job-id">—</span>
+<span id="job-stage-badge" class="badge">待機中</span>
+</div>
+<div id="job-times" class="job-times">
+<small id="job-started-at"></small>
+<small id="job-finished-at"></small>
+</div>
+</div>
+<div id="job-error" class="dialog-error" hidden></div>
+<div id="job-recovery" class="callout danger" hidden>
+<strong>ホスト復旧手順</strong>
+<p>サービスの起動またはヘルスチェックに失敗しました。SSHでホストに接続し、以下のコマンドで状態を確認してください:</p>
+<pre><code>systemctl --user status tma-analytics.service tma-collector.service
+journalctl --user -u tma-analytics.service -e</code></pre>
+<p>必要に応じて <code>/var/lib/tma-analytics/backups/</code> のバックアップからデータベースを復元してください。</p>
+</div>
+</div>
+<dialog id="update-confirm-dialog"><form id="update-confirm-form" method="dialog">
+<h3>システムの更新</h3>
+<div class="callout warning">
+<strong>注意: 画面とデータ収集が一時的に停止します</strong>
+<p>更新中は新しいリリースの検証・成果物の配置・サービスの再起動が行われます。完了するまでブラウザーを閉じずにお待ちください。</p>
+</div>
+<p>更新対象コミット: <strong id="dialog-target-commit"></strong></p>
+<div class="dialog-actions">
+<button type="button" id="btn-update-cancel" class="outline">キャンセル</button>
+<button type="submit" id="btn-update-confirm" class="outline primary">更新を開始</button>
+</div>
+</form></dialog>
+<div id="update-restarting-overlay" class="reconnect-overlay" hidden>
+<div class="reconnect-modal">
+<div class="spinner"></div>
+<h3>更新を適用中...</h3>
+<p id="restarting-text">サービスを再起動しています。Analyticsの復帰を待機しています。</p>
+<p class="muted"><small>自動的に再接続されます。数秒お待ちください。</small></p>
+</div>
+</div>
 </section>
 <footer>Token Monitor Analytics · 0.3.0 self-hosted <span>履歴の正本: AnalyticsサーバーのSQLite</span></footer></main></body></html>

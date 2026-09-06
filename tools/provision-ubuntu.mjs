@@ -4,7 +4,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 import {readJSON,writeChanged} from './publish-config.mjs';
-import {prefix,destination,appUnits,infrastructureFile,userUnit,unitDigest} from './ubuntu-layout.mjs';
+import {prefix,destination,appUnits,managedUnits,updaterDir,repoDir,infrastructureFile,userUnit,unitDigest} from './ubuntu-layout.mjs';
 import {run,inherit,report} from './ubuntu-common.mjs';
 const systemctl=(...args)=>run('/usr/bin/systemctl',args);
 function noLink(p){try{if(fs.lstatSync(p).isSymbolicLink())throw new Error('Managed paths must not be symlinks.');}catch(e){if(e.code!=='ENOENT')throw e;}}
@@ -43,11 +43,14 @@ async function main(){
   run('/bin/sh',[],{input:installer});
  }else console.log('SKIP: Tailscale installed; existing connection and Serve settings retained.');
  systemctl('enable','--now','tailscaled.service');
- for(const p of [prefix,`${prefix}/releases`,'/var/lib/tma-deploy',destination,'/var/lib/tma-analytics','/var/lib/tma-analytics/backups','/var/lib/tma-collector','/var/lib/tma-collector/outbox'])directory(p,uid,gid,p.startsWith('/var/')?0o700:0o755);
+ for(const p of [prefix,`${prefix}/releases`,'/var/lib/tma-deploy',destination,'/var/lib/tma-analytics','/var/lib/tma-analytics/backups','/var/lib/tma-collector','/var/lib/tma-collector/outbox',updaterDir,repoDir])directory(p,uid,gid,p.startsWith('/var/')?0o700:0o755);
+ // Ensure updater directory has dedicated node binary and runner
+ const updaterNode=path.join(updaterDir,'node');
+ fs.copyFileSync(process.execPath,updaterNode);fs.chmodSync(updaterNode,0o755);fs.chownSync(updaterNode,uid,gid);
  const userDir=path.join(home,'.config/systemd/user');
  for(const p of [path.join(home,'.config'),path.join(home,'.config/systemd'),userDir]){noLink(p);if(!fs.existsSync(p))directory(p,uid,gid,0o700);}
  let changed=false;
- for(const name of appUnits){const target=path.join(userDir,name);noLink(target);changed=writeChanged(target,userUnit(name))||changed;fs.chownSync(target,uid,gid);}
+ for(const name of managedUnits){const target=path.join(userDir,name);noLink(target);changed=writeChanged(target,userUnit(name))||changed;fs.chownSync(target,uid,gid);}
  if(spawnSync('/usr/bin/loginctl',['show-user',username,'-p','Linger','--value'],{encoding:'utf8'}).stdout?.trim()!=='yes')run('/usr/bin/loginctl',['enable-linger',username]);
  systemctl('start',`user@${uid}.service`);
  const userctl=(...args)=>run('/usr/sbin/runuser',['-u',username,'--','/usr/bin/env',`XDG_RUNTIME_DIR=/run/user/${uid}`,`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus`,'/usr/bin/systemctl','--user',...args]);

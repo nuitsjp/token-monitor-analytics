@@ -16,7 +16,7 @@ export function loadConfig(filename) {
  const absolute = path.resolve(filename);
  if (fs.statSync(absolute).size > 262144) throw new Error('Config too large');
  const raw = JSON.parse(fs.readFileSync(absolute,'utf8').replace(/^\uFEFF/,''));
- keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','ingestTokenEnv','viewerAuth','hubs','hubsPath','contracts','demo','tailnetViewer','management'],'configuration');
+ keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','ingestTokenEnv','viewerAuth','hubs','hubsPath','contracts','demo','tailnetViewer','management','update'],'configuration');
  if (raw.version !== 1 || typeof raw.demo !== 'boolean') throw new Error('version=1 and explicit demo boolean are required');
  keys(raw.listen,['host','port'],'listen');
  const {host,port} = raw.listen;
@@ -46,6 +46,38 @@ export function loadConfig(filename) {
   if (typeof raw.management.enabled !== 'boolean') throw new Error('management.enabled must be a boolean');
  }
  const managementEnabled = Boolean(raw.management?.enabled);
+ if (raw.update !== undefined) {
+  keys(raw.update, ['enabled', 'repositoryUrl', 'branch', 'checkIntervalSeconds', 'statePath', 'repoPath', 'publicationPath'], 'update');
+  if (typeof raw.update.enabled !== 'boolean') throw new Error('update.enabled must be a boolean');
+  if (raw.update.repositoryUrl !== undefined && (typeof raw.update.repositoryUrl !== 'string' || !raw.update.repositoryUrl.trim())) {
+   throw new Error('update.repositoryUrl must be a non-empty string');
+  }
+  if (raw.update.branch !== undefined && (typeof raw.update.branch !== 'string' || !raw.update.branch.trim())) {
+   throw new Error('update.branch must be a non-empty string');
+  }
+  if (raw.update.checkIntervalSeconds !== undefined && (!Number.isInteger(raw.update.checkIntervalSeconds) || raw.update.checkIntervalSeconds < 10 || raw.update.checkIntervalSeconds > 86400)) {
+   throw new Error('update.checkIntervalSeconds must be 10..86400');
+  }
+  if (raw.update.statePath !== undefined && (typeof raw.update.statePath !== 'string' || !raw.update.statePath.trim())) {
+   throw new Error('update.statePath must be a non-empty string');
+  }
+  if (raw.update.repoPath !== undefined && (typeof raw.update.repoPath !== 'string' || !raw.update.repoPath.trim())) {
+   throw new Error('update.repoPath must be a non-empty string');
+  }
+  if (raw.update.publicationPath !== undefined && (typeof raw.update.publicationPath !== 'string' || !raw.update.publicationPath.trim())) {
+   throw new Error('update.publicationPath must be a non-empty string');
+  }
+ }
+ const resolvePath = p => (p.startsWith('/') ? p : path.resolve(path.dirname(absolute), p));
+ const updateConfig = raw.update ? {
+  enabled: Boolean(raw.update.enabled),
+  repositoryUrl: raw.update.repositoryUrl ?? 'https://github.com/nuitsjp/token-monitor-analytics.git',
+  branch: raw.update.branch ?? 'main',
+  checkIntervalSeconds: raw.update.checkIntervalSeconds ?? 300,
+  statePath: raw.update.statePath ? resolvePath(raw.update.statePath) : '/var/lib/tma-deploy/update-state.json',
+  repoPath: raw.update.repoPath ? resolvePath(raw.update.repoPath) : '/var/lib/tma-deploy/repo',
+  publicationPath: raw.update.publicationPath ? resolvePath(raw.update.publicationPath) : '/opt/token-monitor-analytics/publication.json'
+ } : { enabled: false };
  if (raw.hubs !== undefined && raw.hubsPath !== undefined) {
   throw new Error('Cannot specify both hubs and hubsPath');
  }
@@ -83,7 +115,7 @@ export function loadConfig(filename) {
   if (!safeId(c.id) || typeof c.attributionConfirmed !== 'boolean' || !Array.isArray(c.clientIds) || !Array.isArray(c.deviceIds) || ![...c.clientIds,...c.deviceIds].every(x=>typeof x==='string'&&x.length>0&&x.length<=256) || ![c.label,c.hubId,c.provider,c.accountKey,c.windowKind].every(x=>typeof x==='string'&&x.length>0&&x.length<=256)) throw new Error('Invalid contract identity');
  }
  validateContracts(raw.contracts,[...ids]);
- return {...raw,publicOrigin:origin.origin,databasePath:raw.databasePath.startsWith('/')?raw.databasePath:path.resolve(path.dirname(absolute),raw.databasePath),configFile:absolute,hubsPath:resolvedHubsPath,management:{enabled:managementEnabled}};
+ return {...raw,publicOrigin:origin.origin,databasePath:raw.databasePath.startsWith('/')?raw.databasePath:path.resolve(path.dirname(absolute),raw.databasePath),configFile:absolute,hubsPath:resolvedHubsPath,management:{enabled:managementEnabled},update:updateConfig};
 }
 export function credentials(config, env=process.env) {
  const secret = (name,min) => {

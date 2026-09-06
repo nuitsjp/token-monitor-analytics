@@ -39,6 +39,7 @@ export function configureApplication({dir,identity,port=8788,hubs}){
   analytics.listen={host:'127.0.0.1',port};analytics.publicOrigin=plan.publicOrigin;
   analytics.hubs=configuredHubs.map(h=>({id:h.id,label:oldA?.hubs.find(a=>a.id===h.id)?.label??h.id}));
   if(analytics.contracts.some(c=>!configuredHubs.some(h=>h.id===c.hubId)))throw new Error('A removed Hub is still referenced by a contract; no configuration was changed.');
+  analytics.update={enabled:true,repositoryUrl:oldA?.update?.repositoryUrl??'https://github.com/nuitsjp/token-monitor-analytics.git',branch:oldA?.update?.branch??'main',checkIntervalSeconds:oldA?.update?.checkIntervalSeconds??300};
   const collector={version:1,ingest_token_env:'TMA_INGEST_TOKEN',spool_dir:'/var/lib/tma-collector/outbox',max_spool_bytes:268435456,flush_seconds:2,batch_size:2,idle_seconds:90,...oldC,analytics_url:`http://127.0.0.1:${port}`,hubs:configuredHubs};
   outputs.push(['analytics.json',JSON.stringify(analytics,null,2)+'\n'],['collector.json',JSON.stringify(collector,null,2)+'\n']);
  }

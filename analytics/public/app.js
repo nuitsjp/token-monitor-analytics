@@ -24,7 +24,7 @@ function draw(){if(!data)return;displayZone=data.timeZone??'Asia/Tokyo';
  if(!$('limits').children.length){const tr=el('tr'),td=el('td','利用率はまだ届いていません。');td.colSpan=5;tr.append(td);$('limits').append(tr);}
  $('connections').replaceChildren();for(const h of data.configuredHubs){const o=data.hubs.find(x=>x.hubId===h.id);const card=el('div',undefined,'callout');card.append(el('strong',`${h.label} / ${h.id}`),el('p',o?`最後の観測: ${when(o.observedAt)} ${displayZone}`:'未受信'));if(o){const details=el('details'),summary=el('summary','紐付け用の識別子');details.append(summary);for(const d of o.stats.devices){details.append(el('p',`deviceId: ${d.deviceId} / clients: ${Object.keys(d.periods.allTime?.clientCosts??{}).join(', ')}`));}for(const p of o.stats.limits.providers){details.append(el('p',`${p.provider} / accountKey: ${p.accountKey}`));}card.append(details);}$('connections').append(card);}
 }
-async function refresh(){dirty=true;if(loading)return;loading=true;try{do{dirty=false;data=await get('/api/state');notice(data.demo?'DEMO：合成データです。実サービスの料金・利用枠ではありません。':'');$('nav-manage').hidden=!data.management?.enabled;draw();if(view==='history')await loadHistory();if(view==='manage')await loadManage();}while(dirty);}catch(e){notice(e.message);}finally{loading=false;}}
+async function refresh(){dirty=true;if(loading)return;loading=true;try{do{dirty=false;data=await get('/api/state');notice(data.demo?'DEMO：合成データです。実サービスの料金・利用枠ではありません。':'');$('nav-manage').hidden=!data.management?.enabled;$('nav-update').hidden=!data.management?.enabled;draw();if(view==='history')await loadHistory();if(view==='manage')await loadManage();if(view==='update')await loadUpdate();}while(dirty);}catch(e){notice(e.message);}finally{loading=false;}}
 async function loadHistory(){const id=$('contract-select').value;$('daily').replaceChildren();$('chart').replaceChildren();if(!id){$('chart').append(el('p','契約が未設定です。','muted'));return;}
  const result=await get(`/api/history?contract=${encodeURIComponent(id)}`);if($('contract-select').value!==id)return;
  for(const row of result.rows){const tr=el('tr');tr.append(el('td',row.day),el('td',money(row.monthly_capacity_usd)),el('td',money(row.window_capacity_usd)),el('td',when(row.last_valid_at)),el('td',`${status(row.status)} / ${reasons[row.reason]??row.reason}`));$('daily').append(tr);}
@@ -213,6 +213,141 @@ async function toggleHubStatus(h){
  }catch(err){notice(err.message);}
 }
 
+let updateData=null,pollingRestart=false;
+const updateErrors={lock_conflict:'他の発行タスクまたは更新処理が実行中です。',fetch_failed:'mainブランチの最新コミット取得に失敗しました。ネットワーク接続を確認してください。',commit_not_found:'指定されたコミットがリモートのmainに見つかりません。',verification_failed:'新バージョンのローカル検証（テストまたはビルド）に失敗したため、適用を中止しました。現在のバージョンは維持されています。',deploy_failed:'成果物の配置またはSQLiteバックアップに失敗しました。',health_check_failed:'新バージョンの起動または疎通確認に失敗しました。ホストログを確認してください。',job_aborted:'更新処理が途中で中断されました（プロセス終了またはサービス停止）。',system_restarted:'OS再起動により更新処理が中断されました。',save_state_failed:'状態ファイルの保存に失敗しました。',unknown_error:'予期せぬエラーが発生しました。'};
+const stageNames={accepted:'受付済み',fetching:'取得中',verifying:'検証中',deploying:'配置中',restarting:'再起動中',success:'成功',failed:'失敗',aborted:'中断・状態不明'};
+
+async function loadUpdate(){
+ try{
+  updateData=await get('/api/manage/update');
+  drawUpdate();
+ }catch(e){notice(e.message);}
+}
+
+function drawUpdate(){
+ if(!updateData)return;
+ const {supported,enabled,reason,current,candidate,job}=updateData;
+ const banner=$('update-unsupported-banner');
+ if(!supported||!enabled){
+  let msg='この環境ではWeb UIからのシステム更新機能は利用できません。';
+  if(reason==='unsupported_platform')msg='Windows開発環境ではWeb UIからのシステム更新は無効です（Ubuntu本番環境専用）。';
+  else if(reason==='demo_mode')msg='デモ環境ではシステム更新は無効です。';
+  else if(reason==='update_disabled')msg='設定ファイルでシステム更新機能（update.enabled）が無効化されています。';
+  banner.textContent=msg;banner.hidden=false;
+  $('btn-check-update').disabled=true;$('btn-apply-update').disabled=true;
+ }else{
+  banner.hidden=true;$('btn-check-update').disabled=false;
+ }
+ $('current-commit').textContent=current?.commitSha?`${current.commitSha.slice(0,12)} (${current.commitSha})`:'不明（推測しません）';
+ $('current-commit-date').textContent=current?.commitDate?when(current.commitDate):'—';
+ $('current-release-id').textContent=current?.releaseId?current.releaseId.slice(0,12):'—';
+
+ const badge=$('candidate-badge'),applyBtn=$('btn-apply-update'),compLink=$('candidate-compare-link');
+ if(!candidate){
+  badge.textContent='未確認';badge.className='badge';
+  $('candidate-commit').textContent='—';$('candidate-date').textContent='—';
+  $('candidate-message').textContent='—';$('candidate-checked-at').textContent='未確認（「更新を確認」を押してください）';
+  compLink.hidden=true;applyBtn.disabled=true;
+ }else{
+  $('candidate-commit').textContent=candidate.targetCommitSha.slice(0,12);
+  $('candidate-date').textContent=candidate.commitDate?when(candidate.commitDate):'—';
+  $('candidate-message').textContent=candidate.message||'—';
+  $('candidate-checked-at').textContent=when(candidate.lastCheckedAt);
+  if(candidate.compareUrl){compLink.href=candidate.compareUrl;compLink.hidden=false;}
+  else{compLink.hidden=true;}
+  if(candidate.hasUpdate){
+   badge.textContent='新しいバージョンがあります';badge.className='badge warn';
+   applyBtn.disabled=!supported||!enabled||(job&&job.status==='running');
+  }else{
+   badge.textContent='最新です';badge.className='badge active';
+   applyBtn.disabled=true;
+  }
+ }
+
+ const stageBadge=$('job-stage-badge'),jobErr=$('job-error'),jobRecovery=$('job-recovery');
+ if(!job){
+  $('job-id').textContent='—';stageBadge.textContent='待機中';stageBadge.className='badge';
+  $('job-started-at').textContent='';$('job-finished-at').textContent='';
+  jobErr.hidden=true;jobRecovery.hidden=true;
+ }else{
+  $('job-id').textContent=job.jobId;
+  stageBadge.textContent=stageNames[job.stage]||job.stage;
+  stageBadge.className=`badge stage-${job.stage}`;
+  $('job-started-at').textContent=`開始: ${when(job.startedAt)}`;
+  $('job-finished-at').textContent=job.finishedAt?`終了: ${when(job.finishedAt)}`:'';
+  if(job.errorCode){
+   jobErr.textContent=updateErrors[job.errorCode]||`エラーコード: ${job.errorCode}`;
+   jobErr.hidden=false;
+  }else{
+   jobErr.hidden=true;
+  }
+  if(job.stage==='failed'&&(job.errorCode==='health_check_failed'||job.errorCode==='deploy_failed')){
+   jobRecovery.hidden=false;
+  }else{
+   jobRecovery.hidden=true;
+  }
+  if(job.status==='running'&&!pollingRestart){
+   applyBtn.disabled=true;
+  }
+ }
+}
+
+$('btn-check-update').onclick=async()=>{
+ $('btn-check-update').disabled=true;
+ $('btn-check-update').textContent='確認中...';
+ try{
+  await post('/api/manage/update/check',{});
+  await loadUpdate();
+ }catch(e){notice(e.message);}
+ finally{
+  $('btn-check-update').textContent='更新を確認';
+  if(updateData?.supported&&updateData?.enabled)$('btn-check-update').disabled=false;
+ }
+};
+
+$('btn-apply-update').onclick=()=>{
+ if(!updateData?.candidate)return;
+ $('dialog-target-commit').textContent=updateData.candidate.targetCommitSha.slice(0,12);
+ $('update-confirm-dialog').showModal();
+};
+$('btn-update-cancel').onclick=()=>$('update-confirm-dialog').close();
+$('update-confirm-form').onsubmit=async e=>{
+ e.preventDefault();
+ $('update-confirm-dialog').close();
+ if(!updateData?.candidate)return;
+ try{
+  await post('/api/manage/update/apply',{targetCommitSha:updateData.candidate.targetCommitSha});
+  await loadUpdate();
+  waitForRestart();
+ }catch(err){notice(err.message);}
+};
+
+function waitForRestart(){
+ if(pollingRestart)return;
+ pollingRestart=true;
+ $('update-restarting-overlay').hidden=false;
+ let attempts=0;
+ const maxAttempts=90;
+ const timer=setInterval(async()=>{
+  attempts++;
+  try{
+   const res=await fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(1500)});
+   if(res.ok){
+    clearInterval(timer);
+    pollingRestart=false;
+    $('update-restarting-overlay').hidden=true;
+    await refresh();
+    if(view==='update')await loadUpdate();
+    return;
+   }
+  }catch{}
+  if(attempts>=maxAttempts){
+   clearInterval(timer);
+   $('restarting-text').textContent='再起動が完了しませんでした。SSHでホストに接続し、サービス状態を確認してください。';
+  }
+ },2000);
+}
+
 function connection(s,on=false){$('live').textContent=s;$('dot').classList.toggle('on',on);}
 function connect(){
  if(stopped||feed)return;
@@ -221,10 +356,15 @@ function connect(){
  current.addEventListener('ready',()=>refresh());
  current.addEventListener('updated',()=>refresh());
  current.addEventListener('manage_updated',()=>refresh());
- current.onerror=()=>connection('ライブ再接続待ち');
+ current.addEventListener('update_candidate_updated',()=>loadUpdate());
+ current.addEventListener('update_job_changed',()=>loadUpdate());
+ current.onerror=()=>{
+  connection('ライブ再接続待ち');
+  if(updateData?.job?.status==='running')waitForRestart();
+ };
 }
 $('refresh').onclick=refresh;$('hub-select').onchange=draw;$('contract-select').onchange=()=>loadHistory().catch(e=>notice(e.message));
-for(const b of document.querySelectorAll('nav button'))b.onclick=()=>{view=b.dataset.view;for(const t of document.querySelectorAll('nav button'))t.removeAttribute('aria-current');b.setAttribute('aria-current','page');for(const s of document.querySelectorAll('.view'))s.hidden=s.id!==view;$('title').textContent=b.textContent;if(view==='history')loadHistory().catch(e=>notice(e.message));if(view==='manage')loadManage().catch(e=>notice(e.message));};
+for(const b of document.querySelectorAll('nav button'))b.onclick=()=>{view=b.dataset.view;for(const t of document.querySelectorAll('nav button'))t.removeAttribute('aria-current');b.setAttribute('aria-current','page');for(const s of document.querySelectorAll('.view'))s.hidden=s.id!==view;$('title').textContent=b.textContent;if(view==='history')loadHistory().catch(e=>notice(e.message));if(view==='manage')loadManage().catch(e=>notice(e.message));if(view==='update')loadUpdate().catch(e=>notice(e.message));};
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();connect();}});window.addEventListener('pagehide',()=>{stopped=true;feed?.close();feed=null;});
 window.addEventListener('pageshow',()=>{stopped=false;refresh();connect();});
 refresh();connect();

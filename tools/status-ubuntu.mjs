@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
-import {destination,infrastructureFile,appUnits,validateInfrastructure,assertInfrastructureFile} from './ubuntu-layout.mjs';
+import {destination,infrastructureFile,appUnits,prefix,updateStateFile,validateInfrastructure,assertInfrastructureFile} from './ubuntu-layout.mjs';
 import {readJSON,validateConfiguration,selectConfiguration} from './publish-config.mjs';
 import {tailnetIdentity,userEnvironment,report} from './ubuntu-common.mjs';
 async function main(){
@@ -20,6 +20,19 @@ async function main(){
    check('tailnet viewer HTTP',response.status===200);
    if(response.status===200){const state=await response.json();console.log(`Verified viewer URL: ${plan.publicOrigin}`);check('Hub observations received',state.hubs?.length>0);}
   }catch{check('valid configuration and reachable viewer',false);}
+ }
+ const publicationPath=`${prefix}/publication.json`;
+ if(fs.existsSync(publicationPath)){
+  try{
+   const pub=readJSON(publicationPath);
+   console.log(`Current version: ${pub.commitSha?pub.commitSha.slice(0,12):'unknown'} (${pub.commitDate??'unknown date'}) [release: ${pub.releaseId?.slice(0,12)??'unknown'}]`);
+  }catch{}
+ }
+ if(fs.existsSync(updateStateFile)){
+  try{
+   const uState=readJSON(updateStateFile);
+   console.log(`Recent update: ${uState.stage} (${uState.status}) - target: ${uState.targetCommitSha?.slice(0,12)??'none'} [error: ${uState.errorCode??'none'}]`);
+  }catch{}
  }
  if(incomplete)process.exitCode=1;
 }
