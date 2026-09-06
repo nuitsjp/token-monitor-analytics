@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf16"
 )
 
 type HubStatus string
@@ -92,7 +93,7 @@ func LoadHubsFile(path string) (HubsFile, error) {
 		}
 		ids[hub.ID] = true
 
-		if strings.TrimSpace(hub.Label) == "" || len(hub.Label) > 128 {
+		if strings.TrimSpace(hub.Label) == "" || len(utf16.Encode([]rune(hub.Label))) > 128 {
 			return hf, fmt.Errorf("hub %s: label must be 1..128 characters", hub.ID)
 		}
 		if err := ValidateBaseURL(hub.URL); err != nil {

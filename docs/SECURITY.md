@@ -26,8 +26,8 @@ Basic認証はユーザー/権限管理機構ではなく、単一の閲覧資�
 
 ## Hub管理UIとSecret分離
  
-[実装仕様](HUB_MANAGEMENT_PLAN.md)に基づき、Hub Secretは通常設定から分離した秘密情報ファイル（`hub-secrets.json`）に平文で保存されます。ファイル分離は暗号化ではありません。Ubuntuの0700/0600、WindowsのACLでアクセスを制限し、秘密情報・一時ファイル・バックアップを配布/静的配信/Gitから除外します。
+[実装仕様](https://github.com/nuitsjp/token-monitor-analytics/issues/16)に基づき、Hub Secretは通常設定から分離した秘密情報ファイル（`hub-secrets.json`）に平文で保存されます。ファイル分離は暗号化ではありません。Ubuntuの0700/0600、WindowsのACLでアクセスを制限し、秘密情報・一時ファイル・バックアップを配布/静的配信/Gitから除外します。
  
 管理モード有効時、従来の「CollectorだけがSecretを保持する」境界はAnalyticsの管理処理とCollectorに広がります。UIは登録・差し替えだけを許可し、保存済み値を返しません（APIレスポンスには`secretConfigured: true`などのマスク状態のみ返却）。秘密値はSQLite・outbox・ログ・SSEに含めません。暗号化と鍵管理は今回の範囲外です。
  
-管理機能は明示的に有効化（`management.enabled: true`）します。初期版は単一所有者向けで、管理有効時の閲覧許可は編集許可も意味します。Tailscaleの到達範囲を所有者の端末へ制限し、既存配置の閲覧権限を自動的に編集権限へ広げない運用を推奨します。変更APIにはOrigin必須検証・CSRF対策を実施し、ingestおよびCollector状態報告はloopbackのBearer認証に限定されています。
+管理機能は明示的に有効化（`management.enabled: true`）します。初期版は単一所有者向けで、管理有効時の閲覧許可は編集許可も意味します。Tailscaleの到達範囲を所有者の端末へ制限し、既存配置の閲覧権限を自動的に編集権限へ広げない運用を推奨します。変更APIはOriginを必須とし、Host・Origin・クロスサイト要求を検査します。ingestおよびCollector状態報告はloopbackのBearer認証に限定されています。

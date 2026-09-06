@@ -91,6 +91,9 @@ func Load(path string) (Config, error) {
 			return c, err
 		}
 		c.HubsPath = filepath.Join(filepath.Dir(a), c.HubsPath)
+		if _, err := LoadHubsConfig(c.HubsPath); err != nil {
+			return c, errors.New("invalid managed Hub configuration; inspect private files locally")
+		}
 	} else {
 		if len(c.Hubs) > 8 {
 			return c, errors.New("configure 1..8 hubs")

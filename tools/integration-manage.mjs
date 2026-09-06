@@ -184,6 +184,22 @@ try {
   }, 'Collector applied disabled revision');
   console.log('PASS: Collector stopped disabled hub without process restart');
 
+  const enabled = await fetch(origin + '/api/manage/hubs/hub-dynamic-1', {
+    method: 'PUT', headers: {'Content-Type': 'application/json', Origin: origin},
+    body: JSON.stringify({expectedRevision: 2, status: 'active'})
+  });
+  assert.equal(enabled.status, 200);
+  const previousCount = app.db.sql.prepare('SELECT count(*) n FROM observations').get().n;
+  await until(async () => {
+    const state = await (await fetch(origin + '/api/manage/hubs')).json();
+    return state.collector.appliedRevision === 3 &&
+      state.collector.hubs['hub-dynamic-1']?.status === 'connected' &&
+      app.db.sql.prepare('SELECT count(*) n FROM observations').get().n > previousCount;
+  }, 're-enabled Hub reconnects and resumes observations');
+  assert.equal(bridge.exitCode, null);
+  console.log('PASS: Re-enabled Hub reconnects and receives data without Collector restart');
+
+
   await liveReader.cancel();
   liveReader = null;
   await stop(bridge);

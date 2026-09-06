@@ -258,10 +258,25 @@ test('management HTTP API handles CRUD, conflict detection, contracts and Collec
   assert.equal(checkReport.collector.appliedRevision, 1);
   assert.equal(checkReport.collector.hubs['hub-1'].status, 'connected');
 
+  // Management writes require Origin and independent Hub credentials.
+  const missingOrigin = await fetch(`${origin}/api/manage/hubs/hub-1`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({expectedRevision: 1, label: 'Must not change'})
+  });
+  assert.equal(missingOrigin.status, 403);
+  for (const secret of [env.TMA_INGEST_TOKEN, 'demo-hub-secret', 'REPLACE_SECRET']) {
+    const reused = await fetch(`${origin}/api/manage/hubs/hub-1`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json', Origin: origin},
+      body: JSON.stringify({expectedRevision: 1, secret})
+    });
+    assert.equal(reused.status, 400);
+  }
+  assert.equal(readHubsConfig(hubsPath).hubsFile.revision, 1);
+
   // 3. POST /api/manage/hubs - Add new hub
   const addRes = await fetch(`${origin}/api/manage/hubs`, {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: {'Content-Type': 'application/json', Origin: origin},
     body: JSON.stringify({
       expectedRevision: 1,
       id: 'hub-2',
@@ -277,7 +292,7 @@ test('management HTTP API handles CRUD, conflict detection, contracts and Collec
   // 4. Try deleting hub-1 while referenced by contract c1 -> rejected with 400
   const delRefRes = await fetch(`${origin}/api/manage/hubs/hub-1`, {
     method: 'DELETE',
-    headers: {'Content-Type': 'application/json'},
+    headers: {'Content-Type': 'application/json', Origin: origin},
     body: JSON.stringify({expectedRevision: 2})
   });
   assert.equal(delRefRes.status, 400);
@@ -287,7 +302,7 @@ test('management HTTP API handles CRUD, conflict detection, contracts and Collec
   // 5. Update hub-2 status to disabled via PUT /api/manage/hubs/hub-2
   const putRes = await fetch(`${origin}/api/manage/hubs/hub-2`, {
     method: 'PUT',
-    headers: {'Content-Type': 'application/json'},
+    headers: {'Content-Type': 'application/json', Origin: origin},
     body: JSON.stringify({
       expectedRevision: 2,
       status: 'disabled'
@@ -300,7 +315,7 @@ test('management HTTP API handles CRUD, conflict detection, contracts and Collec
   // 6. Delete hub-2 (not referenced by contracts) -> archived
   const delRes = await fetch(`${origin}/api/manage/hubs/hub-2`, {
     method: 'DELETE',
-    headers: {'Content-Type': 'application/json'},
+    headers: {'Content-Type': 'application/json', Origin: origin},
     body: JSON.stringify({expectedRevision: 3})
   });
   assert.equal(delRes.status, 200);
@@ -319,3 +334,67 @@ test('management HTTP API handles CRUD, conflict detection, contracts and Collec
   }
 });
 
+
+
+test('Node and Collector share Japanese and emoji label boundaries', () => {
+  const cases = JSON.parse(fs.readFileSync(new URL('../../test-fixtures/hub-labels.json', import.meta.url), 'utf8'));
+  for (const c of cases) {
+    const validate = () => validateHubsFile({schemaVersion: 1, revision: 1, secretsPath: 'secrets.json', hubs: [
+      {id: 'h1', label: c.label, url: 'https://example.com', status: 'active', secretRef: 's1'}
+    ]});
+    if (c.valid) assert.doesNotThrow(validate, c.name);
+    else assert.throws(validate, /label/, c.name);
+  }
+});
+
+test('oversized serialized configuration leaves both files unchanged', async t => {
+  const dir = createTempDir(t), hubsPath = path.join(dir, 'hubs.json'), secretsPath = path.join(dir, 'secrets.json');
+  writeAtomicFile(secretsPath, JSON.stringify({schemaVersion: 1, secrets: {s1: 'test-secret'}}));
+  writeAtomicFile(hubsPath, JSON.stringify({schemaVersion: 1, revision: 1, secretsPath: 'secrets.json', hubs: [
+    {id: 'h1', label: 'Hub', url: 'https://example.com', status: 'active', secretRef: 's1'}
+  ]}));
+  const beforeHubs = fs.readFileSync(hubsPath), beforeSecrets = fs.readFileSync(secretsPath);
+  for (const largeSecret of [true, false]) {
+    await assert.rejects(saveHubsTransaction(hubsPath, 1, ({hubs, createSecretRef}) => {
+      const secretRef = createSecretRef(largeSecret ? 'あ'.repeat(90000) : 'new-secret');
+      return [{...hubs[0], secretRef, url: largeSecret ? hubs[0].url : 'https://' + 'x'.repeat(270000) + '.example.com'}];
+    }), error => error.status === 413);
+    assert.deepEqual(fs.readFileSync(hubsPath), beforeHubs);
+    assert.deepEqual(fs.readFileSync(secretsPath), beforeSecrets);
+    assert.equal(readHubsConfig(hubsPath).hubsFile.revision, 1);
+  }
+});
+
+test('management responses hide malformed secret contents and filesystem paths', async t => {
+  const dir = createTempDir(t), hubsPath = path.join(dir, 'hubs.json'), secretsPath = path.join(dir, 'secrets.json');
+  writeAtomicFile(secretsPath, JSON.stringify({schemaVersion: 1, secrets: {s1: 'test-secret'}}));
+  writeAtomicFile(hubsPath, JSON.stringify({schemaVersion: 1, revision: 1, secretsPath: 'secrets.json', hubs: [
+    {id: 'h1', label: 'Hub', url: 'https://example.com', status: 'active', secretRef: 's1'}
+  ]}));
+  const config = JSON.parse(fs.readFileSync(new URL('../configs/demo.json', import.meta.url), 'utf8'));
+  Object.assign(config, {hubsPath, management: {enabled: true}, contracts: [], databasePath: path.join(dir, 'test.db')});
+  config.listen.port = 0;
+  const {startServer} = await import('../runtime/server.mjs');
+  const app = await startServer(config, {env: {TMA_INGEST_TOKEN: 'demo-ingest-token-not-for-production'}, logger: {info(){}, error(){}}});
+  t.after(() => app.close());
+  config.publicOrigin = `http://127.0.0.1:${app.server.address().port}`;
+  for (const malformed of [true, false]) {
+    if (malformed) fs.writeFileSync(secretsPath, '{"schemaVersion":1,"secrets":{"s1":SENSITIVE_TOKEN}}');
+    else fs.unlinkSync(secretsPath);
+    for (const [method, suffix, body] of [
+      ['GET', '', undefined],
+      ['POST', '', {expectedRevision: 1, id: 'h2', label: 'Hub 2', url: 'https://two.example.com', secret: 'new-secret'}],
+      ['PUT', '/h1', {expectedRevision: 1, label: 'New label'}],
+      ['DELETE', '/h1', {expectedRevision: 1}]
+    ]) {
+      const response = await fetch(config.publicOrigin + '/api/manage/hubs' + suffix, {
+        method, headers: {'Content-Type': 'application/json', Origin: config.publicOrigin}, body: body && JSON.stringify(body)
+      });
+      assert.ok(response.status >= 400);
+      const text = await response.text();
+      assert.doesNotMatch(text, /SENSITIVE|secrets.json|schemaVersion/);
+      assert.ok(!text.includes(dir));
+      assert.equal(JSON.parse(text).message, undefined);
+    }
+  }
+});

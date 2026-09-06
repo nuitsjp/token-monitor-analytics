@@ -9,16 +9,37 @@ import {validateInfrastructure,unitDigest,assertInfrastructureFile} from '../ubu
 const identity={tailnetIP:'100.69.11.74',hostname:'host.example.ts.net'};
 const hubs=[{id:'hub-a',url:'https://hub.example.com',secret:'test-independent-hub-secret'}];
 function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tma configuration '));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;}
-test('initial configuration without Hub is resumable and does not regenerate credentials',t=>{
+test('empty managed configuration is publishable and configure preserves UI settings',async t=>{
  const dir=fixture(t);
- assert.equal(configureApplication({dir,identity}).ready,false);const before=treeDigest(dir);
- assert.deepEqual(configureApplication({dir,identity}),{ready:false,changed:false,publicOrigin:'http://host.example.ts.net:8788'});assert.equal(treeDigest(dir),before);
- const envBefore=fs.readFileSync(path.join(dir,'analytics.env'),'utf8');
- assert.equal(configureApplication({dir,identity,hubs}).ready,true);
- assert.equal(fs.readFileSync(path.join(dir,'analytics.env'),'utf8'),envBefore);
- const complete=treeDigest(dir);assert.equal(configureApplication({dir,identity,hubs}).changed,false);assert.equal(treeDigest(dir),complete);
+ assert.equal(configureApplication({dir,identity}).ready,true);
+ const before=treeDigest(dir);
+ assert.deepEqual(configureApplication({dir,identity}),{ready:true,changed:false,publicOrigin:'http://host.example.ts.net:8788'});
+ assert.equal(treeDigest(dir),before);
+ const {saveHubsTransaction}=await import('../../analytics/runtime/hubs.mjs');
+ await saveHubsTransaction(path.join(dir,'hubs.json'),0,({createSecretRef})=>[{id:'ui-hub',label:'UI Hub',url:'https://ui.example.com',status:'active',secretRef:createSecretRef('ui-independent-secret')}]);
+ const after=treeDigest(dir);
+ assert.equal(configureApplication({dir,identity}).changed,false);
+ assert.equal(treeDigest(dir),after);
+ assert.throws(()=>configureApplication({dir,identity,hubs}),/UI/);
+ assert.equal(treeDigest(dir),after);
  const plan=readJSON(path.join(dir,'connection.json'));
- assert.equal(validateConfiguration(plan,selectConfiguration({},dir)).analytics.tailnetViewer.host,identity.tailnetIP);
+ assert.equal(validateConfiguration(plan,selectConfiguration({},dir)).analytics.hubs.length,1);
+});
+test('explicit reset removes old Hub secrets and preserves ingest credentials',t=>{
+ const dir=fixture(t);configureApplication({dir,identity,hubs});
+ const token=readEnvironment(path.join(dir,'collector.env')).TMA_INGEST_TOKEN;
+ const before=treeDigest(dir);
+ assert.throws(()=>configureApplication({dir,identity,management:true}),/reset-hubs/);
+ assert.equal(treeDigest(dir),before);
+ configureApplication({dir,identity,resetHubs:true});
+ const c=readJSON(path.join(dir,'collector.json'));
+ assert.equal(c.hubs,undefined);assert.equal(c.hubs_path,'./hubs.json');
+ assert.deepEqual(readJSON(path.join(dir,'hubs.json')).hubs,[]);
+ assert.deepEqual(readJSON(path.join(dir,'hub-secrets.json')).secrets,{});
+ assert.deepEqual({...readEnvironment(path.join(dir,'collector.env'))},{TMA_INGEST_TOKEN:token});
+ const plan=readJSON(path.join(dir,'connection.json'));
+ assert.equal(validateConfiguration(plan,selectConfiguration({},dir)).analytics.management.enabled,true);
+ const after=treeDigest(dir);assert.equal(configureApplication({dir,identity}).changed,false);assert.equal(treeDigest(dir),after);
 });
 test('invalid Hub updates leave existing configuration intact and preserve contracts',t=>{
  const dir=fixture(t);configureApplication({dir,identity,hubs});const before=treeDigest(dir);

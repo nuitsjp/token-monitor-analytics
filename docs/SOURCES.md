@@ -12,3 +12,22 @@
 - **S10 — 型検査依存の固定**: https://registry.npmjs.org/typescript/5.8.3 。公式レジストリーのバージョン・integrityからpackage-lock.jsonを作成し、npmのoffline lock-onlyで検査。既存コードに合わせTypeScript 5.8.3を継承。
 
 この資料は実機での受入試験を代替しません。Node 24/Windows/systemdでの実行確認と、作成環境のNode 22/Linuxでの試験は区別して記録します。
+
+## Hub実装の参照用サブモジュール
+
+[`external/token-monitor`](../external/token-monitor) に上流の `Javis603/token-monitor` を登録している。2026-09-06時点の `main` の最新コミットを取得し、参照する版は親リポジトリーのgitlinkで固定する。Hub本体は `worker/src/index.js`、関連資料は `worker/README.md` と `docs/API.md` を参照する。`nuitsjp/token-monitor-hub` はデプロイ管理用であり、実装本体はこちらの上流にある。
+
+クローン後の取得:
+
+```sh
+git submodule update --init external/token-monitor
+```
+
+上流の `main` の最新へ更新:
+
+```sh
+git submodule update --remote external/token-monitor
+git add external/token-monitor
+```
+
+このサブモジュールは仕様調査用。Analyticsの実行依存には含めず、上記S6の検証済み契約や稼働中Hubのバージョンを更新したことにはしない。

@@ -127,6 +127,11 @@ export function createManagementHandler({config, auth, db, live, tracker, getIng
         return;
       }
 
+      if (['POST','PUT','DELETE'].includes(req.method) && !req.headers.origin) {
+        json(res, {error: 'origin_required'}, 403);
+        return;
+      }
+
       // /api/manage/hubs or /api/manage/hubs/:id
       const subpath = url.pathname.slice('/api/manage/hubs'.length);
 
@@ -143,7 +148,7 @@ export function createManagementHandler({config, auth, db, live, tracker, getIng
               contracts: config.contracts
             });
           } catch (err) {
-            json(res, {error: 'load_failed', message: err.message}, 500);
+            json(res, {error: 'load_failed'}, 500);
           }
           return;
         }
@@ -182,7 +187,7 @@ export function createManagementHandler({config, auth, db, live, tracker, getIng
             json(res, {error: 'invalid_url', message: err.message}, 400);
             return;
           }
-          if (typeof secret !== 'string' || !secret || /[\r\n\0]/.test(secret)) {
+          if (typeof secret !== 'string' || !secret || /[\r\n\0]/.test(secret) || secret === auth.ingest || secret === auth.password || (!config.demo && (secret.startsWith('REPLACE_') || secret === 'demo-hub-secret'))) {
             json(res, {error: 'invalid_secret', message: 'Secret must be non-empty without newlines'}, 400);
             return;
           }
@@ -223,7 +228,7 @@ export function createManagementHandler({config, auth, db, live, tracker, getIng
             live.broadcast('manage_updated', {type: 'manage_updated'});
             json(res, {ok: true, revision: result.hubsFile.revision});
           } catch (err) {
-            json(res, {error: err.status === 409 ? 'revision_conflict' : 'save_failed', message: err.message, currentRevision: err.currentRevision}, err.status || 500);
+            json(res, {error: err.status === 409 ? 'revision_conflict' : 'save_failed', currentRevision: err.currentRevision}, err.status || 500);
           }
           return;
         }
@@ -296,7 +301,7 @@ export function createManagementHandler({config, auth, db, live, tracker, getIng
               }
 
               if (secret !== undefined && secret !== '') {
-                if (typeof secret !== 'string' || /[\r\n\0]/.test(secret)) {
+                if (typeof secret !== 'string' || /[\r\n\0]/.test(secret) || secret === auth.ingest || secret === auth.password || (!config.demo && (secret.startsWith('REPLACE_') || secret === 'demo-hub-secret'))) {
                   throw Object.assign(new Error('Invalid secret string'), {status: 400});
                 }
                 nextSecretRef = createSecretRef(secret);
@@ -320,7 +325,7 @@ export function createManagementHandler({config, auth, db, live, tracker, getIng
           live.broadcast('manage_updated', {type: 'manage_updated'});
           json(res, {ok: true, revision: result.hubsFile.revision});
         } catch (err) {
-          json(res, {error: err.status === 409 ? 'revision_conflict' : 'update_failed', message: err.message, currentRevision: err.currentRevision}, err.status || 500);
+          json(res, {error: err.status === 409 ? 'revision_conflict' : 'update_failed', currentRevision: err.currentRevision}, err.status || 500);
         }
         return;
       }
@@ -372,7 +377,7 @@ export function createManagementHandler({config, auth, db, live, tracker, getIng
           live.broadcast('manage_updated', {type: 'manage_updated'});
           json(res, {ok: true, revision: result.hubsFile.revision});
         } catch (err) {
-          json(res, {error: err.status === 409 ? 'revision_conflict' : 'delete_failed', message: err.message, currentRevision: err.currentRevision}, err.status || 500);
+          json(res, {error: err.status === 409 ? 'revision_conflict' : 'delete_failed', currentRevision: err.currentRevision}, err.status || 500);
         }
         return;
       }

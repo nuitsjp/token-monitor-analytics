@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {readJSON,readEnvironment,writeChanged} from './publish-config.mjs';
+import {readHubsConfig} from '../analytics/runtime/hubs.mjs';
 import {isTailnetIPv4} from '../analytics/runtime/config.mjs';
 function envText(env){return Object.entries(env).map(([key,value])=>{
  if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)||typeof value!=='string'||/[\r\n\0]/.test(value))throw new Error('Invalid environment assignment.');
@@ -9,7 +10,7 @@ function envText(env){return Object.entries(env).map(([key,value])=>{
  if(value.includes(quote)||(quote==='"'&&value.includes('\\')))throw new Error('Secret contains unsupported quote/escape characters.');
  return `${key}=${quote}${value}${quote}`;
 }).join('\n')+'\n';}
-export function configureApplication({dir,identity,port=8788,hubs}){
+function configureLegacyApplication({dir,identity,port=8788,hubs}){
  if(!isTailnetIPv4(identity.tailnetIP)||!/^[-a-z0-9.]+\.ts\.net$/.test(identity.hostname)||!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid Tailscale identity or port.');
  const file=name=>path.join(dir,name),json=name=>fs.existsSync(file(name))?readJSON(file(name)):null;
  const env=name=>fs.existsSync(file(name))?readEnvironment(file(name)):{};
@@ -45,4 +46,53 @@ export function configureApplication({dir,identity,port=8788,hubs}){
  let changed=false;
  for(const [name,text] of outputs)changed=writeChanged(file(name),text,0o600)||changed;
  return {ready:!!configuredHubs?.length,changed,publicOrigin:plan.publicOrigin};
+}
+
+
+export function configureApplication(options) {
+ const {dir, identity, port=8788, hubs, management=false, resetHubs=false} = options;
+ const file=name=>path.join(dir,name);
+ const read=name=>fs.existsSync(file(name))?readJSON(file(name)):null;
+ const oldA=read('analytics.json'),oldC=read('collector.json');
+ const managed=management||resetHubs||!!oldA?.hubsPath||!!oldC?.hubs_path||(!oldA&&!oldC&&!hubs);
+ if(!managed)return configureLegacyApplication(options);
+ if(hubs)throw new Error('Managed Hub registration must use the UI; CLI Hub updates are disabled.');
+ if(!isTailnetIPv4(identity.tailnetIP)||!/^[-a-z0-9.]+\.ts\.net$/.test(identity.hostname)||!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid Tailscale identity or port.');
+ if((oldA?.hubs||oldC?.hubs)&&!resetHubs)throw new Error('Legacy Hub settings exist. Stop collection and use --reset-hubs to discard them explicitly.');
+ if(resetHubs&&oldA?.contracts?.length)throw new Error('Contracts still reference existing Hubs; remove their configuration before resetting Hubs. History is retained.');
+ if(oldA&&oldA.ingestTokenEnv!=='TMA_INGEST_TOKEN'||oldC&&oldC.ingest_token_env!=='TMA_INGEST_TOKEN')throw new Error('Custom ingest credential names require explicit configuration.');
+ const aEnv=fs.existsSync(file('analytics.env'))?readEnvironment(file('analytics.env')):{};
+ const cEnv=fs.existsSync(file('collector.env'))?readEnvironment(file('collector.env')):{};
+ if(aEnv.TMA_INGEST_TOKEN&&cEnv.TMA_INGEST_TOKEN&&aEnv.TMA_INGEST_TOKEN!==cEnv.TMA_INGEST_TOKEN)throw new Error('Existing ingest credentials disagree.');
+ const token=aEnv.TMA_INGEST_TOKEN??cEnv.TMA_INGEST_TOKEN??randomBytes(32).toString('hex');
+ aEnv.TMA_INGEST_TOKEN=token;cEnv.TMA_INGEST_TOKEN=token;
+ const hubsPath=oldA?.hubsPath??oldC?.hubs_path??'./hubs.json';
+ const absHubs=path.resolve(dir,hubsPath);
+ if(oldC?.hubs_path&&path.resolve(dir,oldC.hubs_path)!==absHubs)throw new Error('Managed Hub paths disagree.');
+ const secretsPath='hub-secrets.json';
+ // Initialization never replaces an existing managed store during ordinary configure.
+ if(!resetHubs&&fs.existsSync(absHubs))readHubsConfig(absHubs);
+ if(!resetHubs&&!fs.existsSync(absHubs)&&(oldA?.hubsPath||oldC?.hubs_path))throw new Error('Managed Hub store is missing; refusing to recreate it.');
+ if(resetHubs){
+  if(oldA?.hubsPath){
+   const current=readHubsConfig(absHubs);
+   if(current.secretsFilePath!==path.join(path.dirname(absHubs),secretsPath))throw new Error('Reset requires the standard secrets filename.');
+  }
+  for(const h of oldC?.hubs??[])if(h.secret_env&&h.secret_env!=='TMA_INGEST_TOKEN')delete cEnv[h.secret_env];
+  for(const key of Object.keys(cEnv))if(/^TMA_HUB_/.test(key))delete cEnv[key];
+ }
+ const plan={version:2,...identity,port,publicOrigin:`http://${identity.hostname}:${port}`};
+ const analytics={version:1,listen:{host:'127.0.0.1',port},publicOrigin:plan.publicOrigin,databasePath:'/var/lib/tma-analytics/analytics.db',timeZone:'Asia/Tokyo',detailRetentionDays:7,ingestTokenEnv:'TMA_INGEST_TOKEN',contracts:[],...oldA,demo:false,viewerAuth:{mode:'tailscale'},tailnetViewer:{host:identity.tailnetIP,port},hubsPath,management:{enabled:management||resetHubs||!oldA?true:Boolean(oldA.management?.enabled)}};
+ delete analytics.hubs;
+ analytics.listen={host:'127.0.0.1',port};analytics.publicOrigin=plan.publicOrigin;
+ const collector={version:1,ingest_token_env:'TMA_INGEST_TOKEN',spool_dir:'/var/lib/tma-collector/outbox',max_spool_bytes:268435456,flush_seconds:2,batch_size:2,idle_seconds:90,...oldC,analytics_url:`http://127.0.0.1:${port}`,hubs_path:hubsPath};
+ delete collector.hubs;
+ let changed=false;
+ const json=x=>JSON.stringify(x,null,2)+'\n';
+ if(resetHubs||!fs.existsSync(absHubs)){
+  changed=writeChanged(path.join(path.dirname(absHubs),secretsPath),json({schemaVersion:1,secrets:{}}),0o600)||changed;
+  changed=writeChanged(absHubs,json({schemaVersion:1,revision:0,secretsPath,hubs:[]}),0o600)||changed;
+ }
+ for(const [name,value] of [['analytics.env',envText(aEnv)],['collector.env',envText(cEnv)],['analytics.json',json(analytics)],['collector.json',json(collector)],['connection.json',json(plan)]])changed=writeChanged(file(name),value,0o600)||changed;
+ return {ready:true,changed,publicOrigin:plan.publicOrigin};
 }

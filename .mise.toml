@@ -30,7 +30,7 @@ run = "npm run typecheck"
 
 [tasks.integration]
 dir = "{{config_root}}"
-run = "node --experimental-strip-types tools/integration.mjs"
+run = ["node --experimental-strip-types tools/integration.mjs", "node --experimental-strip-types tools/integration-manage.mjs"]
 
 [tasks."demo:hub"]
 dir = "{{config_root}}/collector"

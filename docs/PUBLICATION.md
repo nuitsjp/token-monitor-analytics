@@ -30,24 +30,31 @@ mise run provision:ubuntu
 
 以前の`deploy/config.local.json`、`TMA_PUBLISH_CONFIG`は使用しません。構築時にアプリ設定JSONやHub Secretを要求しません。
 
-## アプリ設定
+## アプリ設定とHub管理
 
-以下は現在のCLI手順です。[Hub管理UIの実装計画](HUB_MANAGEMENT_PLAN.md)では、初回移行後のHub更新をAnalyticsに集約し、通常設定とSecretを別ファイルへ分離します。まだ移行機能はありません。計画のファイルを手作業で配置しても現行プログラムは読み込みません。
-
-Hub Secretは`--hub-secret`引数で渡せます。タスクは値をログへ表示せず、`/var/lib/tma-deploy/config/collector.env`へ0600で保存します。同じ入力で再実行しても認証を再生成しません。引数は実行中のプロセス一覧から見える可能性があります。シェル履歴への値の保存とmiseのコマンド表示を避けるには、Bashで次のように入力します。
+新規環境では次を実行します。Hub URL・SecretのCLI入力は不要です。Hub 0件の管理モードを初期化し、TailscaleのIP・DNSと既定ポート8788を設定します。
 
 ```bash
-read -r -s -p 'Hub Secret: ' TMA_INPUT_SECRET
-printf '\n'
-mise --quiet run configure:ubuntu -- --hub-url https://YOUR-HUB.example --hub-id hub-a --hub-secret "$TMA_INPUT_SECRET"
-unset TMA_INPUT_SECRET
+mise run configure:ubuntu
+mise run publish:ubuntu
+mise run status:ubuntu
 ```
 
-既存の`--hub-secret-file /absolute/private/hub-secret`も利用できます。この場合は発行ユーザーだけが読める通常ファイル（0600）にSecretを保存してください。秘密値をGitやチャットへ貼りません。
+発行後、表示されたURLの「Hubs」からHub ID・表示名・HTTPS origin・Secretを登録します。管理画面へ到達できる利用者は編集もできるため、Tailscaleの到達範囲は所有者の端末に制限してください。Secretはブラウザーへ再表示せず、通常設定とは別の0600ファイルへ平文で保存します。
 
-URLは実HubのHTTPS originに置き換えます。複数Hubの場合は0600のJSONファイルに`[{"id":"hub-a","url":"https://YOUR-HUB.example","secretFile":"/absolute/private/hub-secret"}]`の形式で記載し、`--hubs-file /absolute/private/hubs.json`で渡します。
+既存のCLI登録を破棄して管理画面から登録し直す場合だけ、次を実行します。Hub情報の移行は行いません。
 
-TailscaleのIPとDNS名を検出し、既定ポート8788を使います。変更には`--port 8789`などを指定します。取込みトークンは再実行時に保持します。閲覧モードは`tailscale`に揃えます。以前の閲覧資格情報がenvに残っていても使用しません。Hub未指定でもネットワーク・認証の準備を保存しますが、Hub設定が完成するまで非ゼロで終了します。Hubを差し替える場合、既存契約が参照するHubの削除は拒否します。
+```bash
+mise run configure:ubuntu -- --reset-hubs
+mise run publish:ubuntu
+mise run status:ubuntu
+```
+
+`--reset-hubs`はCollectorを停止し、既存Analyticsへ未送信outboxをPOSTして全件のACKを確認してからAnalyticsを停止します。ACKできない場合は登録・未ACKデータを保持して失敗します。Analyticsの可用性を復旧して再実行してください。契約設定がある場合は変更前に拒否します。契約の設定を別途整理してから再実行してください。
+
+削除対象はHub登録とHub Secretです。SQLite履歴、ingest資格情報、送信済み以外のoutboxは消しません。設定完了後はサービスを停止したままにし、`publish:ubuntu`で新版を起動します。リセットを毎回実行しないでください。通常のconfigure/publishはUI登録を保持します。過去の履歴と別のHubを混同しないよう、新しい実体には新しいIDを指定します。
+
+ポート変更は`configure:ubuntu -- --port 8789`で行います。管理モードでは従来のHub入力引数を拒否し、UI以外をHub設定のwriterにしません。旧形式のまま運用する既存環境のみ、旧CLI形式との互換を維持します。
 
 | 配置先 | 内容 |
 | --- | --- |
@@ -59,7 +66,7 @@ TailscaleのIPとDNS名を検出し、既定ポート8788を使います。変�
 | `~/.config/systemd/user/tma-{analytics,collector}.service` | ユーザーサービス定義 |
 | `/var/lib/tma-lock/deploy.lock` | 構築・設定・発行の共通排他ロック |
 
-閲覧資格情報の入力は不要です。契約定義などは同じディレクトリーの`analytics.json`を編集します。デモDB・認証を流用しません。
+閲覧資格情報の入力は不要です。契約定義は同じディレクトリーの`analytics.json`を編集します。デモDB・認証を流用しません。
 
 ## 発行と確認
 

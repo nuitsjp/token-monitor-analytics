@@ -114,13 +114,21 @@ export function saveHubsTransaction(hubsFilePath, expectedRevision, mutator) {
       }
     }
 
+    // Check both serialized files before either write. Readers enforce this same limit.
+    const hubsContent = JSON.stringify(nextHubsFile, null, 2) + '\n';
+    const secretsContent = JSON.stringify(nextSecretsFile, null, 2) + '\n';
+    if (Buffer.byteLength(hubsContent, 'utf8') > MAX_CONFIG_BYTES ||
+        Buffer.byteLength(secretsContent, 'utf8') > MAX_CONFIG_BYTES) {
+      throw Object.assign(new Error('Configuration exceeds storage size limit'), {status: 413});
+    }
+
     // Step 2: If new secrets were added, update secrets file first
     if (newSecretAdded) {
-      writeAtomicFile(secretsFilePath, JSON.stringify(nextSecretsFile, null, 2) + '\n');
+      writeAtomicFile(secretsFilePath, secretsContent);
     }
 
     // Step 3: Replace hubs.json (commit point)
-    writeAtomicFile(hubsFilePath, JSON.stringify(nextHubsFile, null, 2) + '\n');
+    writeAtomicFile(hubsFilePath, hubsContent);
 
     return {
       hubsFile: nextHubsFile,

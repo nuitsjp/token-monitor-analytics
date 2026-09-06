@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {readHubsConfig} from '../analytics/runtime/hubs.mjs';
 import {credentials,loadConfig} from '../analytics/runtime/config.mjs';
 
 export const destination='/var/lib/tma-deploy/config';
@@ -46,6 +47,20 @@ export function validateConfiguration(plan,selected){
  const auth=credentials(analytics,analyticsEnv);
  if(collector.analytics_url!==`http://127.0.0.1:${analytics.listen.port}`||collector.spool_dir!=='/var/lib/tma-collector/outbox'||collectorEnv[collector.ingest_token_env]!==auth.ingest){
   throw new Error('Collector loopback URL, persistent outbox path or ingest credential does not match Analytics.');
+ }
+ if(analytics.hubsPath){
+  if(collector.hubs!==undefined||typeof collector.hubs_path!=='string'||path.resolve(path.dirname(selected.collectorConfig),collector.hubs_path)!==analytics.hubsPath)throw new Error('Analytics and Collector must share the managed Hub file.');
+  const store=readHubsConfig(analytics.hubsPath);
+  for(const filename of [analytics.hubsPath,store.secretsFilePath]){
+   const stat=fs.lstatSync(filename);
+   if(!stat.isFile()||(process.platform!=='win32'&&(stat.mode&0o077)))throw new Error('Managed configuration files require mode 0600.');
+  }
+  for(const h of store.hubsFile.hubs){
+   if(h.status==='archived')continue;
+   const secret=store.secretsFile.secrets[h.secretRef];
+   if(!h.url.startsWith('https:')||secret.startsWith('REPLACE_')||secret==='demo-hub-secret'||secret===auth.ingest||secret===auth.password)throw new Error('Real Hubs require HTTPS and independent secrets.');
+  }
+  return {analytics,collector,analyticsEnv,collectorEnv,auth};
  }
  if(!Array.isArray(collector.hubs)||collector.hubs.length!==analytics.hubs.length||collector.hubs.some(h=>!analytics.hubs.some(a=>a.id===h.id)))throw new Error('Analytics and Collector Hub IDs must match.');
  for(const hub of collector.hubs){

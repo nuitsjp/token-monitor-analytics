@@ -4,13 +4,15 @@
 
 初期はUbuntuにGo CollectorとNode.js Analyticsを同居。開発中はWindows上で両方を起動する。Hubは既存Cloudflareの別リポジトリー。AnalyticsにCloudflare、Wails、デスクトップGUI、Dockerを導入しない。
 
+Hub API仕様: [API資料](external/token-monitor/docs/API.md) / [Worker README](external/token-monitor/worker/README.md#endpoints)。
+
 CollectorはGo標準ライブラリー。AnalyticsはNode組込みHTTP/SQLite、純粋なTypeScript推定処理、静的HTML/CSS/JS。Nodeの型除去で直接動かすため、enum、引数プロパティ、非type importの型、tsconfigパスエイリアスなどを導入しない。変更時はtscも実行する。
 
 ## 単純さ
 
 Hub→CollectorはSSE、Collector→同居Analyticsはloopback HTTP POST、Analytics→ブラウザーはSSE。黙ってポーリングへ変えない。履歴の正本はSQLite1つ。outboxは未送信バッファだけで、DB同期ではない。外部キュー・Redis・クラウドへの自動フォールバック・プラグイン層は不要。
 
-計画中のHub管理UIは`docs/HUB_MANAGEMENT_PLAN.md`に従う。Collectorによるローカル設定ファイルの定期確認は合意済みであり、観測のSSE経路は維持する。Analytics→Collectorの設定通知SSEは追加しない。Hub Secretは通常設定から別ファイルへ分離し、今回は暗号化せずOS権限で保護する。管理モードではAnalyticsの管理処理とCollectorがSecretを扱い、UIへ保存済み値や設定ファイル全体を返さない。
+Hub管理UIは[GitHub Issue #16](https://github.com/nuitsjp/token-monitor-analytics/issues/16)に従う。Collectorによるローカル設定ファイルの定期確認は合意済みであり、観測のSSE経路は維持する。Analytics→Collectorの設定通知SSEは追加しない。Hub Secretは通常設定から別ファイルへ分離し、今回は暗号化せずOS権限で保護する。管理モードではAnalyticsの管理処理とCollectorがSecretを扱い、UIへ保存済み値や設定ファイル全体を返さない。
 
 ## 正しさと安全
 
@@ -24,3 +26,5 @@ Go: gofmt / go test ./... / go vet ./...、Linuxで-race。
 Analytics: npm test（ネイティブHTTP/SSE/SQLite）とnpm run typecheck。
 結合: node --experimental-strip-types tools/integration.mjs。
 WindowsとUbuntuの違いはパス・終了処理・ファイルロックも確認する。未実行のOS/systemd試験を成功と書かない。適用済みSQLは変更せず、新migrationを追加する。
+
+現環境の旧Hub情報は移行せず、明示的なリセットで登録とSecretを削除してUIから登録し直す。削除前にCollectorを停止し未送信outboxのCOMMIT ACKを確認する。履歴SQLiteとingest認証は保持する。

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,6 +76,8 @@ func TestLoadHubsConfigErrors(t *testing.T) {
 
 func TestCollectorConfigWithHubsPath(t *testing.T) {
 	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "hubs.json"), []byte(`{"schemaVersion":1,"revision":0,"secretsPath":"secrets.json","hubs":[]}`), 0600)
+	os.WriteFile(filepath.Join(dir, "secrets.json"), []byte(`{"schemaVersion":1,"secrets":{}}`), 0600)
 	t.Setenv("INGEST", "12345678901234567890")
 	cfgPath := filepath.Join(dir, "collector.json")
 
@@ -95,5 +98,36 @@ func TestCollectorConfigWithHubsPath(t *testing.T) {
 	os.WriteFile(cfgPath, []byte(conflict), 0600)
 	if _, err := Load(cfgPath); err == nil {
 		t.Fatal("expected error when both hubs and hubs_path are provided")
+	}
+}
+
+func TestSharedLabelValidation(t *testing.T) {
+	raw, err := os.ReadFile("../../../test-fixtures/hub-labels.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name  string
+		Label string
+		Valid bool
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "hubs.json")
+			data, err := json.Marshal(HubsFile{SchemaVersion: 1, Revision: 1, SecretsPath: "secrets.json", Hubs: []ManagedHub{{ID: "h1", Label: tc.Label, URL: "https://example.com", Status: "active", SecretRef: "s1"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err = LoadHubsFile(file)
+			if (err == nil) != tc.Valid {
+				t.Fatalf("valid=%v, error=%v", tc.Valid, err)
+			}
+		})
 	}
 }

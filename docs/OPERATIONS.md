@@ -2,11 +2,11 @@
 
 ## 現在のUbuntu運用
 
-Tailscale経由の閲覧ではID・パスワード入力は不要です。環境変更は`mise run provision:ubuntu`、Hub設定変更は`mise run configure:ubuntu`、更新発行は`mise run publish:ubuntu`、状態確認は`mise run status:ubuntu`を使います。sudoが必要なのは環境構築です。[詳細手順](PUBLICATION.md)を参照してください。
+Tailscale経由の閲覧ではID・パスワード入力は不要です。環境変更は`mise run provision:ubuntu`、Hub設定変更はWeb画面の「Hubs」、更新発行は`mise run publish:ubuntu`、状態確認は`mise run status:ubuntu`を使います。sudoが必要なのは環境構築です。[詳細手順](PUBLICATION.md)を参照してください。
 
 `status:ubuntu`の「Hub observations received」は保存済み観測の存在を示し、継続受信や鮮度を保証しません。閲覧URLが疎通していてもこの項目がMISSINGなら、Collectorの接続とHubのURL・DNS・認証を確認します。
 
-Hubの日常管理をWeb UIから行う機能が利用できます（詳細は[HUB_MANAGEMENT_PLAN.md](HUB_MANAGEMENT_PLAN.md)）。管理モード（`management.enabled: true`）では、Analyticsが設定（`hubs.json`）および秘密情報（`hub-secrets.json`）をアトミックに保存し、Collectorがファイルの定期確認（2秒間隔）で動的に反映します。プロセスの再起動は不要です。Hubの停止・削除（アーカイブ）を行っても、過去の観測履歴や未送信outboxは消去されません。
+Hubの日常管理をWeb UIから行う機能が利用できます（詳細は[Issue #16](https://github.com/nuitsjp/token-monitor-analytics/issues/16)）。既存CLI登録は`configure:ubuntu -- --reset-hubs`で破棄してからUIで登録します。通常のconfigure/publishは登録済み情報を保持します。管理モード（`management.enabled: true`）では、Analyticsが設定（`hubs.json`）および秘密情報（`hub-secrets.json`）をアトミックに保存し、Collectorがファイルの定期確認（2秒間隔）で動的に反映します。プロセスの再起動は不要です。Hubの停止・削除（アーカイブ）を行っても、過去の観測履歴や未送信outboxは消去されません。
 
 ## 費用とデータの所在
 

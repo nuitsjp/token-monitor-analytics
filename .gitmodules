@@ -1,0 +1,4 @@
+[submodule "external/token-monitor"]
+	path = external/token-monitor
+	url = https://github.com/Javis603/token-monitor.git
+	branch = main

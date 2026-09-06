@@ -11,8 +11,8 @@ if(!['amd64','arm64'].includes(architecture)||extra.length)throw new Error('Usag
 // Explicit runtime allowlist: local files inside these directories must never ship.
 const files=[
  'README.md','CHANGELOG.md','THIRD_PARTY_NOTICES.md','analytics/package.json',
- ...['db','estimate','platform','protocol'].map(n=>`analytics/src/${n}.ts`),
- ...['auth','backup','config','live','server','sqlite'].map(n=>`analytics/runtime/${n}.mjs`),
+ ...['db','estimate','platform','protocol','hubs'].map(n=>`analytics/src/${n}.ts`),
+ ...['auth','backup','config','live','server','sqlite','hubs','management'].map(n=>`analytics/runtime/${n}.mjs`),
  ...['index.html','app.js','styles.css'].map(n=>`analytics/public/${n}`),
  ...['analytics.example.json','demo.json'].map(n=>`analytics/configs/${n}`),
  ...['analytics.ubuntu.json','collector.ubuntu.json','analytics.env.example','collector.env.example','tma-analytics.service','tma-collector.service'].map(n=>`deploy/${n}`),

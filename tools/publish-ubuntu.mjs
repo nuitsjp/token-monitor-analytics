@@ -37,11 +37,12 @@ async function verify(plan,config){
  for(const unit of units){if(!active(unit)||systemctl('is-enabled',unit).trim()!=='enabled')throw new Error('A published service is not active and enabled.');}
  const authorization=config.analytics.viewerAuth.mode==='basic'?`Basic ${Buffer.from(`${config.auth.user}:${config.auth.password}`).toString('base64')}`:undefined;
  for(const local of [false]){
-  for(const [route,auth,expected] of [['/api/state',undefined,authorization?401:200],['/api/ingest',undefined,404],['/',authorization,200],['/api/state',authorization,200]]){
+  for(const [route,auth,expected] of [['/api/state',undefined,authorization?401:200],['/api/ingest',undefined,404],['/api/collector/status',undefined,404],['/',authorization,200],['/api/state',authorization,200]]){
    if(await viewerRequest(plan,route,{authorization:auth,local})!==expected)throw new Error('Tailnet authentication/routing verification failed.');
   }
   if(await viewerRequest(plan,'/api/live',{authorization,local,sse:true})!==200)throw new Error('Tailnet SSE verification failed.');
  }
+ if(config.analytics.management?.enabled&&await viewerRequest(plan,'/api/manage/hubs',{authorization})!==200)throw new Error('Hub management verification failed.');
  console.log('PASS: user services active/enabled, tailnet HTTP, configured viewer access, private ingest, SSE.');
 }
 async function apply(architecture){
@@ -129,7 +130,7 @@ async function main(){
  const architecture=process.arch==='x64'?'amd64':'arm64';
  if(!fs.existsSync(infrastructureFile))throw new Error('Infrastructure is not provisioned. Run provision:ubuntu first.');
  assertInfrastructureFile();validateInfrastructure(readJSON(infrastructureFile),process.getuid());
- if(!fs.existsSync(`${destination}/analytics.json`)||!fs.existsSync(`${destination}/collector.json`))throw new Error('Application configuration is incomplete. Run configure:ubuntu with real Hub input.');
+ if(!fs.existsSync(`${destination}/analytics.json`)||!fs.existsSync(`${destination}/collector.json`))throw new Error('Application configuration is incomplete. Run configure:ubuntu to initialize empty Hub management settings.');
  if(values.apply){
   // The lock covers build, verification and placement of the same snapshot.
   run('mise',['run',`release:ubuntu:${architecture}`],{cwd:root,stdio:'inherit'});

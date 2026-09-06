@@ -36,3 +36,29 @@ NodeのTypeScript型除去だけでは型検査になりません。tscの対象
 - 上記の結合試験は模擬データの短時間試験です。負荷試験や実料金の正しさを保証するものではありません。
 
 現在の環境構築・発行手順は[PUBLICATION](PUBLICATION.md)、旧データの扱いは[MIGRATION](MIGRATION.md)を参照してください。
+
+## Hub管理レビュー修正（2026-09-06、Linux）
+
+`b4df7d4`のレビューで確認した5件を修正。Ubuntu配布対象へ必須モジュールを追加し、停止後のHub再有効化、Secretファイル解析エラーの非露出、Node/Goの表示名長検証、書込み前の両設定ファイルのサイズ検証を修正した。
+
+- `mise run --continue-on-error check`: Analytics 54件・発行関連10件、Go整形/test/race/vet、TypeScript型検査に成功。
+- 従来の`tools/integration.mjs`: HTTP/SSE/SQLite、停止復旧、outbox排出、バックアップの結合試験に成功。
+- `tools/integration-manage.mjs`: Hub 0件からの追加・受信・停止に加え、同一Collectorプロセスで再有効化後の接続と新しい観測の保存に成功。通常の`mise run integration`にも管理用試験を追加。
+- `mise run package:ubuntu:amd64`: アーカイブ作成、チェックサム、配布内容、ELF、展開後のAnalytics HTTP/SQLite試験に成功。
+- 共通fixtureで日本語・絵文字の128 UTF-16コード単位境界をNode/Go双方で検証。秘密情報JSONの破損・欠落時にGET/POST/PUT/DELETE応答へ秘密値や内部パスが出ないこと、設定サイズ超過時に両ファイルが変更されないことを検証。
+
+Windows実機、arm64実行、今回の修正を本番へ発行した場合の動作、OS再起動は未検証。本番への発行は行っていない。既存設定の移行とconfigure/publish/statusの管理モード対応は今回の修正対象外であり、未実装。
+
+
+## 管理モードの運用統合・正式発行（2026-09-06）
+
+前節で未実装としていたconfigure/publish/statusを管理モードへ対応させた。ユーザー指定により旧Hub情報は移行せず、停止・outbox ACK確認後に登録とSecretを削除し、UIから登録し直す方式とした。
+
+- Analytics 54件、運用関連12件、Go整形/test/race/vet、型検査、従来および管理用の結合試験、amd64配布検証に成功。
+- 実環境で`configure:ubuntu -- --reset-hubs`を実行。停止時点の未送信outboxは0件。旧登録とHub Secretを削除し、契約0件・Hub0件・Secret0件で管理モードを初期化した。
+- `publish:ubuntu`で正式発行。両ユーザーサービスactive/enabled、Tailscaleの閲覧・管理API・SSE、外部ingest/状態POSTの遮断、Collectorの空設定revision反映を確認。
+- リセット前後で履歴件数が減少していないことと、ingest資格情報のハッシュ一致を確認した。設定・Secretの内容は検証出力へ表示していない。
+- 同じコード・設定でconfigure/publishを再実行し、サービスPID・設定ファイルのハッシュ・DBバックアップ一覧が不変であることを確認。
+- 実Hubの再登録はユーザーが管理画面から行う。削除した秘密情報を復元・自動登録していない。
+
+Windows実機・別Tailscale端末のブラウザー・OS再起動は未実施。別端末ではTailscale接続後に表示URLのHubs画面で登録・接続状態を確認する。Windowsの開発実行を検証する場合は修正コードを配置し、PowerShellで`mise run setup`、`mise run check`、`mise run integration`を実行する。OS再起動確認は都合のよい時にUbuntuで`sudo reboot`を実行し、復帰後にリポジトリーで`mise run status:ubuntu`とブラウザーからの到達を確認する。

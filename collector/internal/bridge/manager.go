@@ -167,19 +167,14 @@ func (m *HubManager) checkAndApply() bool {
 			m.log.Info("stopping hub subscription", "hub", id)
 			r.cancel()
 			<-r.done
-			if !exists {
-				delete(m.runners, id)
-			} else {
-				r.update(StateDisabled, "")
-			}
+			// A stopped runner cannot be reused when the Hub becomes active again.
+			delete(m.runners, id)
 		} else if target.URL != r.hub.URL || target.SecretRef != r.hub.SecretRef || target.Secret != r.hub.Secret {
 			m.log.Info("hub credentials or URL changed; restarting subscription", "hub", id)
 			r.cancel()
 			<-r.done
 			delete(m.runners, id)
-		} else {
-			r.hub.Label = target.Label
-		}
+		} // Labels do not affect subscriptions; runner configuration stays immutable.
 	}
 
 	for id, target := range activeMap {
