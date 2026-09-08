@@ -21,4 +21,27 @@ dialog input:focus,dialog select:focus{outline:2px solid #53c2b5;border-color:#5
 .inline-label input{width:auto;margin:0}
 .dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:10px}
 .dialog-error{background:#fbecec;border:1px solid #f2c0c0;color:#ad3131;padding:10px 14px;border-radius:6px;font-size:12px}
+.update-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;margin-bottom:24px}
+.card{background:white;border:1px solid #e0e7ea;border-radius:12px;padding:22px}
+.card-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.card h3{font-size:15px;font-weight:600;margin:0 0 12px}
+.meta-dl{display:grid;grid-template-columns:100px 1fr;gap:8px 12px;margin:0;font-size:12px}
+.meta-dl dt{color:#697e88;font-weight:500}
+.meta-dl dd{margin:0;color:#1d323e;word-break:break-all}
+.candidate-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid #edf1f3}
+.outline-link{font-size:12px;color:#355666;text-decoration:none}
+.outline-link:hover{text-decoration:underline}
+.job-status-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.job-times{display:flex;gap:14px;color:#7c8f99;font-size:11px}
+.callout.warning{background:#fdf8ec;border:1px solid #f2e2be;color:#7c5f21}
+.callout.danger{background:#fdf2f2;border:1px solid #f6cfcf;color:#9b2c2c}
+.badge.stage-accepted{background:#e8f1f7;color:#2c6e91}
+.badge.stage-fetching,.badge.stage-verifying,.badge.stage-deploying,.badge.stage-restarting{background:#fef5e7;color:#936214}
+.badge.stage-success{background:#eaf4f1;color:#287a68}
+.badge.stage-failed,.badge.stage-aborted{background:#fbecec;color:#ad3131}
+.reconnect-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(18,43,55,.7);display:grid;place-items:center;z-index:9999}
+.reconnect-modal{background:white;border-radius:14px;padding:32px;text-align:center;max-width:400px;width:90%;box-shadow:0 16px 40px rgba(0,0,0,.25)}
+.reconnect-modal h3{margin:16px 0 8px;font-size:18px}
+.spinner{width:36px;height:36px;border:3px solid #edf2f4;border-top-color:#53c2b5;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
 

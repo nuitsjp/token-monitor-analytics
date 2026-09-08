@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {configureApplication} from '../configure-application.mjs';
-import {readEnvironment,readJSON,selectConfiguration,validateConfiguration,writeChanged,treeDigest} from '../publish-config.mjs';
+import {readEnvironment,readJSON,selectConfiguration,validateConfiguration,writeChanged,treeDigest,readPublication} from '../publish-config.mjs';
 import {validateInfrastructure,unitDigest,assertInfrastructureFile} from '../ubuntu-layout.mjs';
 const identity={tailnetIP:'100.69.11.74',hostname:'host.example.ts.net'};
 const hubs=[{id:'hub-a',url:'https://hub.example.com',secret:'test-independent-hub-secret'}];
@@ -23,7 +23,11 @@ test('empty managed configuration is publishable and configure preserves UI sett
  assert.throws(()=>configureApplication({dir,identity,hubs}),/UI/);
  assert.equal(treeDigest(dir),after);
  const plan=readJSON(path.join(dir,'connection.json'));
- assert.equal(validateConfiguration(plan,selectConfiguration({},dir)).analytics.hubs.length,1);
+ const config=validateConfiguration(plan,selectConfiguration({},dir));
+ assert.equal(config.analytics.hubs.length,1);
+ assert.equal(config.analytics.tailnetViewer.host,identity.tailnetIP);
+ assert.equal(config.analytics.update?.enabled,true);
+ assert.equal(config.analytics.update?.branch,'main');
 });
 test('explicit reset removes old Hub secrets and preserves ingest credentials',t=>{
  const dir=fixture(t);configureApplication({dir,identity,hubs});
@@ -41,6 +45,7 @@ test('explicit reset removes old Hub secrets and preserves ingest credentials',t
  assert.equal(validateConfiguration(plan,selectConfiguration({},dir)).analytics.management.enabled,true);
  const after=treeDigest(dir);assert.equal(configureApplication({dir,identity}).changed,false);assert.equal(treeDigest(dir),after);
 });
+
 test('invalid Hub updates leave existing configuration intact and preserve contracts',t=>{
  const dir=fixture(t);configureApplication({dir,identity,hubs});const before=treeDigest(dir);
  for(const bad of [{...hubs[0],url:'http://localhost:8765'},{...hubs[0],secret:'demo-hub-secret'}])assert.throws(()=>configureApplication({dir,identity,hubs:[bad]}));
@@ -67,4 +72,20 @@ test('publication requires the provisioned UID and current user service definiti
 test('ordinary user cannot forge a root-owned infrastructure record',t=>{
  if(process.platform==='win32'||process.getuid?.()===0){t.skip('Requires ordinary Unix user');return;}
  const file=path.join(fixture(t),'infrastructure.json');fs.writeFileSync(file,'{}',{mode:0o600});assert.throws(()=>assertInfrastructureFile(file),/root-owned/);
+});
+test('readPublication reads commit info or handles legacy/missing file gracefully',t=>{
+  const dir=fixture(t);
+  const file=path.join(dir,'publication.json');
+  assert.equal(readPublication(path.join(dir,'nonexistent.json')),null);
+  fs.writeFileSync(file,JSON.stringify({releaseId:'rel-legacy',configurationId:'cfg-1',publicOrigin:'http://localhost:8788'}));
+  const legacy=readPublication(file);
+  assert.equal(legacy.releaseId,'rel-legacy');
+  assert.equal(legacy.commitSha,null);
+  assert.equal(legacy.commitDate,null);
+  fs.writeFileSync(file,JSON.stringify({releaseId:'rel-new',configurationId:'cfg-2',publicOrigin:'http://localhost:8788',commitSha:'abc1234567890abcdef1234567890abcdef1234',commitDate:'2026-09-06T12:00:00Z',publishedAt:'2026-09-06T12:01:00Z'}));
+  const modern=readPublication(file);
+  assert.equal(modern.releaseId,'rel-new');
+  assert.equal(modern.commitSha,'abc1234567890abcdef1234567890abcdef1234');
+  assert.equal(modern.commitDate,'2026-09-06T12:00:00Z');
+  assert.equal(modern.publishedAt,'2026-09-06T12:01:00Z');
 });

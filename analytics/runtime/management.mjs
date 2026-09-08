@@ -57,7 +57,7 @@ export class CollectorStatusTracker {
   }
 }
 
-export function createManagementHandler({config, auth, db, live, tracker, getIngestHubIds, setIngestHubIds, exclusive}) {
+export function createManagementHandler({config, auth, db, live, tracker, getIngestHubIds, setIngestHubIds, exclusive, updateManager}) {
   const json = (res, data, status = 200) => {
     res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8'});
     res.end(JSON.stringify(data));
@@ -383,6 +383,89 @@ export function createManagementHandler({config, auth, db, live, tracker, getIng
       }
 
       json(res, {error: 'method_not_allowed'}, 405);
+    },
+
+    async handleUpdate(req, res, url) {
+      if (!config.management?.enabled) {
+        json(res, {error: 'not_found'}, 404);
+        return;
+      }
+      if (!allowedRequest(req, config)) {
+        json(res, {error: 'origin_rejected'}, 403);
+        return;
+      }
+      if (!canView(req, config, auth)) {
+        if (config.viewerAuth.mode === 'basic') {
+          res.setHeader('WWW-Authenticate', 'Basic realm="Token Monitor Analytics", charset="UTF-8"');
+        }
+        json(res, {error: 'viewer_auth_required'}, 401);
+        return;
+      }
+
+      if (!updateManager) {
+        json(res, {error: 'update_manager_unavailable'}, 500);
+        return;
+      }
+
+      const subpath = url.pathname.slice('/api/manage/update'.length);
+
+      if (subpath === '' || subpath === '/') {
+        if (req.method === 'GET') {
+          try {
+            const status = updateManager.getStatus();
+            json(res, status);
+          } catch (err) {
+            json(res, {error: 'load_failed', message: err.message}, 500);
+          }
+          return;
+        }
+        json(res, {error: 'method_not_allowed'}, 405);
+        return;
+      }
+
+      if (subpath === '/check') {
+        if (req.method !== 'POST') {
+          json(res, {error: 'method_not_allowed'}, 405);
+          return;
+        }
+        try {
+          await updateManager.checkUpdate();
+          json(res, updateManager.getStatus());
+        } catch (err) {
+          json(res, {error: 'check_failed', message: err.message}, 500);
+        }
+        return;
+      }
+
+      if (subpath === '/apply') {
+        if (req.method !== 'POST') {
+          json(res, {error: 'method_not_allowed'}, 405);
+          return;
+        }
+        const ct = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+        if (ct !== 'application/json') {
+          json(res, {error: 'json_required'}, 415);
+          return;
+        }
+        let body;
+        try {
+          body = await parseJsonBody(req);
+        } catch (err) {
+          json(res, {error: 'invalid_json'}, err.status || 400);
+          return;
+        }
+
+        const {targetCommitSha} = body ?? {};
+        try {
+          const result = await updateManager.applyUpdate({targetCommitSha});
+          json(res, result, 202);
+        } catch (err) {
+          json(res, {error: err.code || 'apply_failed', message: err.message}, err.status || 500);
+        }
+        return;
+      }
+
+      json(res, {error: 'not_found'}, 404);
     }
   };
 }

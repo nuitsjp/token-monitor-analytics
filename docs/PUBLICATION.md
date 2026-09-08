@@ -63,8 +63,11 @@ mise run status:ubuntu
 | `/opt/token-monitor-analytics` | 発行ユーザー所有の`releases/`・`current`・発行記録 |
 | `/var/lib/tma-analytics` | 正式SQLiteとバックアップ、0700 |
 | `/var/lib/tma-collector/outbox` | 正式outbox、0700 |
-| `~/.config/systemd/user/tma-{analytics,collector}.service` | ユーザーサービス定義 |
-| `/var/lib/tma-lock/deploy.lock` | 構築・設定・発行の共通排他ロック |
+| `~/.config/systemd/user/tma-{analytics,collector,update}.service` | ユーザーサービス定義（analytics/collectorは常駐、updateはoneshot） |
+| `/var/lib/tma-deploy/updater` | 発行ユーザー所有の更新実行ランナーと固定Node、0700 |
+| `/var/lib/tma-deploy/repo` | 発行専用gitリポジトリー、0700 |
+| `/var/lib/tma-deploy/update-state.json` | 更新ジョブ状態ファイル、0600 |
+| `/var/lib/tma-lock/deploy.lock` | 構築・設定・発行・更新の共通排他ロック |
 
 閲覧資格情報の入力は不要です。契約定義は同じディレクトリーの`analytics.json`を編集します。デモDB・認証を流用しません。
 
@@ -84,3 +87,37 @@ active/enabled、正式DBモード、Tailscale DNS経由のHTTP、認証入力�
 `status:ubuntu`は実際に疎通したURLだけをVerifiedとして表示します。このホストで発行・疎通確認済みのURLは`http://home-ubuntu.tail1bf795.ts.net:8788`です。別のTailscale端末での到達性と実Hubの受信も確認してください。OS再起動試験は別途実施し、linger/enable検査だけで再起動試験成功とは扱いません。
 
 更新自動化は同じ発行ユーザーで`mise run publish:ubuntu`を実行します。各タスクはユーザーsystemdバスの環境変数を未設定時に補います。サービス定義変更やOS環境の修復時だけ`provision:ubuntu`を再実行します。
+
+## Web UIからのシステム更新
+
+AnalyticsのWeb UI（「Update」画面）から、GitHub mainブランチの最新コミットを確認し、ボタン操作でシステム全体（AnalyticsおよびCollector）を手動更新できます。
+
+### 動作フローと安全性
+
+1. **更新確認**: サーバーが定期的にmainブランチのコミットを確認（5分間隔）し、UIに最新コミットとGitHub比較リンクを表示します。「更新を確認」ボタンで即時確認も可能です。
+2. **対象SHAの固定**: ブラウザーから指定できるのは、サーバーが提示した更新候補コミットSHAのみです。任意のリポジトリーURL、ブランチ名、コマンド、パスは受け付けません。
+3. **再起動から独立した実行**: 更新要求を受理すると、固定systemdユーザーサービス `tma-update.service`（oneshot）を起動します。Analyticsの子プロセスとして実行しないため、Analyticsの停止・再起動によって更新処理が中断されません。
+4. **ローカル検証ゲート**: 発行専用チェックアウト（`/var/lib/tma-deploy/repo`）上で対象コミットのスナップショットを展開し、Go/Analyticsのテスト・型検査・結合テスト・ビルドを実行します。検証に失敗した場合は稼働中のアプリを一切停止せず、エラー状態を記録して安全に終了します。
+5. **排他制御**: CLI発行（`publish:ubuntu`）と同一の共通排他ロック（`/var/lib/tma-lock/deploy.lock`）を使用し、競合時は二重実行を安全に防止します。
+6. **再接続と結果表示**: 更新中は画面およびデータ収集が一時的に停止します。ブラウザーは自動的にAnalyticsの復帰を待機・ポーリングし、復帰後に最新の更新結果（成功/失敗/中断）を表示します。
+
+### 障害時の手動復旧手順
+
+万が一、コード配置後のサービス起動やヘルスチェックに失敗した場合、自動ロールバックは行われません。ホストへSSH接続し、以下の手順で状態確認と復旧を行ってください。
+
+```bash
+# 1. サービスの状態とログを確認
+systemctl --user status tma-analytics.service tma-collector.service
+journalctl --user -u tma-analytics.service -e
+
+# 2. 直近の更新ジョブ状態を確認
+cat /var/lib/tma-deploy/update-state.json
+
+# 3. 必要に応じて直近のSQLiteバックアップを確認
+ls -lt /var/lib/tma-analytics/backups/
+
+# 4. 前の安定版リリースへcurrentシンボリックリンクを差し替え
+# （/opt/token-monitor-analytics/releases/ 配下に過去のリリースが保持されています）
+ln -sfn /opt/token-monitor-analytics/releases/<PREVIOUS_RELEASE_ID> /opt/token-monitor-analytics/current
+systemctl --user restart tma-analytics.service tma-collector.service
+```

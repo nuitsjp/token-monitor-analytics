@@ -34,6 +34,7 @@ SQLiteのDELETEでファイルサイズが直ちに縮むとは限りません�
 | HubとのSSE切断 | 新streamIdで再接続。推定基準を作り直す |
 | ブラウザー通知切断 | 自動再接続時に保存済み状態を再取得 |
 | 認証/設定の恒常的な4xx | Collectorはoutboxを残して停止。設定を修正 |
+| Web UIシステム更新失敗 | 検証失敗時はアプリ無停止。配置後の起動失敗時は手動復旧（バックアップあり） |
 | Ubuntu全体の停止 | Collector/Analyticsとも停止。自動補完はしない |
 
 同じHubのCollectorをWindowsとUbuntuで二重稼働させず、同じoutboxを複数プロセスから書きません。Analyticsは1プロセスだけにします。

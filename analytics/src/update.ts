@@ -1,0 +1,78 @@
+export type UpdateStage =
+  | 'accepted'
+  | 'fetching'
+  | 'verifying'
+  | 'deploying'
+  | 'restarting'
+  | 'success'
+  | 'failed'
+  | 'aborted';
+
+export type UpdateStatus = 'idle' | 'running' | 'completed' | 'failed' | 'aborted';
+
+export type SafeUpdateErrorCode =
+  | 'lock_conflict'
+  | 'fetch_failed'
+  | 'commit_not_found'
+  | 'verification_failed'
+  | 'deploy_failed'
+  | 'health_check_failed'
+  | 'job_aborted'
+  | 'system_restarted'
+  | 'save_state_failed'
+  | 'unknown_error';
+
+export interface CurrentVersionInfo {
+  releaseId: string | null;
+  commitSha: string | null;
+  commitDate: string | null;
+  configurationId: string | null;
+}
+
+export interface CandidateInfo {
+  targetCommitSha: string;
+  commitDate: string | null;
+  message: string | null;
+  compareUrl: string | null;
+  lastCheckedAt: string | null;
+  hasUpdate: boolean;
+}
+
+export interface UpdateJobState {
+  jobId: string;
+  targetCommitSha: string;
+  targetCommitDate: string | null;
+  targetMessage: string | null;
+  status: UpdateStatus;
+  stage: UpdateStage;
+  errorCode: SafeUpdateErrorCode | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface UpdateResponse {
+  supported: boolean;
+  enabled: boolean;
+  current: CurrentVersionInfo;
+  candidate: CandidateInfo | null;
+  job: UpdateJobState | null;
+  reason?: string;
+}
+
+const SAFE_ERROR_MESSAGES: Record<string, string> = {
+  lock_conflict: '他の発行タスクまたは更新処理が実行中です。',
+  fetch_failed: 'mainブランチの最新コミット取得に失敗しました。ネットワーク接続を確認してください。',
+  commit_not_found: '指定されたコミットがリモートのmainブランチに見つかりません。',
+  verification_failed: '新バージョンのローカル検証（テストまたはビルド）に失敗したため、適用を中止しました。現在のバージョンは維持されています。',
+  deploy_failed: '成果物の配置またはSQLiteバックアップに失敗しました。',
+  health_check_failed: '新バージョンの起動または疎通確認に失敗しました。ホストログを確認してください。',
+  job_aborted: '更新処理が途中で中断されました（プロセス終了またはサービス停止）。',
+  system_restarted: 'OS再起動により更新処理が中断されました。',
+  save_state_failed: '状態ファイルの保存に失敗しました。',
+  unknown_error: '予期せぬエラーが発生しました。'
+};
+
+export function getSafeErrorMessage(code: string | null | undefined): string {
+  if (!code) return '';
+  return SAFE_ERROR_MESSAGES[code] ?? '更新処理中にエラーが発生しました。ホストログを確認してください。';
+}

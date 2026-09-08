@@ -9,5 +9,7 @@
 - UbuntuでAnalyticsとCollectorの2サービスを常駐。既定はloopback＋SSH転送。
 - デモと本番を別DBへ分離し、誤ったDBの共用を起動時に拒否。
 - ブラウザーの1観測日グラフ表示と保存先表示を改善。
+- Web UIにシステム更新機能を統合（Issue #17）。GitHub mainの更新確認、手動適用、独立したsystemd oneshotサービス（tma-update.service）による発行、再起動後の結果表示。
+- 発行記録にコミットSHA・コミット日時を保持。status:ubuntuでバージョンと直近更新状態を表示。
 
 古い.wranglerのD1データは自動移行しません。元のディレクトリーは残してください。

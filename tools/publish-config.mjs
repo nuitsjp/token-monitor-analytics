@@ -96,3 +96,16 @@ export function treeDigest(directory){
  }
  walk(directory);return hash.digest('hex');
 }
+
+export function readPublication(filename='/opt/token-monitor-analytics/publication.json'){
+ if(!fs.existsSync(filename))return null;
+ const raw=readJSON(filename);
+ return {
+  releaseId:typeof raw.releaseId==='string'?raw.releaseId:null,
+  configurationId:typeof raw.configurationId==='string'?raw.configurationId:null,
+  publicOrigin:typeof raw.publicOrigin==='string'?raw.publicOrigin:null,
+  commitSha:typeof raw.commitSha==='string'?raw.commitSha:null,
+  commitDate:typeof raw.commitDate==='string'?raw.commitDate:null,
+  publishedAt:typeof raw.publishedAt==='string'?raw.publishedAt:null
+ };
+}
