@@ -1,95 +1,210 @@
-// Real native HTTP/SSE/SQLite integration. Requires Go and Node.js, no npm packages.
+// Node-only native integration. Exercises the current v2 Hub/Analytics
+// contract without the retired Go Collector or an outbox bridge.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import {fileURLToPath} from 'node:url';
-import {execFileSync,spawn} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {setTimeout as delay} from 'node:timers/promises';
+import {DatabaseSync} from 'node:sqlite';
+import {loadConfig} from '../analytics/runtime/config.mjs';
 import {startServer} from '../analytics/runtime/server.mjs';
 import {backupDatabase} from '../analytics/runtime/sqlite.mjs';
-import {DatabaseSync} from 'node:sqlite';
+import {startMockHub} from './mockhub.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const temp=fs.mkdtempSync(path.join(os.tmpdir(),'tma-integration-'));
-const children=[];
-let app, liveReader;
-const token='integration-ingest-000000000000000000000000000';
-const env={...process.env,CGO_ENABLED:'0',TMA_INGEST_TOKEN:token,TMA_HUB_A_SECRET:'demo-hub-secret',TMA_HUB_B_SECRET:'demo-hub-secret'};
-const suffix=process.platform==='win32'?'.exe':'';
-async function freePort(){
- const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port;
+const at='2026-09-09T00:00:00.000Z';
+const periodWindows={timeZone:'UTC',today:{key:'2026-09-09',endsAt:'2026-09-10T00:00:00.000Z'},month:{key:'2026-09',endsAt:'2026-10-01T00:00:00.000Z'}};
+const historyA={daily:[
+ {date:'2026-09-08',tokens:12,cost:1.2,messages:2},
+ {date:'2026-09-09',tokens:24,cost:2.4,messages:4},
+],monthly:[{month:'2026-09',tokens:36,cost:3.6,messages:6}]};
+const historyB={daily:[
+ {date:'2026-09-08',tokens:8,cost:0.8,messages:1},
+ {date:'2026-09-09',tokens:16,cost:1.6,messages:2},
+],monthly:[{month:'2026-09',tokens:24,cost:2.4,messages:3}]};
+
+function device(deviceId,history){
+ return {
+  deviceId,hostname:deviceId,platform:'linux-x64',agentVersion:'mockhub',updatedAt:at,stale:false,
+  today:{totalTokens:24,costUsd:2.4},month:{totalTokens:36,costUsd:3.6},allTime:{totalTokens:36,costUsd:3.6},
+  periodWindows,historyAvailable:true,history,
+ };
 }
-async function until(predicate,label,timeout=20000){
- const end=Date.now()+timeout;
- while(Date.now()<end){try{const v=await predicate();if(v)return v;}catch{}await delay(150);}
+
+async function waitFor(predicate,label,timeout=20000){
+ const deadline=Date.now()+timeout;
+ while(Date.now()<deadline){
+  try{const value=await predicate();if(value)return value;}catch{}
+  await delay(50);
+ }
  throw new Error(`Timed out: ${label}`);
 }
-function child(file,args){
- const p=spawn(file,args,{env,stdio:['ignore','pipe','pipe']});children.push(p);
- p.on('error',error=>console.error(error.message));
- p.stdout.resume();p.stderr.resume();
- return p;
+
+async function readUntil(reader,needle,timeout=10000){
+ let text='';
+ const decoder=new TextDecoder();
+ const timer=setTimeout(()=>reader.cancel(),timeout);
+ timer.unref?.();
+ try{
+  while(!text.includes(needle)){
+   const next=await reader.read();
+   if(next.done)throw new Error(`Browser SSE ended before ${needle}`);
+   text+=decoder.decode(next.value,{stream:true});
+   if(text.length>1024*1024)throw new Error('Browser SSE response exceeded the test limit');
+  }
+  return text;
+ }finally{clearTimeout(timer);}
 }
-async function stop(p){
- if(p.exitCode!==null||p.signalCode!==null)return;
- const ended=new Promise(resolve=>p.once('exit',resolve));p.kill('SIGTERM');
- const timer=setTimeout(()=>p.kill('SIGKILL'),3000);timer.unref();await ended;clearTimeout(timer);
+
+function rowCount(db,table){
+ return Number(db.prepare(`SELECT count(*) AS total FROM ${table}`).get().total);
 }
-async function frame(reader,contains){
- let text='';const decoder=new TextDecoder();
- const deadline=setTimeout(()=>reader.cancel(),10000);
- try{while(!text.includes(contains)){const r=await reader.read();if(r.done)throw new Error('SSE ended');text+=decoder.decode(r.value,{stream:true});}return text;}
- finally{clearTimeout(deadline);}
+
+async function main(){
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'tma-integration-node-'));
+ const hubs=[];
+ let app=null;
+ let liveReader=null;
+ try{
+  hubs.push(await startMockHub({
+   listen:'127.0.0.1:0',secret:'hub-a-secret',intervalMs:40,disconnectAfter:2,
+   devices:[device('device-a',historyA)],
+  }));
+  hubs.push(await startMockHub({
+   listen:'127.0.0.1:0',secret:'hub-b-secret',intervalMs:40,
+   devices:[device('device-b',historyB)],
+  }));
+
+  const raw=JSON.parse(fs.readFileSync(path.join(root,'analytics/configs/demo.json'),'utf8'));
+  Object.assign(raw,{
+   demo:false,
+   databasePath:path.join(temp,'analytics.db'),
+   hubSecretsPath:path.join(temp,'hub-secrets.json'),
+   contracts:[],
+   management:{enabled:true},
+  });
+  const configFile=path.join(temp,'analytics.json');
+  fs.writeFileSync(configFile,JSON.stringify(raw));
+  const config=loadConfig(configFile);
+  config.listen.port=0;
+  const serverOptions={
+   logger:{info(){},error(error){console.error(error?.message??error);}},
+   heartbeatMs:50,
+   historyMinIntervalMs:0,
+   historyRetryDelayMs:0,
+   collectionIdleMs:1000,
+  };
+  app=await startServer(config,serverOptions);
+  config.listen.port=app.server.address().port;
+  config.publicOrigin=`http://127.0.0.1:${config.listen.port}`;
+  const origin=()=>config.publicOrigin;
+  const request=(route,init={})=>fetch(origin()+route,init);
+  const database=()=>app.db.sql;
+
+  const moduleResponse=await request('/usage-history.mjs');
+  assert.equal(moduleResponse.status,200);
+  assert.match(moduleResponse.headers.get('content-type')??'',/text\/javascript/);
+
+  const live=await request('/api/live');
+  assert.equal(live.status,200);
+  assert.ok(live.body);
+  liveReader=live.body.getReader();
+  await readUntil(liveReader,'event: ready');
+
+  for(const [index,hub] of hubs.entries()){
+   const id=`hub-${index===0?'a':'b'}`;
+   const response=await request('/api/manage/hubs',{
+    method:'POST',
+    headers:{Origin:origin(),'Content-Type':'application/json'},
+    body:JSON.stringify({id,label:`Hub ${id}`,url:hub.origin,secret:hub.secret}),
+   });
+   assert.equal(response.status,200,await response.text());
+  }
+
+  await waitFor(()=>hubs.every((_,index)=>{
+   const id=`hub-${index===0?'a':'b'}`;
+   return database().prepare('SELECT count(*) AS total FROM observations WHERE hub_id=?').get(id).total>0;
+  }),'live Hub observations');
+  await waitFor(()=>hubs.every((_,index)=>{
+   const id=`hub-${index===0?'a':'b'}`;
+   return database().prepare('SELECT last_status FROM usage_fetches WHERE hub_id=?').get(id)?.last_status==='success';
+  }),'initial history fetches');
+  await readUntil(liveReader,'event: updated');
+
+  const state=await (await request('/api/state')).json();
+  assert.deepEqual(state.configuredHubs.map(hub=>hub.id).sort(),['hub-a','hub-b']);
+  assert.equal((await request('/api/ingest')).status,404);
+  assert.equal((await request('/api/collector/status')).status,404);
+  assert.equal(fs.existsSync(path.join(temp,'outbox')),false);
+  console.log('PASS: Hub SSE -> Analytics -> SQLite -> browser SSE, with no ingest/outbox bridge');
+
+  const daily=await request('/api/usage-history?hubId=hub-a&deviceId=device-a&granularity=daily&from=2026-09-08&to=2026-09-09');
+  assert.equal(daily.status,200);
+  const dailyBody=await daily.json();
+  assert.equal(dailyBody.rows.length,2);
+  assert.equal(dailyBody.rows.at(-1).tokens,24);
+  const beforePeriodRows=rowCount(database(),'usage_periods');
+  const beforeFetchId=Number(database().prepare("SELECT last_attempt_fetch_id FROM usage_fetches WHERE hub_id='hub-a'").get().last_attempt_fetch_id);
+
+  hubs[0].setDeviceHistory('device-a',{
+   ...historyA,
+   daily:[historyA.daily[0],{date:'2026-09-09',tokens:99,cost:9.9,messages:9}],
+  });
+  await waitFor(()=>{
+   const row=database().prepare("SELECT last_attempt_fetch_id,last_status FROM usage_fetches WHERE hub_id='hub-a'").get();
+   return Number(row?.last_attempt_fetch_id)>beforeFetchId&&row?.last_status==='success';
+  },'history revision refetch');
+  const revised=await request('/api/usage-history?hubId=hub-a&deviceId=device-a&granularity=daily&from=2026-09-09&to=2026-09-09');
+  assert.equal(revised.status,200);
+  assert.equal((await revised.json()).rows[0].tokens,99);
+  assert.equal(rowCount(database(),'usage_periods'),beforePeriodRows);
+  console.log('PASS: revision refetch replaces the current period atomically without duplicate rows');
+
+  await waitFor(()=>Number(database().prepare("SELECT count(DISTINCT stream_id) AS total FROM observations WHERE hub_id='hub-a'").get().total)>=2,'Hub SSE reconnect');
+  console.log('PASS: forced Hub disconnect reconnects and records a new stream segment');
+
+  const beforeRestartObservations=rowCount(database(),'observations');
+  await liveReader.cancel();
+  liveReader=null;
+  await app.close();
+  app=null;
+  config.listen.port=0;
+  app=await startServer(config,serverOptions);
+  config.listen.port=app.server.address().port;
+  config.publicOrigin=`http://127.0.0.1:${config.listen.port}`;
+  const restartedLive=await request('/api/live');
+  assert.equal(restartedLive.status,200);
+  liveReader=restartedLive.body.getReader();
+  await readUntil(liveReader,'event: ready');
+  await waitFor(()=>rowCount(database(),'observations')>beforeRestartObservations,'post-restart Hub observation');
+  const restartedState=await (await request('/api/state')).json();
+  assert.deepEqual(restartedState.configuredHubs.map(hub=>hub.id).sort(),['hub-a','hub-b']);
+  const uniqueness=database().prepare('SELECT count(*) AS total,count(DISTINCT event_id) AS unique_ids FROM observations').get();
+  assert.equal(Number(uniqueness.total),Number(uniqueness.unique_ids));
+  const monthly=await request('/api/usage-history?hubId=hub-b&deviceId=device-b&granularity=monthly&from=2026-09&to=2026-09');
+  assert.equal(monthly.status,200);
+  assert.equal((await monthly.json()).rows.length,1);
+  console.log('PASS: restart reloads Hub registrations/secrets, resumes SSE, and keeps event IDs unique');
+
+  const backupFile=path.join(temp,'analytics-backup.db');
+  await backupDatabase(config.databasePath,backupFile);
+  const backup=new DatabaseSync(backupFile,{readOnly:true});
+  assert.equal(backup.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+  assert.ok(Number(backup.prepare('SELECT count(*) AS total FROM observations').get().total)>=beforeRestartObservations);
+  backup.close();
+  assert.equal(database().prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+  console.log('PASS: live database and backup pass SQLite integrity checks');
+  console.log('INTEGRATION OK');
+ }finally{
+  if(liveReader)await liveReader.cancel().catch(()=>{});
+  if(app)await app.close().catch(error=>console.error(error?.message??error));
+  for(const hub of hubs)await hub.close().catch(error=>console.error(error?.message??error));
+  fs.rmSync(temp,{recursive:true,force:true});
+ }
 }
-try{
- const mock=path.join(temp,'mockhub'+suffix),collector=path.join(temp,'collector'+suffix);
- execFileSync('go',['build','-o',mock,'./cmd/mockhub'],{cwd:path.join(root,'collector'),env,stdio:'inherit'});
- execFileSync('go',['build','-o',collector,'./cmd/collector'],{cwd:path.join(root,'collector'),env,stdio:'inherit'});
- const portA=await freePort(),portB=await freePort();
- const mocks=[child(mock,['-listen',`127.0.0.1:${portA}`]),child(mock,['-listen',`127.0.0.1:${portB}`])];
- for(const port of [portA,portB])await until(async()=>{const r=await fetch(`http://127.0.0.1:${port}/api/health`);return r.ok;},'mock health');
- const config=JSON.parse(fs.readFileSync(path.join(root,'analytics/configs/demo.json'),'utf8'));
- config.listen.port=0;config.databasePath=path.join(temp,'analytics.db');
- app=await startServer(config,{env,logger:{info(){},error:console.error}});
- config.listen.port=app.server.address().port;config.publicOrigin=`http://127.0.0.1:${config.listen.port}`;
- const origin=config.publicOrigin;
- const spool=path.join(temp,'outbox');
- const c=JSON.parse(fs.readFileSync(path.join(root,'collector/configs/collector.demo.json'),'utf8'));
- c.analytics_url=origin;c.spool_dir=spool;c.flush_seconds=1;
- c.hubs=[{id:'hub-a',url:`http://127.0.0.1:${portA}`,secret_env:'TMA_HUB_A_SECRET'},{id:'hub-b',url:`http://127.0.0.1:${portB}`,secret_env:'TMA_HUB_B_SECRET'}];
- const file=path.join(temp,'collector.json');fs.writeFileSync(file,JSON.stringify(c));
- const source=await fetch(origin+'/api/live');liveReader=source.body.getReader();await frame(liveReader,'event: ready');
- const bridge=child(collector,['-config',file]);
- const state=()=>fetch(origin+'/api/state').then(r=>r.json());
- await frame(liveReader,'event: updated');
- await until(async()=>{const s=await state();return s.hubs.length===2&&s.estimates.some(e=>e.windowCapacityUsd===160);},'two hubs and real estimate');
- console.log('PASS: two mock Hubs -> Go Collector -> native Analytics -> SQLite -> actual SSE');
- const first=(await state()).hubs[0];const before=app.db.sql.prepare('SELECT count(*) n FROM observations').get().n;
- await liveReader.cancel();liveReader=null;await app.close();app=null;
- await until(()=>fs.readdirSync(spool).filter(n=>n.endsWith('.json')).length>=2,'outbox fills while Analytics is stopped');
- app=await startServer(config,{env,logger:{info(){},error:console.error}});
- assert.ok(app.db.sql.prepare('SELECT count(*) n FROM observations').get().n>=before);
- await until(()=>app.db.sql.prepare('SELECT count(*) n FROM observations').get().n>before,'retry stored after Analytics restart');
- await until(()=>fs.readdirSync(spool).filter(n=>n.endsWith('.json')).length===0,'outbox drains');
- console.log('PASS: Analytics restart preserves history; Collector retries and drains its outbox');
- const replay=await fetch(origin+'/api/ingest',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({schemaVersion:1,events:[first]})});
- assert.equal(replay.status,200);assert.equal(app.db.sql.prepare('SELECT count(*) n FROM observations WHERE hub_id=? AND event_id=?').get(first.hubId,first.eventId).n,1);
- await stop(bridge);
- const bridge2=child(collector,['-config',file]);
- await until(async()=>{const s=await state();return s.hubs.find(h=>h.hubId===first.hubId)?.streamId!==first.streamId;},'Collector reconnect');
- console.log('PASS: replay is idempotent and Collector restart creates a new SSE observation segment');
- await stop(bridge2);for(const p of mocks)await stop(p);
- const backupFile=path.join(temp,'backup.db');await backupDatabase(config.databasePath,backupFile);
- const backup=new DatabaseSync(backupFile,{readOnly:true});assert.ok(backup.prepare('SELECT count(*) n FROM observations').get().n>=before);backup.close();
- console.log('PASS: live SQLite backup and integrity checks');
- assert.equal(app.db.sql.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
- console.log('INTEGRATION OK');
-}finally{
- if(liveReader)await liveReader.cancel().catch(()=>{});
- for(const p of children)await stop(p);
- if(app)await app.close();
- fs.rmSync(temp,{recursive:true,force:true});
-}
+
+main().catch(error=>{
+ console.error(`INTEGRATION FAILED: ${error?.stack??error}`);
+ process.exitCode=1;
+});
