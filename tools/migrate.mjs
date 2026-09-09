@@ -661,13 +661,11 @@ function defaultPlatform(options) {
       for (const service of serviceRows(layout).filter(item => serviceRunning(item) || item.enabled)) {
         try {
           serviceControl('mask', service.unit, service.scope, ['--runtime']);
-          // Runtime masks prevent an immediate restart, while disable keeps a
-          // persisted Collector/legacy system unit from returning after a
-          // reboot. The new publication user Analytics unit is explicitly
-          // unmasked and enabled by provisionForMigration below.
-          if (service.unit === 'tma-collector.service' || service.unit === 'tma-update.service' || (service.unit === 'tma-analytics.service' && service.scope === 'system')) {
-            serviceControl('disable', service.unit, service.scope);
-          }
+          // Inhibit every legacy unit across reboot, including the user
+          // Analytics unit: its old code must never open the archived schema
+          // if migration is interrupted before provisioning the new unit.
+          // provisionForMigration enables only the new Analytics definition.
+          serviceControl('disable', service.unit, service.scope);
         } catch { throw errorWithCode('Cannot inhibit legacy service autostart', 'service_command_failed'); }
       }
     },
