@@ -267,11 +267,11 @@ test('Windows direct CLI migration and rollback restore the old process and data
   // process IDs are the acceptance evidence; no synthetic service inventory
   // is injected into the migration CLI.
   const result = await runCli([...migrationArgs, '--dry-run']);
-  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.code, 0, `${result.stderr}\n${result.stdout}`);
   assert.match(result.stdout, new RegExp(LEGACY_COMMIT_SHA));
   // The actual cutover command uses the same explicit PIDs after dry-run.
   const applied = await runCli(migrationArgs);
-  assert.equal(applied.code, 0, applied.stderr);
+  assert.equal(applied.code, 0, `${applied.stderr}\n${applied.stdout}`);
   const state = readJson(statePath);
   assert.equal(state.phase, 'complete');
   assert.equal(readJson(targetConfigPath).version, 2);
