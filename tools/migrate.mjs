@@ -254,6 +254,7 @@ function legacyDescriptor(legacy) {
       timeZone: legacy.analytics.timeZone,
       detailRetentionDays: legacy.analytics.detailRetentionDays,
       listen: legacy.analytics.listen,
+      ingestTokenEnv: legacy.analytics.ingestTokenEnv,
       publicOrigin: legacy.analytics.publicOrigin,
       viewerAuth: legacy.analytics.viewerAuth,
       tailnetViewer: legacy.analytics.tailnetViewer,
@@ -421,6 +422,40 @@ function processExists(pid) {
   catch (error) { return error?.code === 'EPERM'; }
 }
 
+function processId(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const pid = Number(value);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+function explicitLegacyPids(options = {}) {
+  return {
+    collector: processId(options.collectorPid) ?? null,
+    analytics: processId(options.analyticsPid) ?? null,
+  };
+}
+
+function mergeLegacyPids(existing, options = {}) {
+  const explicit = explicitLegacyPids(options);
+  const current = existing && typeof existing === 'object' ? existing : {};
+  return {
+    collector: processId(current.collector) ?? processId(current.collectorPid) ?? explicit.collector,
+    analytics: processId(current.analytics) ?? processId(current.analyticsPid) ?? explicit.analytics,
+  };
+}
+
+function persistedLegacyPid(layout, kind, optionName) {
+  const explicit = processId(layout?.[optionName]);
+  if (explicit !== undefined) return explicit;
+  const state = layout?.state && typeof layout.state === 'object' ? layout.state : layout;
+  const persisted = state?.legacyPids ?? layout?.legacyPids;
+  if (!persisted || typeof persisted !== 'object') return undefined;
+  // `collectorPid`/`analyticsPid` were accepted as CLI names in early
+  // migration states. Read those aliases as well as the compact state keys so
+  // a resumable state remains useful after a CLI restart.
+  return processId(persisted[kind]) ?? processId(persisted[`${kind}Pid`]);
+}
+
 function comparableProcessText(value) {
   return String(value ?? '').replaceAll('\\', '/').toLowerCase();
 }
@@ -534,6 +569,190 @@ function loadLegacyEnvironment({analyticsEnvPath, collectorEnvPath, environment 
     }
   }
   return {...collectorValues, ...analyticsValues, ...explicit};
+}
+
+function loopbackHost(value) {
+  const host = String(value ?? '').trim().replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost') return true;
+  if (net.isIP(host) === 4) return host.startsWith('127.');
+  return net.isIP(host) === 6 && host === '::1';
+}
+
+function legacyReadinessContext(layout) {
+  const state = layout?.state && typeof layout.state === 'object' ? layout.state : layout;
+  const descriptor = state?.legacyLayout && typeof state.legacyLayout === 'object'
+    ? state.legacyLayout
+    : layout?.legacyLayout && typeof layout.legacyLayout === 'object' ? layout.legacyLayout : {};
+  const configPath = descriptor.analyticsFile;
+  // The protected legacy config is restored before startLegacy is called. Read
+  // that file rather than trusting a stale descriptor so the readiness check
+  // uses the actual old listener and its current port.
+  const analytics = typeof configPath === 'string'
+    ? readJson(configPath, 'Legacy Analytics configuration', 262144)
+    : descriptor.analytics;
+  const listen = analytics?.listen;
+  const host = typeof listen?.host === 'string' ? listen.host.trim() : '';
+  const port = Number(listen?.port);
+  if (!loopbackHost(host) || !Number.isSafeInteger(port) || port < 1 || port > 65535) {
+    throw errorWithCode('Windows legacy Analytics readiness requires a valid loopback listener', 'windows_restore_start_required');
+  }
+  const normalizedHost = host.replace(/^\[|\]$/g, '');
+  const authority = net.isIP(normalizedHost) === 6 ? `[${normalizedHost}]` : normalizedHost;
+  return {
+    state,
+    descriptor,
+    configPath: typeof configPath === 'string' ? path.resolve(configPath) : null,
+    analytics,
+    protectedBackup: typeof state?.protectedBackup === 'string' ? state.protectedBackup : null,
+    origin: `http://${authority}:${port}`,
+  };
+}
+
+function requiredLegacyEnvironment(environment, name, label) {
+  if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw errorWithCode(`Legacy ${label} environment name is invalid`, 'missing_legacy_secret');
+  }
+  const value = environment?.[name];
+  if (typeof value !== 'string' || !value || /[\0\r\n]/.test(value)) {
+    throw errorWithCode(`Legacy ${label} environment is unavailable`, 'missing_legacy_secret');
+  }
+  return value;
+}
+
+function legacyStartEnvironment({descriptor, analytics, protectedBackup, environment}) {
+  const loaded = loadLegacyEnvironment({
+    analyticsEnvPath: descriptor.analyticsEnvPath,
+    collectorEnvPath: descriptor.collectorEnvPath,
+    environment,
+    fallbackAnalyticsEnvPath: protectedBackup ? path.join(protectedBackup, 'legacy-analytics-env') : null,
+    fallbackCollectorEnvPath: protectedBackup ? path.join(protectedBackup, 'legacy-collector-env') : null,
+  });
+  const analyticsTokenName = analytics?.ingestTokenEnv ?? descriptor.analytics?.ingestTokenEnv;
+  const collectorTokenName = descriptor.ingestEnv ?? analyticsTokenName;
+  const analyticsToken = requiredLegacyEnvironment(loaded, analyticsTokenName, 'Analytics ingest token');
+  const collectorToken = requiredLegacyEnvironment(loaded, collectorTokenName, 'Collector ingest token');
+  if (analyticsToken !== collectorToken) throw errorWithCode('Legacy Analytics and Collector ingest credentials do not match', 'legacy_ingest_mismatch');
+  const viewerAuth = analytics?.viewerAuth;
+  if (viewerAuth?.mode === 'basic') {
+    requiredLegacyEnvironment(loaded, viewerAuth.userEnv, 'viewer user');
+    requiredLegacyEnvironment(loaded, viewerAuth.passwordEnv, 'viewer password');
+  }
+  return loaded;
+}
+
+function childProcessAlive(child, pid) {
+  return Boolean(child && child.exitCode === null && child.signalCode === null && !child.spawnError && processExists(pid));
+}
+
+async function waitForLegacyReadiness({child, pid, origin, timeoutMs = 15000} = {}) {
+  const timeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 120000) : 15000;
+  const deadline = Date.now() + timeout;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    if (!childProcessAlive(child, pid)) {
+      throw errorWithCode('Windows legacy Analytics exited before readiness', 'windows_restore_start_failed');
+    }
+    const remaining = Math.max(100, deadline - Date.now());
+    const requestTimeout = Math.min(1000, remaining);
+    try {
+      const response = await fetch(`${origin}/api/health`, {method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(requestTimeout)});
+      const length = Number(response.headers.get('content-length'));
+      if (Number.isSafeInteger(length) && length > 65536) throw new Error('legacy health response is too large');
+      const body = await response.json();
+      if (response.status === 200 && body?.ok === true && childProcessAlive(child, pid)) {
+        return {origin, path: '/api/health'};
+      }
+      lastError = new Error(`legacy health returned ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (!childProcessAlive(child, pid)) {
+      throw errorWithCode('Windows legacy Analytics exited before readiness', 'windows_restore_start_failed', {cause: lastError});
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now()))));
+  }
+  throw errorWithCode('Windows legacy Analytics did not become healthy before the startup deadline', 'windows_restore_start_failed', {cause: lastError});
+}
+
+async function ensureLegacyPortAvailable(origin) {
+  let url;
+  try { url = new URL(origin); }
+  catch (error) { throw errorWithCode('Windows legacy Analytics readiness URL is invalid', 'windows_restore_start_required', {cause: error}); }
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error); else resolve();
+    };
+    const socket = net.createConnection({host: url.hostname.replace(/^\[|\]$/g, ''), port: Number(url.port)});
+    socket.once('connect', () => {
+      socket.destroy();
+      finish(errorWithCode('The legacy Analytics listener is already in use', 'windows_restore_start_failed'));
+    });
+    socket.once('error', error => {
+      socket.destroy();
+      if (error?.code === 'ECONNREFUSED') finish();
+      else finish(errorWithCode('Cannot prove the legacy Analytics listener is available', 'windows_restore_start_failed', {cause: error}));
+    });
+    socket.setTimeout(500, () => {
+      socket.destroy();
+      finish(errorWithCode('Cannot prove the legacy Analytics listener is available', 'windows_restore_start_failed'));
+    });
+  });
+}
+
+/**
+ * Start the direct Windows rollback launcher and prove the old process is
+ * serving its restored loopback configuration before restore is recorded.
+ * This helper is platform-neutral so the child/readiness contract can be
+ * exercised in portable tests; the default platform calls it only on Windows.
+ */
+export async function startLegacyProcess({command, args = [], cwd, environment = process.env, layout = {}, readinessTimeoutMs = 15000} = {}) {
+  if (typeof command !== 'string' || !command.trim()) throw errorWithCode('Windows restore requires an explicit legacy launcher command', 'windows_restore_start_required');
+  if (!Array.isArray(args) || !args.every(value => typeof value === 'string')) throw errorWithCode('Windows legacy launcher arguments must be a JSON array', 'invalid_arguments');
+  const readiness = legacyReadinessContext(layout);
+  const loadedEnvironment = legacyStartEnvironment({
+    descriptor: readiness.descriptor,
+    analytics: readiness.analytics,
+    protectedBackup: readiness.protectedBackup,
+    environment,
+  });
+  await ensureLegacyPortAvailable(readiness.origin);
+  let child;
+  try {
+    child = spawn(command, args, {
+      cwd: cwd || undefined,
+      env: {...process.env, ...loadedEnvironment},
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  } catch (error) {
+    throw errorWithCode('Windows legacy launcher did not start', 'windows_restore_start_failed', {cause: error});
+  }
+  let spawnError = null;
+  child.once('error', error => { spawnError = error; child.spawnError = error; });
+  const pid = processId(child.pid);
+  if (pid === undefined) throw errorWithCode('Windows legacy launcher did not start', 'windows_restore_start_failed');
+  try {
+    await waitForLegacyReadiness({child, pid, origin: readiness.origin, timeoutMs: readinessTimeoutMs});
+  } catch (error) {
+    let cleanupError = null;
+    try {
+      // A launcher can exit between the readiness poll and cleanup. A zombie
+      // still visible to kill(0) is already stopped and must not make failure
+      // handling wait for the full service-stop deadline.
+      if (child.exitCode === null && child.signalCode === null) await stopProcessByPid(pid, 'legacy Analytics');
+    }
+    catch (cause) { cleanupError = cause; }
+    throw errorWithCode(
+      spawnError ? 'Windows legacy launcher failed before readiness' : (error?.message ?? 'Windows legacy Analytics did not become ready'),
+      'windows_restore_start_failed',
+      {cause: error, cleanupError},
+    );
+  }
+  child.unref();
+  return {pid, command, origin: readiness.origin, healthPath: '/api/health'};
 }
 
 function copyDirectReleaseTree(source, destination) {
@@ -705,7 +924,7 @@ function defaultPlatform(options) {
       if (windows) {
         if (typeof options.stopWindowsCollector === 'function') return options.stopWindowsCollector(layout);
         const row = layout.services.find(item => item.unit?.toLowerCase().includes('collector') && (item.active || item.pid > 0));
-        const pid = options.collectorPid ?? row?.pid;
+        const pid = persistedLegacyPid(layout, 'collector', 'collectorPid') ?? processId(row?.pid);
         if (pid === undefined) {
           if (row) return {alreadyStopped: true};
           throw errorWithCode('Windows migration requires --collector-pid or an inspectable Collector process', 'windows_stop_verification_required');
@@ -718,7 +937,7 @@ function defaultPlatform(options) {
       if (windows) {
         if (typeof options.stopWindowsAnalytics === 'function') return options.stopWindowsAnalytics(layout);
         const row = layout.services.find(item => item.unit?.toLowerCase().includes('analytics') && (item.active || item.pid > 0));
-        const pid = options.analyticsPid ?? row?.pid;
+        const pid = persistedLegacyPid(layout, 'analytics', 'analyticsPid') ?? processId(row?.pid);
         if (pid === undefined) {
           if (row) return {alreadyStopped: true};
           throw errorWithCode('Windows migration requires --analytics-pid or an inspectable Analytics process', 'windows_stop_verification_required');
@@ -732,7 +951,10 @@ function defaultPlatform(options) {
         if (typeof options.inhibitWindowsAutostart === 'function') return options.inhibitWindowsAutostart(layout);
         const rows = layout.services ?? [];
         if (rows.some(item => item.enabled)) throw errorWithCode('Windows service autostart requires an explicit migration hook', 'windows_autostart_verification_required');
-        const pids = [options.collectorPid, options.analyticsPid].filter(value => value !== undefined).map(Number);
+        const pids = [
+          persistedLegacyPid(layout, 'collector', 'collectorPid'),
+          persistedLegacyPid(layout, 'analytics', 'analyticsPid'),
+        ].filter(value => value !== undefined);
         if (!pids.length && !rows.length) throw errorWithCode('Windows migration requires explicit process IDs when no service manager inventory is available', 'windows_autostart_verification_required');
         return {verified: true, managed: false, pids};
       }
@@ -750,7 +972,10 @@ function defaultPlatform(options) {
     verifyStopped: async layout => {
       if (windows) {
         if (typeof options.verifyWindowsStopped === 'function') return options.verifyWindowsStopped(layout);
-        const pids = [options.collectorPid, options.analyticsPid].filter(value => value !== undefined).map(Number);
+        const pids = [
+          persistedLegacyPid(layout, 'collector', 'collectorPid'),
+          persistedLegacyPid(layout, 'analytics', 'analyticsPid'),
+        ].filter(value => value !== undefined);
         if (pids.some(processExists)) throw errorWithCode('A Windows legacy process is still running', 'service_still_running');
         const active = (layout.services ?? []).filter(item => (item.active || item.pid > 0) && item.unit?.toLowerCase().includes('tma-'));
         if (active.length) throw errorWithCode('Windows service state still reports a legacy process', 'service_still_running');
@@ -899,16 +1124,19 @@ function defaultPlatform(options) {
     startLegacy: async layout => {
       if (windows) {
         if (typeof options.startWindowsLegacy === 'function') return options.startWindowsLegacy(layout);
-        if (typeof options.legacyCommand !== 'string' || !options.legacyCommand.trim()) throw errorWithCode('Windows restore requires an explicit legacy launcher command', 'windows_restore_start_required');
         let args = [];
         if (options.legacyArgs !== undefined) {
           try { args = Array.isArray(options.legacyArgs) ? options.legacyArgs : JSON.parse(options.legacyArgs); } catch { throw errorWithCode('Windows legacy launcher arguments must be a JSON array', 'invalid_arguments'); }
           if (!Array.isArray(args) || !args.every(value => typeof value === 'string')) throw errorWithCode('Windows legacy launcher arguments must be a JSON array', 'invalid_arguments');
         }
-        const child = spawn(options.legacyCommand, args, {cwd: options.legacyWorkingDir || undefined, env: options.environment ?? process.env, stdio: 'ignore', windowsHide: true});
-        if (!Number.isInteger(child.pid) || child.pid <= 0) throw errorWithCode('Windows legacy launcher did not start', 'windows_restore_start_failed');
-        child.unref();
-        return {pid: child.pid, command: options.legacyCommand};
+        return startLegacyProcess({
+          command: options.legacyCommand,
+          args,
+          cwd: options.legacyWorkingDir,
+          environment: options.environment ?? process.env,
+          layout,
+          readinessTimeoutMs: options.legacyReadinessTimeoutMs ?? options.legacyStartupTimeoutMs,
+        });
       }
       const legacyServices = (layout?.services ?? [])
         .filter(item => ['tma-collector.service', 'tma-analytics.service', 'tma-update.service'].includes(item.unit))
@@ -1910,14 +2138,23 @@ async function executeMigration(context) {
           updateStatePath: absolute(options.updateStatePath ?? '/var/lib/tma-deploy/update-state.json'),
           databasePath: path.resolve(legacy.databasePath),
           legacyDatabasePath: path.resolve(legacy.databasePath),
+          legacyPids: explicitLegacyPids(options),
           legacyLayout: legacyDescriptor(legacy),
           createdAt: new Date().toISOString(), error: null,
         });
+      }
+      // States created by an earlier CLI may not contain the direct-process
+      // identities. Fill only missing entries from explicit operator input;
+      // once recorded, never replace a PID with a later untrusted value.
+      const savedLegacyPids = mergeLegacyPids(state.legacyPids, options);
+      if (stable(savedLegacyPids) !== stable(state.legacyPids ?? {})) {
+        state = saveMigrationState(statePath, {...state, legacyPids: savedLegacyPids});
       }
       ensureStateInputs(state, {oldCommitSha, targetCommitSha, legacy, targetArtifactPath});
       const backupDir = absolute(state.backupDir);
       fs.mkdirSync(backupDir, {recursive: true, mode: 0o700});
       const phaseContext = {state, statePath, legacy, inventory: context.inventory, targetArtifact, targetArtifactPath, targetCommitSha, oldCommitSha, backupDir, lock: lockContext(lockPath, state.phase)};
+      phaseContext.inventory.legacyPids = state.legacyPids;
       let publishedThisRun = false;
 
       // A persisted phase is not proof that the host is still quiescent. A
@@ -2088,7 +2325,7 @@ export async function restoreMigration({statePath, lockPath, platform: suppliedP
       // do not touch target files or the live old database.
       await platform.stopCollector({services: state.legacyServices, ...state});
       await platform.stopAnalytics({services: state.legacyServices, ...state});
-      await platform.verifyStopped({services: state.legacyServices});
+      await platform.verifyStopped({services: state.legacyServices, ...state});
     }
     await platform.verifyNoDatabaseWriter({databasePath, state});
     const preservePath = preservePostCutover ? await platform.preserveCutoverDatabase({databasePath, backupDir, state, lock: lockContext(lock, 'restore')}) : null;

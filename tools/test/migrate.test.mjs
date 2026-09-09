@@ -7,11 +7,19 @@ import net from 'node:net';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {createReleaseArtifact} from '../release.mjs';
-import {LEGACY_COMMIT_SHA, backupProtectedLayout, preflightMigration, publishWindowsMigrationArtifact, runMigration, restoreMigration} from '../migrate.mjs';
+import {LEGACY_COMMIT_SHA, backupProtectedLayout, preflightMigration, publishWindowsMigrationArtifact, runMigration, restoreMigration, startLegacyProcess} from '../migrate.mjs';
 import {verifyReleaseArtifact} from '../release.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const TARGET_SHA = 'b'.repeat(40);
+
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-migration-'));
@@ -108,6 +116,76 @@ test('protected manifest accepts a bounded large metadata record', {skip: proces
   assert.ok(fs.statSync(path.join(protectedDir, 'manifest.json')).size > 1024 * 1024);
   const loaded = backupProtectedLayout({backupDir, sources: [], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
   assert.equal(loaded.entries[0].padding, padding);
+});
+
+test('direct legacy launcher loads protected env and waits for a live health endpoint', async t => {
+  const dir = fixture(t);
+  const port = await freePort();
+  const token = 'l'.repeat(64);
+  const configPath = path.join(dir, 'analytics.json');
+  const analyticsEnvPath = path.join(dir, 'analytics.env');
+  const collectorEnvPath = path.join(dir, 'collector.env');
+  const protectedBackup = path.join(dir, 'protected');
+  const launcherPath = path.join(dir, 'legacy-launcher.mjs');
+  fs.writeFileSync(configPath, `${JSON.stringify({listen: {host: '127.0.0.1', port}, ingestTokenEnv: 'TMA_INGEST_TOKEN', viewerAuth: {mode: 'loopback'}}, null, 2)}\n`, {mode: 0o600});
+  fs.mkdirSync(protectedBackup, {recursive: true, mode: 0o700});
+  fs.writeFileSync(path.join(protectedBackup, 'legacy-analytics-env'), `TMA_INGEST_TOKEN=${token}\n`, {mode: 0o600});
+  fs.writeFileSync(path.join(protectedBackup, 'legacy-collector-env'), `TMA_INGEST_TOKEN=${token}\n`, {mode: 0o600});
+  fs.writeFileSync(launcherPath, `import http from 'node:http';\nif (process.env.TMA_INGEST_TOKEN !== ${JSON.stringify(token)} || process.argv[3] === 'fail') process.exit(1);\nconst server = http.createServer((request, response) => { if (request.method === 'GET' && request.url === '/api/health') { response.writeHead(200, {'content-type': 'application/json'}); response.end(JSON.stringify({ok: true})); return; } response.writeHead(404); response.end(); });\nserver.listen(Number(process.argv[2]), '127.0.0.1');\n`, {mode: 0o600});
+  const legacyLayout = {
+    analyticsFile: configPath,
+    analyticsEnvPath,
+    collectorEnvPath,
+    ingestEnv: 'TMA_INGEST_TOKEN',
+    analytics: {ingestTokenEnv: 'TMA_INGEST_TOKEN', listen: {host: '127.0.0.1', port}, viewerAuth: {mode: 'loopback'}},
+  };
+  let started = null;
+  t.after(async () => {
+    if (!started?.pid) return;
+    try { process.kill(started.pid, 'SIGTERM'); } catch {}
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try { process.kill(started.pid, 0); } catch { return; }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error('direct legacy test child did not stop');
+  });
+  started = await startLegacyProcess({
+    command: process.execPath,
+    args: [launcherPath, String(port)],
+    cwd: dir,
+    environment: {},
+    layout: {state: {legacyLayout, protectedBackup}},
+    readinessTimeoutMs: 3000,
+  });
+  assert.equal(typeof started.pid, 'number');
+  assert.equal(started.origin, `http://127.0.0.1:${port}`);
+  assert.deepEqual(started.healthPath, '/api/health');
+
+  const emptyBackup = path.join(dir, 'empty-protected');
+  fs.mkdirSync(emptyBackup, {recursive: true, mode: 0o700});
+  await assert.rejects(() => startLegacyProcess({
+    command: process.execPath,
+    args: [launcherPath, String(port), 'fail'],
+    cwd: dir,
+    environment: {},
+    layout: {state: {legacyLayout, protectedBackup: emptyBackup}},
+    readinessTimeoutMs: 500,
+  }), error => error.code === 'missing_legacy_secret');
+  try { process.kill(started.pid, 'SIGTERM'); } catch {}
+  const stoppedDeadline = Date.now() + 5000;
+  while (Date.now() < stoppedDeadline) {
+    try { process.kill(started.pid, 0); } catch { break; }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  await assert.rejects(() => startLegacyProcess({
+    command: process.execPath,
+    args: [launcherPath, String(port), 'fail'],
+    cwd: dir,
+    environment: {},
+    layout: {state: {legacyLayout, protectedBackup}},
+    readinessTimeoutMs: 3000,
+  }), error => error.code === 'windows_restore_start_failed');
 });
 
 async function oldRuntime() {
@@ -290,6 +368,8 @@ async function setup(t) {
 
 test('migration drains pinned legacy outbox, archives IDs without active URL/Secret, and resumes idempotently', async t => {
   const f = await setup(t);
+  f.options.collectorPid = 101;
+  f.options.analyticsPid = 102;
   const calls = [];
   f.options.platform = migrationPlatform({databasePath: f.databasePath}, calls);
   const result = await runMigration(f.options);
@@ -298,6 +378,7 @@ test('migration drains pinned legacy outbox, archives IDs without active URL/Sec
   assert.deepEqual(calls.slice(0, 5), ['stopCollector', 'stopAnalytics', 'inhibitAutostart', 'verifyStopped', 'verifyNoDatabaseWriter']);
   assert.equal(fs.readdirSync(f.outboxPath).length, 0);
   const state = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
+  assert.deepEqual(state.legacyPids, {collector: 101, analytics: 102});
   assert.equal(state.rollbackDatabase, path.join(f.options.backupDir, 'post-drain-analytics.db'));
   assert.equal(state.protectedManifest.path, path.join(f.options.backupDir, 'protected', 'manifest.json'));
   assert.equal(Object.hasOwn(state.protectedManifest, 'entries'), false);
@@ -460,6 +541,8 @@ test('restore recovers a stopped partial drain without replacing the current dat
 
 test('restore recovers a crash after the durable stop handoff without a rollback database', async t => {
   const f = await setup(t);
+  f.options.collectorPid = 201;
+  f.options.analyticsPid = 202;
   const migrationCalls = [];
   f.options.platform = migrationPlatform({databasePath: f.databasePath}, migrationCalls, {failAt: 'stopCollector'});
   await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_stopCollector');
@@ -467,11 +550,12 @@ test('restore recovers a crash after the durable stop handoff without a rollback
   assert.equal(failed.phase, 'prepare');
   assert.equal(typeof failed.stopAttemptedAt, 'string');
   assert.equal(Array.isArray(failed.legacyServices), true);
+  assert.deepEqual(failed.legacyPids, {collector: 201, analytics: 202});
   const restoreCalls = [];
   const restored = await restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: {
-    stopCollector: async () => restoreCalls.push('stopCollector'),
-    stopAnalytics: async () => restoreCalls.push('stopAnalytics'),
-    verifyStopped: async () => restoreCalls.push('verifyStopped'),
+    stopCollector: async layout => { assert.deepEqual(layout.legacyPids, {collector: 201, analytics: 202}); restoreCalls.push('stopCollector'); },
+    stopAnalytics: async layout => { assert.deepEqual(layout.legacyPids, {collector: 201, analytics: 202}); restoreCalls.push('stopAnalytics'); },
+    verifyStopped: async layout => { assert.deepEqual(layout.legacyPids, {collector: 201, analytics: 202}); restoreCalls.push('verifyStopped'); },
     verifyNoDatabaseWriter: async () => restoreCalls.push('verifyNoDatabaseWriter'),
     preserveCutoverDatabase: async ({backupDir}) => { restoreCalls.push('preserve'); const p = path.join(backupDir, 'early-current.db'); fs.copyFileSync(f.databasePath, p); return p; },
     restoreProtected: async () => restoreCalls.push('restoreProtected'),
