@@ -35,7 +35,7 @@
 
 ## 検証中の fixture 事象
 
-旧 fixture の protected backup symlink 検査で対象を follow したため、fixture の active release directory の mode が `0755` から `0777` へ変わった。mode を `0755` に復元し、nested symlink がないことを確認した。`b92a98b` で symlink 先の live permission を保持し、`4d01945` で service unit と migration inventory を fixture directory に隔離した。この事象で本番 DB・設定・service を migration または restart していない。
+旧 fixture が既定の本番パスを参照し、protected backup の symlink 処理でリンク先へ chmod したため、実ホストで稼働中の `/opt/token-monitor-analytics/current` の参照先ディレクトリーの mode が `0755` から `0777` へ変わった。mode を `0755` に復元し、nested symlink がないことを確認した。`b92a98b` で symlink 先の live permission を保持し、`4d01945` で service unit と migration inventory を fixture directory に隔離した。この事象で本番 DB・設定・service を migration または restart していない。
 
 ## 残課題と実行範囲
 
