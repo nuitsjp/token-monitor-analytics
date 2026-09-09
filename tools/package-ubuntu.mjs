@@ -12,7 +12,7 @@ if(!['amd64','arm64'].includes(architecture)||extra.length)throw new Error('Usag
 const files=[
  'README.md','CHANGELOG.md','THIRD_PARTY_NOTICES.md','analytics/package.json',
  ...['db','estimate','platform','protocol','hubs'].map(n=>`analytics/src/${n}.ts`),
- ...['auth','backup','config','live','server','sqlite','hubs','management','update-manager','update-state'].map(n=>`analytics/runtime/${n}.mjs`),
+ ...['auth','backup','config','live','server','sqlite','hubs','management','update-manager','update-state','collection/manager','collection/sse','collection/subscribe'].map(n=>`analytics/runtime/${n}.mjs`),
  ...['index.html','app.js','styles.css'].map(n=>`analytics/public/${n}`),
  ...['analytics.example.json','demo.json'].map(n=>`analytics/configs/${n}`),
  ...['analytics.ubuntu.json','collector.ubuntu.json','analytics.env.example','collector.env.example','tma-analytics.service','tma-collector.service'].map(n=>`deploy/${n}`),

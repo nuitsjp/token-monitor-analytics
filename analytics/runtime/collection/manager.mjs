@@ -91,10 +91,14 @@ export function createCollectionManager({
     for (const [id, hub] of active) if (!runners.has(id)) startRunner(hub);
   }
 
-  function applyHubs(hubs) {
-    const next = applyTail.then(() => applyHubsNow(hubs));
+  function enqueue(operation) {
+    const next = applyTail.then(operation);
     applyTail = next.catch(() => {});
     return next;
+  }
+
+  function applyHubs(hubs) {
+    return enqueue(() => applyHubsNow(hubs));
   }
 
   async function start(hubs = []) {
@@ -103,24 +107,28 @@ export function createCollectionManager({
   }
 
   async function reconnectHub(id) {
-    const runner = runners.get(id);
-    if (!runner || stopped) return false;
-    const hub = {...runner.hub, status: 'active'};
-    await stopRunner(id);
-    if (!stopped) startRunner(hub);
-    return true;
+    return enqueue(async () => {
+      const runner = runners.get(id);
+      if (!runner || stopped) return false;
+      const hub = {...runner.hub, status: 'active'};
+      await stopRunner(id);
+      if (!stopped) startRunner(hub);
+      return true;
+    });
   }
 
   async function stopHub(id) {
-    if (!runners.has(id)) return false;
-    await stopRunner(id);
-    return true;
+    return enqueue(async () => {
+      if (!runners.has(id)) return false;
+      await stopRunner(id);
+      return true;
+    });
   }
 
   async function stop() {
     if (stopPromise) return stopPromise;
     stopped = true;
-    stopPromise = Promise.all([...runners.keys()].map(stopRunner));
+    stopPromise = enqueue(() => Promise.all([...runners.keys()].map(stopRunner)));
     return stopPromise;
   }
 

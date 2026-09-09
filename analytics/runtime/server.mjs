@@ -37,6 +37,8 @@ export async function startServer(config,{env=process.env,logger=console,mainten
  const exclusive=callback=>{const next=tail.then(callback);tail=next.catch(()=>{});return next;};
  const live=new LiveFeed({heartbeatMs});
  let collectionFatal=false;
+ let fatalPending=false;
+ let closeApp=null;
  let collection;
  collection=createCollectionManager({
   idleMs:collectionIdleMs,
@@ -57,8 +59,11 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   onFatal:()=>{
    if(collectionFatal)return;
    collectionFatal=true;
+   fatalPending=true;
+   process.exitCode=1;
    logger.error('Observation persistence failed; collection stopped; inspect disk/database');
    void collection.stop();
+   if(closeApp)void closeApp().catch(()=>{process.exitCode=1;});
   },
  });
  const stopCollection=()=>{
@@ -168,7 +173,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
  const maintenance=setInterval(()=>exclusive(()=>prune(db,config.detailRetentionDays)).catch(()=>logger.error('Retention maintenance failed; inspect disk/database')),maintenanceMs);
  maintenance.unref();
  logger.info(`Analytics ready at ${config.publicOrigin} (${config.demo?'DEMO':'REAL'}; SQLite; browser SSE)`);
- return {
+ const app={
   server,viewerServer,db,live,updateManager,collection,
   startCollection: hubs => collection.start(hubs),
   async close(){
@@ -178,6 +183,9 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    await tail;db.close();
   }
  };
+ closeApp=app.close;
+ if(fatalPending)await app.close();
+ return app;
 }
 async function main(){
  const {values}=parseArgs({options:{config:{type:'string',default:'config.local.json'}},strict:true});
@@ -188,7 +196,7 @@ async function main(){
  let stopping=false;
  for(const name of ['SIGINT','SIGTERM'])process.on(name,async()=>{
   if(stopping)return;stopping=true;
-  try{await app.close();process.exitCode=0;}catch{process.exitCode=1;}
+  try{await app.close();}catch{process.exitCode=1;}
  });
 }
 if(process.argv[1]&&fs.existsSync(process.argv[1])&&import.meta.url===pathToFileURL(fs.realpathSync(process.argv[1])).href){

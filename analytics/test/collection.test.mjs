@@ -67,6 +67,13 @@ test('compactHubEvent mirrors Go normalization and strips private fields', () =>
   assert.equal(observation.eventId, undefined);
 });
 
+test('compactHubEvent applies the size limit after dropping unknown period fields', () => {
+  const data = payload({periods: {today: {costUsd: 1, debug: 'x'.repeat(140 * 1024)}, month: {costUsd: 2}, allTime: {costUsd: 3}}});
+  const observation = compactHubEvent({name: 'snapshot', data}, 'hub-a', 'a'.repeat(32), Date.parse(at));
+  assert.equal(observation.stats.periods.today.costUsd, 1);
+  assert.equal(JSON.stringify(observation).includes('debug'), false);
+});
+
 test('compactHubEvent rejects malformed upstream input as a permanent Hub error', () => {
   assert.throws(() => compactHubEvent({name: 'stats', data: '{bad'}, 'h', 'a'.repeat(32), Date.parse(at)), error => error instanceof HubInputError && error.code === 'input_error');
   assert.equal(isPermanent(new HTTPError(401)), true);
@@ -152,6 +159,34 @@ test('collection manager isolates Hubs and replaces old generations after they f
   } finally { await manager.stop(); for (const server of servers) server.close(); }
 });
 
+test('collection manager serializes reconnect behind configuration removal', async () => {
+  let first = true;
+  let markObservation;
+  const observationStarted = new Promise(resolve => { markObservation = resolve; });
+  let releaseObservation;
+  const observationGate = new Promise(resolve => { releaseObservation = resolve; });
+  const manager = createCollectionManager({
+    fetchImpl: async () => {
+      if (!first) return new Response(null, {status: 500});
+      first = false;
+      return new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode(['event: stats', 'data: x', '', ''].join(String.fromCharCode(10)))); },
+      }), {status: 200, headers: {'Content-Type': 'text/event-stream'}});
+    },
+    onObservation: async () => { markObservation(); await observationGate; },
+    jitterFn: () => 0,
+  });
+  try {
+    await manager.applyHubs([{id: 'a', url: 'http://127.0.0.1:1', secret: 's', status: 'active'}]);
+    await observationStarted;
+    const reconnect = manager.reconnectHub('a');
+    const removal = manager.applyHubs([]);
+    releaseObservation();
+    await Promise.all([reconnect, removal]);
+    assert.deepEqual(manager.getStatus(), []);
+  } finally { await manager.stop(); }
+});
+
 test('startServer stores Node-collected observations only after the SQLite commit', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-collection-server-'));
   const hub = http.createServer((_req, res) => {
@@ -183,5 +218,39 @@ test('startServer stores Node-collected observations only after the SQLite commi
     });
   } finally {
     await app.close(); hub.close(); fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('startServer closes and marks the process failed after a storage error', async () => {
+  const previousExitCode = process.exitCode;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-collection-fatal-'));
+  let sendEvent = null;
+  const hub = http.createServer((_req, res) => {
+    res.writeHead(200, {'Content-Type': 'text/event-stream'});
+    sendEvent = () => res.end(['event: snapshot', `data: ${payload()}`, '', ''].join(String.fromCharCode(10)));
+  });
+  const hubUrl = await listen(hub);
+  const configRaw = JSON.parse(fs.readFileSync(new URL('../configs/demo.json', import.meta.url), 'utf8'));
+  Object.assign(configRaw, {demo: false, databasePath: path.join(dir, 'analytics.db'), contracts: []});
+  const configFile = path.join(dir, 'analytics.json');
+  fs.writeFileSync(configFile, JSON.stringify(configRaw));
+  const config = loadConfig(configFile); config.listen.port = 0;
+  const app = await startServer(config, {
+    env: {TMA_INGEST_TOKEN: 'server-ingest-token-000000000000000000000000000000'},
+    logger: {info() {}, error() {}}, collectionIdleMs: 1000,
+    collectionHubs: [{id: 'hub-a', url: hubUrl, secret: 'hub-secret', status: 'active'}],
+  });
+  try {
+    const deadline = Date.now() + 1000;
+    while (!sendEvent && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(typeof sendEvent, 'function');
+    app.db.transaction = () => { throw new Error('injected storage failure'); };
+    sendEvent();
+    while ((app.server.listening || process.exitCode !== 1) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(app.server.listening, false);
+    assert.equal(process.exitCode, 1);
+  } finally {
+    await app.close(); hub.close(); fs.rmSync(dir, {recursive: true, force: true});
+    process.exitCode = previousExitCode;
   }
 });

@@ -40,6 +40,17 @@ function stats(v:unknown):v is Stats{
 function copyPeriod(p:Period):Period{const out:Period={costUsd:p.costUsd};if(p.totalTokens!==undefined)out.totalTokens=p.totalTokens;if(p.clientCosts!==undefined)out.clientCosts={...p.clientCosts};return out;}
 function copyPeriods(ps:Record<string,Period>):Record<string,Period>{return Object.fromEntries(Object.entries(ps).map(([k,p])=>[k,copyPeriod(p)]));}
 function cleanStats(s:Stats):Stats{return {updatedAt:s.updatedAt,periods:copyPeriods(s.periods),devices:s.devices.map(d=>({deviceId:d.deviceId,updatedAt:d.updatedAt,stale:d.stale,periods:copyPeriods(d.periods)})),limits:{providers:s.limits.providers.map(p=>({provider:p.provider,accountKey:p.accountKey,updatedAt:p.updatedAt,status:p.status,stale:p.stale,windows:p.windows.map(w=>({kind:w.kind,usedPercent:w.usedPercent,resetsAt:w.resetsAt}))}))}};}
+function compactPeriod(v:unknown):Period{
+ if(!obj(v)||!finite(v.costUsd))throw new HubInputError('invalid Hub period');
+ const out:Period={costUsd:v.costUsd as number|null};
+ if(v.totalTokens!==undefined){if(!finite(v.totalTokens))throw new HubInputError('invalid Hub period');out.totalTokens=v.totalTokens as number|null;}
+ if(v.clientCosts!==undefined){
+  if(!obj(v.clientCosts)||Object.keys(v.clientCosts).length>128)throw new HubInputError('invalid Hub period');
+  for(const value of Object.values(v.clientCosts))if(!finite(value))throw new HubInputError('invalid Hub period');
+  out.clientCosts={...v.clientCosts as Record<string,number|null>};
+ }
+ return out;
+}
 
 // Compact one Hub SSE event into the synchronous storage boundary. Unknown
 // upstream fields are deliberately discarded before the event is persisted.
@@ -55,7 +66,7 @@ export function compactHubEvent(event:HubStreamEvent,hubId:string,streamId:strin
   if(at>now+300000)throw new HubInputError('Hub clock is over five minutes ahead');
   const rawStats=envelope.stats,rawPeriods=rawStats.periods as Record<string,unknown>,periodMap:Record<string,unknown>={};
   if(rawStats.updatedAt!==undefined&&rawStats.updatedAt!==null&&typeof rawStats.updatedAt!=='string')throw new HubInputError('invalid Hub stats payload');
-  for(const key of ['today','month','allTime'])if(Object.prototype.hasOwnProperty.call(rawPeriods,key))periodMap[key]=rawPeriods[key];
+  for(const key of ['today','month','allTime'])if(Object.prototype.hasOwnProperty.call(rawPeriods,key))periodMap[key]=compactPeriod(rawPeriods[key]);
   const rawDevices=rawStats.devices===undefined||rawStats.devices===null?[]:rawStats.devices;
   if(!Array.isArray(rawDevices))throw new HubInputError('invalid Hub stats payload');
   if(rawDevices.length>64)throw new HubInputError('Hub exceeds starter device/account limit');
@@ -66,7 +77,7 @@ export function compactHubEvent(event:HubStreamEvent,hubId:string,streamId:strin
    if(raw.stale!==undefined&&raw.stale!==null&&typeof raw.stale!=='boolean')throw new HubInputError('invalid Hub stats payload');
    const devicePeriods=raw.periods===undefined||raw.periods===null?{}:raw.periods;if(!obj(devicePeriods))throw new HubInputError('invalid Hub stats payload');
    const allTime=devicePeriods.allTime;
-   ids.add(raw.deviceId);devices.push({deviceId:raw.deviceId,updatedAt:raw.updatedAt===undefined||raw.updatedAt===null?'':raw.updatedAt,stale:raw.stale===undefined?null:raw.stale,periods:allTime===undefined||allTime===null?{}:{allTime:allTime as Period}});
+   ids.add(raw.deviceId);devices.push({deviceId:raw.deviceId,updatedAt:raw.updatedAt===undefined||raw.updatedAt===null?'':raw.updatedAt,stale:raw.stale===undefined?null:raw.stale,periods:allTime===undefined||allTime===null?{}:{allTime:compactPeriod(allTime)}});
   }
   const rawLimits=rawStats.limits===undefined||rawStats.limits===null?{}:rawStats.limits;if(!obj(rawLimits))throw new HubInputError('invalid Hub stats payload');
   const rawProviders=rawLimits.providers===undefined||rawLimits.providers===null?[]:rawLimits.providers;
