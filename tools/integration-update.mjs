@@ -55,8 +55,11 @@ async function waitFile(filename, timeout = 15000) {
   return until(() => fs.existsSync(filename), `file ${filename}`, timeout);
 }
 
-function git(command, args, cwd) {
-  return execFileSync('git', [command, ...args], {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
+const fixtureIdentity = ['-c', 'user.email=fixture@example.invalid', '-c', 'user.name=Token Monitor fixture'];
+
+function git(command, args, cwd, {identity = false} = {}) {
+  const prefix = identity ? fixtureIdentity : [];
+  return execFileSync('git', [...prefix, command, ...args], {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
 }
 
 function createRemoteFixture() {
@@ -64,11 +67,9 @@ function createRemoteFixture() {
   const bare = path.join(temp, 'remote.git');
   fs.mkdirSync(work, {recursive: true});
   git('init', ['-q'], work);
-  git('config', ['user.email', 'fixture@example.invalid'], work);
-  git('config', ['user.name', 'Update fixture'], work);
   fs.writeFileSync(path.join(work, 'README.md'), 'fixture release\n');
-  git('add', ['README.md'], work);
-  git('commit', ['-qm', 'fixture release'], work);
+  git('add', ['README.md'], work, {identity: true});
+  git('commit', ['-qm', 'fixture release'], work, {identity: true});
   const sha = git('rev-parse', ['HEAD'], work);
   git('init', ['--bare', '-q', bare], temp);
   git('push', ['-q', bare, 'HEAD:refs/heads/main'], work);
@@ -77,12 +78,22 @@ function createRemoteFixture() {
 
 function copySourceFixture() {
   const source = path.join(temp, 'source-work');
-  fs.cpSync(root, source, {
-    recursive: true,
-    filter(filename) {
-      return !filename.includes(`${path.sep}node_modules${path.sep}`) && !filename.includes(`${path.sep}.git${path.sep}`);
-    }
-  });
+  const archive = path.join(temp, 'source-work.tar');
+  fs.mkdirSync(source, {recursive: true, mode: 0o700});
+  // Archive only tracked source. Copying a worktree recursively can copy its
+  // .git pointer, which would make fixture git commands mutate the shared
+  // repository/worktree metadata. Submodules and generated/private trees are
+  // removed explicitly after extraction even when represented by a gitlink.
+  git('archive', ['--format=tar', 'HEAD', '-o', archive], root);
+  execFileSync('tar', ['-xf', archive, '-C', source], {stdio: 'ignore'});
+  fs.rmSync(archive, {force: true});
+  for (const relative of ['external', 'node_modules', 'dist']) {
+    fs.rmSync(path.join(source, relative), {recursive: true, force: true});
+  }
+  git('init', ['-q'], source);
+  const sourceReal = fs.realpathSync(source);
+  const commonDir = fs.realpathSync(path.resolve(source, git('rev-parse', ['--git-common-dir'], source)));
+  assert.equal(commonDir, path.join(sourceReal, '.git'), 'fixture Git metadata must be private to the temporary checkout');
   // The real release gate invokes these entry points. Replace only the
   // fixture checkout's recursive integration calls; production code and the
   // publisher remain the exact target source used by the runner.
@@ -93,15 +104,12 @@ function copySourceFixture() {
   fs.rmSync(tests, {recursive: true, force: true});
   fs.mkdirSync(tests, {recursive: true});
   fs.writeFileSync(path.join(tests, 'fixture-release.test.mjs'), "import test from 'node:test'; test('fixture release gate', () => {});\n", {mode: 0o600});
-  git('init', ['-q'], source);
-  git('config', ['user.email', 'fixture@example.invalid'], source);
-  git('config', ['user.name', 'Release fixture'], source);
-  git('add', ['-A'], source);
-  git('commit', ['-qm', 'fixture verified release'], source);
+  git('add', ['-A'], source, {identity: true});
+  git('commit', ['-qm', 'fixture verified release'], source, {identity: true});
   const firstSha = git('rev-parse', ['HEAD'], source);
   fs.writeFileSync(path.join(source, 'fixture-only.txt'), 'excluded from the release allowlist\n', {mode: 0o600});
-  git('add', ['fixture-only.txt'], source);
-  git('commit', ['-qm', 'fixture metadata-only revision'], source);
+  git('add', ['fixture-only.txt'], source, {identity: true});
+  git('commit', ['-qm', 'fixture metadata-only revision'], source, {identity: true});
   const secondSha = git('rev-parse', ['HEAD'], source);
   const bare = path.join(temp, 'source.git');
   git('init', ['--bare', '-q', bare], temp);
@@ -247,13 +255,15 @@ async function runRealPublicationFixture() {
   fs.writeFileSync(publicationPath, JSON.stringify({schemaVersion: 1, releaseId: 'rel-old', targetCommitSha: '1111111111111111111111111111111111111111', contentHash: 'c'.repeat(64), archiveSha256: 'a'.repeat(64), configurationId: 'cfg-old'}), {mode: 0o600});
   const configPath = path.join(configDir, 'analytics.json');
   const pidFile = path.join(temp, 'app.pid');
-  runningChild = await startFixtureApp({currentLink, configPath, pidFile, appScript});
-  const origin = config.publicOrigin;
-  await until(async () => (await (await fetch(`${origin}/api/health`)).json()).ok, 'old packaged app health');
+  // Seed the committed marker before the application opens SQLite. Keeping
+  // one writer at a time makes the fixture exercise the production boundary.
   const marker = new DatabaseSync(databasePath);
   marker.exec('CREATE TABLE IF NOT EXISTS fixture_marker (value TEXT NOT NULL)');
   marker.prepare('INSERT INTO fixture_marker VALUES (?)').run('committed-before-update');
   marker.close();
+  runningChild = await startFixtureApp({currentLink, configPath, pidFile, appScript});
+  const origin = config.publicOrigin;
+  await until(async () => (await (await fetch(`${origin}/api/health`)).json()).ok, 'old packaged app health');
 
   const statePath = path.join(temp, 'publication-state.json');
   const verifyRoot = path.join(temp, 'verify');
