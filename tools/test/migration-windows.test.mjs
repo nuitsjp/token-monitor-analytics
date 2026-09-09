@@ -297,7 +297,7 @@ test('Windows direct CLI migration and rollback restore the old process and data
     '--legacy-node-path', legacyNodePath, '--infrastructure-path', infrastructurePath,
     '--publication-path', publicationPath, '--update-state-path', updateStatePath,
   ]);
-  assert.equal(restored.code, 0, restored.stderr);
+  assert.equal(restored.code, 0, `${restored.stderr}\n${restored.stdout}`);
   assert.equal(fs.existsSync(targetConfigPath), false);
   assert.equal(fs.existsSync(analyticsConfigPath), true);
   assert.equal(fs.existsSync(collectorConfigPath), true);

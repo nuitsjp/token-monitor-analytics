@@ -68,4 +68,4 @@ jobs:
           "TMA_MIGRATION_REAL=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "TMA_MIGRATION_LEGACY_SOURCE_MANIFEST=$(Join-Path $legacyDir 'manifest.json')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Run the explicit real-source migration fixtures
-        run: node --experimental-strip-types --test tools/test/migration-real.test.mjs tools/test/migration-windows.test.mjs
+        run: node --experimental-strip-types --test --test-concurrency=1 tools/test/migration-real.test.mjs tools/test/migration-windows.test.mjs

@@ -1331,9 +1331,9 @@ function protectWindowsBackupPath(filename) {
   const script = [
     "$ErrorActionPreference='Stop'",
     "$item=Get-Item -LiteralPath $env:TMA_MIGRATION_PATH -Force",
-    "$acl=Get-Acl -LiteralPath $item.FullName",
+    "$acl=if($item.PSIsContainer){New-Object System.Security.AccessControl.DirectorySecurity}else{New-Object System.Security.AccessControl.FileSecurity}",
     "$acl.SetAccessRuleProtection($true,$false)",
-    "foreach($rule in @($acl.Access)){[void]$acl.RemoveAccessRule($rule)}",
+    "$acl.SetOwner([System.Security.Principal.WindowsIdentity]::GetCurrent().User)",
     "$inherit=[System.Security.AccessControl.InheritanceFlags]::None",
     "if($item.PSIsContainer){$inherit=[System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit}",
     "$prop=[System.Security.AccessControl.PropagationFlags]::None",
