@@ -50,6 +50,7 @@ jobs:
           bash tools/test/ubuntu-reboot-vm.sh \
             --source-dir "$GITHUB_WORKSPACE" \
             --node-bin "$(command -v node)" \
+            --mise-bin "$(command -v mise)" \
             --artifact-dir "$RUNNER_TEMP/tma-ubuntu-reboot" \
             --image-url "$TMA_UBUNTU_IMAGE_URL" \
             --image-sha256 "$TMA_UBUNTU_IMAGE_SHA256"

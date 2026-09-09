@@ -7,13 +7,14 @@ set -Eeuo pipefail
 
 source_dir=''
 node_bin=''
+mise_bin=''
 artifact_dir=''
 image_url=''
 image_sha256=''
 
 usage() {
   cat >&2 <<'EOF'
-Usage: ubuntu-reboot-vm.sh --source-dir DIR --node-bin FILE --artifact-dir DIR \
+Usage: ubuntu-reboot-vm.sh --source-dir DIR --node-bin FILE --mise-bin FILE --artifact-dir DIR \
   --image-url URL --image-sha256 HEX
 EOF
 }
@@ -22,6 +23,7 @@ while (($#)); do
   case "$1" in
     --source-dir) source_dir=${2:?missing --source-dir value}; shift 2 ;;
     --node-bin) node_bin=${2:?missing --node-bin value}; shift 2 ;;
+    --mise-bin) mise_bin=${2:?missing --mise-bin value}; shift 2 ;;
     --artifact-dir) artifact_dir=${2:?missing --artifact-dir value}; shift 2 ;;
     --image-url) image_url=${2:?missing --image-url value}; shift 2 ;;
     --image-sha256) image_sha256=${2:?missing --image-sha256 value}; shift 2 ;;
@@ -30,16 +32,18 @@ while (($#)); do
   esac
 done
 
-if [[ -z "$source_dir" || -z "$node_bin" || -z "$artifact_dir" || -z "$image_url" || ! "$image_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+if [[ -z "$source_dir" || -z "$node_bin" || -z "$mise_bin" || -z "$artifact_dir" || -z "$image_url" || ! "$image_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   usage
   exit 2
 fi
 source_dir=$(cd "$source_dir" && pwd)
 node_bin=$(readlink -f "$node_bin")
+mise_bin=$(readlink -f "$mise_bin")
 node_root=$(cd "$(dirname "$node_bin")/.." && pwd)
 [[ -d "$source_dir/.git" ]] || { echo "source directory must be a clean Git checkout" >&2; exit 2; }
 [[ -x "$node_bin" ]] || { echo "fixed Node binary is not executable: $node_bin" >&2; exit 2; }
 [[ -x "$node_root/bin/npm" ]] || { echo "fixed Node installation must include npm: $node_root" >&2; exit 2; }
+[[ -x "$mise_bin" ]] || { echo "fixed mise binary is not executable: $mise_bin" >&2; exit 2; }
 git -C "$source_dir" diff --exit-code
 git -C "$source_dir" diff --cached --exit-code
 
@@ -115,6 +119,7 @@ guest_copy() { timeout --foreground 300s scp "${scp_opts[@]}" "$@"; }
 # machine property; `-accel kvm:tcg` is not a valid equivalent.
 qemu-system-x86_64 \
   -machine q35,accel=kvm:tcg \
+  -cpu max \
   -m 2048 \
   -smp 2 \
   -display none \
@@ -126,16 +131,18 @@ qemu-system-x86_64 \
   >"$work_dir/qemu.stdout.log" 2>"$work_dir/qemu.stderr.log" &
 vm_pid=$!
 
-for attempt in $(seq 1 180); do
+initial_ssh_deadline=$((SECONDS + 900))
+initial_ssh_ready=false
+while ((SECONDS < initial_ssh_deadline)); do
   if ! kill -0 "$vm_pid" 2>/dev/null; then
     echo 'QEMU exited before SSH became available' >&2
     tail -100 "$work_dir/serial.log" >&2 || true
     exit 1
   fi
-  if guest true >/dev/null 2>&1; then break; fi
+  if guest true >/dev/null 2>&1; then initial_ssh_ready=true; break; fi
   sleep 2
-  if ((attempt == 180)); then echo 'Timed out waiting for guest SSH' >&2; exit 1; fi
 done
+if [[ "$initial_ssh_ready" != true ]]; then echo 'Timed out waiting for guest SSH' >&2; exit 1; fi
 
 echo 'Installing guest prerequisites and transferring the clean checkout'
 guest 'sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar'
@@ -143,22 +150,25 @@ git -C "$source_dir" bundle create "$bundle" HEAD
 tar -C "$node_root" -czf "$node_runtime_archive" .
 guest_copy "$bundle" "tma@127.0.0.1:/tmp/tma-source.bundle"
 guest_copy "$node_runtime_archive" "tma@127.0.0.1:/tmp/tma-node-runtime.tar.gz"
+guest_copy "$mise_bin" "tma@127.0.0.1:/tmp/tma-mise"
 guest <<'EOF'
 set -Eeuo pipefail
 rm -rf /home/tma/node-runtime
 mkdir -m 0755 /home/tma/node-runtime
 tar -xzf /tmp/tma-node-runtime.tar.gz -C /home/tma/node-runtime
 chmod 0755 /home/tma/node-runtime/bin/node
+mkdir -p -m 0755 /home/tma/.local/bin
+install -m 0755 /tmp/tma-mise /home/tma/.local/bin/mise
 rm -rf /home/tma/repo
 git clone --quiet /tmp/tma-source.bundle /home/tma/repo
 sudo chown -R tma:tma /home/tma/repo
-rm -f /tmp/tma-node-runtime.tar.gz /tmp/tma-source.bundle
+rm -f /tmp/tma-mise /tmp/tma-node-runtime.tar.gz /tmp/tma-source.bundle
 EOF
 
 echo 'Provisioning the isolated guest and publishing the native user service'
 guest <<'EOF'
 set -Eeuo pipefail
-export PATH=/home/tma/node-runtime/bin:$PATH
+export PATH=/home/tma/node-runtime/bin:/home/tma/.local/bin:$PATH
 cd /home/tma/repo
 sudo env TMA_DEPLOY_USER=tma /home/tma/node-runtime/bin/node --experimental-strip-types tools/provision-ubuntu.mjs --apply --user tma
 /home/tma/node-runtime/bin/node --experimental-strip-types tools/configure-ubuntu.mjs --port 18787 --listen-host 127.0.0.1 --viewer-mode loopback --public-origin http://127.0.0.1:18787
@@ -176,22 +186,127 @@ test -f /var/lib/tma-analytics/hub-secrets.json
 EOF
 guest 'systemctl --user status --no-pager tma-analytics.service' | tee "$artifact_dir/service-before-reboot.txt"
 guest 'cat /tmp/tma-health-before.json' | tee "$artifact_dir/health-before-reboot.json"
+
+echo 'Running the real user-systemd one-shot update against an isolated local Git fixture'
+guest <<'EOF'
+set -Eeuo pipefail
+export PATH=/home/tma/node-runtime/bin:/home/tma/.local/bin:$PATH
+cd /home/tma/repo
+git config user.name 'TMA acceptance fixture'
+git config user.email 'tma-acceptance@example.invalid'
+git checkout -B main
+rm -rf /home/tma/acceptance-remote.git
+git init --bare --quiet /home/tma/acceptance-remote.git
+git remote remove acceptance 2>/dev/null || true
+git remote add acceptance /home/tma/acceptance-remote.git
+git push --quiet acceptance HEAD:refs/heads/main
+git commit --allow-empty --quiet -m 'isolated acceptance candidate'
+git push --quiet acceptance HEAD:refs/heads/main
+candidate=$(git rev-parse HEAD)
+printf '%s\n' "$candidate" > /tmp/tma-update-candidate.sha
+
+# The production runner validates an HTTPS origin. Git's per-user URL rewrite
+# keeps that validation intact while directing only this disposable guest to
+# its local bare repository; no application or runner source is modified.
+git config --global url."file:///home/tma/acceptance-remote.git".insteadOf https://acceptance.invalid/tma.git
+
+/home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+const filename='/var/lib/tma-deploy/config/analytics.json';
+const config=JSON.parse(fs.readFileSync(filename,'utf8'));
+config.update={...(config.update??{}),enabled:true,repositoryUrl:'https://acceptance.invalid/tma.git',branch:'main',checkIntervalSeconds:3600};
+fs.writeFileSync(filename,`${JSON.stringify(config,null,2)}\n`,{mode:0o600});
+NODE
+
+sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}' > /tmp/tma-config-before-update.sha
+sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}' > /tmp/tma-secret-before-update.sha
+sha256sum /var/lib/tma-analytics/analytics.db | awk '{print $1}' > /tmp/tma-db-before-update.sha
+systemctl --user restart tma-analytics.service
+for attempt in $(seq 1 60); do
+  if curl --fail --silent http://127.0.0.1:18787/api/health >/tmp/tma-health-update-start.json; then break; fi
+  if ((attempt == 60)); then echo 'Analytics did not restart before update acceptance' >&2; exit 1; fi
+  sleep 1
+done
+
+/home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+const base='http://127.0.0.1:18787';
+async function request(route,body){
+ const response=await fetch(base+route,{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify(body)});
+ const data=await response.json();
+ if(!response.ok)throw new Error(`${route} failed: ${response.status} ${JSON.stringify(data)}`);
+ return data;
+}
+const checked=await request('/api/manage/update/check',{});
+const candidate=checked.candidate;
+if(!candidate?.hasUpdate||!/^[0-9a-f]{40}$/.test(candidate.targetCommitSha))throw new Error('local update candidate was not accepted');
+const applied=await request('/api/manage/update/apply',{targetCommitSha:candidate.targetCommitSha});
+if(!applied.jobId)throw new Error('update apply did not return a job ID');
+fs.writeFileSync('/tmp/tma-update-request.json',JSON.stringify({jobId:applied.jobId,targetCommitSha:candidate.targetCommitSha},null,2)+'\n',{mode:0o600});
+NODE
+
+for attempt in $(seq 1 180); do
+  if grep -q '"status": "completed"' /var/lib/tma-deploy/update-state.json; then break; fi
+  if grep -q '"status": "failed"\|"status": "aborted"' /var/lib/tma-deploy/update-state.json; then
+    cat /var/lib/tma-deploy/update-state.json >&2
+    exit 1
+  fi
+  if ((attempt == 180)); then echo 'Timed out waiting for the isolated update oneshot' >&2; cat /var/lib/tma-deploy/update-state.json >&2; exit 1; fi
+  sleep 2
+done
+
+/home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+const request=JSON.parse(fs.readFileSync('/tmp/tma-update-request.json','utf8'));
+const state=JSON.parse(fs.readFileSync('/var/lib/tma-deploy/update-state.json','utf8'));
+if(state.jobId!==request.jobId||state.targetCommitSha!==request.targetCommitSha||state.status!=='completed'||state.stage!=='success')throw new Error('update state did not retain the accepted terminal job');
+const health=await (await fetch('http://127.0.0.1:18787/api/health')).json();
+if(health.release?.targetCommitSha!==request.targetCommitSha)throw new Error('Analytics did not restart at the candidate commit');
+const sse=await fetch('http://127.0.0.1:18787/api/live');
+if(sse.status!==200||!sse.body)throw new Error('Analytics SSE did not reopen after update');
+const reader=sse.body.getReader();let text='';const deadline=Date.now()+5000;
+while(!text.includes('event: ready')&&Date.now()<deadline){const next=await reader.read();if(next.done)break;text+=new TextDecoder().decode(next.value);}
+await reader.cancel();
+if(!text.includes('event: ready'))throw new Error('Analytics SSE did not emit ready after update');
+const history=await fetch('http://127.0.0.1:18787/api/usage-history/hubs');
+if(history.status!==200)throw new Error('History API did not reopen after update');
+NODE
+
+test "$(cat /tmp/tma-config-before-update.sha)" = "$(sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}')"
+test "$(cat /tmp/tma-secret-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}')"
+test "$(cat /tmp/tma-db-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/analytics.db | awk '{print $1}')"
+if systemctl --user is-enabled --quiet tma-update.service; then
+  echo 'update oneshot must remain disabled after an on-demand run' >&2
+  exit 1
+fi
+curl --fail --silent --show-error http://127.0.0.1:18787/api/health > /tmp/tma-health-after-update.json
+EOF
+guest 'cat /tmp/tma-update-request.json' | tee "$artifact_dir/update-request.json"
+guest 'cat /tmp/tma-update-candidate.sha' | tee "$artifact_dir/update-candidate.sha"
+guest 'cat /var/lib/tma-deploy/update-state.json' | tee "$artifact_dir/update-state.json"
+guest 'cat /tmp/tma-health-update-start.json' | tee "$artifact_dir/health-update-start.json"
+guest 'cat /tmp/tma-health-after-update.json' | tee "$artifact_dir/health-after-update.json"
+
 boot_before=$(guest 'cat /proc/sys/kernel/random/boot_id')
 printf '%s\n' "$boot_before" > "$artifact_dir/boot-before.txt"
 
 echo 'Rebooting the guest (the host and its production services are untouched)'
 guest 'sudo systemctl reboot' >/dev/null 2>&1 || true
 sleep 4
-for attempt in $(seq 1 60); do
+reboot_down_deadline=$((SECONDS + 120))
+while ((SECONDS < reboot_down_deadline)); do
   if ! guest true >/dev/null 2>&1; then break; fi
   sleep 1
 done
-for attempt in $(seq 1 180); do
+if guest true >/dev/null 2>&1; then echo 'Guest SSH did not stop during reboot' >&2; exit 1; fi
+reboot_ssh_deadline=$((SECONDS + 900))
+reboot_ssh_ready=false
+while ((SECONDS < reboot_ssh_deadline)); do
   if ! kill -0 "$vm_pid" 2>/dev/null; then echo 'QEMU exited during guest reboot' >&2; exit 1; fi
-  if guest true >/dev/null 2>&1; then break; fi
+  if guest true >/dev/null 2>&1; then reboot_ssh_ready=true; break; fi
   sleep 2
-  if ((attempt == 180)); then echo 'Timed out waiting for SSH after guest reboot' >&2; exit 1; fi
 done
+if [[ "$reboot_ssh_ready" != true ]]; then echo 'Timed out waiting for SSH after guest reboot' >&2; exit 1; fi
 
 boot_after=$(guest 'cat /proc/sys/kernel/random/boot_id')
 printf '%s\n' "$boot_after" > "$artifact_dir/boot-after.txt"
