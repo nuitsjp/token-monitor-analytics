@@ -19,12 +19,13 @@ Ubuntuでは対象設定の既定値は`/var/lib/tma-deploy/config/analytics.jso
 `analytics.env`も同じ配下）です。Basic認証・旧Tailscale待受・更新repository/branch・状態
 pathは旧設定から引き継ぎます。Windowsでは`--collector-pid`と`--analytics-pid`を指定して
 停止対象を明示し、DBのファイルロック検査を通過してから同じDBへ設定を切り替えます。
+Windowsの対応範囲は直接起動したプロセスです。サービス・タスクスケジューラー・監視ツールによる自動再起動は管理しないため、それらの対象は事前に停止・無効化した状態で実行します。
 
 Windowsではさらに`--windows-install-dir`で新Nodeアプリの配置先を指定します。publish段階は
 検証済みartifactをその場所へ原子的に配置し、実際の`analytics/runtime/server.mjs`を起動して
 health/state/SSEとrelease SHAを確認します。復旧時は`--restore --analytics-pid <PID>
 --legacy-command <旧起動コマンド>`（必要なら`--legacy-args` JSON配列）を指定します。
-WindowsのPID停止・DB rename検査・新アプリ起動証明が通らない限りcompleteへ進みません。
+WindowsのPID停止・DB/WAL/SHMの排他アクセス検査・新アプリ起動証明が通らない限りcompleteへ進みません。
 保存済みの新Analytics PIDを自動停止するときは、実行ファイル・配置先・設定ファイルの
 プロセス情報を照合し、PID再利用や別プロセスの場合は停止せず中断します。
 
