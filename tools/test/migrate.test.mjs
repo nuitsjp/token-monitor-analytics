@@ -631,3 +631,151 @@ test('restore rejects a corrupted post-drain backup before destructive cutover c
   assert.deepEqual(restoreCalls, []);
   assert.equal(fs.existsSync(f.databasePath), true);
 });
+
+test('restore verifies a temporary database before replacing the live database and can retry', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  const before = fs.readFileSync(f.databasePath);
+  let attempts = 0;
+  let preserves = 0;
+  const restorePlatform = {
+    stopNew: async () => {},
+    verifyNoDatabaseWriter: async () => {},
+    preserveCutoverDatabase: async ({backupDir}) => {
+      preserves += 1;
+      if (preserves > 1) throw new Error('preserved copy must be reused on retry');
+      const target = path.join(backupDir, 'post-cutover-retry.db');
+      fs.copyFileSync(f.databasePath, target);
+      return target;
+    },
+    restoreDatabase: async ({source, destination}) => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error('restore destination unavailable'), {code: 'fixture_restore'});
+      fs.copyFileSync(source, destination);
+    },
+    restoreProtected: async () => {},
+    startLegacy: async () => true,
+  };
+  await assert.rejects(() => restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: restorePlatform}), error => error.code === 'fixture_restore');
+  assert.deepEqual(fs.readFileSync(f.databasePath), before, 'failed restore must leave the live DB untouched');
+  assert.equal(fs.existsSync(f.databasePath), true);
+  const pending = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
+  assert.equal(pending.restore.status, 'restoring');
+  assert.equal(typeof pending.restore.postCutoverPreserved, 'string');
+  fs.rmSync(f.databasePath);
+  const restored = await restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: restorePlatform});
+  assert.equal(restored.state.status, 'restored');
+  assert.equal(attempts, 2);
+  assert.equal(preserves, 1);
+  assert.equal(fs.existsSync(f.databasePath), true);
+});
+
+test('migration resume rejects a missing live database before archive', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  fs.rmSync(f.databasePath);
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'legacy_database_invalid');
+  assert.equal(fs.existsSync(f.databasePath), false);
+});
+
+test('migration resume rejects a valid replacement database that lost legacy rows', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  fs.rmSync(f.databasePath);
+  const current = await import('../../analytics/runtime/sqlite.mjs');
+  current.openDatabase(f.databasePath).close();
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'legacy_database_changed');
+  assert.equal(fs.existsSync(f.databasePath), true);
+});
+
+test('migration resume keeps a new active Hub after archive already committed', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  const {DatabaseSync} = await import('node:sqlite');
+  const db = new DatabaseSync(f.databasePath);
+  db.prepare('INSERT INTO hubs(id,label,url,status,secret_ref,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run('new-hub', 'New Hub', 'https://new.example.invalid', 'active', 'new-secret', 1, '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z');
+  db.close();
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, []);
+  const resumed = await runMigration(f.options);
+  assert.equal(resumed.state.phase, 'complete');
+  const check = new DatabaseSync(f.databasePath, {readOnly: true});
+  try {
+    assert.deepEqual({...check.prepare('SELECT id,label,url,status,secret_ref FROM hubs WHERE id=?').get('new-hub')}, {
+      id: 'new-hub', label: 'New Hub', url: 'https://new.example.invalid', status: 'active', secret_ref: 'new-secret',
+    });
+  } finally { check.close(); }
+});
+
+test('a partial pre-drain outbox copy is rebuilt with a completion marker', async t => {
+  const f = await setup(t);
+  const name = fs.readdirSync(f.outboxPath)[0];
+  const target = path.join(f.options.backupDir, 'outbox-pre-drain');
+  fs.mkdirSync(target, {recursive: true, mode: 0o700});
+  fs.writeFileSync(path.join(target, name), 'partial copy', {mode: 0o600});
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, []);
+  await runMigration(f.options);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(target, name), 'utf8')).eventId, legacyEvent().eventId);
+  assert.equal(fs.existsSync(path.join(target, '.migration-complete')), true);
+});
+
+async function partialDrainFixture(t) {
+  const f = await setup(t);
+  const second = `${'00000000000000000002'}-${'b'.repeat(32)}.json`;
+  const third = `${'00000000000000000003'}-${'c'.repeat(32)}.json`;
+  fs.writeFileSync(path.join(f.outboxPath, second), JSON.stringify({...legacyEvent(), eventId: 'event-2'}), {mode: 0o600});
+  fs.writeFileSync(path.join(f.outboxPath, third), JSON.stringify({...legacyEvent(), eventId: 'event-3'}), {mode: 0o600});
+  let sends = 0;
+  f.options.send = async (url, init) => {
+    sends += 1;
+    if (sends > 1) throw new Error('fixture ACK uncertainty');
+    return fetch(url, init);
+  };
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, []);
+  await assert.rejects(() => runMigration(f.options), /fixture ACK uncertainty/);
+  return {f, third};
+}
+
+test('migration resume accepts an ACKed deletion subset after partial drain', async t => {
+  const {f} = await partialDrainFixture(t);
+  f.options.send = fetch;
+  const result = await runMigration(f.options);
+  assert.equal(result.state.phase, 'complete');
+  assert.equal(fs.readdirSync(f.outboxPath).length, 0);
+  const {DatabaseSync} = await import('node:sqlite');
+  const db = new DatabaseSync(f.databasePath, {readOnly: true});
+  try { assert.equal(db.prepare('SELECT count(*) AS n FROM observations').get().n, 3); } finally { db.close(); }
+});
+
+test('migration resume rejects a changed remaining outbox payload', async t => {
+  const {f, third} = await partialDrainFixture(t);
+  fs.writeFileSync(path.join(f.outboxPath, third), JSON.stringify({...legacyEvent(), eventId: 'changed-event'}), {mode: 0o600});
+  let resumedSends = 0;
+  f.options.send = async (...args) => { resumedSends += 1; return fetch(...args); };
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'outbox_changed');
+  assert.equal(resumedSends, 0);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.outboxPath, third), 'utf8')).eventId, 'changed-event');
+});
+
+test('migration resume rejects a new outbox file after the stop handoff', async t => {
+  const {f} = await partialDrainFixture(t);
+  const added = `${'00000000000000000004'}-${'d'.repeat(32)}.json`;
+  fs.writeFileSync(path.join(f.outboxPath, added), JSON.stringify({...legacyEvent(), eventId: 'event-4'}), {mode: 0o600});
+  f.options.send = fetch;
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'outbox_changed');
+  assert.equal(fs.existsSync(path.join(f.outboxPath, added)), true);
+});
+
+test('migration resume requires deleted outbox events to be present in legacy observations', async t => {
+  const {f} = await partialDrainFixture(t);
+  const {DatabaseSync} = await import('node:sqlite');
+  const db = new DatabaseSync(f.databasePath);
+  db.prepare('DELETE FROM observations WHERE event_id=?').run(legacyEvent().eventId);
+  db.close();
+  f.options.send = fetch;
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'outbox_ack_unproven');
+});

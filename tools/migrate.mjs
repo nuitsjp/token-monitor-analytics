@@ -78,6 +78,52 @@ function fileSha256(filename) {
   return sha256(fs.readFileSync(filename));
 }
 
+function syncFileAndParent(filename) {
+  const target = absolute(filename);
+  const fd = fs.openSync(target, 'r');
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  try {
+    const parent = fs.openSync(path.dirname(target), 'r');
+    try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
+  } catch (error) {
+    // Windows does not expose a directory handle that can always be fsynced;
+    // the file itself is still synchronously durable before a cutover.
+    if (process.platform !== 'win32') throw error;
+  }
+}
+
+const LEGACY_DATA_TABLES = Object.freeze([
+  'observations', 'hub_latest', 'contract_state', 'daily_estimates',
+]);
+
+/**
+ * Hash the legacy data rows independently of SQLite's file/WAL layout.  The
+ * archive migrations add tables but leave these four legacy tables unchanged,
+ * so the same digest remains valid after an archive has already been applied.
+ */
+async function sqliteDataFingerprint(filename) {
+  const {DatabaseSync} = await import('node:sqlite');
+  const db = new DatabaseSync(filename, {readOnly: true});
+  try {
+    const digest = crypto.createHash('sha256');
+    for (const table of LEGACY_DATA_TABLES) {
+      const quoted = `"${table.replaceAll('"', '""')}"`;
+      const columns = db.prepare(`PRAGMA table_info(${quoted})`).all().sort((a, b) => Number(a.cid) - Number(b.cid));
+      digest.update(`${table}\0${JSON.stringify(columns.map(column => [column.name, column.type, column.notnull, column.pk]))}\n`);
+      if (!columns.length) continue;
+      const order = columns.map((_, index) => String(index + 1)).join(',');
+      let count = 0;
+      for (const row of db.prepare(`SELECT * FROM ${quoted} ORDER BY ${order}`).iterate()) {
+        digest.update(JSON.stringify([...Object.entries(row)]));
+        digest.update('\n');
+        count += 1;
+      }
+      digest.update(`count=${count}\n`);
+    }
+    return digest.digest('hex');
+  } finally { db.close(); }
+}
+
 function stable(value) {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
@@ -1830,34 +1876,153 @@ export function backupProtectedLayout({backupDir, sources, state} = {}) {
   }
 }
 
+const OUTBOX_COPY_MARKER = '.migration-complete';
+const compareNames = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+
+function outboxEntries(directory, {source = false} = {}) {
+  if (!fs.existsSync(directory)) return [];
+  let directoryStat;
+  try { directoryStat = fs.lstatSync(directory); } catch (error) {
+    throw errorWithCode('Legacy outbox cannot be read', 'outbox_unreadable', {cause: error});
+  }
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+    throw errorWithCode('Legacy outbox is not a regular directory', 'outbox_unsafe');
+  }
+  let names;
+  try { names = fs.readdirSync(directory).sort(compareNames); } catch (error) {
+    throw errorWithCode('Legacy outbox cannot be read', 'outbox_unreadable', {cause: error});
+  }
+  const entries = [];
+  for (const name of names) {
+    if (name === OUTBOX_COPY_MARKER && !source) continue;
+    if (!name.endsWith('.json')) {
+      if (source) throw errorWithCode('Outbox changed to an unsupported file while stopping', 'outbox_unsafe');
+      throw errorWithCode('Protected outbox copy contains an unsupported file', 'outbox_backup_invalid');
+    }
+    const filename = path.join(directory, name);
+    let stat;
+    try { stat = fs.lstatSync(filename); } catch (error) {
+      throw errorWithCode('Legacy outbox cannot be read', 'outbox_unreadable', {cause: error});
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw errorWithCode(source ? 'Outbox changed to an unsupported file while stopping' : 'Protected outbox copy contains an unsupported file', source ? 'outbox_unsafe' : 'outbox_backup_invalid');
+    }
+    entries.push({name, size: stat.size, sha256: fileSha256(filename)});
+  }
+  return entries;
+}
+
+function sameOutboxEntries(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return left.every((entry, index) => entry.name === right[index].name && entry.size === right[index].size && entry.sha256 === right[index].sha256);
+}
+
+function readOutboxCopyMarker(target) {
+  const markerPath = path.join(target, OUTBOX_COPY_MARKER);
+  if (!fs.existsSync(markerPath)) return null;
+  const marker = readJson(markerPath, 'Outbox copy marker', 16 * 1024 * 1024);
+  if (marker?.schemaVersion !== 1 || !Array.isArray(marker.files)
+    || marker.files.some(file => !file || typeof file.name !== 'string' || !file.name.endsWith('.json')
+      || !Number.isSafeInteger(file.size) || file.size < 0 || typeof file.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(file.sha256))) {
+    throw errorWithCode('Protected outbox copy marker is invalid', 'outbox_backup_invalid');
+  }
+  const files = [...marker.files].sort((a, b) => compareNames(a.name, b.name));
+  if (files.some((file, index) => index > 0 && file.name === files[index - 1].name)) throw errorWithCode('Protected outbox copy marker contains duplicate files', 'outbox_backup_invalid');
+  const actual = outboxEntries(target);
+  if (!sameOutboxEntries(actual, files)) throw errorWithCode('Protected outbox copy is incomplete or changed', 'outbox_backup_invalid');
+  return {...marker, files};
+}
+
+function snapshotOutboxSource(directory) {
+  const classified = classifyOutbox(directory);
+  if (!classified.safe) throw errorWithCode('Legacy outbox contains uncertain or corrupt files', 'outbox_unsafe', {outbox: classified});
+  return outboxEntries(directory, {source: true});
+}
+
 function outboxCopy({backupDir, directory}) {
   const target = path.join(backupDir, 'outbox-pre-drain');
   if (fs.existsSync(target)) {
-    const sourceNames = fs.existsSync(directory) ? fs.readdirSync(directory).sort() : [];
-    const targetNames = fs.readdirSync(target).sort();
-    if (sourceNames.length !== targetNames.length || sourceNames.some((name, index) => name !== targetNames[index])) {
-      throw errorWithCode('Legacy outbox changed after its protected copy', 'outbox_changed');
+    const stat = fs.lstatSync(target);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw errorWithCode('Protected outbox copy is not a regular directory', 'outbox_backup_invalid');
+    const marker = readOutboxCopyMarker(target);
+    if (marker) {
+      const source = snapshotOutboxSource(directory);
+      if (!sameOutboxEntries(source, marker.files)) throw errorWithCode('Legacy outbox changed after its protected copy', 'outbox_changed');
+      return target;
     }
-    for (const name of sourceNames) {
-      const source = path.join(directory, name), previous = path.join(target, name);
-      const sourceStat = fs.lstatSync(source), previousStat = fs.lstatSync(previous);
-      if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || !previousStat.isFile() || previousStat.isSymbolicLink() || sourceStat.size !== previousStat.size || fileSha256(source) !== fileSha256(previous)) {
-        throw errorWithCode('Legacy outbox changed after its protected copy', 'outbox_changed');
+    // Older versions copied directly into the final directory. A directory
+    // without the completion marker may be a partial copy from a crash; it is
+    // safe to rebuild it because the migration has not reached the stop phase.
+    fs.rmSync(target, {recursive: true, force: true});
+  }
+  fs.mkdirSync(path.dirname(target), {recursive: true, mode: 0o700});
+  const temporary = `${target}.migration-${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+  try {
+    fs.mkdirSync(temporary, {recursive: true, mode: 0o700});
+    const source = snapshotOutboxSource(directory);
+    for (const entry of source) {
+      const from = path.join(directory, entry.name);
+      const to = path.join(temporary, entry.name);
+      if (process.platform === 'win32') copyFileContentsOnly(from, to);
+      else fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+      fs.chmodSync(to, fs.lstatSync(from).mode & 0o777);
+    }
+    writeAtomic(path.join(temporary, OUTBOX_COPY_MARKER), `${JSON.stringify({schemaVersion: 1, files: source}, null, 2)}\n`, 0o600);
+    fs.renameSync(temporary, target);
+    syncFileAndParent(target);
+    return target;
+  } finally { fs.rmSync(temporary, {recursive: true, force: true}); }
+}
+
+async function verifyDeletedOutboxEntries({backupDirectory, sourceDirectory, databasePath}) {
+  const marker = readOutboxCopyMarker(path.join(absolute(backupDirectory), 'outbox-pre-drain'));
+  if (!marker) throw errorWithCode('Protected outbox copy has no completion marker', 'outbox_backup_invalid');
+  const current = snapshotOutboxSource(sourceDirectory);
+  const currentNames = new Set(current.map(entry => entry.name));
+  const deleted = marker.files.filter(entry => !currentNames.has(entry.name));
+  if (!deleted.length) return;
+  if (!fs.existsSync(databasePath)) throw errorWithCode('Cannot prove deleted outbox events were acknowledged', 'outbox_ack_unproven');
+  const {DatabaseSync} = await import('node:sqlite');
+  let db;
+  try {
+    regularFile(databasePath, 'Legacy database');
+    db = new DatabaseSync(databasePath, {readOnly: true});
+    const statement = db.prepare('SELECT 1 FROM observations WHERE hub_id=? AND event_id=? LIMIT 1');
+    for (const entry of deleted) {
+      let event;
+      try { event = JSON.parse(fs.readFileSync(path.join(markerPathFor(backupDirectory), entry.name), 'utf8')); } catch (error) {
+        throw errorWithCode('Cannot prove a deleted outbox event was acknowledged', 'outbox_ack_unproven', {cause: error});
+      }
+      if (typeof event?.hubId !== 'string' || typeof event?.eventId !== 'string' || !statement.get(event.hubId, event.eventId)) {
+        throw errorWithCode('A deleted outbox event is not present in the legacy database', 'outbox_ack_unproven');
       }
     }
-    return target;
+  } catch (error) {
+    if (error?.code === 'outbox_ack_unproven') throw error;
+    throw errorWithCode('Cannot prove deleted outbox events were acknowledged', 'outbox_ack_unproven', {cause: error});
+  } finally { db?.close(); }
+}
+
+function markerPathFor(backupDirectory) {
+  return path.join(absolute(backupDirectory), 'outbox-pre-drain');
+}
+
+async function verifyOutboxForResume({backupDirectory, sourceDirectory, databasePath}) {
+  const target = markerPathFor(backupDirectory);
+  if (!fs.existsSync(target)) throw errorWithCode('Protected outbox copy is missing', 'outbox_backup_invalid');
+  const stat = fs.lstatSync(target);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw errorWithCode('Protected outbox copy is not a regular directory', 'outbox_backup_invalid');
+  const marker = readOutboxCopyMarker(target);
+  if (!marker) throw errorWithCode('Protected outbox copy has no completion marker', 'outbox_backup_invalid');
+  const current = snapshotOutboxSource(sourceDirectory);
+  const baseline = new Map(marker.files.map(entry => [entry.name, entry]));
+  for (const entry of current) {
+    const previous = baseline.get(entry.name);
+    if (!previous || previous.size !== entry.size || previous.sha256 !== entry.sha256) {
+      throw errorWithCode('Legacy outbox changed after its protected copy', 'outbox_changed');
+    }
   }
-  fs.mkdirSync(target, {recursive: true, mode: 0o700});
-  if (!fs.existsSync(directory)) return target;
-  for (const name of fs.readdirSync(directory).sort()) {
-    const source = path.join(directory, name);
-    const stat = fs.lstatSync(source);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw errorWithCode('Outbox changed to an unsupported file while stopping', 'outbox_unsafe');
-    const destination = path.join(target, name);
-    if (process.platform === 'win32') copyFileContentsOnly(source, destination);
-    else fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
-    fs.chmodSync(path.join(target, name), stat.mode & 0o777);
-  }
+  await verifyDeletedOutboxEntries({backupDirectory, sourceDirectory, databasePath});
   return target;
 }
 
@@ -1931,6 +2096,27 @@ async function verifySQLiteBackup(filename) {
   return true;
 }
 
+async function verifyResumeDatabase({databasePath, rollbackDatabase = null, legacyDataFingerprint = null} = {}) {
+  try {
+    regularFile(databasePath, 'Legacy database');
+    await verifySQLiteBackup(databasePath);
+  } catch (error) {
+    if (error?.code === 'legacy_database_invalid') throw error;
+    throw errorWithCode('Legacy database is missing or failed integrity verification while migration was paused', 'legacy_database_invalid', {cause: error});
+  }
+  if (!rollbackDatabase) return null;
+  try {
+    regularFile(rollbackDatabase, 'Post-drain rollback database');
+    await verifySQLiteBackup(rollbackDatabase);
+  } catch (error) {
+    throw errorWithCode('Post-drain rollback database failed integrity verification', 'rollback_backup_invalid', {cause: error});
+  }
+  const expected = legacyDataFingerprint ?? await sqliteDataFingerprint(rollbackDatabase);
+  const current = await sqliteDataFingerprint(databasePath);
+  if (current !== expected) throw errorWithCode('Legacy database changed after the post-drain backup', 'legacy_database_changed');
+  return current;
+}
+
 export async function backupPostDrainDatabase({legacy, oldSource, backupDir, state}) {
   const backupPath = path.join(absolute(backupDir), 'post-drain-analytics.db');
   const metadataPath = `${backupPath}.meta.json`;
@@ -1940,7 +2126,9 @@ export async function backupPostDrainDatabase({legacy, oldSource, backupDir, sta
       const stat = regularFile(backupPath, 'Post-drain database backup');
       if (metadata.schemaVersion === 1 && metadata.sourceFingerprint === state.sourceFingerprint && metadata.size === stat.size && metadata.sha256 === fileSha256(backupPath)) {
         await verifySQLiteBackup(backupPath);
-        return {path: backupPath, sha256: metadata.sha256, size: metadata.size, sourceFingerprint: state.sourceFingerprint, reused: true};
+        const legacyDataFingerprint = await sqliteDataFingerprint(backupPath);
+        if (metadata.legacyDataFingerprint && metadata.legacyDataFingerprint !== legacyDataFingerprint) throw new Error('post-drain data fingerprint mismatch');
+        return {path: backupPath, sha256: metadata.sha256, size: metadata.size, sourceFingerprint: state.sourceFingerprint, legacyDataFingerprint, reused: true};
       }
     } catch {}
     // A missing, stale, or partially written marker makes the database
@@ -1961,11 +2149,15 @@ export async function backupPostDrainDatabase({legacy, oldSource, backupDir, sta
     regularFile(temporary, 'Post-drain database backup');
     await verifySQLiteBackup(temporary);
     const stat = fs.statSync(temporary);
-    const result = {path: backupPath, sha256: fileSha256(temporary), size: stat.size, sourceFingerprint: state.sourceFingerprint};
+    const result = {path: backupPath, sha256: fileSha256(temporary), size: stat.size, sourceFingerprint: state.sourceFingerprint, legacyDataFingerprint: await sqliteDataFingerprint(temporary)};
     fs.renameSync(temporary, backupPath);
-    writeAtomic(metadataPath, `${JSON.stringify({schemaVersion: 1, sourceFingerprint: state.sourceFingerprint, sha256: result.sha256, size: result.size})}\n`, 0o600);
+    writeAtomic(metadataPath, `${JSON.stringify({schemaVersion: 1, sourceFingerprint: state.sourceFingerprint, sha256: result.sha256, size: result.size, legacyDataFingerprint: result.legacyDataFingerprint})}\n`, 0o600);
     return result;
-  } finally { fs.rmSync(temporary, {force: true}); }
+  } finally {
+    fs.rmSync(temporary, {force: true});
+    fs.rmSync(`${temporary}-wal`, {force: true});
+    fs.rmSync(`${temporary}-shm`, {force: true});
+  }
 }
 
 async function archiveDatabase({legacy, targetArtifact, sourceCommitSha, now = new Date().toISOString()} = {}) {
@@ -2061,6 +2253,9 @@ async function prepareContext(options) {
       collectorEnvPath: options.collectorEnvPath,
       environment: options.environment ?? process.env,
     });
+  // Never let the pinned legacy drain runtime create a replacement empty DB
+  // when a resumed or first migration points at a missing/corrupt database.
+  await verifyResumeDatabase({databasePath: legacy.databasePath});
   const targetArtifactPath = absolute(options.targetArtifactPath);
   ensureStateInputs(state, {oldCommitSha, targetCommitSha, legacy, targetArtifactPath});
   const platform = {...defaultPlatform({...options, updateStatePath: options.updateStatePath ?? '/var/lib/tma-deploy/update-state.json'}), ...(options.platform ?? {})};
@@ -2167,6 +2362,7 @@ async function executeMigration(context) {
       const phaseContext = {state, statePath, legacy, inventory: context.inventory, targetArtifact, targetArtifactPath, targetCommitSha, oldCommitSha, backupDir, lock: lockContext(lockPath, state.phase)};
       phaseContext.inventory.legacyPids = state.legacyPids;
       let publishedThisRun = false;
+      let verifiedResumePhase = null;
 
       // A persisted phase is not proof that the host is still quiescent. A
       // reboot, an administrator restart, or a transient systemd activation
@@ -2183,6 +2379,13 @@ async function executeMigration(context) {
         if (!resumedOutbox.safe) throw errorWithCode('Legacy outbox became uncertain while migration was paused', 'outbox_unsafe', {outbox: resumedOutbox});
         await platform.verifyStopped(phaseContext.inventory);
         await platform.verifyNoDatabaseWriter({databasePath: legacy.databasePath, inventory: phaseContext.inventory});
+        await verifyResumeDatabase({
+          databasePath: legacy.databasePath,
+          rollbackDatabase: state.rollbackDatabase ?? null,
+          legacyDataFingerprint: state.finalDatabase?.legacyDataFingerprint ?? null,
+        });
+        await verifyOutboxForResume({backupDirectory: backupDir, sourceDirectory: legacy.outboxPath, databasePath: legacy.databasePath});
+        verifiedResumePhase = state.phase;
         if (PHASE_INDEX.get(state.phase) < PHASE_INDEX.get('provision')) await platform.inhibitAutostart(phaseContext.inventory);
       } else if (state.phase === 'publish') {
         await platform.verifyPublished({state, lock: lockContext(lockPath, 'resume')});
@@ -2223,6 +2426,18 @@ async function executeMigration(context) {
         const finalDatabase = await backupPostDrainDatabase({legacy, oldSource: legacySource, backupDir, state});
         state = saveMigrationState(statePath, nextState(state, 'finalbackup', {finalDatabase, rollbackDatabase: finalDatabase.path, error: null}));
         phaseContext.state = state;
+      }
+
+      // The archive phase can have committed its schema/data transaction just
+      // before a crash, while the durable state still says finalbackup. Check
+      // the logical legacy rows rather than the SQLite file bytes so a
+      // current-schema, already-archived database remains resumable.
+      if (PHASE_INDEX.get(state.phase) >= PHASE_INDEX.get('stop') && PHASE_INDEX.get(state.phase) < PHASE_INDEX.get('archive') && verifiedResumePhase !== state.phase) {
+        await verifyResumeDatabase({
+          databasePath: legacy.databasePath,
+          rollbackDatabase: state.rollbackDatabase ?? null,
+          legacyDataFingerprint: state.finalDatabase?.legacyDataFingerprint ?? null,
+        });
       }
 
       if (PHASE_INDEX.get(state.phase) < PHASE_INDEX.get('archive')) {
@@ -2280,6 +2495,74 @@ function copyFileAtomic(source, destination) {
   fs.renameSync(temporary, destination);
 }
 
+function pathExists(filename) {
+  try { fs.lstatSync(filename); return true; }
+  catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function restoreDatabaseAtomically({restoreDatabase, source, destination, metadata, state, lock} = {}) {
+  const sourcePath = absolute(source);
+  const destinationPath = absolute(destination);
+  regularFile(sourcePath, 'Restore source');
+  if (sourcePath === destinationPath) throw errorWithCode('Restore source and destination must differ', 'restore_unavailable');
+  fs.mkdirSync(path.dirname(destinationPath), {recursive: true, mode: 0o700});
+  const temporary = `${destinationPath}.restore-${process.pid}-${crypto.randomBytes(8).toString('hex')}.tmp`;
+  const suffix = `${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+  const displacedMain = `${destinationPath}.restore-old-${suffix}`;
+  const displacedWal = `${destinationPath}-wal.restore-old-${suffix}`;
+  const displacedShm = `${destinationPath}-shm.restore-old-${suffix}`;
+  const moved = [];
+  let installed = false;
+  try {
+    await restoreDatabase({source: sourcePath, destination: temporary, metadata, state, lock});
+    regularFile(temporary, 'Restored database');
+    await verifySQLiteBackup(temporary);
+    syncFileAndParent(temporary);
+
+    if (pathExists(destinationPath)) {
+      const destinationStat = fs.lstatSync(destinationPath);
+      if (destinationStat.isSymbolicLink() || !destinationStat.isFile()) throw errorWithCode('Live database must be a regular file before restore', 'restore_unavailable');
+    }
+    for (const [sidecar, displaced] of [[`${destinationPath}-wal`, displacedWal], [`${destinationPath}-shm`, displacedShm]]) {
+      if (!pathExists(sidecar)) continue;
+      fs.renameSync(sidecar, displaced);
+      moved.push([sidecar, displaced]);
+    }
+
+    if (process.platform === 'win32' && pathExists(destinationPath)) {
+      fs.renameSync(destinationPath, displacedMain);
+      moved.push([destinationPath, displacedMain]);
+    }
+    // POSIX rename atomically replaces the old database. Windows requires the
+    // short displaced-main handoff above because it cannot rename over an open
+    // destination, while the durable pre-restore copy remains available if a
+    // machine loses power during that handoff.
+    fs.renameSync(temporary, destinationPath);
+    installed = true;
+    syncFileAndParent(destinationPath);
+    for (const [, displaced] of moved) {
+      try { fs.rmSync(displaced, {force: true}); } catch {}
+    }
+  } catch (error) {
+    if (!installed) {
+      // Restore any sidecars moved out of the way before exposing the new DB.
+      for (let index = moved.length - 1; index >= 0; index -= 1) {
+        const [original, displaced] = moved[index];
+        if (!pathExists(displaced) || pathExists(original)) continue;
+        try { fs.renameSync(displaced, original); } catch {}
+      }
+    }
+    throw error;
+  } finally {
+    fs.rmSync(temporary, {force: true});
+    fs.rmSync(`${temporary}-wal`, {force: true});
+    fs.rmSync(`${temporary}-shm`, {force: true});
+  }
+}
+
 /**
  * Explicit rollback. It stops the new app, preserves post-cutover data, then
  * restores only the post-drain DB and the matching protected legacy layout.
@@ -2287,7 +2570,7 @@ function copyFileAtomic(source, destination) {
  */
 export async function restoreMigration({statePath, lockPath, platform: suppliedPlatform, platformOptions = {}, preservePostCutover = true} = {}) {
   const stateFile = absolute(statePath);
-  const state = loadMigrationState(stateFile);
+  let state = loadMigrationState(stateFile);
   const statePhase = state && PHASE_INDEX.get(state.phase);
   // The state write immediately before the stop handoff is deliberately
   // durable.  If the process dies after that write but before the protected
@@ -2339,7 +2622,31 @@ export async function restoreMigration({statePath, lockPath, platform: suppliedP
       await platform.verifyStopped({services: state.legacyServices, ...state});
     }
     await platform.verifyNoDatabaseWriter({databasePath, state});
-    const preservePath = preservePostCutover ? await platform.preserveCutoverDatabase({databasePath, backupDir, state, lock: lockContext(lock, 'restore')}) : null;
+    const pendingPreservePath = state.restore?.status === 'restoring' ? state.restore.postCutoverPreserved : null;
+    let preservePath = null;
+    if (preservePostCutover || pendingPreservePath) {
+      if (typeof pendingPreservePath === 'string' && pathExists(pendingPreservePath)) {
+        preservePath = pendingPreservePath;
+        if (path.resolve(preservePath) === path.resolve(databasePath)) throw errorWithCode('Post-cutover database preservation did not produce a separate file', 'restore_unavailable');
+        regularFile(preservePath, 'Post-cutover database preservation');
+        await verifySQLiteBackup(preservePath);
+        syncFileAndParent(preservePath);
+      } else {
+        preservePath = await platform.preserveCutoverDatabase({databasePath, backupDir, state, lock: lockContext(lock, 'restore')});
+        if (typeof preservePath !== 'string' || path.resolve(preservePath) === path.resolve(databasePath)) throw errorWithCode('Post-cutover database preservation did not produce a separate file', 'restore_unavailable');
+        regularFile(preservePath, 'Post-cutover database preservation');
+        await verifySQLiteBackup(preservePath);
+        syncFileAndParent(preservePath);
+      }
+      // Persist this handoff before touching the live DB. If a Windows rename
+      // or subsequent restore step is interrupted, the next invocation can
+      // reuse the durable copy even when the live path is temporarily absent.
+      state = saveMigrationState(stateFile, {
+        ...state,
+        restore: {...(state.restore ?? {}), status: 'restoring', postCutoverPreserved: preservePath},
+        error: null,
+      });
+    }
     if (!earlyRecovery && statePhase >= PHASE_INDEX.get('archive')) {
       const legacyFiles = new Set(Object.values(state.legacyLayout ?? {})
         .filter(value => typeof value === 'string')
@@ -2349,11 +2656,20 @@ export async function restoreMigration({statePath, lockPath, platform: suppliedP
       }
     }
     if (!earlyRecovery && !preFinalRecovery) {
-      fs.rmSync(databasePath, {force: true});
-      fs.rmSync(`${databasePath}-wal`, {force: true});
-      fs.rmSync(`${databasePath}-shm`, {force: true});
-      if (typeof platform.restoreDatabase === 'function') await platform.restoreDatabase({source: state.rollbackDatabase, destination: databasePath, metadata: databaseEntry?.sourceMetadata ?? null, state, lock: lockContext(lock, 'restore')});
-      else copyFileAtomic(state.rollbackDatabase, databasePath);
+      const restoreDatabase = typeof platform.restoreDatabase === 'function'
+        ? platform.restoreDatabase
+        : async ({source, destination}) => copyFileAtomic(source, destination);
+      await restoreDatabaseAtomically({
+        restoreDatabase,
+        source: state.rollbackDatabase,
+        destination: databasePath,
+        metadata: databaseEntry?.sourceMetadata ?? null,
+        state,
+        lock: lockContext(lock, 'restore'),
+      });
+      // Keep the metadata handoff for injected platform hooks as well as the
+      // default restoreDatabase implementation, which applies it to the
+      // temporary file before the atomic swap.
       if (databaseEntry?.sourceMetadata) applyEntryMetadata(databasePath, databaseEntry.sourceMetadata);
     }
     if (!earlyRecovery) await platform.restoreProtected({manifest, backupRoot: state.protectedBackup, state, lock: lockContext(lock, 'restore')});
