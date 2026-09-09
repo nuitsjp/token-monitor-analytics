@@ -11,11 +11,16 @@ mise_bin=''
 artifact_dir=''
 image_url=''
 image_sha256=''
+guest_stage_script=''
+target_artifact=''
 
 usage() {
   cat >&2 <<'EOF'
 Usage: ubuntu-reboot-vm.sh --source-dir DIR --node-bin FILE --mise-bin FILE --artifact-dir DIR \
   --image-url URL --image-sha256 HEX
+
+Optional guest stage mode (the same disposable QEMU boot is reused):
+  --guest-stage-script FILE --target-artifact FILE
 EOF
 }
 
@@ -27,6 +32,8 @@ while (($#)); do
     --artifact-dir) artifact_dir=${2:?missing --artifact-dir value}; shift 2 ;;
     --image-url) image_url=${2:?missing --image-url value}; shift 2 ;;
     --image-sha256) image_sha256=${2:?missing --image-sha256 value}; shift 2 ;;
+    --guest-stage-script) guest_stage_script=${2:?missing --guest-stage-script value}; shift 2 ;;
+    --target-artifact) target_artifact=${2:?missing --target-artifact value}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -36,9 +43,19 @@ if [[ -z "$source_dir" || -z "$node_bin" || -z "$mise_bin" || -z "$artifact_dir"
   usage
   exit 2
 fi
+if [[ -n "$guest_stage_script" && -z "$target_artifact" ]] || [[ -z "$guest_stage_script" && -n "$target_artifact" ]]; then
+  echo '--guest-stage-script and --target-artifact must be supplied together' >&2
+  exit 2
+fi
 source_dir=$(cd "$source_dir" && pwd)
 node_bin=$(readlink -f "$node_bin")
 mise_bin=$(readlink -f "$mise_bin")
+if [[ -n "$guest_stage_script" ]]; then
+  guest_stage_script=$(readlink -f "$guest_stage_script")
+  target_artifact=$(readlink -f "$target_artifact")
+  [[ -f "$guest_stage_script" && -x "$guest_stage_script" ]] || { echo "guest stage script must be an executable regular file: $guest_stage_script" >&2; exit 2; }
+  [[ -f "$target_artifact" && -f "$target_artifact.sha256" ]] || { echo "target artifact and SHA sidecar are required: $target_artifact" >&2; exit 2; }
+fi
 node_root=$(cd "$(dirname "$node_bin")/.." && pwd)
 node_npm_cli="$node_root/lib/node_modules/npm/bin/npm-cli.js"
 [[ -d "$source_dir/.git" ]] || { echo "source directory must be a clean Git checkout" >&2; exit 2; }
@@ -174,6 +191,22 @@ git clone --quiet /tmp/tma-source.bundle /home/tma/repo
 sudo chown -R tma:tma /home/tma/repo
 rm -f /tmp/tma-mise /tmp/tma-node-runtime.tar.gz /tmp/tma-source.bundle
 EOF
+
+if [[ -n "$guest_stage_script" ]]; then
+  echo 'Running the requested migration stage inside the isolated guest'
+  target_artifact_name=$(basename "$target_artifact")
+  guest_copy "$guest_stage_script" "tma@127.0.0.1:/tmp/tma-guest-stage.sh"
+  guest_copy "$target_artifact" "tma@127.0.0.1:/tmp/$target_artifact_name"
+  guest_copy "$target_artifact.sha256" "tma@127.0.0.1:/tmp/$target_artifact_name.sha256"
+  guest <<'EOF'
+set -Eeuo pipefail
+chmod 0755 /tmp/tma-guest-stage.sh
+EOF
+  guest_update "/tmp/tma-guest-stage.sh /home/tma/repo /home/tma/node-runtime/bin/node /tmp/$target_artifact_name /tmp/$target_artifact_name.sha256 /home/tma/migration-evidence" | tee "$artifact_dir/migration-stage.log"
+  guest 'tar -C /home/tma/migration-evidence -czf - .' > "$artifact_dir/migration-evidence.tar.gz"
+  echo 'PASS: isolated Ubuntu guest migration stage completed'
+  exit 0
+fi
 
 echo 'Provisioning the isolated guest and publishing the native user service'
 guest <<'EOF'
