@@ -38,6 +38,14 @@ outboxはwrite→fsync→rename後に送信対象とするが、rename後のデ�
 
 純粋な推定ロジックとNode組込みSQLiteの同期`Database`/`Statement`境界を維持する。Promiseで同期SQLiteを包む互換層、Cloudflare/クラウドStoreの実装、クラウドへの自動切替、DB同期は含めない。実要件が発生する前から複数運用形態を抱え込まない。
 
+## Node Hub収集（Issue #21）
+
+Nodeの収集経路は`analytics/runtime/collection/`に置く。`createCollectionManager`は`start(hubs)`、`applyHubs(hubs)`、`reconnectHub(id)`、`stop()`、`getStatus()`を公開し、Hubごとに独立した購読と終了待ちを持つ。購読入力の型は`{id, url, secret, status}`で、`status: "active"`だけを接続対象とする。`secret`は内部引数に限り、状態通知へ含めない。現在のファイル管理・旧Collectorと二重収集しないため、`startServer`は`collectionHubs`を明示した時だけ`start()`し、管理Issueで正本と接続反映を統合する。
+
+`readSSE`はUTF-8チャンク境界、BOM、LF/CRLF/CR、複数`data`行、コメントheartbeat、未知イベント、8 MiBのイベント上限を処理する。不完全なEOFフレームは保存せず、`snapshot`/`stats`だけを`compactHubEvent`で許可リストへ正規化する。正規化済みの`Observation`は`recordObservation(db, observation, contracts, timeZone)`へ渡し、呼出し側の同期SQLite transactionがCOMMITした後にブラウザーへ通知する。
+
+接続はBearerヘッダー、HTTPS origin（開発時のloopback HTTPのみ例外）、リダイレクト拒否、接続・ヘッダー待ち20秒、無通信90秒を適用する。通信断・5xx・408・429は1秒から最大30秒のjitter付き指数バックオフ、3xx・その他4xx・上流入力エラーは当該Hubだけ停止する。購読世代を差し替える際は旧AbortControllerと保存callbackの完了を待つ。SQLite保存エラーは入力エラーと区別して全収集を停止し、未COMMITの観測を成功扱いしない。
+
 ## Hub管理UI（基本機能実装済み）
 
 AnalyticsをHub設定の更新窓口とし、Collectorが共有設定ファイルを定期確認する。[Hub管理UIの実装計画](https://github.com/nuitsjp/token-monitor-analytics/issues/16)を参照。Analytics→CollectorのSSEは追加せず、既存の観測・ブラウザー通知経路を維持する。通常設定と平文の秘密情報は別ファイルに置き、OS権限で保護する。状態表示のためのCollector→Analyticsのloopback POSTを追加している。configure/publish/statusは管理モードに対応する。既存登録の移行は行わず、明示的なリセットとUIでの再登録を使用する。
