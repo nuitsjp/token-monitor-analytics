@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
 import {configureApplication} from '../configure-application.mjs';
 import {readEnvironment,readJSON,selectConfiguration,validateConfiguration,writeChanged,treeDigest,readPublication,configurationId,withPublicationLock,assertOldLayout} from '../publish-config.mjs';
 import {createReleaseArtifact} from '../release.mjs';
-import {preparePublication,applyPublication,defaultHealthCheck} from '../publish-ubuntu.mjs';
+import {preparePublication,applyPublication,defaultHealthCheck,validateFixedNode} from '../publish-ubuntu.mjs';
 import {validateInfrastructure,unitDigest,appUnits,managedUnits,infrastructureVersion,configVersion,serviceContractVersion,runnerVersion} from '../ubuntu-layout.mjs';
 
 function fixture(t) {
@@ -129,14 +129,23 @@ test('writeChanged preserves mtime for identical managed files', t => {
   assert.equal(fs.statSync(file).mtimeMs, stamp);
 });
 
+test('fixed Node preflight validates the executable version', t => {
+  const dir = fixture(t), fixedNode = path.join(dir, 'node');
+  fs.copyFileSync(process.execPath, fixedNode);
+  fs.chmodSync(fixedNode, 0o755);
+  assert.match(validateFixedNode(fixedNode, {minimum: {major: 0, minor: 0, patch: 0}}), /^v\d+\.\d+\.\d+$/);
+  const currentMajor = Number(process.versions.node.split('.')[0]);
+  assert.throws(() => validateFixedNode(fixedNode, {minimum: {major: currentMajor + 1, minor: 0, patch: 0}}), /older than required/);
+});
+
 test('verified publication is idempotent and rechecks config before stop', async t => {
   const dir = fixture(t);
   configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}, port: 8788});
   const sha = 'd'.repeat(40);
-  const artifact = createReleaseArtifact({root: path.resolve(new URL('../../', import.meta.url).pathname), architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
+  const artifact = createReleaseArtifact({root: fileURLToPath(new URL('../../', import.meta.url)), architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
   const current = path.join(dir, 'current'), publication = path.join(dir, 'publication.json');
   let stopped = 0, started = 0;
-  const services = {stop: async () => { stopped++; }, start: async () => { started++; }, daemonReload() {}, installUnit() {}};
+  const services = {isActive: () => false, stop: async () => { stopped++; }, start: async () => { started++; }, daemonReload() {}, installUnit() {}};
   const stages = [];
   const options = {services, backup: async () => {}, healthCheck: async () => {}, jobId: 'job-publication', targetCommitSha: sha, onStage: stage => stages.push(stage)};
   const releaseVerification = fixtureReleaseVerification(artifact.contentHash);
@@ -159,7 +168,7 @@ test('custom publication destinations cannot bypass pinned source verification',
   const dir = fixture(t);
   configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}, port: 8788});
   const sha = 'f'.repeat(40);
-  const artifact = createReleaseArtifact({root: path.resolve(new URL('../../', import.meta.url).pathname), architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
+  const artifact = createReleaseArtifact({root: fileURLToPath(new URL('../../', import.meta.url)), architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
   let stopped = false;
   const services = {stop: async () => { stopped = true; }, start: async () => {}, daemonReload() {}, installUnit() {}};
   await assert.rejects(() => preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current: path.join(dir, 'current'), publicationPath: path.join(dir, 'publication.json'), uid: undefined, services}), /pinned commit SHA/);
@@ -193,7 +202,7 @@ test('publish verification reaches the extracted real HTTP/SSE/SQLite entrypoint
   const reserve = net.createServer(); await new Promise((resolve, reject) => { reserve.once('error', reject); reserve.listen(0, '127.0.0.1', resolve); }); const port = reserve.address().port; await new Promise(resolve => reserve.close(resolve));
   const config = readJSON(configFile); config.listen.port = port; config.publicOrigin = `http://127.0.0.1:${port}`; fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n', {mode: 0o600});
   const sha = 'e'.repeat(40);
-  const root = path.resolve(new URL('../../', import.meta.url).pathname);
+  const root = fileURLToPath(new URL('../../', import.meta.url));
   const artifact = createReleaseArtifact({root, architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
   const current = path.join(dir, 'current'), publication = path.join(dir, 'publication.json');
   let app = null, active = false;
@@ -221,7 +230,7 @@ test('publish verification reaches the extracted real HTTP/SSE/SQLite entrypoint
 test('same payload with a new target SHA keeps the running release identity', async t => {
   const dir = fixture(t);
   configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}, port: 8788});
-  const root = path.resolve(new URL('../../', import.meta.url).pathname);
+  const root = fileURLToPath(new URL('../../', import.meta.url));
   const first = createReleaseArtifact({root, architecture: 'amd64', outputDir: path.join(dir, 'first'), targetCommitSha: '1'.repeat(40), certified: true, verification: {level: 'release', checks: ['fixture']}});
   const second = createReleaseArtifact({root, architecture: 'amd64', outputDir: path.join(dir, 'second'), targetCommitSha: '2'.repeat(40), certified: true, verification: {level: 'release', checks: ['fixture']}});
   const current = path.join(dir, 'current'), publication = path.join(dir, 'publication.json');

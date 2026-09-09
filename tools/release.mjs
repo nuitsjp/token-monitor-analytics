@@ -418,10 +418,20 @@ export function runReleaseVerification(root, {stdio = 'inherit'} = {}) {
   const toolTests = fs.readdirSync(path.join(sourceRoot, 'tools/test')).filter(name => name.endsWith('.test.mjs')).sort().map(name => path.join('tools/test', name));
   const integration = ['tools/integration.mjs', 'tools/integration-manage.mjs', 'tools/integration-update.mjs'];
   const checks = [];
+  const quoteWindowsArgument = value => {
+    const text = String(value);
+    if (!/[\s"&|<>^]/.test(text)) return text;
+    return `"${text.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
+  };
   const run = (command, args, cwd = sourceRoot) => {
-    // Windows exposes npm as a .cmd shim. execFile needs shell resolution for
-    // that shim; all arguments here are fixed paths/flags from this module.
-    execFileSync(command, args, {cwd, stdio, ...(command.endsWith('.cmd') ? {shell: true} : {})});
+    // Windows exposes npm as a .cmd shim. Invoke cmd.exe explicitly so this
+    // remains valid when the checkout path contains spaces, without enabling
+    // Node's implicit shell mode for arbitrary command strings.
+    if (process.platform === 'win32' && command.endsWith('.cmd')) {
+      const shell = process.env.ComSpec ?? process.env.COMSPEC ?? 'cmd.exe';
+      const commandLine = [command, ...args].map(quoteWindowsArgument).join(' ');
+      execFileSync(shell, ['/d', '/s', '/c', commandLine], {cwd, stdio});
+    } else execFileSync(command, args, {cwd, stdio});
     checks.push([command, ...args]);
   };
   // The release gate is reproducible from the lock file even in a clean

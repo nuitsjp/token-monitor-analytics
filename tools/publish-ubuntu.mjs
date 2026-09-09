@@ -13,6 +13,10 @@ import {userEnvironment,report} from './ubuntu-common.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const nodeVersioned = value => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value);
 
+function provisioningError(message) {
+  return Object.assign(new Error(message), {code: 'provision_required'});
+}
+
 function run(command, args, options = {}) {
   try { return execFileSync(command, args, {encoding: 'utf8', stdio: 'pipe', ...options}); }
   catch { throw Object.assign(new Error(`${path.basename(command)} failed; inspect the host configuration locally (command output suppressed).`), {code: 'host_command_failed'}); }
@@ -34,6 +38,24 @@ function serviceController(overrides = {}) {
 function regular(filename) {
   const stat = fs.lstatSync(filename);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Expected a regular deployment file.');
+}
+
+/** Check the provisioned Node binary before any application stop. */
+export function validateFixedNode(filename, {minimum} = {}) {
+  regular(filename);
+  const required = minimum && typeof minimum === 'object' && !Array.isArray(minimum)
+    ? [minimum.major, minimum.minor, minimum.patch]
+    : null;
+  if (!required || !required.every(value => Number.isSafeInteger(value) && value >= 0)) throw provisioningError('The fixed Node requirement is invalid; run provision:ubuntu.');
+  const result = spawnSync(filename, ['--version'], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']});
+  if (result.error || result.status !== 0) throw provisioningError('The fixed Node runtime cannot be executed; run provision:ubuntu.');
+  const reported = String(result.stdout ?? '').trim().replace(/^v/, '');
+  if (!nodeVersioned(reported)) throw provisioningError('The fixed Node runtime reported an invalid version; run provision:ubuntu.');
+  const actual = reported.split('.').map(Number);
+  if (actual[0] < required[0] || (actual[0] === required[0] && (actual[1] < required[1] || (actual[1] === required[1] && actual[2] < required[2])))) {
+    throw provisioningError(`The fixed Node runtime is older than required (${required.join('.')}); run provision:ubuntu.`);
+  }
+  return `v${reported}`;
 }
 
 function configSnapshot(selected) {
@@ -124,6 +146,7 @@ export async function preparePublication({
     try {
       const stat = fs.lstatSync(fixedNode);
       if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('fixed Node is not a regular file');
+      validateFixedNode(fixedNode, {minimum: runtime.minNode});
     } catch (error) {
       if (error?.code === 'ENOENT') throw Object.assign(new Error('Fixed Node is missing; run provision:ubuntu before publication'), {code: 'provision_required'});
       throw error;
@@ -356,7 +379,7 @@ export async function applyPublication(prepared, {
       existingRelease = true;
     }
     await services.stop('tma-analytics.service');
-    if (typeof services.isActive === 'function' && services.isActive('tma-analytics.service')) throw new Error('Analytics service remained active after stop; refusing to back up or replace it');
+    if (typeof services.isActive !== 'function' || services.isActive('tma-analytics.service')) throw new Error('Analytics service activity could not be confirmed after stop; refusing to back up or replace it');
     await backup(prepared, backupDirectory);
     if (!existingRelease) {
       fs.mkdirSync(prepared.releasesDir, {recursive: true, mode: 0o755});
