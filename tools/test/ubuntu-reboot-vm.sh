@@ -209,10 +209,10 @@ cd /home/tma/repo
 git config user.name 'TMA acceptance fixture'
 git config user.email 'tma-acceptance@example.invalid'
 git checkout -B main
-rm -rf /home/tma/acceptance-remote.git
-git init --bare --quiet /home/tma/acceptance-remote.git
+rm -rf /var/lib/tma-deploy/acceptance-remote.git
+git init --bare --quiet /var/lib/tma-deploy/acceptance-remote.git
 git remote remove acceptance 2>/dev/null || true
-git remote add acceptance /home/tma/acceptance-remote.git
+git remote add acceptance /var/lib/tma-deploy/acceptance-remote.git
 git push --quiet acceptance HEAD:refs/heads/main
 printf '\n/* isolated acceptance release payload */\n' >> analytics/public/styles.css
 git add analytics/public/styles.css
@@ -221,10 +221,10 @@ git push --quiet acceptance HEAD:refs/heads/main
 candidate=$(git rev-parse HEAD)
 printf '%s\n' "$candidate" > /tmp/tma-update-candidate.sha
 
-# The production runner validates an HTTPS origin. Git's per-user URL rewrite
-# keeps that validation intact while directing only this disposable guest to
-# its local bare repository; no application or runner source is modified.
-git config --global url."file:///home/tma/acceptance-remote.git".insteadOf https://acceptance.invalid/tma.git
+# The production runner validates an HTTPS origin. A guest-only system Git
+# rewrite keeps it intact. Both config and bare repository remain visible to
+# the Analytics unit with ProtectHome=true; no application code is modified.
+sudo git config --system url."file:///var/lib/tma-deploy/acceptance-remote.git".insteadOf https://acceptance.invalid/tma.git
 
 /home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
 import fs from 'node:fs';
