@@ -138,6 +138,13 @@ test('subscribeLoop stops on permanent input/auth errors and backs off transient
 
 test('collection manager isolates Hubs and replaces old generations after they finish', async () => {
   const observations = [];
+  const waitForObservations = async expected => {
+    const deadline = Date.now() + 5000;
+    while (observations.length < expected && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(observations.length, expected);
+  };
   const servers = [];
   const makeHub = value => http.createServer((_req, res) => {
     res.writeHead(200, {'Content-Type': 'text/event-stream'});
@@ -148,12 +155,10 @@ test('collection manager isolates Hubs and replaces old generations after they f
   const manager = createCollectionManager({idleMs: 1000, onObservation: async observation => { observations.push(observation); }});
   try {
     await manager.applyHubs([{id: 'a', url: urlA, secret: 's', status: 'active'}, {id: 'b', url: urlB, secret: 's', status: 'disabled'}]);
-    await new Promise(resolve => setTimeout(resolve, 40));
-    assert.equal(observations.length, 1);
+    await waitForObservations(1);
     assert.equal(observations[0].hubId, 'a');
     await manager.applyHubs([{id: 'a', url: urlA, secret: 's', status: 'disabled'}, {id: 'b', url: urlB, secret: 's', status: 'active'}]);
-    await new Promise(resolve => setTimeout(resolve, 40));
-    assert.equal(observations.length, 2);
+    await waitForObservations(2);
     assert.equal(observations[1].hubId, 'b');
     assert.equal(manager.getStatus().some(status => status.hubId === 'a'), false);
   } finally { await manager.stop(); for (const server of servers) server.close(); }
