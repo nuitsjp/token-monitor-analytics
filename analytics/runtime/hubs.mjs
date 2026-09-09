@@ -311,3 +311,24 @@ export function recordContractSnapshots(db, contracts, now = nowIso()) {
       VALUES(?,?,?,?,?,?)`).bind(contract.id, hash, contract.hubId, contract.label, definition, now).run();
   }
 }
+
+/** Return immutable contract definitions kept for historical descriptions. */
+export function listContractSnapshots(db) {
+  return db.prepare(`SELECT contract_id,definition_hash,hub_id,label,definition_json,captured_at
+    FROM contract_snapshots ORDER BY captured_at DESC,contract_id,definition_hash`).all().flatMap(row => {
+    try {
+      const definition = JSON.parse(row.definition_json);
+      if (!definition || typeof definition !== 'object' || Array.isArray(definition)) return [];
+      return [{
+        id: row.contract_id,
+        definitionHash: row.definition_hash,
+        hubId: row.hub_id,
+        label: row.label,
+        definition,
+        capturedAt: row.captured_at,
+      }];
+    } catch {
+      return [];
+    }
+  });
+}

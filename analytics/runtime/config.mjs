@@ -15,7 +15,7 @@ export function loadConfig(filename) {
  const absolute = path.resolve(filename);
  if (fs.statSync(absolute).size > 262144) throw new Error('Config too large');
  const raw = JSON.parse(fs.readFileSync(absolute,'utf8').replace(/^\uFEFF/,''));
- keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','viewerAuth','hubSecretsPath','contracts','demo','tailnetViewer','management','update'],'configuration');
+ keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','viewerAuth','hubSecretsPath','contracts','demo','management','update'],'configuration');
  if (raw.version !== 2 || typeof raw.demo !== 'boolean') throw new Error('version=2 and explicit demo boolean are required');
  keys(raw.listen,['host','port'],'listen');
  const {host,port} = raw.listen;
@@ -30,15 +30,19 @@ export function loadConfig(filename) {
  keys(raw.viewerAuth,['mode','userEnv','passwordEnv'],'viewerAuth');
  if (!['loopback','basic','tailscale'].includes(raw.viewerAuth.mode)) throw new Error('viewerAuth mode must be loopback, basic or tailscale');
  if (raw.viewerAuth.mode === 'basic' && (!envName(raw.viewerAuth.userEnv) || !envName(raw.viewerAuth.passwordEnv))) throw new Error('Basic auth environment names required');
- // No plaintext non-loopback listener. Remote publication requires an explicit HTTPS reverse proxy origin.
- if (!isLoopback(host) && (raw.viewerAuth.mode !== 'basic' || origin.protocol !== 'https:')) throw new Error('Non-loopback listener requires basic auth and an HTTPS reverse proxy origin');
+ // There is exactly one listener.  Tailscale mode binds that listener to the
+ // selected Tailscale address; it never creates a second viewer socket.
+ if (raw.viewerAuth.mode === 'tailscale') {
+  if (raw.demo || !isTailnetIPv4(host) || origin.protocol !== 'http:' || !origin.hostname.endsWith('.ts.net') || Number(origin.port || 80) !== port) {
+   throw new Error('Tailscale viewer requires a dedicated Tailscale listener, HTTP ts.net origin, and real data.');
+  }
+ } else if (!isLoopback(host)) {
+  // The supported public boundary is the selected Tailscale address. Basic
+  // authentication is intentionally available only on loopback/SSH forward.
+  throw new Error('Non-loopback listener requires viewerAuth.mode=tailscale');
+ }
  if (raw.viewerAuth.mode === 'loopback' && (!isLoopback(host) || !['localhost','127.0.0.1','[::1]'].includes(origin.hostname))) throw new Error('Loopback viewer mode is local-only');
  if (raw.demo && (!isLoopback(host) || raw.viewerAuth.mode !== 'loopback' || origin.protocol !== 'http:')) throw new Error('Demo must remain loopback-only');
- if(raw.tailnetViewer!==undefined){
-  keys(raw.tailnetViewer,['host','port'],'tailnetViewer');
-  if(!isTailnetIPv4(raw.tailnetViewer.host)||!Number.isInteger(raw.tailnetViewer.port)||raw.tailnetViewer.port<1024||raw.tailnetViewer.port>65535||host!=='127.0.0.1'||raw.demo||!['basic','tailscale'].includes(raw.viewerAuth.mode)||origin.protocol!=='http:'||!origin.hostname.endsWith('.ts.net')||Number(origin.port||80)!==raw.tailnetViewer.port)throw new Error('Tailnet viewer requires an explicit Tailscale IPv4, HTTP ts.net origin, basic/tailscale mode, REAL data and loopback ingest.');
- }
- if(raw.viewerAuth.mode==='tailscale'&&!raw.tailnetViewer)throw new Error('Tailscale viewer mode requires a dedicated tailnet listener.');
  if (raw.management !== undefined) {
   keys(raw.management, ['enabled'], 'management');
   if (typeof raw.management.enabled !== 'boolean') throw new Error('management.enabled must be a boolean');
@@ -116,6 +120,6 @@ export function isTailnetIPv4(ip){
  const parts=ip.split('.').map(Number);return parts[0]===100&&parts[1]>=64&&parts[1]<=127;
 }
 export function validateTailnetBinding(config,interfaces=networkInterfaces()){
- if(!config.tailnetViewer)return;
- if(!isTailnetIPv4(config.tailnetViewer.host)||!Object.entries(interfaces).some(([name,addresses])=>/^tailscale/i.test(name)&&addresses?.some(a=>a.address===config.tailnetViewer.host)))throw new Error('Configured Tailscale address is not assigned to a Tailscale interface; wait for Tailscale or rerun configure:ubuntu.');
+ if(config.viewerAuth?.mode!=='tailscale')return;
+ if(!isTailnetIPv4(config.listen?.host)||!Object.entries(interfaces).some(([name,addresses])=>/^tailscale/i.test(name)&&addresses?.some(a=>a.address===config.listen.host)))throw new Error('Configured Tailscale address is not assigned to a Tailscale interface; wait for Tailscale or rerun configure:ubuntu.');
 }

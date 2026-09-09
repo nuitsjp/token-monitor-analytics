@@ -275,6 +275,25 @@ test('History scheduler waits for an in-flight generation before replacement', a
   await scheduler.stop();
 });
 
+test('History scheduler keeps the minimum fetch interval across reconnect replacement', async () => {
+  const starts = [];
+  let calls = 0;
+  const scheduler = createHistoryScheduler({
+    minIntervalMs: 40,
+    maxRetries: 0,
+    fetchImpl: async () => { starts.push(Date.now()); calls += 1; return responseFor([]); },
+  });
+  await scheduler.startHub(hub, 1);
+  await waitFor(() => calls === 1);
+  const replacement = scheduler.startHub(hub, 2);
+  await waitFor(() => scheduler.getStatus()[0]?.generation === 2);
+  assert.equal(calls, 1, 'a reconnect cannot bypass the Hub fetch interval');
+  await replacement;
+  await waitFor(() => calls === 2);
+  assert.ok(starts[1] - starts[0] >= 35, `fetches started too close together: ${starts[1] - starts[0]}ms`);
+  await scheduler.stop();
+});
+
 test('History scheduler cancels a queued replacement when stopHub races retirement', async () => {
   let release;
   const gate = new Promise(resolve => { release = resolve; });

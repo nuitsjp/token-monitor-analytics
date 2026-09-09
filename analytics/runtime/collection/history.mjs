@@ -172,7 +172,7 @@ export function createHistoryScheduler({
   const hubState=id=>{
     let state=hubStates.get(id);
     if(!state){
-      state={desiredToken:0,tail:Promise.resolve(),pending:new Set(),retiring:new Set()};
+      state={desiredToken:0,tail:Promise.resolve(),pending:new Set(),retiring:new Set(),activeGeneration:null,lastStartAt:-Infinity,lastAttemptAt:-Infinity};
       hubStates.set(id,state);
     }
     return state;
@@ -201,7 +201,8 @@ export function createHistoryScheduler({
   const schedule=(runner,reason)=>{
     if(!isCurrent(runner)||runner.scheduled||runner.inFlight||!runner.pending)return;
     runner.pendingReason=reason||runner.pendingReason||'revision';
-    const elapsed=now()-runner.lastStartAt;
+    const state=hubState(runner.hub.id);
+    const elapsed=now()-Math.max(runner.lastStartAt,state.lastStartAt);
     const delay=Math.max(0,minIntervalMs-elapsed);
     // Publish the completion promise before entering `run`. Callbacks from
     // its first status/fetch hook may synchronously stop or replace the Hub;
@@ -248,6 +249,9 @@ export function createHistoryScheduler({
     if(!isCurrent(runner)||runner.inFlight||!runner.pending)return;
     const runId=runner.nextRunId++;
     runner.pending=false;runner.inFlight=true;runner.inFlightRunId=runId;runner.lastStartAt=now();runner.attempts=0;
+    const state=hubState(runner.hub.id);
+    state.lastStartAt=runner.lastStartAt;
+    runner.lastAttemptAt=state.lastAttemptAt;
     const reason=runner.pendingReason||'manual';runner.pendingReason='';
     const requestedRevision=runner.revision;
     const startedAt=new Date(runner.lastStartAt).toISOString();
@@ -261,14 +265,19 @@ export function createHistoryScheduler({
       }catch(error){
         throw asStorageError(error);
       }
+      // A synchronous collection-generation check may fence this launch
+      // after the scheduler has entered the run.  Treat an explicit false as
+      // a canceled launch, without issuing a stale Hub request.
+      if(allocated===false)return;
       if(Number.isSafeInteger(allocated)&&allocated>0)fetchId=allocated;
       runner.fetchId=fetchId;
       let response=null;let error=null;let attempts=0;
       for(attempts=1;attempts<=maxRetries+1;attempts++){
         if(!isCurrent(runner))return;
-        const sinceAttempt=now()-runner.lastAttemptAt;
+        const sinceAttempt=now()-Math.max(runner.lastAttemptAt,state.lastAttemptAt);
         if(sinceAttempt<minIntervalMs)await sleep(minIntervalMs-sinceAttempt,runner.controller.signal);
         runner.lastAttemptAt=now();
+        state.lastAttemptAt=runner.lastAttemptAt;
         try{
           response=await fetchHistory({hub:runner.hub,signal:runner.controller.signal,fetchImpl,headerTimeoutMs,bodyTimeoutMs,maxBodyBytes});
           error=null;break;
@@ -285,7 +294,12 @@ export function createHistoryScheduler({
       // The revision seen when this request started is intentionally not part
       // of the success payload: SSE and GET are not an atomic version pair.
       try{
-        await onSuccess?.({hub:runner.hub,generation:runner.generation,fetchId,requestId:runner.fetchId,startedAt,completedAt,response,attempts});
+        const stored=await onSuccess?.({hub:runner.hub,generation:runner.generation,fetchId,requestId:runner.fetchId,startedAt,completedAt,response,attempts});
+        // A completed response can lose the collection-generation race while
+        // waiting for the serialized DB tail.  The caller signals that it
+        // deliberately discarded the response; leave no success timestamp
+        // behind for that stale generation.
+        if(stored===false)return;
       }catch(error){
         throw asStorageError(error);
       }
@@ -341,6 +355,7 @@ export function createHistoryScheduler({
       await Promise.all([...state.retiring].map(safeWait));
       if(stopped||record.cancelled||state.desiredToken!==token)return null;
       const runner={hub:{id:hub.id,url:hub.url,secret:hub.secret},generation,controller:new AbortController(),timer:null,scheduled:false,inFlight:false,inFlightRunId:null,nextRunId:1,pending:true,pendingReason:'startup',dirty:false,revision:null,lastStartAt:-Infinity,lastAttemptAt:-Infinity,lastFetchAt:null,nextRequestId:1,attempts:0,state:'idle',errorCode:'',updatedAt:new Date(now()).toISOString()};
+      state.activeGeneration=generation;
       runners.set(hub.id,runner);publish(runner,'pending','',{reason:'startup'});schedule(runner,'startup');
       if(stopped||record.cancelled||state.desiredToken!==token||!isCurrent(runner))return null;
       return runner;
@@ -375,19 +390,23 @@ export function createHistoryScheduler({
     return pending;
   }
 
-  function stopHub(id){
+  function stopHub(id,generation){
+    const state=hubStates.get(id);
+    if(generation!==undefined&&state&&state.activeGeneration!==null&&state.activeGeneration!==generation)return Promise.resolve(false);
     // Invalidate queued starts before the first await. A replacement may
     // already have removed its predecessor from `runners` while waiting for
     // that predecessor's persistence callback.
     const cancelled=cancelPendingStarts(id);
     const retirement=retireCurrent(id);
-    const state=hubStates.get(id);
     const retiring=[...(state?.retiring||[])];
     return Promise.all([
       retirement,
       ...retiring,
       ...cancelled.map(record=>record.promise),
-    ].map(safeWait)).then(()=>{});
+    ].map(safeWait)).then(()=>{
+      if(generation!==undefined&&state?.activeGeneration===generation)state.activeGeneration=null;
+      return true;
+    });
   }
 
   function notifyRevision(id,value,generation){

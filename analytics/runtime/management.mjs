@@ -16,6 +16,7 @@ const PUBLIC_ERROR_CODES = new Set([
   'version_conflict', 'hub_referenced_by_contract', 'delete_failed', 'update_failed',
   'update_manager_unavailable', 'check_failed', 'apply_failed', 'not_found',
   'secret_store_missing', 'secret_store_invalid', 'missing_secret',
+  'history_not_ready', 'history_unavailable',
 ]);
 const PUBLIC_CONNECTION_CODES = new Set([
   'network_error', 'auth_error', 'input_error', 'config_error', 'storage_error', 'permanent_error', 'missing_secret',
@@ -148,7 +149,7 @@ function parseBodyFactory() {
  */
 export function createManagementHandler({
   config, auth, db, live, exclusive = callback => callback(),
-  getCollectionStatuses = () => ({}), onHubCommitted, onReconnect, updateManager,
+  getCollectionStatuses = () => ({}), onHubCommitted, onReconnect, onHistoryRequest, updateManager,
 }) {
   const json = (response, data, status = 200) => {
     response.writeHead(status, {'Content-Type': 'application/json; charset=utf-8'});
@@ -211,6 +212,33 @@ export function createManagementHandler({
         json(response, {ok: true, hub: publicHub(result.row, getCollectionStatuses(), new Set([result.row.secretRef]))});
       } catch (error) {
         json(response, {error: publicErrorCode(error, 'save_failed'), currentVersion: publicCurrentVersion(error)}, publicHttpStatus(error, 500));
+      }
+      return;
+    }
+
+    const historyMatch = subpath.match(/^\/([^/]+)\/history$/);
+    if (historyMatch) {
+      let historyId;
+      try { historyId = decodeHubId(historyMatch[1]); }
+      catch (error) { json(response, {error: publicErrorCode(error, 'invalid_hub_id')}, publicHttpStatus(error, 400)); return; }
+      if (!isSafeId(historyId) || request.method !== 'POST') {
+        json(response, {error: request.method === 'POST' ? 'invalid_hub_id' : 'method_not_allowed'}, request.method === 'POST' ? 400 : 405);
+        return;
+      }
+      if (contentType(request) !== 'application/json') { json(response, {error: 'json_required'}, 415); return; }
+      try { await parseBody(request); }
+      catch (error) { json(response, {error: publicErrorCode(error, 'invalid_json')}, publicHttpStatus(error, 400)); return; }
+      const hub = getHubRecord(db, historyId);
+      if (!hub || hub.status === 'archived') { json(response, {error: 'hub_not_found'}, 404); return; }
+      if (hub.status !== 'active') { json(response, {error: 'history_unavailable'}, 409); return; }
+      if (!safeSecretRefs(config).has(hub.secretRef)) { json(response, {error: 'missing_secret'}, 409); return; }
+      try {
+        const accepted = await onHistoryRequest?.(historyId);
+        if (!accepted) { json(response, {error: 'history_not_ready'}, 409); return; }
+        live?.broadcast('manage_updated', {type: 'manage_updated'});
+        json(response, {ok: true, requested: true}, 202);
+      } catch (error) {
+        json(response, {error: publicErrorCode(error, 'history_unavailable')}, publicHttpStatus(error, 409));
       }
       return;
     }

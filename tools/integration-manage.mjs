@@ -56,6 +56,14 @@ function createMockHub() {
   let eventCount = 0;
   const baseTime = Date.now() - 60000;
   const server = http.createServer((request, response) => {
+    if (request.url === '/api/devices') {
+      response.writeHead(200, {'Content-Type': 'application/json'});
+      response.end(JSON.stringify({devices: [{
+        deviceId: 'device-managed', historyAvailable: true, updatedAt: '2026-09-09T00:00:00.000Z',
+        history: {daily: [{date: '2026-09-09', tokens: 12, cost: 1.2}], monthly: [{month: '2026-09', tokens: 12, cost: 1.2}]},
+      }]}));
+      return;
+    }
     if (request.url !== '/api/stats/stream') {
       response.writeHead(404).end();
       return;
@@ -153,6 +161,7 @@ try {
   app = await startServer(config, {
     collectionIdleMs: 5000,
     collectionHeaderTimeoutMs: 3000,
+    historyMinIntervalMs: 0,
     logger: {info() {}, error: (...args) => console.error(...args)},
   });
   const origin = config.publicOrigin;
@@ -193,6 +202,19 @@ try {
   }, 'first Hub observation');
   assert.equal(firstRequestCount, 1);
   console.log('PASS: created Hub connects and stores observations without a Collector process');
+
+  await until(async () => {
+    const result = (await jsonResponse(`${origin}/api/usage-history/hubs`)).body;
+    return result.hubs[0]?.devices[0]?.deviceId === 'device-managed';
+  }, 'Hub device history is saved');
+  const usage = await jsonResponse(`${origin}/api/usage-history?hubId=hub-managed&deviceId=device-managed&granularity=daily&from=2026-09-09&to=2026-09-09`);
+  assert.equal(usage.response.status, 200);
+  assert.equal(usage.body.rows[0].tokens, 12);
+  const manual = await jsonResponse(`${origin}/api/manage/hubs/hub-managed/history`, {
+    method: 'POST', headers: {'Content-Type': 'application/json', Origin: origin}, body: '{}'
+  });
+  assert.equal(manual.response.status, 202);
+  console.log('PASS: device history is readable and manual fetch uses the management boundary');
 
   const renamed = await jsonResponse(`${origin}/api/manage/hubs/hub-managed`, {
     method: 'PUT',
@@ -238,6 +260,17 @@ try {
     return state.hubs[0]?.observedAt;
   }, 're-enabled Hub stores observations');
   console.log('PASS: re-enable reconnects and resumes observations without a process restart');
+
+  const archived = await jsonResponse(`${origin}/api/manage/hubs/hub-managed`, {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json', Origin: origin},
+    body: JSON.stringify({expectedVersion: 4}),
+  });
+  assert.equal(archived.response.status, 200);
+  const retained = await jsonResponse(`${origin}/api/usage-history?hubId=hub-managed&deviceId=device-managed&granularity=daily&from=2026-09-09&to=2026-09-09`);
+  assert.equal(retained.response.status, 200);
+  assert.equal(retained.body.archived, true);
+  console.log('PASS: archived Hub history remains readable and is marked historical');
 
   await liveReader.cancel();
   liveReader = null;
