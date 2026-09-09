@@ -342,7 +342,13 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   server,db,live,updateManager,collection,history,
   startCollection: hubs => collection.start(hubs),
   async close(){
-   if(closing)return;closing=true;clearInterval(maintenance);await stopCollection();await stopHistory();live.close();updateManager.close();
+   if(closing)return;closing=true;clearInterval(maintenance);await stopCollection();await stopHistory();
+   // Flush the final update stage before ending SSE. The state-file watcher
+   // and a browser's follow-up GET can both lose the race with service stop.
+   if(!updateManager.getSupportReason()){
+    try{updateManager.pollJobState(true);}catch{logger.error('Update shutdown notification failed');}
+   }
+   live.close();updateManager.close();
    const force=setTimeout(()=>{for(const socket of sockets)socket.destroy();},5000);force.unref();
    await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))));clearTimeout(force);
    await tail;db.close();

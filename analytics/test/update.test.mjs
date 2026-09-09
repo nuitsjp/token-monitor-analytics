@@ -9,6 +9,40 @@ import {UpdateManager} from '../runtime/update-manager.mjs';
 import {createManagementHandler} from '../runtime/management.mjs';
 import {LiveFeed} from '../runtime/live.mjs';
 
+test('service shutdown sends the final update stage before browser SSE ends', {skip: process.platform !== 'linux', timeout: 10000}, async t => {
+  const {startServer} = await import('../runtime/server.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-update-shutdown-'));
+  const config = {
+    version: 2, demo: false, listen: {host: '127.0.0.1', port: 0},
+    publicOrigin: 'http://127.0.0.1:0', databasePath: path.join(dir, 'analytics.db'),
+    hubSecretsPath: path.join(dir, 'secrets.json'), timeZone: 'UTC', detailRetentionDays: 7,
+    viewerAuth: {mode: 'loopback'}, management: {enabled: true}, contracts: [],
+    update: {enabled: true, statePath: path.join(dir, 'update-state.json'), checkIntervalSeconds: 300},
+  };
+  let job = {jobId: 'shutdown-race', status: 'running', stage: 'verifying', targetCommitSha: 'a'.repeat(40)};
+  const app = await startServer(config, {logger: {info(){}, error(){}}, updateManagerOptions: {
+    readState: () => job, isServiceActive: () => true, fetchRemoteCommit: async () => null,
+  }});
+  t.after(async () => {await app.close(); fs.rmSync(dir, {recursive: true, force: true});});
+  config.publicOrigin = `http://127.0.0.1:${app.server.address().port}`;
+  const response = await fetch(`${config.publicOrigin}/api/live`, {signal: AbortSignal.timeout(8000)});
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  let frames = new TextDecoder().decode((await reader.read()).value);
+  // No file-system event or polling interval announces this transition.
+  job = {...job, stage: 'deploying'};
+  const closing = app.close();
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    frames += new TextDecoder().decode(value);
+  }
+  await closing;
+  assert.match(frames, /event: update_job_changed/);
+  assert.match(frames, /"jobId":"shutdown-race"/);
+  assert.match(frames, /"stage":"deploying"/);
+});
+
 test('readUpdateState and saveUpdateState atomically manage job state and reconcile with service status', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-update-state-'));
   const statePath = path.join(dir, 'update-state.json');
