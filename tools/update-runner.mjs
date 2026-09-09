@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {fileURLToPath, pathToFileURL} from 'node:url';
-import {readRunnerState, saveRunnerState, isTerminalState} from './update-runner-state.mjs';
+import {readRunnerState, saveRunnerState, isTerminalState, normalizeFailedStage} from './update-runner-state.mjs';
 
 const SHA = /^[0-9a-f]{40}$/i;
 const HASH = /^[0-9a-f]{64}$/i;
@@ -208,7 +208,7 @@ export async function runUpdate({
   if (!state || state.status !== 'running') return null;
   const {jobId, targetCommitSha} = state;
   if (!SHA.test(targetCommitSha)) {
-    saveRunnerState(paths.statePath, {...state, status: 'failed', stage: 'failed', errorCode: 'configuration_required', finishedAt: now()});
+    saveRunnerState(paths.statePath, {...state, status: 'failed', stage: 'failed', failedStage: normalizeFailedStage(state.stage), errorCode: 'configuration_required', finishedAt: now()});
     return null;
   }
   const setStage = (stage, fields = {}) => {
@@ -304,7 +304,7 @@ export async function runUpdate({
     const code = failureCode(error, stage);
     try {
       const latest = readRunnerState(paths.statePath, {checkServiceActive: () => true, now});
-      if (latest?.jobId === jobId && !isTerminalState(latest)) saveRunnerState(paths.statePath, {...latest, status: 'failed', stage: 'failed', errorCode: code, finishedAt: now()});
+      if (latest?.jobId === jobId && !isTerminalState(latest)) saveRunnerState(paths.statePath, {...latest, status: 'failed', stage: 'failed', failedStage: latest.failedStage ?? normalizeFailedStage(stage), errorCode: code, finishedAt: now()});
     } catch {}
     return {jobId, targetCommitSha, errorCode: code};
   } finally {

@@ -1,3 +1,7 @@
+export function isRestartRecoveryStage(job) {
+  return job?.status === 'running' && (job.stage === 'deploying' || job.stage === 'restarting');
+}
+
 export function createUpdateRestartController({
   fetchHealth,
   fetchStatus,

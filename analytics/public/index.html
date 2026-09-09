@@ -87,11 +87,9 @@
 </div>
 <div id="job-error" class="dialog-error" hidden></div>
 <div id="job-recovery" class="callout danger" hidden>
-<strong>ホスト復旧手順</strong>
-<p>サービスの起動またはヘルスチェックに失敗しました。SSHでホストに接続し、以下のコマンドで状態を確認してください:</p>
-<pre><code>systemctl --user status tma-analytics.service
-journalctl --user -u tma-analytics.service -e</code></pre>
-<p>必要に応じて <code>/var/lib/tma-analytics/backups/</code> のバックアップからデータベースを復元してください。</p>
+<strong id="job-recovery-title">ホスト復旧手順</strong>
+<p id="job-recovery-message"></p>
+<pre><code id="job-recovery-commands"></code></pre>
 </div>
 </div>
 <dialog id="update-confirm-dialog"><form id="update-confirm-form" method="dialog">

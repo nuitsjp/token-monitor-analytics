@@ -141,7 +141,7 @@ test('verification preflight fails before the app is stopped', async () => {
   try {
     const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port},mode:'preflight'});
     assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
-    const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.errorCode,'provision_required'); assert.ok(fs.existsSync(pidFile));
+    const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.errorCode,'provision_required'); assert.equal(failed.failedStage,'verifying'); assert.ok(fs.existsSync(pidFile));
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
 
@@ -155,7 +155,7 @@ test('a branch move after candidate acceptance fails before the app is stopped',
   try {
     const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port},mode:'moved'});
     assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
-    const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.errorCode,'main_moved'); assert.ok(fs.existsSync(pidFile));
+    const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.errorCode,'main_moved'); assert.equal(failed.failedStage,'fetching'); assert.ok(fs.existsSync(pidFile));
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
 
@@ -169,7 +169,7 @@ test('post-restart proof failure is terminal and retains the failed stage', asyn
   try {
     const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port,fixtureBadProof:true},mode:'success'});
     assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
-    const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.status,'failed'); assert.equal(failed.errorCode,'health_check_failed');
+    const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.status,'failed'); assert.equal(failed.errorCode,'health_check_failed'); assert.equal(failed.failedStage,'restarting');
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
 
@@ -183,7 +183,7 @@ test('a runner killed after stopping the app leaves a recoverable running state'
   try {
     const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port,fixtureKillAfterStop:true},mode:'success'});
     assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
-    const aborted=readRunnerState(statePath,{checkServiceActive:()=>false,now:()=>new Date('2026-09-09T00:00:00Z').toISOString()}); assert.equal(aborted.status,'aborted'); assert.equal(aborted.errorCode,'job_aborted'); assert.equal(aborted.stage,'aborted');
+    const aborted=readRunnerState(statePath,{checkServiceActive:()=>false,now:()=>new Date('2026-09-09T00:00:00Z').toISOString()}); assert.equal(aborted.status,'aborted'); assert.equal(aborted.errorCode,'job_aborted'); assert.equal(aborted.stage,'aborted'); assert.equal(aborted.failedStage,'restarting');
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
 

@@ -44,6 +44,7 @@ test('readUpdateState and saveUpdateState atomically manage job state and reconc
     });
     assert.equal(readInactive.status, 'aborted');
     assert.equal(readInactive.stage, 'aborted');
+    assert.equal(readInactive.failedStage, 'accepted');
     assert.equal(readInactive.errorCode, 'job_aborted');
     assert.equal(readInactive.finishedAt, '2026-09-06T12:05:00Z');
 
@@ -303,6 +304,7 @@ test('readUpdateState preserves running status during grace period even if servi
     });
     assert.equal(afterGrace.status, 'aborted');
     assert.equal(afterGrace.stage, 'aborted');
+    assert.equal(afterGrace.failedStage, 'accepted');
     assert.equal(afterGrace.errorCode, 'job_aborted');
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
@@ -396,6 +398,61 @@ test('UpdateManager coalesces concurrent checkUpdate calls and broadcasts state 
     mgr.pollJobState();
     assert.equal(broadcastEvents.length, 3);
     assert.equal(broadcastEvents[2].payload.job.stage, 'deploying');
+  } finally {
+    mgr.close();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('UpdateManager exposes the actual failed stage and inspection-only recovery guidance', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-update-recovery-'));
+  const statePath = path.join(dir, 'update-state.json');
+  const pubPath = path.join(dir, 'publication.json');
+  fs.writeFileSync(pubPath, JSON.stringify({releaseId: 'rel-current', commitSha: '1'.repeat(40)}));
+  const config = {
+    demo: false,
+    management: {enabled: true},
+    update: {
+      enabled: true,
+      repositoryUrl: 'https://example.invalid/repository.git',
+      branch: 'main',
+      statePath,
+      publicationPath: pubPath
+    }
+  };
+  const job = {
+    jobId: 'job-recovery',
+    targetCommitSha: '2'.repeat(40),
+    status: 'failed',
+    stage: 'failed',
+    failedStage: 'restarting',
+    errorCode: 'health_check_failed',
+    startedAt: '2026-09-09T00:00:00Z',
+    finishedAt: '2026-09-09T00:01:00Z'
+  };
+  saveUpdateState(statePath, job);
+  const mgr = new UpdateManager(config, null, {isServiceActive: () => false});
+  mgr.isSupported = () => true;
+  try {
+    const status = mgr.getStatus();
+    assert.equal(status.job.failedStage, 'restarting');
+    assert.equal(status.job.recovery.stage, 'restarting');
+    assert.equal(status.job.recovery.kind, 'post_restart');
+    assert.match(status.job.recovery.message, /停止後/);
+    assert.ok(status.job.recovery.commands.some(command => command.includes('update-state.json')));
+    assert.equal(status.job.recovery.commands.some(command => /restart|rollback|restore/.test(command)), false);
+
+    // Preserve compatibility with terminal states written before failedStage
+    // was added, while still choosing a stage from a known safe error code.
+    saveUpdateState(statePath, {...job, failedStage: null, errorCode: 'deploy_failed'});
+    const legacy = mgr.getStatus().job;
+    assert.equal(legacy.failedStage, 'deploying');
+    assert.equal(legacy.recovery.kind, 'post_deploy');
+
+    saveUpdateState(statePath, {...job, failedStage: null, stage: 'aborted', status: 'aborted', errorCode: 'job_aborted'});
+    const unknownAbort = mgr.getStatus().job;
+    assert.equal(unknownAbort.failedStage, null);
+    assert.equal(unknownAbort.recovery, null);
   } finally {
     mgr.close();
     fs.rmSync(dir, {recursive: true, force: true});

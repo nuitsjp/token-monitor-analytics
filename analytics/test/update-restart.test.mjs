@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createUpdateRestartController} from '../public/update-restart.mjs';
+import {createUpdateRestartController, isRestartRecoveryStage} from '../public/update-restart.mjs';
 
 const response = body => ({ok: true, async json() { return body; }});
+
+test('restart recovery begins only for deployment or restart stages', () => {
+  assert.equal(isRestartRecoveryStage({status: 'running', stage: 'fetching'}), false);
+  assert.equal(isRestartRecoveryStage({status: 'running', stage: 'verifying'}), false);
+  assert.equal(isRestartRecoveryStage({status: 'running', stage: 'deploying'}), true);
+  assert.equal(isRestartRecoveryStage({status: 'running', stage: 'restarting'}), true);
+  assert.equal(isRestartRecoveryStage({status: 'failed', stage: 'failed', failedStage: 'restarting'}), false);
+});
 
 test('restart controller completes a same-content no-op without claiming the requested SHA is running', async () => {
   const events = [];

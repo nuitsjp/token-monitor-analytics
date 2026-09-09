@@ -17,6 +17,11 @@ export const VALID_STAGES = new Set([
 
 export const VALID_STATUSES = new Set(['idle', 'running', 'completed', 'failed', 'aborted']);
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'aborted']);
+const OPERATIONAL_STAGES = new Set(['accepted', 'fetching', 'verifying', 'deploying', 'restarting']);
+
+export function normalizeFailedStage(value) {
+  return typeof value === 'string' && OPERATIONAL_STAGES.has(value) ? value : null;
+}
 
 function defaultCheckServiceActive(unitName = 'tma-update.service') {
   if (process.platform !== 'linux') return false;
@@ -51,6 +56,7 @@ function stateObject(raw, fallbackStartedAt) {
     archiveSha256: typeof raw.archiveSha256 === 'string' ? raw.archiveSha256 : null,
     configurationId: typeof raw.configurationId === 'string' ? raw.configurationId : null,
     outcome: raw.outcome === 'updated' || raw.outcome === 'unchanged' ? raw.outcome : null,
+    failedStage: normalizeFailedStage(raw.failedStage),
     status,
     stage,
     errorCode: typeof raw.errorCode === 'string' ? raw.errorCode : null,
@@ -102,6 +108,7 @@ export function readRunnerState(statePath, {
     ...state,
     status: 'aborted',
     stage: 'aborted',
+    failedStage: state.failedStage ?? normalizeFailedStage(state.stage),
     errorCode: state.errorCode || 'job_aborted',
     finishedAt: state.finishedAt || now()
   };
@@ -139,6 +146,7 @@ export function saveRunnerState(statePath, state) {
     archiveSha256: state.archiveSha256 ?? null,
     configurationId: state.configurationId ?? null,
     outcome: state.outcome ?? null,
+    failedStage: normalizeFailedStage(state.failedStage),
     status: state.status,
     stage: state.stage,
     errorCode: state.errorCode ?? null,

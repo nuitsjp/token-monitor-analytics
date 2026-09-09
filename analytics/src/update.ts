@@ -8,6 +8,8 @@ export type UpdateStage =
   | 'failed'
   | 'aborted';
 
+export type UpdateOperationalStage = Exclude<UpdateStage, 'success' | 'failed' | 'aborted'>;
+
 export type UpdateStatus = 'idle' | 'running' | 'completed' | 'failed' | 'aborted';
 
 export type SafeUpdateErrorCode =
@@ -46,6 +48,14 @@ export interface CandidateInfo {
   hasUpdate: boolean;
 }
 
+export interface UpdateRecovery {
+  stage: UpdateOperationalStage;
+  kind: 'pre_stop' | 'post_deploy' | 'post_restart';
+  title: string;
+  message: string;
+  commands: string[];
+}
+
 export interface UpdateJobState {
   jobId: string;
   targetCommitSha: string;
@@ -61,6 +71,8 @@ export interface UpdateJobState {
   outcome?: 'updated' | 'unchanged' | null;
   status: UpdateStatus;
   stage: UpdateStage;
+  failedStage: UpdateOperationalStage | null;
+  recovery: UpdateRecovery | null;
   errorCode: SafeUpdateErrorCode | null;
   startedAt: string;
   finishedAt: string | null;

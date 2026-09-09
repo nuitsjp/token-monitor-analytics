@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {promisify} from 'node:util';
 import {readUpdateState, saveUpdateState} from './update-state.mjs';
+import {publicUpdateJob} from './update-recovery.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -163,13 +164,14 @@ export class UpdateManager {
   pollJobState() {
     const statePath = this.#config.update?.statePath ?? '/var/lib/tma-deploy/update-state.json';
     const job = this.#readState(statePath, {checkServiceActive: this.#isServiceActive});
-    const key = job ? `${job.jobId}:${job.status}:${job.stage}:${job.errorCode}` : null;
+    const publicJob = publicUpdateJob(job);
+    const key = publicJob ? `${publicJob.jobId}:${publicJob.status}:${publicJob.stage}:${publicJob.failedStage}:${publicJob.errorCode}` : null;
     if (key !== this.#lastJobKey) {
       this.#lastJobKey = key;
-      if (this.#live && job) {
+      if (this.#live && publicJob) {
         this.#live.broadcast('update_job_changed', {
           type: 'update_job_changed',
-          job
+          job: publicJob
         });
       }
     }
@@ -257,7 +259,7 @@ export class UpdateManager {
       reason: reason ?? undefined,
       current,
       candidate: this.#candidate,
-      job
+      job: publicUpdateJob(job)
     };
   }
 
@@ -298,8 +300,10 @@ export class UpdateManager {
       contentHash: null,
       archiveSha256: null,
       configurationId: null,
+      outcome: null,
       status: 'running',
       stage: 'accepted',
+      failedStage: null,
       errorCode: null,
       startedAt: new Date().toISOString(),
       finishedAt: null
@@ -312,18 +316,19 @@ export class UpdateManager {
     } catch (err) {
       newJob.status = 'failed';
       newJob.stage = 'failed';
+      newJob.failedStage = newJob.failedStage ?? 'accepted';
       newJob.errorCode = 'job_aborted';
       newJob.finishedAt = new Date().toISOString();
       this.#saveState(statePath, newJob);
       throw Object.assign(new Error(`Failed to trigger update service: ${err.message}`), {status: 500});
     }
 
-    this.#lastJobKey = `${newJob.jobId}:${newJob.status}:${newJob.stage}:${newJob.errorCode}`;
+    this.#lastJobKey = `${newJob.jobId}:${newJob.status}:${newJob.stage}:${newJob.failedStage}:${newJob.errorCode}`;
 
     if (this.#live) {
       this.#live.broadcast('update_job_changed', {
         type: 'update_job_changed',
-        job: newJob
+        job: publicUpdateJob(newJob)
       });
     }
 

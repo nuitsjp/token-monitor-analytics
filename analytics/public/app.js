@@ -1,5 +1,5 @@
 import {boundedUsageRange,createUsageHistoryController,historyFetchErrorText} from './usage-history.mjs';
-import {createUpdateRestartController} from './update-restart.mjs';
+import {createUpdateRestartController,isRestartRecoveryStage} from './update-restart.mjs';
 
 const $=id=>document.getElementById(id);
 const money=n=>typeof n==='number'&&Number.isFinite(n)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(n):'—';
@@ -9,7 +9,7 @@ const reasons={estimate_out_of_range:'推定値が計算範囲外',baseline_star
 const status=s=>({estimated:'参考推定',observing:'観測中',unavailable:'推定不可'}[s]??s);
 function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
 function notice(s){$('notice').textContent=s;$('notice').hidden=!s;}
-async function get(path){const r=await fetch(path,{cache:'no-store'});if(r.status===401)throw new Error('閲覧認証が必要です。画面を再読み込みし、設定したユーザー名・パスワードでログインしてください。');if(!r.ok)throw new Error(`APIの読み込みに失敗しました (${r.status})。保存済みの表示は更新されていません。`);return r.json();}
+async function get(path,options={}){const r=await fetch(path,{cache:'no-store',...options});if(r.status===401)throw new Error('閲覧認証が必要です。画面を再読み込みし、設定したユーザー名・パスワードでログインしてください。');if(!r.ok)throw new Error(`APIの読み込みに失敗しました (${r.status})。保存済みの表示は更新されていません。`);return r.json();}
 let data=null,view='dashboard',feed=null,stopped=false,loading=false,dirty=false;
 let usageHistoryHubs=[],usageHistoryRows=null,usageHistoryDisplayedQuery=null;
 const usageHistoryController=createUsageHistoryController({
@@ -306,7 +306,7 @@ async function reconnectHub(h){
  catch(err){notice(err.message);}
 }
 
-let updateData=null,pollingRestart=false;
+let updateData=null,pollingRestart=false,restartRefreshPromise=null;
 const updateErrors={lock_conflict:'他の発行タスクまたは更新処理が実行中です。',fetch_failed:'mainブランチの最新コミット取得に失敗しました。ネットワーク接続を確認してください。',invalid_remote_commit:'リモートブランチのコミット識別子を検証できないため、更新を中止しました。',main_moved:'確認後にmainが進んだため、指定SHAへの更新を中止しました。',already_current:'選択したコミットはすでに発行済みです。',commit_not_found:'指定されたコミットがリモートのmainに見つかりません。',verification_failed:'新バージョンのローカル検証（テストまたはビルド）に失敗したため、適用を中止しました。現在のバージョンは維持されます。',deploy_failed:'成果物の配置またはSQLiteバックアップに失敗しました。',health_check_failed:'新バージョンの起動または疎通確認に失敗しました。ホストログを確認してください。',configuration_changed:'受付後に起動設定が変更されたため、停止前に更新を中止しました。',migration_required:'新しいサービス構成には管理者による移行が必要です。',provision_required:'更新に必要な固定ツールがありません。管理者にprovision:ubuntuを依頼してください。',job_aborted:'更新処理が途中で中断されました（プロセス終了またはサービス停止）。',system_restarted:'OS再起動により更新処理が中断されました。',save_state_failed:'状態ファイルの保存に失敗しました。',unknown_error:'予期せぬエラーが発生しました。'};
 const stageNames={accepted:'受付済み',fetching:'取得中',verifying:'検証中',deploying:'配置中',restarting:'再起動中',success:'成功',failed:'失敗',aborted:'中断・状態不明'};
 
@@ -381,7 +381,7 @@ function drawUpdate(){
   }
  }
 
- const stageBadge=$('job-stage-badge'),jobErr=$('job-error'),jobRecovery=$('job-recovery');
+ const stageBadge=$('job-stage-badge'),jobErr=$('job-error'),jobRecovery=$('job-recovery'),jobRecoveryTitle=$('job-recovery-title'),jobRecoveryMessage=$('job-recovery-message'),jobRecoveryCommands=$('job-recovery-commands');
  if(!job){
   $('job-id').textContent='—';stageBadge.textContent='待機中';stageBadge.className='badge';
   $('job-started-at').textContent='';$('job-finished-at').textContent='';
@@ -398,7 +398,12 @@ function drawUpdate(){
   }else{
    jobErr.hidden=true;
   }
-  if(job.stage==='failed'&&(job.errorCode==='health_check_failed'||job.errorCode==='deploy_failed')){
+  const recovery=job.recovery;
+  if(recovery){
+   jobRecoveryTitle.textContent=recovery.title||'ホスト復旧手順';
+   jobRecoveryMessage.textContent=recovery.message||'';
+   jobRecoveryCommands.textContent=Array.isArray(recovery.commands)?recovery.commands.join('\n'):'';
+   jobRecoveryCommands.parentElement.hidden=!jobRecoveryCommands.textContent;
    jobRecovery.hidden=false;
   }else{
    jobRecovery.hidden=true;
@@ -446,20 +451,46 @@ function waitForRestart(jobId,targetCommitSha){
  if(!restartController.start(jobId,targetCommitSha))pollingRestart=false;
 }
 
+async function refreshUpdateAfterDisconnect(){
+ if(restartRefreshPromise)return restartRefreshPromise;
+ if(updateData?.job?.status!=='running')return;
+ restartRefreshPromise=(async()=>{
+  try{
+   // A state-file SSE event can race the service stop. Fetch one fresh DTO so
+   // a disconnect seen while the cached stage is verifying cannot hide a
+   // restart that has already entered deploying/restarting. This is a single
+   // bounded check; verification-stage disconnects never start the long poll.
+   const latest=await get('/api/manage/update',{signal:AbortSignal.timeout(1500)});
+   updateData=latest;drawUpdate();
+   if(isRestartRecoveryStage(latest?.job))waitForRestart(latest.job.jobId,latest.job.targetCommitSha);
+  }catch{}
+  finally{restartRefreshPromise=null;}
+ })();
+ return restartRefreshPromise;
+}
+
 function connection(s,on=false){$('live').textContent=s;$('dot').classList.toggle('on',on);}
 function connect(){
  if(stopped||feed)return;
  const current=new EventSource('/api/live');feed=current;
- current.onopen=()=>connection('ライブ接続中',true);
+ current.onopen=()=>{connection('ライブ接続中',true);if(updateData?.job?.status==='running')void refreshUpdateAfterDisconnect();};
  current.addEventListener('ready',()=>refresh());
  current.addEventListener('updated',()=>refresh());
  current.addEventListener('manage_updated',()=>refresh());
  current.addEventListener('update_candidate_updated',()=>loadUpdate());
- current.addEventListener('update_job_changed',()=>loadUpdate());
+ current.addEventListener('update_job_changed',event=>{
+  // Apply the event payload before the follow-up GET. If the app is about to
+  // stop, the GET may lose the race even though this SSE frame was delivered.
+  try{
+   const job=JSON.parse(event.data||'').job;
+   if(job&&updateData){updateData={...updateData,job};drawUpdate();}
+  }catch{}
+  loadUpdate();
+ });
  current.onerror=()=>{
   connection('ライブ再接続待ち');
-  const stage=updateData?.job?.stage;
-  if(updateData?.job?.status==='running'&&(stage==='deploying'||stage==='restarting'))waitForRestart(updateData.job.jobId,updateData.job.targetCommitSha);
+  if(isRestartRecoveryStage(updateData?.job))waitForRestart(updateData.job.jobId,updateData.job.targetCommitSha);
+  else if(updateData?.job?.status==='running')void refreshUpdateAfterDisconnect();
  };
 }
 $('refresh').onclick=refresh;$('hub-select').onchange=draw;$('contract-select').onchange=()=>loadHistory().catch(e=>notice(e.message));
