@@ -31,6 +31,43 @@ test('protected symlink backup leaves the live release permissions unchanged', {
   assert.equal(fs.readlinkSync(path.join(backupDir, 'protected', 'legacy-code')), release);
 });
 
+test('protected backup records metadata for every nested POSIX entry', {skip: process.platform === 'win32'}, t => {
+  const dir = fixture(t);
+  const source = path.join(dir, 'legacy-tree');
+  const nested = path.join(source, 'nested');
+  const secret = path.join(nested, 'hub-secret.env');
+  fs.mkdirSync(nested, {recursive: true});
+  fs.writeFileSync(secret, 'TOKEN=private\n');
+  fs.chmodSync(source, 0o750);
+  fs.chmodSync(nested, 0o710);
+  fs.chmodSync(secret, 0o640);
+
+  const backupDir = path.join(dir, 'backup');
+  const manifest = backupProtectedLayout({backupDir, sources: [{key: 'legacy-tree', path: source, exists: true}], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
+  const entry = manifest.entries[0];
+  assert.deepEqual(Object.keys(entry.sourceMetadataTree).sort(), ['', 'nested', 'nested/hub-secret.env']);
+  assert.equal(entry.sourceMetadataTree[''].mode & 0o777, 0o750);
+  assert.equal(entry.sourceMetadataTree.nested.mode & 0o777, 0o710);
+  assert.equal(entry.sourceMetadataTree['nested/hub-secret.env'].mode & 0o777, 0o640);
+  assert.equal(fs.statSync(path.join(backupDir, 'protected', 'legacy-tree', 'nested', 'hub-secret.env')).mode & 0o777, 0o640);
+});
+
+test('Windows protected backup records recursive ACL metadata', {skip: process.platform !== 'win32'}, t => {
+  const dir = fixture(t);
+  const source = path.join(dir, 'legacy-tree');
+  fs.mkdirSync(path.join(source, 'nested'), {recursive: true});
+  fs.writeFileSync(path.join(source, 'nested', 'hub-secret.env'), 'TOKEN=private\n');
+  const manifest = backupProtectedLayout({
+    backupDir: path.join(dir, 'backup'),
+    sources: [{key: 'legacy-tree', path: source, exists: true}],
+    state: {oldCommitSha: LEGACY_COMMIT_SHA},
+  });
+  const metadata = manifest.entries[0].sourceMetadataTree;
+  assert.equal(typeof metadata[''].acl, 'string');
+  assert.equal(typeof metadata.nested.acl, 'string');
+  assert.equal(typeof metadata['nested/hub-secret.env'].acl, 'string');
+});
+
 async function oldRuntime() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-old-runtime-'));
   const oldMigrationChecksum = createHash('sha256').update(fs.readFileSync(path.join(root, 'analytics/migrations/0001_initial.sql'))).digest('hex');

@@ -832,8 +832,9 @@ function defaultPlatform(options) {
         if (entry.key === 'legacy-database' || entry.key === 'legacy-outbox') continue;
         const source = path.join(backupRoot, entry.backupKey ?? entry.key);
         if (!fs.existsSync(source)) throw errorWithCode('Protected legacy backup is incomplete', 'restore_unavailable');
+        if (process.platform === 'win32' && !entry.sourceMetadataTree) throw errorWithCode('Protected legacy backup does not contain recursive Windows metadata', 'restore_unavailable');
         fs.rmSync(entry.path, {recursive: true, force: true});
-        copyEntry(source, entry.path, entry.sourceMetadata ?? null);
+        copyEntry(source, entry.path, entry.sourceMetadata ?? null, entry.sourceMetadataTree ?? null);
       }
       return true;
     },
@@ -1238,78 +1239,196 @@ function retireLegacyInputs({legacy, options, targetConfigPath, targetSecretsPat
   return moved;
 }
 
-function aclText(filename) {
+function windowsPowerShellPath() {
+  return process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe';
+}
+
+function runWindowsPowerShell(script, environment = {}) {
+  return execFileSync(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      // Keep ACL operations on the inbox Windows PowerShell modules. A
+      // machine-wide PSModulePath can autoload incompatible PowerShell 7
+      // modules under Windows PowerShell 5.1.
+      PSModulePath: process.env.SystemRoot
+        ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules')
+        : process.env.PSModulePath,
+      ...environment,
+    },
+    timeout: 5000,
+    killSignal: 'SIGTERM',
+    windowsHide: true,
+  });
+}
+
+function windowsAclError(message, code, cause) {
+  return errorWithCode(message, code, cause ? {cause} : {});
+}
+
+function windowsAclText(filename) {
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "$item=Get-Item -LiteralPath $env:TMA_MIGRATION_PATH -Force",
+    "$acl=Get-Acl -LiteralPath $item.FullName",
+    "[Console]::Out.Write($acl.Sddl)",
+  ].join(';');
+  let raw;
+  try { raw = runWindowsPowerShell(script, {TMA_MIGRATION_PATH: filename}).trim(); }
+  catch (error) { throw windowsAclError('Cannot capture the Windows ACL for a protected path', 'metadata_capture_failed', error); }
+  if (!raw) throw windowsAclError('Windows ACL capture returned no security descriptor', 'metadata_capture_failed');
+  return raw;
+}
+
+function protectWindowsBackupPath(filename) {
+  if (process.platform !== 'win32') return;
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "$item=Get-Item -LiteralPath $env:TMA_MIGRATION_PATH -Force",
+    "$acl=Get-Acl -LiteralPath $item.FullName",
+    "$acl.SetAccessRuleProtection($true,$false)",
+    "foreach($rule in @($acl.Access)){[void]$acl.RemoveAccessRule($rule)}",
+    "$inherit=[System.Security.AccessControl.InheritanceFlags]::None",
+    "if($item.PSIsContainer){$inherit=[System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit}",
+    "$prop=[System.Security.AccessControl.PropagationFlags]::None",
+    "$allow=[System.Security.AccessControl.AccessControlType]::Allow",
+    "$rights=[System.Security.AccessControl.FileSystemRights]::FullControl",
+    "$system=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')",
+    "$identities=@([System.Security.Principal.WindowsIdentity]::GetCurrent().User,$system)",
+    "foreach($identity in $identities){$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($identity,$rights,$inherit,$prop,$allow);[void]$acl.AddAccessRule($rule)}",
+    "Set-Acl -LiteralPath $item.FullName -AclObject $acl",
+  ].join(';');
+  try { runWindowsPowerShell(script, {TMA_MIGRATION_PATH: filename}); }
+  catch (error) { throw windowsAclError('Cannot make the migration backup private on Windows', 'backup_acl_failed', error); }
+}
+
+function applyWindowsAcl(filename, acl) {
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "$item=Get-Item -LiteralPath $env:TMA_MIGRATION_PATH -Force",
+    "$current=Get-Acl -LiteralPath $item.FullName",
+    "$current.SetSecurityDescriptorSddlForm($env:TMA_MIGRATION_ACL)",
+    "Set-Acl -LiteralPath $item.FullName -AclObject $current",
+  ].join(';');
+  try { runWindowsPowerShell(script, {TMA_MIGRATION_PATH: filename, TMA_MIGRATION_ACL: acl}); }
+  catch (error) { throw windowsAclError('Cannot restore a protected Windows ACL', 'metadata_restore_failed', error); }
+}
+
+function aclText(filename, stat = null) {
+  if (process.platform === 'win32') {
+    // ACL APIs resolve links to their targets. Never inspect a link while
+    // taking metadata for a protected copy: the target can be the live
+    // release outside the backup tree.
+    if (stat?.isSymbolicLink?.() ?? fs.lstatSync(filename).isSymbolicLink()) return null;
+    return windowsAclText(filename);
+  }
   if (process.platform !== 'linux') return null;
   try { return execFileSync('/usr/bin/getfacl', ['--absolute-names', '-p', filename], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}); }
   catch { return null; }
 }
 
 function entryMetadata(filename, stat = fs.lstatSync(filename)) {
-  return {uid: stat.uid, gid: stat.gid, mode: stat.mode & 0o7777, acl: aclText(filename)};
+  return {uid: stat.uid, gid: stat.gid, mode: stat.mode & 0o7777, acl: aclText(filename, stat)};
+}
+
+function metadataNeedsOwnership(metadata) {
+  if (process.platform === 'win32' || typeof metadata?.uid !== 'number' || typeof metadata?.gid !== 'number') return false;
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  return uid === 0 || uid !== metadata.uid || gid !== metadata.gid;
 }
 
 function applyEntryMetadata(filename, metadata) {
   if (!metadata) return;
+  let stat;
+  try { stat = fs.lstatSync(filename); }
+  catch (error) { throw errorWithCode('Cannot inspect a protected path while restoring metadata', 'metadata_restore_failed', {cause: error}); }
+
   // chmod/setfacl follow symlinks. A protected copy may point at the live
   // release, so touching its target would mutate the source during backup.
-  if (fs.lstatSync(filename).isSymbolicLink()) {
-    if (process.platform !== 'win32' && typeof metadata.uid === 'number' && typeof metadata.gid === 'number' && process.getuid?.() === 0) fs.lchownSync(filename, metadata.uid, metadata.gid);
+  if (stat.isSymbolicLink()) {
+    if (metadataNeedsOwnership(metadata)) {
+      try { fs.lchownSync(filename, metadata.uid, metadata.gid); }
+      catch (error) { throw errorWithCode('Cannot restore protected symlink ownership', 'metadata_restore_failed', {cause: error}); }
+    }
     return;
   }
-  try { fs.chmodSync(filename, metadata.mode); } catch {}
-  if (process.platform !== 'win32' && typeof metadata.uid === 'number' && typeof metadata.gid === 'number' && process.getuid?.() === 0) {
-    try { if (fs.lstatSync(filename).isSymbolicLink()) fs.lchownSync(filename, metadata.uid, metadata.gid); else fs.chownSync(filename, metadata.uid, metadata.gid); } catch {}
+
+  if (process.platform !== 'win32' && typeof metadata.mode === 'number') {
+    try { fs.chmodSync(filename, metadata.mode); }
+    catch (error) { throw errorWithCode('Cannot restore protected path permissions', 'metadata_restore_failed', {cause: error}); }
   }
-  if (metadata.acl && process.platform === 'linux') {
-    try { execFileSync('/usr/bin/setfacl', ['--set-file=-', filename], {input: metadata.acl, stdio: ['pipe', 'ignore', 'ignore']}); } catch {}
+  if (metadataNeedsOwnership(metadata)) {
+    try { fs.chownSync(filename, metadata.uid, metadata.gid); }
+    catch (error) { throw errorWithCode('Cannot restore protected path ownership', 'metadata_restore_failed', {cause: error}); }
+  }
+  if (metadata.acl) {
+    if (process.platform === 'win32') applyWindowsAcl(filename, metadata.acl);
+    else if (process.platform === 'linux') {
+      try { execFileSync('/usr/bin/setfacl', ['--set-file=-', filename], {input: metadata.acl, stdio: ['pipe', 'ignore', 'ignore']}); }
+      catch (error) { throw errorWithCode('Cannot restore the protected POSIX ACL', 'metadata_restore_failed', {cause: error}); }
+    }
   }
 }
 
-function copyEntry(source, destination, metadataOverride = null) {
+function copyEntry(source, destination, metadataOverride = null, metadataTree = null, relative = '', {privateDestination = false} = {}) {
   const stat = fs.lstatSync(source);
+  const sourceMetadata = entryMetadata(source, stat);
+  const metadata = metadataTree && Object.hasOwn(metadataTree, relative)
+    ? metadataTree[relative]
+    : (relative === '' && metadataOverride ? metadataOverride : sourceMetadata);
   fs.mkdirSync(path.dirname(destination), {recursive: true, mode: 0o700});
   if (stat.isSymbolicLink()) {
     const target = fs.readlinkSync(source);
     fs.symlinkSync(target, destination);
-    const metadata = metadataOverride ?? entryMetadata(source, stat);
-    applyEntryMetadata(destination, metadata);
-    return {type: 'symlink', target, metadata};
+    if (!privateDestination) applyEntryMetadata(destination, metadata);
+    return {type: 'symlink', target, metadata: sourceMetadata, metadataTree: {[relative]: sourceMetadata}};
   }
   if (stat.isDirectory()) {
     fs.mkdirSync(destination, {recursive: true, mode: stat.mode & 0o777});
+    if (privateDestination) protectWindowsBackupPath(destination);
+    const collected = {[relative]: sourceMetadata};
     for (const name of fs.readdirSync(source).sort()) {
       if (name === '.git') continue;
-      copyEntry(path.join(source, name), path.join(destination, name));
+      const child = copyEntry(path.join(source, name), path.join(destination, name), null, metadataTree, relative ? `${relative}/${name}` : name, {privateDestination});
+      Object.assign(collected, child.metadataTree);
     }
-    const metadata = metadataOverride ?? entryMetadata(source, stat);
-    applyEntryMetadata(destination, metadata);
-    return {type: 'directory', metadata};
+    if (!privateDestination) applyEntryMetadata(destination, metadata);
+    return {type: 'directory', metadata: sourceMetadata, metadataTree: collected};
   }
   if (!stat.isFile()) throw errorWithCode('Protected backup contains an unsupported file type', 'backup_invalid_source');
   fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
-  const metadata = metadataOverride ?? entryMetadata(source, stat);
-  applyEntryMetadata(destination, metadata);
-  return {type: 'file', size: stat.size, digest: fileSha256(source), metadata};
+  if (privateDestination) protectWindowsBackupPath(destination);
+  else applyEntryMetadata(destination, metadata);
+  return {type: 'file', size: stat.size, digest: fileSha256(source), metadata: sourceMetadata, metadataTree: {[relative]: sourceMetadata}};
 }
 
 export function backupProtectedLayout({backupDir, sources, state} = {}) {
   const root = absolute(backupDir);
   const protectedDir = path.join(root, 'protected');
   const manifestFile = path.join(protectedDir, 'manifest.json');
-  if (fs.existsSync(manifestFile)) return readJson(manifestFile, 'Protected backup manifest');
   fs.mkdirSync(root, {recursive: true, mode: 0o700});
+  if (process.platform === 'win32') protectWindowsBackupPath(root);
+  if (fs.existsSync(manifestFile)) {
+    if (process.platform === 'win32') protectWindowsBackupPath(protectedDir);
+    return readJson(manifestFile, 'Protected backup manifest');
+  }
   const temporary = path.join(root, `.protected-${process.pid}-${crypto.randomBytes(8).toString('hex')}`);
   fs.mkdirSync(temporary, {recursive: true, mode: 0o700});
+  if (process.platform === 'win32') protectWindowsBackupPath(temporary);
   const entries = [];
   try {
     for (const source of sources) {
       if (!source.exists) { entries.push({...source, backedUp: false}); continue; }
       const target = path.join(temporary, source.key);
-      const copied = copyEntry(source.path, target);
-      entries.push({...source, backedUp: true, copied, sourceMetadata: copied.metadata, backupKey: source.key});
+      const copied = copyEntry(source.path, target, null, null, '', {privateDestination: process.platform === 'win32'});
+      entries.push({...source, backedUp: true, copied, sourceMetadata: copied.metadata, sourceMetadataTree: copied.metadataTree, backupKey: source.key});
     }
     const manifest = {schemaVersion: 1, createdAt: new Date().toISOString(), phase: state?.phase ?? 'stop', oldCommitSha: state?.oldCommitSha ?? null, entries};
     fs.writeFileSync(path.join(temporary, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, {mode: 0o600});
+    if (process.platform === 'win32') protectWindowsBackupPath(path.join(temporary, 'manifest.json'));
     fs.renameSync(temporary, protectedDir);
     return manifest;
   } catch (error) {
