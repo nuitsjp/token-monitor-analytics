@@ -1546,14 +1546,10 @@ function windowsAclError(message, code, cause) {
   const raw = cause && typeof cause === 'object'
     ? [cause.stderr, cause.stdout].map(value => Buffer.isBuffer(value) ? value.toString('utf8') : typeof value === 'string' ? value : '').filter(Boolean).join(' ')
     : '';
-  // PowerShell emits CLIXML on stderr. Keep only the short operation/category
-  // detail so a failed restore is diagnosable in the CLI log without echoing an
-  // ACL, token, or other protected file content.
-  const detail = raw.replace(/<[^>]*>/g, ' ').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
-    .replace(/([A-Za-z]:[\\/][^ ]+|\\\\[^ ]+)/g, '<path>')
-    .replace(/\b[A-Fa-f0-9]{32,}\b/g, '<redacted>')
-    .slice(0, 320);
-  const diagnostic = detail || (cause?.code ? String(cause.code) : '');
+  // Only emit an explicitly generated category marker. Raw PowerShell errors
+  // can contain paths or protected arguments and must never reach CLI output.
+  const detail = raw.match(/TMA_ACL_FAILURE index=\d+ type=[A-Za-z0-9_]+ hresult=-?\d+/)?.[0];
+  const diagnostic = detail || (/^[A-Z_]+$/.test(String(cause?.code ?? '')) ? cause.code : '');
   return errorWithCode(diagnostic ? `${message}: ${diagnostic}` : message, code, cause ? {cause} : {});
 }
 
@@ -1642,7 +1638,7 @@ function applyWindowsAclTree(root, metadataTree, temporaryDirectory = null) {
       "$rootPath=$root.FullName.TrimEnd('\\','/')",
       "$records=@(Get-Content -LiteralPath $env:TMA_MIGRATION_ACL_FILE -Raw | ConvertFrom-Json)",
       "$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group",
-      "foreach($record in $records){$relative=[string]$record.path;try{if($relative -eq ''){$target=$root}else{if($relative -match '(^|/)\\.\\.?(/|$)'){throw 'Unsafe ACL metadata path'};$targetPath=Join-Path $rootPath ($relative.Replace('/','\\'));$target=Get-Item -LiteralPath $targetPath -Force;$prefix=$rootPath+'\\';if(-not $target.FullName.StartsWith($prefix,[System.StringComparison]::OrdinalIgnoreCase)){throw 'ACL metadata path escaped destination root'}};if(([bool]($target.Attributes -band [IO.FileAttributes]::ReparsePoint))){continue};$acl=Get-Acl -LiteralPath $target.FullName;$acl.SetSecurityDescriptorSddlForm([string]$record.acl,$sections);Set-Acl -LiteralPath $target.FullName -AclObject $acl}catch{throw ('ACL record ' + $relative + ' failed: ' + $_.Exception.Message)}}",
+      "$recordIndex=0;foreach($record in $records){$recordIndex++;$relative=[string]$record.path;try{if($relative -eq ''){$target=$root}else{if($relative -match '(^|/)\\.\\.?(/|$)'){throw 'Unsafe ACL metadata path'};$targetPath=Join-Path $rootPath ($relative.Replace('/','\\'));$target=Get-Item -LiteralPath $targetPath -Force;$prefix=$rootPath+'\\';if(-not $target.FullName.StartsWith($prefix,[System.StringComparison]::OrdinalIgnoreCase)){throw 'ACL metadata path escaped destination root'}};if(([bool]($target.Attributes -band [IO.FileAttributes]::ReparsePoint))){continue};$acl=Get-Acl -LiteralPath $target.FullName;$acl.SetSecurityDescriptorSddlForm([string]$record.acl,$sections);Set-Acl -LiteralPath $target.FullName -AclObject $acl}catch{[Console]::Error.WriteLine(('TMA_ACL_FAILURE index={0} type={1} hresult={2}' -f $recordIndex,$_.Exception.GetType().Name,$_.Exception.HResult));throw 'ACL metadata restoration failed'}}",
     ].join(';');
     try { runWindowsPowerShell(script, {TMA_MIGRATION_PATH: root, TMA_MIGRATION_ACL_FILE: metadataFile}, 90000); }
     catch (error) { throw windowsAclError('Cannot restore the protected Windows ACL tree', 'metadata_restore_failed', error); }
