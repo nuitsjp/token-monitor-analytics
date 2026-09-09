@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 
 const root=fileURLToPath(new URL('../..',import.meta.url));
 
@@ -125,7 +125,7 @@ test('Analytics releases listener and SQLite after POSIX SIGINT or Windows force
  });
 
  await waitForReady(child,output,5000);
- const health=await fetch(`http://127.0.0.1:${port}/api/health`);
+ const health=await fetch(`http://127.0.0.1:${port}/api/health`,{signal:AbortSignal.timeout(5000)});
  assert.equal(health.status,200);
  assert.equal((await health.json()).storage,'sqlite');
  const live=await openLive(port);
@@ -142,9 +142,14 @@ test('Analytics releases listener and SQLite after POSIX SIGINT or Windows force
 });
 
 const WINDOWS_CONSOLE_CTRL_C = String.raw`
+$ErrorActionPreference = 'Stop'
+$env:PSModulePath = Join-Path $PSHOME 'Modules'
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') -Force -ErrorAction Stop
+
 Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -178,9 +183,35 @@ public static class TmaConsoleControl {
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr handle, uint exitCode);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
 
+  sealed class TimeoutWebClient : WebClient {
+    protected override WebRequest GetWebRequest(Uri address) {
+      var request = (HttpWebRequest)base.GetWebRequest(address);
+      request.Timeout = 1000;
+      request.ReadWriteTimeout = 1000;
+      return request;
+    }
+  }
+
   static string Quote(string value) {
+    if (value.Length == 0) return "\"\"";
     if (value.IndexOfAny(new[] {' ', '\t', '"'}) < 0) return value;
-    return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+    var result = new StringBuilder("\"");
+    var backslashes = 0;
+    foreach (var character in value) {
+      if (character == '\\') { backslashes++; continue; }
+      if (character == '"') {
+        result.Append('\\', backslashes * 2 + 1);
+        result.Append('"');
+        backslashes = 0;
+        continue;
+      }
+      result.Append('\\', backslashes);
+      result.Append(character);
+      backslashes = 0;
+    }
+    result.Append('\\', backslashes * 2);
+    result.Append('"');
+    return result.ToString();
   }
 
   public static int Run(string node, string entry, string config, string root, int port) {
@@ -191,7 +222,7 @@ public static class TmaConsoleControl {
       throw new InvalidOperationException("CreateProcess failed: " + Marshal.GetLastWin32Error());
     }
     try {
-      using (var client = new System.Net.WebClient()) {
+      using (var client = new TimeoutWebClient()) {
         var ready = false;
         for (var attempt = 0; attempt < 100; attempt++) {
           try {
@@ -211,8 +242,8 @@ public static class TmaConsoleControl {
       // the controller that is waiting for its exit.
       if (!SetConsoleCtrlHandler(IntPtr.Zero, true)) throw new InvalidOperationException("SetConsoleCtrlHandler failed: " + Marshal.GetLastWin32Error());
       if (!GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)) throw new InvalidOperationException("GenerateConsoleCtrlEvent failed: " + Marshal.GetLastWin32Error());
-      SetConsoleCtrlHandler(IntPtr.Zero, false);
       FreeConsole();
+      if (!SetConsoleCtrlHandler(IntPtr.Zero, false)) throw new InvalidOperationException("SetConsoleCtrlHandler restore failed: " + Marshal.GetLastWin32Error());
       if (WaitForSingleObject(process.hProcess, 8000) != WAIT_OBJECT_0) {
         TerminateProcess(process.hProcess, 124);
         throw new TimeoutException("child Analytics process did not exit after CTRL_C_EVENT");
@@ -224,6 +255,10 @@ public static class TmaConsoleControl {
       TerminateProcess(process.hProcess, 125);
       throw;
     } finally {
+      // Detach before restoring the helper's default CTRL+C behavior. This
+      // avoids a late console event racing with the controller cleanup.
+      FreeConsole();
+      SetConsoleCtrlHandler(IntPtr.Zero, false);
       if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
       if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
     }
@@ -257,10 +292,22 @@ function runWindowsConsoleCtrlC({port,configPath}){
   let output='';
   child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
   child.stdout.on('data',chunk=>{output+=chunk;});child.stderr.on('data',chunk=>{output+=chunk;});
-  const timer=setTimeout(()=>{child.kill('SIGKILL');reject(new Error(`Windows console helper timed out: ${output}`));},15000);
+  let settled=false;
+  const cleanup=()=>{
+   if(child.pid){
+    const result=spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore',windowsHide:true,timeout:5000});
+    if(result.error||result.status!==0)child.kill('SIGKILL');
+   }else child.kill('SIGKILL');
+  };
+  const timer=setTimeout(()=>{
+   if(settled)return;
+   settled=true;cleanup();reject(new Error(`Windows console helper timed out: ${output}`));
+  },15000);
   timer.unref?.();
-  child.once('error',error=>{clearTimeout(timer);reject(error);});
+  child.once('error',error=>{if(settled)return;settled=true;clearTimeout(timer);reject(error);});
   child.once('exit',(code,signal)=>{
+   if(settled)return;
+   settled=true;
    clearTimeout(timer);
    if(code===0)resolve(output);else reject(new Error(`Windows console helper failed (${code ?? signal}): ${output}`));
   });

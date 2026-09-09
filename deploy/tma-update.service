@@ -7,5 +7,6 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/var/lib/tma-deploy/updater
 ExecStart=/var/lib/tma-deploy/updater/node --experimental-strip-types /var/lib/tma-deploy/updater/tools/update-runner.mjs
+Environment=PATH=/var/lib/tma-deploy/updater/node-runtime/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 UMask=0077
 NoNewPrivileges=true

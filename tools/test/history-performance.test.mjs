@@ -152,7 +152,7 @@ async function historyShutdownFixture(dir){
  const app=await startServer(config,{logger:{info(){},error(){}},historyHeaderTimeoutMs:10000,historyBodyTimeoutMs:30000,historyMinIntervalMs:0,historyRetryDelayMs:0});
  config.listen.port=app.server.address().port;config.publicOrigin=`http://127.0.0.1:${config.listen.port}`;
  try{
-  const response=await fetch(`${config.publicOrigin}/api/manage/hubs`,{method:'POST',headers:{Origin:config.publicOrigin,'Content-Type':'application/json'},body:JSON.stringify({id:'shutdown-hub',label:'Shutdown fixture',url:hubUrl,secret:'performance-secret'})});
+  const response=await fetch(`${config.publicOrigin}/api/manage/hubs`,{method:'POST',headers:{Origin:config.publicOrigin,'Content-Type':'application/json'},body:JSON.stringify({id:'shutdown-hub',label:'Shutdown fixture',url:hubUrl,secret:'performance-secret'}),signal:AbortSignal.timeout(10000)});
   assert.equal(response.status,200);
   await waitFor(()=>historyRequested,10000);
   const started=performance.now();

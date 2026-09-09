@@ -19,6 +19,7 @@ export const legacySystemUnits = Object.freeze([
   'tma-update.service'
 ]);
 export const updaterDir = '/var/lib/tma-deploy/updater';
+export const runtimeBinDir = `${updaterDir}/node-runtime/bin`;
 export const repoDir = '/var/lib/tma-deploy/repo';
 export const updateStateFile = '/var/lib/tma-deploy/update-state.json';
 export const publicationFile = `${prefix}/publication.json`;
@@ -51,6 +52,7 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=${updaterDir}
 ExecStart=${updaterDir}/node --experimental-strip-types ${updaterDir}/tools/update-runner.mjs
+Environment=PATH=${runtimeBinDir}:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 UMask=0077
 NoNewPrivileges=true
 `;

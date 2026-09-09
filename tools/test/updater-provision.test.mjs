@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {updaterRunnerFiles,legacySystemUnits,userUnit,infrastructureVersion,appUnits,managedUnits,serviceContractVersion,runnerVersion} from '../ubuntu-layout.mjs';
+import {updaterRunnerFiles,runtimeBinDir,legacySystemUnits,userUnit,infrastructureVersion,appUnits,managedUnits,serviceContractVersion,runnerVersion} from '../ubuntu-layout.mjs';
 import {assertLegacySystemUnitsAbsent,assertLegacyUserUnitsAbsent,bootstrapTailscale,ensureDirectory,isIntegratedInfrastructureRecord,requiredPackages} from '../provision-ubuntu.mjs';
 import {RUNNER_CONTRACT,validateRunnerContract} from '../runner-contract.mjs';
 
@@ -135,6 +135,7 @@ test('provisioning keeps the nonempty wrong-owner guard and Node-only dependenci
   assert.match(unit, /ProtectHome=true/);
   assert.match(unit, /ReadWritePaths=.*\/var\/lib\/tma-analytics.*\/var\/lib\/tma-deploy/);
   assert.doesNotMatch(userUnit('tma-update.service'), /--apply|--locked/);
+  assert.match(userUnit('tma-update.service'), new RegExp(`Environment=PATH=${runtimeBinDir.replaceAll('/', '\\/')}:%h\\/.local\\/bin:`));
   if (process.getuid?.() !== 0) { t.skip('Wrong-owner filesystem guard requires root-owned fixture mutation.'); return; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-owner-'));
   t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
@@ -156,5 +157,6 @@ test('packaged service units use the same single user-service contract', () => {
   assert.doesNotMatch(analytics, /^User=|^Group=|^WantedBy=multi-user/m);
   assert.match(analytics, /ReadWritePaths=\/var\/lib\/tma-analytics \/var\/lib\/tma-deploy/);
   assert.doesNotMatch(update, /^User=|^Group=|--apply|--locked/m);
+  assert.match(update, /Environment=PATH=\/var\/lib\/tma-deploy\/updater\/node-runtime\/bin:%h\/\.local\/bin:/);
   assert.doesNotMatch(update, /^WantedBy=/m);
 });

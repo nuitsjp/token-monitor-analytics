@@ -40,9 +40,11 @@ source_dir=$(cd "$source_dir" && pwd)
 node_bin=$(readlink -f "$node_bin")
 mise_bin=$(readlink -f "$mise_bin")
 node_root=$(cd "$(dirname "$node_bin")/.." && pwd)
+node_npm_cli="$node_root/lib/node_modules/npm/bin/npm-cli.js"
 [[ -d "$source_dir/.git" ]] || { echo "source directory must be a clean Git checkout" >&2; exit 2; }
 [[ -x "$node_bin" ]] || { echo "fixed Node binary is not executable: $node_bin" >&2; exit 2; }
 [[ -x "$node_root/bin/npm" ]] || { echo "fixed Node installation must include npm: $node_root" >&2; exit 2; }
+[[ -f "$node_npm_cli" ]] || { echo "fixed Node installation must include the npm package: $node_npm_cli" >&2; exit 2; }
 [[ -x "$mise_bin" ]] || { echo "fixed mise binary is not executable: $mise_bin" >&2; exit 2; }
 git -C "$source_dir" diff --exit-code
 git -C "$source_dir" diff --cached --exit-code
@@ -74,6 +76,7 @@ seed_image="$work_dir/seed.img"
 ssh_key="$work_dir/id_ed25519"
 bundle="$work_dir/source.bundle"
 node_runtime_archive="$work_dir/node-runtime.tar.gz"
+node_runtime_tree="$work_dir/node-runtime"
 
 echo "Downloading pinned Ubuntu image: $image_url"
 curl --fail --location --retry 3 --output "$base_image" "$image_url"
@@ -112,6 +115,7 @@ PY
 ssh_opts=(-i "$ssh_key" -p "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=6)
 scp_opts=(-i "$ssh_key" -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=6)
 guest() { timeout --foreground 900s ssh "${ssh_opts[@]}" "tma@127.0.0.1" "$@"; }
+guest_update() { timeout --foreground 1200s ssh "${ssh_opts[@]}" "tma@127.0.0.1" "$@"; }
 guest_copy() { timeout --foreground 300s scp "${scp_opts[@]}" "$@"; }
 
 # QEMU selects KVM when the hosted runner exposes it and falls back to the
@@ -147,7 +151,12 @@ if [[ "$initial_ssh_ready" != true ]]; then echo 'Timed out waiting for guest SS
 echo 'Installing guest prerequisites and transferring the clean checkout'
 guest 'sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar'
 git -C "$source_dir" bundle create "$bundle" HEAD
-tar -C "$node_root" -czf "$node_runtime_archive" .
+mkdir -p "$node_runtime_tree/bin" "$node_runtime_tree/lib/node_modules"
+cp -L "$node_bin" "$node_runtime_tree/bin/node"
+cp -a "$node_root/bin/npm" "$node_runtime_tree/bin/npm"
+if [[ -e "$node_root/bin/npx" ]]; then cp -a "$node_root/bin/npx" "$node_runtime_tree/bin/npx"; fi
+cp -a "$node_root/lib/node_modules/npm" "$node_runtime_tree/lib/node_modules/npm"
+tar -C "$node_runtime_tree" -czf "$node_runtime_archive" .
 guest_copy "$bundle" "tma@127.0.0.1:/tmp/tma-source.bundle"
 guest_copy "$node_runtime_archive" "tma@127.0.0.1:/tmp/tma-node-runtime.tar.gz"
 guest_copy "$mise_bin" "tma@127.0.0.1:/tmp/tma-mise"
@@ -180,7 +189,12 @@ if systemctl --user is-enabled --quiet tma-update.service; then
   echo 'update oneshot must not be enabled by provisioning' >&2
   exit 1
 fi
-curl --fail --silent --show-error http://127.0.0.1:18787/api/health | tee /tmp/tma-health-before.json
+test -x /var/lib/tma-deploy/updater/node-runtime/bin/node
+test -x /var/lib/tma-deploy/updater/node-runtime/bin/npm
+test -x /home/tma/.local/bin/mise
+PATH=/var/lib/tma-deploy/updater/node-runtime/bin:/home/tma/.local/bin:/usr/bin:/bin npm --version
+systemctl --user cat tma-update.service | grep -F 'Environment=PATH=/var/lib/tma-deploy/updater/node-runtime/bin:%h/.local/bin:'
+curl --connect-timeout 5 --max-time 30 --fail --silent --show-error http://127.0.0.1:18787/api/health | tee /tmp/tma-health-before.json
 test -s /var/lib/tma-analytics/analytics.db
 test -f /var/lib/tma-analytics/hub-secrets.json
 EOF
@@ -188,7 +202,7 @@ guest 'systemctl --user status --no-pager tma-analytics.service' | tee "$artifac
 guest 'cat /tmp/tma-health-before.json' | tee "$artifact_dir/health-before-reboot.json"
 
 echo 'Running the real user-systemd one-shot update against an isolated local Git fixture'
-guest <<'EOF'
+guest_update <<'EOF'
 set -Eeuo pipefail
 export PATH=/home/tma/node-runtime/bin:/home/tma/.local/bin:$PATH
 cd /home/tma/repo
@@ -200,7 +214,9 @@ git init --bare --quiet /home/tma/acceptance-remote.git
 git remote remove acceptance 2>/dev/null || true
 git remote add acceptance /home/tma/acceptance-remote.git
 git push --quiet acceptance HEAD:refs/heads/main
-git commit --allow-empty --quiet -m 'isolated acceptance candidate'
+printf '\n/* isolated acceptance release payload */\n' >> analytics/public/styles.css
+git add analytics/public/styles.css
+git commit --quiet -m 'isolated acceptance candidate payload'
 git push --quiet acceptance HEAD:refs/heads/main
 candidate=$(git rev-parse HEAD)
 printf '%s\n' "$candidate" > /tmp/tma-update-candidate.sha
@@ -220,19 +236,38 @@ NODE
 
 sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}' > /tmp/tma-config-before-update.sha
 sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}' > /tmp/tma-secret-before-update.sha
-sha256sum /var/lib/tma-analytics/analytics.db | awk '{print $1}' > /tmp/tma-db-before-update.sha
-systemctl --user restart tma-analytics.service
+systemctl --user stop tma-analytics.service
+/home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+const filename='/var/lib/tma-analytics/analytics.db';
+const marker='tma-acceptance-persistent-marker-v1';
+const db=new DatabaseSync(filename);
+try {
+ db.exec('PRAGMA busy_timeout=5000');
+ if(db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')throw new Error('database integrity check failed before update');
+ db.prepare("INSERT INTO app_metadata(key,value) VALUES('acceptance_marker',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(marker);
+ const row=db.prepare("SELECT value FROM app_metadata WHERE key='acceptance_marker'").get();
+ if(row?.value!==marker)throw new Error('database marker did not commit before update');
+ fs.writeFileSync('/tmp/tma-db-before-update.json',JSON.stringify({marker,appMetadataRows:Number(db.prepare('SELECT COUNT(*) AS count FROM app_metadata').get().count),schemaMigrations:Number(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count),integrity:'ok'},null,2)+'\n',{mode:0o600});
+} finally { db.close(); }
+NODE
+systemctl --user start tma-analytics.service
 for attempt in $(seq 1 60); do
-  if curl --fail --silent http://127.0.0.1:18787/api/health >/tmp/tma-health-update-start.json; then break; fi
+  if curl --connect-timeout 5 --max-time 30 --fail --silent http://127.0.0.1:18787/api/health >/tmp/tma-health-update-start.json; then break; fi
   if ((attempt == 60)); then echo 'Analytics did not restart before update acceptance' >&2; exit 1; fi
   sleep 1
 done
+main_pid_before=$(systemctl --user show -p MainPID --value tma-analytics.service)
+if ! [[ "$main_pid_before" =~ ^[1-9][0-9]*$ ]]; then echo "invalid Analytics MainPID before update: $main_pid_before" >&2; exit 1; fi
+printf '%s\n' "$main_pid_before" > /tmp/tma-main-pid-before-update
 
 /home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
 import fs from 'node:fs';
 const base='http://127.0.0.1:18787';
+const fetchWithTimeout=(url,options={},timeoutMs=30000)=>fetch(url,{...options,signal:AbortSignal.timeout(timeoutMs)});
 async function request(route,body){
- const response=await fetch(base+route,{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify(body)});
+ const response=await fetchWithTimeout(base+route,{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify(body)});
  const data=await response.json();
  if(!response.ok)throw new Error(`${route} failed: ${response.status} ${JSON.stringify(data)}`);
  return data;
@@ -245,13 +280,13 @@ if(!applied.jobId)throw new Error('update apply did not return a job ID');
 fs.writeFileSync('/tmp/tma-update-request.json',JSON.stringify({jobId:applied.jobId,targetCommitSha:candidate.targetCommitSha},null,2)+'\n',{mode:0o600});
 NODE
 
-for attempt in $(seq 1 180); do
+for attempt in $(seq 1 300); do
   if grep -q '"status": "completed"' /var/lib/tma-deploy/update-state.json; then break; fi
   if grep -q '"status": "failed"\|"status": "aborted"' /var/lib/tma-deploy/update-state.json; then
     cat /var/lib/tma-deploy/update-state.json >&2
     exit 1
   fi
-  if ((attempt == 180)); then echo 'Timed out waiting for the isolated update oneshot' >&2; cat /var/lib/tma-deploy/update-state.json >&2; exit 1; fi
+  if ((attempt == 300)); then echo 'Timed out waiting for the isolated update oneshot' >&2; cat /var/lib/tma-deploy/update-state.json >&2; exit 1; fi
   sleep 2
 done
 
@@ -260,32 +295,60 @@ import fs from 'node:fs';
 const request=JSON.parse(fs.readFileSync('/tmp/tma-update-request.json','utf8'));
 const state=JSON.parse(fs.readFileSync('/var/lib/tma-deploy/update-state.json','utf8'));
 if(state.jobId!==request.jobId||state.targetCommitSha!==request.targetCommitSha||state.status!=='completed'||state.stage!=='success')throw new Error('update state did not retain the accepted terminal job');
-const health=await (await fetch('http://127.0.0.1:18787/api/health')).json();
+const fetchWithTimeout=(url,options={},timeoutMs=30000)=>fetch(url,{...options,signal:AbortSignal.timeout(timeoutMs)});
+const health=await (await fetchWithTimeout('http://127.0.0.1:18787/api/health')).json();
 if(health.release?.targetCommitSha!==request.targetCommitSha)throw new Error('Analytics did not restart at the candidate commit');
-const sse=await fetch('http://127.0.0.1:18787/api/live');
-if(sse.status!==200||!sse.body)throw new Error('Analytics SSE did not reopen after update');
-const reader=sse.body.getReader();let text='';const deadline=Date.now()+5000;
-while(!text.includes('event: ready')&&Date.now()<deadline){const next=await reader.read();if(next.done)break;text+=new TextDecoder().decode(next.value);}
-await reader.cancel();
+const sseController=new AbortController();const sseTimer=setTimeout(()=>sseController.abort(),10000);let reader;
+let text='';
+try {
+ const sse=await fetch('http://127.0.0.1:18787/api/live',{signal:sseController.signal});
+ if(sse.status!==200||!sse.body)throw new Error('Analytics SSE did not reopen after update');
+ reader=sse.body.getReader();
+ while(!text.includes('event: ready')){const next=await reader.read();if(next.done)break;text+=new TextDecoder().decode(next.value);}
+} finally {
+ try { await reader?.cancel(); } catch {}
+ clearTimeout(sseTimer);sseController.abort();
+}
 if(!text.includes('event: ready'))throw new Error('Analytics SSE did not emit ready after update');
-const history=await fetch('http://127.0.0.1:18787/api/usage-history/hubs');
+const history=await fetchWithTimeout('http://127.0.0.1:18787/api/usage-history/hubs');
 if(history.status!==200)throw new Error('History API did not reopen after update');
 NODE
 
 test "$(cat /tmp/tma-config-before-update.sha)" = "$(sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}')"
 test "$(cat /tmp/tma-secret-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}')"
-test "$(cat /tmp/tma-db-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/analytics.db | awk '{print $1}')"
+main_pid_after=$(systemctl --user show -p MainPID --value tma-analytics.service)
+if ! [[ "$main_pid_after" =~ ^[1-9][0-9]*$ ]] || [[ "$main_pid_before" == "$main_pid_after" ]]; then
+  echo "Analytics MainPID did not change across the release update: before=$main_pid_before after=$main_pid_after" >&2
+  exit 1
+fi
+printf '%s\n' "$main_pid_after" > /tmp/tma-main-pid-after-update
+/home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+const filename='/var/lib/tma-analytics/analytics.db';
+const expected='tma-acceptance-persistent-marker-v1';
+const db=new DatabaseSync(filename,{readOnly:true});
+try {
+ const integrity=db.prepare('PRAGMA integrity_check').get().integrity_check;
+ const marker=db.prepare("SELECT value FROM app_metadata WHERE key='acceptance_marker'").get()?.value;
+ if(integrity!=='ok'||marker!==expected)throw new Error(`persistent database evidence failed: integrity=${integrity} marker=${marker}`);
+ fs.writeFileSync('/tmp/tma-db-after-update.json',JSON.stringify({marker,appMetadataRows:Number(db.prepare('SELECT COUNT(*) AS count FROM app_metadata').get().count),schemaMigrations:Number(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count),integrity},null,2)+'\n',{mode:0o600});
+} finally { db.close(); }
+NODE
 if systemctl --user is-enabled --quiet tma-update.service; then
   echo 'update oneshot must remain disabled after an on-demand run' >&2
   exit 1
 fi
-curl --fail --silent --show-error http://127.0.0.1:18787/api/health > /tmp/tma-health-after-update.json
+curl --connect-timeout 5 --max-time 30 --fail --silent --show-error http://127.0.0.1:18787/api/health > /tmp/tma-health-after-update.json
 EOF
 guest 'cat /tmp/tma-update-request.json' | tee "$artifact_dir/update-request.json"
 guest 'cat /tmp/tma-update-candidate.sha' | tee "$artifact_dir/update-candidate.sha"
 guest 'cat /var/lib/tma-deploy/update-state.json' | tee "$artifact_dir/update-state.json"
 guest 'cat /tmp/tma-health-update-start.json' | tee "$artifact_dir/health-update-start.json"
 guest 'cat /tmp/tma-health-after-update.json' | tee "$artifact_dir/health-after-update.json"
+guest 'cat /tmp/tma-db-before-update.json' | tee "$artifact_dir/db-before-update.json"
+guest 'cat /tmp/tma-db-after-update.json' | tee "$artifact_dir/db-after-update.json"
+guest 'printf "before="; cat /tmp/tma-main-pid-before-update; printf "after="; cat /tmp/tma-main-pid-after-update' | tee "$artifact_dir/main-pid-update.txt"
 
 boot_before=$(guest 'cat /proc/sys/kernel/random/boot_id')
 printf '%s\n' "$boot_before" > "$artifact_dir/boot-before.txt"
@@ -299,7 +362,7 @@ while ((SECONDS < reboot_down_deadline)); do
   sleep 1
 done
 if guest true >/dev/null 2>&1; then echo 'Guest SSH did not stop during reboot' >&2; exit 1; fi
-reboot_ssh_deadline=$((SECONDS + 900))
+reboot_ssh_deadline=$((SECONDS + 600))
 reboot_ssh_ready=false
 while ((SECONDS < reboot_ssh_deadline)); do
   if ! kill -0 "$vm_pid" 2>/dev/null; then echo 'QEMU exited during guest reboot' >&2; exit 1; fi
@@ -323,10 +386,24 @@ if systemctl --user is-enabled --quiet tma-update.service; then
   echo 'update oneshot unexpectedly enabled after reboot' >&2
   exit 1
 fi
-curl --fail --silent --show-error http://127.0.0.1:18787/api/health | tee /tmp/tma-health-after.json
+curl --connect-timeout 5 --max-time 30 --fail --silent --show-error http://127.0.0.1:18787/api/health | tee /tmp/tma-health-after.json
 test -s /var/lib/tma-analytics/analytics.db
 test -f /var/lib/tma-analytics/hub-secrets.json
 systemctl --user status --no-pager tma-analytics.service
+test "$(cat /tmp/tma-config-before-update.sha)" = "$(sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}')"
+test "$(cat /tmp/tma-secret-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}')"
+/home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+const db=new DatabaseSync('/var/lib/tma-analytics/analytics.db',{readOnly:true});
+try {
+ const integrity=db.prepare('PRAGMA integrity_check').get().integrity_check;
+ const marker=db.prepare("SELECT value FROM app_metadata WHERE key='acceptance_marker'").get()?.value;
+ if(integrity!=='ok'||marker!=='tma-acceptance-persistent-marker-v1')throw new Error(`persistent database evidence failed after reboot: integrity=${integrity} marker=${marker}`);
+ fs.writeFileSync('/tmp/tma-db-after-reboot.json',JSON.stringify({marker,appMetadataRows:Number(db.prepare('SELECT COUNT(*) AS count FROM app_metadata').get().count),schemaMigrations:Number(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count),integrity},null,2)+'\n',{mode:0o600});
+} finally { db.close(); }
+NODE
 EOF
 guest 'cat /tmp/tma-health-after.json' | tee "$artifact_dir/health-after-reboot.json"
+guest 'cat /tmp/tma-db-after-reboot.json' | tee "$artifact_dir/db-after-reboot.json"
 echo 'PASS: isolated Ubuntu user service survived an actual guest reboot'

@@ -107,18 +107,21 @@ service status, health, update state, and post-reboot logs.
 The guest sequence is:
 
 1. Install the fixed Node runtime (including npm) and the fixed `mise` binary
-   as an ordinary user; use the already-tested privileged provisioning contract
-   only inside the guest, with no host paths or old host services.
+   as an ordinary user; privileged provisioning copies the fixed Node/npm
+   runtime for the update unit and exposes it together with `%h/.local/bin` on
+   its `PATH`. Use the already-tested provisioning contract only inside the
+   guest, with no host paths or old host services.
 2. Configure one loopback listener and publish the current clean Git bundle.
    Assert that `tma-analytics.service` is enabled/active and
    `tma-update.service` is not enabled. Check health, SQLite, and the private
    secret file.
-3. Create a second commit in a guest-only local bare Git repository. Keep the
-   runner's required HTTPS repository URL and use a per-user Git `insteadOf`
-   rule to resolve that URL to the local bare path. Trigger check/apply through
-   the management API and assert the one-shot reaches one completed job ID,
-   candidate release health, reopened SSE/history, and unchanged config,
-   database, and secret hashes.
+3. Create a second commit with a harmless CSS comment in a guest-only local
+   bare Git repository. Keep the runner's required HTTPS repository URL and use
+   a per-user Git `insteadOf` rule to resolve that URL to the local bare path.
+   Trigger check/apply through the management API and assert the one-shot
+   reaches one completed job ID, candidate release health, a changed service
+   `MainPID`, reopened SSE/history, unchanged config/secret hashes, and a
+   persistent SQLite marker with `PRAGMA integrity_check=ok`.
 4. Issue `sudo reboot` inside the guest, wait for SSH, and assert user linger,
    enabled/active Analytics at the candidate release, healthy listener,
    preserved DB/secret, and no automatically-running update unit.

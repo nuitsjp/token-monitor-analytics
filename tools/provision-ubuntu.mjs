@@ -7,7 +7,7 @@ import {readJSON,writeChanged,assertOldLayout} from './publish-config.mjs';
 import {withPublicationLock} from './release.mjs';
 import {
  prefix,releasesDir,destination,appUnits,managedUnits,legacySystemUnits,
- updaterDir,repoDir,infrastructureFile,deploymentLock,userUnit,unitDigest,updaterRunnerFiles,
+ updaterDir,runtimeBinDir,repoDir,infrastructureFile,deploymentLock,userUnit,unitDigest,updaterRunnerFiles,
  infrastructureVersion,configVersion,serviceContractVersion,runnerVersion,runtimeContract,assertInfrastructureFile
 } from './ubuntu-layout.mjs';
 import {run,inherit,report} from './ubuntu-common.mjs';
@@ -145,6 +145,68 @@ function deploymentLockDirectory(){
  if((stat.mode&0o777)!==0o755)fs.chmodSync(directory,0o755);
 }
 
+function regularRuntimeFile(filename,label){
+ const stat=fs.lstatSync(filename);
+ if(!stat.isFile()||stat.isSymbolicLink())throw new Error(`${label} must be a regular file: ${filename}`);
+ return filename;
+}
+
+function fixedNpmPackage(nodeFilename){
+ const node=fs.realpathSync(nodeFilename);
+ const installation=path.dirname(path.dirname(node));
+ const candidates=[
+  path.join(installation,'lib','node_modules','npm'),
+  path.join(installation,'share','node_modules','npm'),
+  path.join(installation,'share','nodejs','npm')
+ ];
+ const npmExecutable=path.join(path.dirname(node),'npm');
+ if(fs.existsSync(npmExecutable)){
+  let current;
+  try{current=path.dirname(fs.realpathSync(npmExecutable));}catch{}
+  while(current&&current!==path.dirname(current)){
+   candidates.push(current);
+   current=path.dirname(current);
+  }
+ }
+ for(const npm of [...new Set(candidates)]){
+  try{
+   regularRuntimeFile(path.join(npm,'bin','npm-cli.js'),'Fixed Node npm CLI');
+   regularRuntimeFile(path.join(npm,'bin','npx-cli.js'),'Fixed Node npx CLI');
+   return npm;
+  }catch{}
+ }
+ throw new Error(`Fixed Node installation must include npm beside ${nodeFilename}.`);
+}
+
+function chownTree(filename,uid,gid){
+ const stat=fs.lstatSync(filename);
+ if(stat.isDirectory())for(const name of fs.readdirSync(filename))chownTree(path.join(filename,name),uid,gid);
+ fs.chownSync(filename,uid,gid);
+}
+
+/** Install the pinned Node plus the npm CLI needed by release verification. */
+function installFixedNodeRuntime(uid,gid){
+ const npmSource=fixedNpmPackage(process.execPath);
+ const runtimeRoot=path.dirname(runtimeBinDir);
+ ensureDirectory(runtimeRoot,uid,gid,0o755);
+ for(const name of fs.readdirSync(runtimeRoot))fs.rmSync(path.join(runtimeRoot,name),{recursive:true,force:true});
+ const runtimeLib=path.join(runtimeRoot,'lib','node_modules','npm');
+ fs.mkdirSync(path.dirname(runtimeLib),{recursive:true,mode:0o755});
+ fs.mkdirSync(runtimeBinDir,{recursive:true,mode:0o755});
+ const runtimeNode=path.join(runtimeBinDir,'node');
+ fs.copyFileSync(process.execPath,runtimeNode);fs.chmodSync(runtimeNode,0o755);
+ fs.cpSync(npmSource,runtimeLib,{recursive:true,dereference:true});
+ // Keep npm's package-relative resolution while avoiding a symlinked managed
+ // executable. The wrapper always invokes the fixed runtime binary.
+ for(const name of ['npm','npx']){
+  const target=path.join(runtimeBinDir,name);
+  fs.writeFileSync(target,`#!/bin/sh\nexec ${runtimeNode} ${path.join(runtimeLib,'bin',name==='npm'?'npm-cli.js':'npx-cli.js')} "$@"\n`,{mode:0o755});
+ }
+ chownTree(runtimeRoot,uid,gid);
+ const updaterNode=path.join(updaterDir,'node');
+ noLink(updaterNode);fs.rmSync(updaterNode,{force:true});fs.linkSync(runtimeNode,updaterNode);fs.chmodSync(updaterNode,0o755);fs.chownSync(updaterNode,uid,gid);
+}
+
 async function provisionLocked({username,uid,gid,home}){
  const existing=fs.existsSync(infrastructureFile)?readJSON(infrastructureFile):null;
  if(existing&&existing.uid!==uid)throw new Error('Changing publication user requires explicit migration.');
@@ -155,9 +217,7 @@ async function provisionLocked({username,uid,gid,home}){
   ['/var/lib/tma-analytics',0o700],['/var/lib/tma-analytics/backups',0o700],[updaterDir,0o700],[repoDir,0o700]
  ];
  for(const [directory,mode] of directories)ensureDirectory(directory,uid,gid,mode);
- const updaterNode=path.join(updaterDir,'node');
- noLink(updaterNode);
- fs.copyFileSync(process.execPath,updaterNode);fs.chmodSync(updaterNode,0o755);fs.chownSync(updaterNode,uid,gid);
+ installFixedNodeRuntime(uid,gid);
  for(const relative of updaterRunnerFiles){
   const source=path.join(sourceRoot,relative),target=path.join(updaterDir,relative);
   if(!fs.lstatSync(source).isFile())throw new Error(`Updater dependency is missing: ${relative}`);
