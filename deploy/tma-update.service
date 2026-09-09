@@ -1,0 +1,14 @@
+[Unit]
+Description=Token Monitor Analytics update runner (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tma-analytics
+Group=tma-analytics
+WorkingDirectory=/var/lib/tma-deploy/updater
+ExecStart=/var/lib/tma-deploy/updater/node --experimental-strip-types /var/lib/tma-deploy/updater/tools/update-runner.mjs --apply
+UMask=0077
+NoNewPrivileges=true
+

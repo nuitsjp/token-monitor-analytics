@@ -1,100 +1,111 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
+import {isIP} from 'node:net';
 import {readJSON,readEnvironment,writeChanged} from './publish-config.mjs';
-import {readHubsConfig} from '../analytics/runtime/hubs.mjs';
-import {isTailnetIPv4} from '../analytics/runtime/config.mjs';
-function envText(env){return Object.entries(env).map(([key,value])=>{
- if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)||typeof value!=='string'||/[\r\n\0]/.test(value))throw new Error('Invalid environment assignment.');
- const quote=value.includes("'")?'"':"'";
- if(value.includes(quote)||(quote==='"'&&value.includes('\\')))throw new Error('Secret contains unsupported quote/escape characters.');
- return `${key}=${quote}${value}${quote}`;
-}).join('\n')+'\n';}
-function configureLegacyApplication({dir,identity,port=8788,hubs}){
- if(!isTailnetIPv4(identity.tailnetIP)||!/^[-a-z0-9.]+\.ts\.net$/.test(identity.hostname)||!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid Tailscale identity or port.');
- const file=name=>path.join(dir,name),json=name=>fs.existsSync(file(name))?readJSON(file(name)):null;
- const env=name=>fs.existsSync(file(name))?readEnvironment(file(name)):{};
- const aEnv=env('analytics.env'),cEnv=env('collector.env');
- if(aEnv.TMA_INGEST_TOKEN&&cEnv.TMA_INGEST_TOKEN&&aEnv.TMA_INGEST_TOKEN!==cEnv.TMA_INGEST_TOKEN)throw new Error('Existing ingest credentials disagree; no settings were changed.');
- const token=aEnv.TMA_INGEST_TOKEN??cEnv.TMA_INGEST_TOKEN??randomBytes(32).toString('hex');
- aEnv.TMA_INGEST_TOKEN=token;cEnv.TMA_INGEST_TOKEN=token;
- aEnv.TMA_VIEWER_USER??='viewer';aEnv.TMA_VIEWER_PASSWORD??=randomBytes(24).toString('hex');
- const oldA=json('analytics.json'),oldC=json('collector.json');
- if(oldA&&(oldA.ingestTokenEnv!=='TMA_INGEST_TOKEN'||(oldA.viewerAuth.mode==='basic'&&(oldA.viewerAuth.userEnv!=='TMA_VIEWER_USER'||oldA.viewerAuth.passwordEnv!=='TMA_VIEWER_PASSWORD'))))throw new Error('Existing custom credential names require explicit migration.');
- let configuredHubs=oldC?.hubs;
- if(hubs){
-  if(!Array.isArray(hubs)||hubs.length<1||hubs.length>8)throw new Error('Configure 1..8 real Hubs.');
-  const ids=new Set(),urls=new Set();
-  configuredHubs=hubs.map((h,index)=>{
-   let u;try{u=new URL(h.url);}catch{throw new Error('Invalid Hub URL.');}
-   if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(h.id)||ids.has(h.id)||urls.has(u.origin)||u.protocol!=='https:'||u.username||u.password||u.pathname!=='/'||u.search||u.hash||typeof h.secret!=='string'||!h.secret||/[\r\n\0]/.test(h.secret)||h.secret.startsWith('REPLACE_')||h.secret==='demo-hub-secret'||h.secret===token||h.secret===aEnv.TMA_VIEWER_PASSWORD)throw new Error('Hub IDs, HTTPS URLs and independent secrets must be valid.');
-   ids.add(h.id);urls.add(u.origin);const key=`TMA_HUB_${index+1}_SECRET`;cEnv[key]=h.secret;
-   return {id:h.id,url:u.origin,secret_env:key};
-  });
- }
- const plan={version:2,...identity,port,publicOrigin:`http://${identity.hostname}:${port}`};
- const outputs=[['analytics.env',envText(aEnv)],['collector.env',envText(cEnv)],['connection.json',JSON.stringify(plan,null,2)+'\n']];
- if(configuredHubs?.length){
-  const analytics={version:1,listen:{host:'127.0.0.1',port},publicOrigin:plan.publicOrigin,databasePath:'/var/lib/tma-analytics/analytics.db',timeZone:'Asia/Tokyo',detailRetentionDays:7,ingestTokenEnv:'TMA_INGEST_TOKEN',viewerAuth:{mode:'basic',userEnv:'TMA_VIEWER_USER',passwordEnv:'TMA_VIEWER_PASSWORD'},contracts:[],...oldA,demo:false,tailnetViewer:{host:identity.tailnetIP,port}};
-  analytics.viewerAuth={mode:'tailscale'};
-  analytics.listen={host:'127.0.0.1',port};analytics.publicOrigin=plan.publicOrigin;
-  analytics.hubs=configuredHubs.map(h=>({id:h.id,label:oldA?.hubs.find(a=>a.id===h.id)?.label??h.id}));
-  if(analytics.contracts.some(c=>!configuredHubs.some(h=>h.id===c.hubId)))throw new Error('A removed Hub is still referenced by a contract; no configuration was changed.');
-  analytics.update={enabled:true,repositoryUrl:oldA?.update?.repositoryUrl??'https://github.com/nuitsjp/token-monitor-analytics.git',branch:oldA?.update?.branch??'main',checkIntervalSeconds:oldA?.update?.checkIntervalSeconds??300};
-  const collector={version:1,ingest_token_env:'TMA_INGEST_TOKEN',spool_dir:'/var/lib/tma-collector/outbox',max_spool_bytes:268435456,flush_seconds:2,batch_size:2,idle_seconds:90,...oldC,analytics_url:`http://127.0.0.1:${port}`,hubs:configuredHubs};
-  outputs.push(['analytics.json',JSON.stringify(analytics,null,2)+'\n'],['collector.json',JSON.stringify(collector,null,2)+'\n']);
- }
- let changed=false;
- for(const [name,text] of outputs)changed=writeChanged(file(name),text,0o600)||changed;
- return {ready:!!configuredHubs?.length,changed,publicOrigin:plan.publicOrigin};
+
+const json = value => `${JSON.stringify(value, null, 2)}\n`;
+const loopback = host => host === '127.0.0.1' || host === '::1';
+const validHost = host => typeof host === 'string' && isIP(host) !== 0;
+const validPort = port => Number.isInteger(port) && port >= 1024 && port <= 65535;
+
+function environmentText(env) {
+  return Object.entries(env).map(([key, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string' || /[\r\n\0]/.test(value)) throw new Error('Invalid environment assignment.');
+    if (value.includes('\\') || value.includes('\n') || value.includes('\r')) throw new Error('Environment values contain unsupported characters.');
+    const quote = value.includes("'") ? '"' : "'";
+    if (value.includes(quote)) throw new Error('Environment values contain unsupported quotes.');
+    return `${key}=${quote}${value}${quote}`;
+  }).join('\n') + '\n';
 }
 
-
-export function configureApplication(options) {
- const {dir, identity, port=8788, hubs, management=false, resetHubs=false} = options;
- const file=name=>path.join(dir,name);
- const read=name=>fs.existsSync(file(name))?readJSON(file(name)):null;
- const oldA=read('analytics.json'),oldC=read('collector.json');
- const managed=management||resetHubs||!!oldA?.hubsPath||!!oldC?.hubs_path||(!oldA&&!oldC&&!hubs);
- if(!managed)return configureLegacyApplication(options);
- if(hubs)throw new Error('Managed Hub registration must use the UI; CLI Hub updates are disabled.');
- if(!isTailnetIPv4(identity.tailnetIP)||!/^[-a-z0-9.]+\.ts\.net$/.test(identity.hostname)||!Number.isInteger(port)||port<1024||port>65535)throw new Error('Invalid Tailscale identity or port.');
- if((oldA?.hubs||oldC?.hubs)&&!resetHubs)throw new Error('Legacy Hub settings exist. Stop collection and use --reset-hubs to discard them explicitly.');
- if(resetHubs&&oldA?.contracts?.length)throw new Error('Contracts still reference existing Hubs; remove their configuration before resetting Hubs. History is retained.');
- if(oldA&&oldA.ingestTokenEnv!=='TMA_INGEST_TOKEN'||oldC&&oldC.ingest_token_env!=='TMA_INGEST_TOKEN')throw new Error('Custom ingest credential names require explicit configuration.');
- const aEnv=fs.existsSync(file('analytics.env'))?readEnvironment(file('analytics.env')):{};
- const cEnv=fs.existsSync(file('collector.env'))?readEnvironment(file('collector.env')):{};
- if(aEnv.TMA_INGEST_TOKEN&&cEnv.TMA_INGEST_TOKEN&&aEnv.TMA_INGEST_TOKEN!==cEnv.TMA_INGEST_TOKEN)throw new Error('Existing ingest credentials disagree.');
- const token=aEnv.TMA_INGEST_TOKEN??cEnv.TMA_INGEST_TOKEN??randomBytes(32).toString('hex');
- aEnv.TMA_INGEST_TOKEN=token;cEnv.TMA_INGEST_TOKEN=token;
- const hubsPath=oldA?.hubsPath??oldC?.hubs_path??'./hubs.json';
- const absHubs=path.resolve(dir,hubsPath);
- if(oldC?.hubs_path&&path.resolve(dir,oldC.hubs_path)!==absHubs)throw new Error('Managed Hub paths disagree.');
- const secretsPath='hub-secrets.json';
- // Initialization never replaces an existing managed store during ordinary configure.
- if(!resetHubs&&fs.existsSync(absHubs))readHubsConfig(absHubs);
- if(!resetHubs&&!fs.existsSync(absHubs)&&(oldA?.hubsPath||oldC?.hubs_path))throw new Error('Managed Hub store is missing; refusing to recreate it.');
- if(resetHubs){
-  if(oldA?.hubsPath){
-   const current=readHubsConfig(absHubs);
-   if(current.secretsFilePath!==path.join(path.dirname(absHubs),secretsPath))throw new Error('Reset requires the standard secrets filename.');
+function existingEnvironment(filename) {
+  try { return readEnvironment(filename); } catch (error) {
+    if (error?.code === 'ENOENT') return Object.create(null);
+    throw error;
   }
-  for(const h of oldC?.hubs??[])if(h.secret_env&&h.secret_env!=='TMA_INGEST_TOKEN')delete cEnv[h.secret_env];
-  for(const key of Object.keys(cEnv))if(/^TMA_HUB_/.test(key))delete cEnv[key];
- }
- const plan={version:2,...identity,port,publicOrigin:`http://${identity.hostname}:${port}`};
- const analytics={version:1,listen:{host:'127.0.0.1',port},publicOrigin:plan.publicOrigin,databasePath:'/var/lib/tma-analytics/analytics.db',timeZone:'Asia/Tokyo',detailRetentionDays:7,ingestTokenEnv:'TMA_INGEST_TOKEN',contracts:[],...oldA,demo:false,viewerAuth:{mode:'tailscale'},tailnetViewer:{host:identity.tailnetIP,port},hubsPath,management:{enabled:management||resetHubs||!oldA?true:Boolean(oldA.management?.enabled)}};
- analytics.update={enabled:true,repositoryUrl:oldA?.update?.repositoryUrl??'https://github.com/nuitsjp/token-monitor-analytics.git',branch:oldA?.update?.branch??'main',checkIntervalSeconds:oldA?.update?.checkIntervalSeconds??300};
- delete analytics.hubs;
- analytics.listen={host:'127.0.0.1',port};analytics.publicOrigin=plan.publicOrigin;
- const collector={version:1,ingest_token_env:'TMA_INGEST_TOKEN',spool_dir:'/var/lib/tma-collector/outbox',max_spool_bytes:268435456,flush_seconds:2,batch_size:2,idle_seconds:90,...oldC,analytics_url:`http://127.0.0.1:${port}`,hubs_path:hubsPath};
- delete collector.hubs;
- let changed=false;
- const json=x=>JSON.stringify(x,null,2)+'\n';
- if(resetHubs||!fs.existsSync(absHubs)){
-  changed=writeChanged(path.join(path.dirname(absHubs),secretsPath),json({schemaVersion:1,secrets:{}}),0o600)||changed;
-  changed=writeChanged(absHubs,json({schemaVersion:1,revision:0,secretsPath,hubs:[]}),0o600)||changed;
- }
- for(const [name,value] of [['analytics.env',envText(aEnv)],['collector.env',envText(cEnv)],['analytics.json',json(analytics)],['collector.json',json(collector)],['connection.json',json(plan)]])changed=writeChanged(file(name),value,0o600)||changed;
- return {ready:true,changed,publicOrigin:plan.publicOrigin};
 }
+
+function chooseIdentity({identity = {}, listenHost, viewerMode, publicOrigin, port}) {
+  const oldTailnet = identity.tailnetIP;
+  const host = listenHost ?? identity.listenHost ?? (oldTailnet && !viewerMode?.includes('loopback') ? oldTailnet : '127.0.0.1');
+  if (!validHost(host)) throw new Error('listen host must be an IP literal.');
+  const selectedMode = viewerMode ?? identity.viewerMode ?? (oldTailnet && !loopback(host) ? 'tailscale' : 'loopback');
+  if (!['loopback', 'basic', 'tailscale'].includes(selectedMode)) throw new Error('viewer mode must be loopback, basic or tailscale.');
+  const selectedPort = port ?? identity.port ?? 8788;
+  if (!validPort(selectedPort)) throw new Error('Port must be an integer from 1024 through 65535.');
+  if (selectedMode === 'loopback' && !loopback(host)) throw new Error('Loopback viewer mode requires a loopback listen host.');
+  if (selectedMode === 'tailscale' && (loopback(host) || isIP(host) !== 4 || !host.startsWith('100.'))) throw new Error('Tailscale viewer mode requires a Tailscale IPv4 listen host.');
+  const defaultHost = identity.hostname ?? host;
+  const origin = publicOrigin ?? identity.publicOrigin ?? `http://${defaultHost.includes(':') && !defaultHost.startsWith('[') ? `[${defaultHost}]` : defaultHost}:${selectedPort}`;
+  let parsed;
+  try { parsed = new URL(origin); } catch { throw new Error('publicOrigin must be a valid HTTP(S) origin.'); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) throw new Error('publicOrigin must be an HTTP(S) origin without credentials or path.');
+  if (selectedMode === 'loopback' && (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname))) throw new Error('Loopback publicOrigin must use HTTP localhost.');
+  return {host, mode: selectedMode, port: selectedPort, origin: parsed.origin};
+}
+
+/**
+ * Write the new-install configuration. The function has no Hub/Collector
+ * input by design; Hub rows live in SQLite and are added through the UI.
+ */
+export function configureApplication({dir, identity = {}, port, listenHost, viewerMode, publicOrigin, databasePath, hubSecretsPath, update, management} = {}) {
+  if (!dir) throw new Error('Configuration directory is required.');
+  const directory = path.resolve(dir);
+  fs.mkdirSync(directory, {recursive: true, mode: 0o700});
+  const file = name => path.join(directory, name);
+  const oldConfig = fs.existsSync(file('analytics.json')) ? readJSON(file('analytics.json')) : {};
+  const selected = chooseIdentity({identity, port, listenHost, viewerMode, publicOrigin});
+  const productionDirectory = directory === path.resolve('/var/lib/tma-deploy/config');
+  const dbPath = path.resolve(databasePath ?? (productionDirectory ? '/var/lib/tma-analytics/analytics.db' : path.join(directory, 'analytics.db')));
+  const secretPath = path.resolve(hubSecretsPath ?? (productionDirectory ? '/var/lib/tma-analytics/hub-secrets.json' : path.join(directory, 'hub-secrets.json')));
+  const oldEnv = existingEnvironment(file('analytics.env'));
+  const basicEnv = Object.create(null);
+  if (selected.mode === 'basic') {
+    basicEnv.TMA_VIEWER_USER = oldEnv.TMA_VIEWER_USER ?? 'viewer';
+    basicEnv.TMA_VIEWER_PASSWORD = oldEnv.TMA_VIEWER_PASSWORD ?? randomBytes(24).toString('hex');
+  }
+  const oldUpdate = oldConfig.update && typeof oldConfig.update === 'object' ? oldConfig.update : {};
+  const updateConfig = update ?? {
+    enabled: oldUpdate.enabled ?? true,
+    repositoryUrl: oldUpdate.repositoryUrl ?? 'https://github.com/nuitsjp/token-monitor-analytics.git',
+    branch: oldUpdate.branch ?? 'main',
+    checkIntervalSeconds: oldUpdate.checkIntervalSeconds ?? 300
+  };
+  const config = {
+    version: 2,
+    listen: {host: selected.host, port: selected.port},
+    publicOrigin: selected.origin,
+    databasePath: dbPath,
+    timeZone: typeof oldConfig.timeZone === 'string' ? oldConfig.timeZone : 'Asia/Tokyo',
+    detailRetentionDays: Number.isInteger(oldConfig.detailRetentionDays) ? oldConfig.detailRetentionDays : 7,
+    hubSecretsPath: secretPath,
+    viewerAuth: selected.mode === 'basic' ? {mode: 'basic', userEnv: 'TMA_VIEWER_USER', passwordEnv: 'TMA_VIEWER_PASSWORD'} : {mode: selected.mode},
+    management: {enabled: management ?? oldConfig.management?.enabled ?? true},
+    contracts: Array.isArray(oldConfig.contracts) ? oldConfig.contracts : [],
+    update: updateConfig,
+    demo: false
+  };
+  const connection = {
+    version: 2,
+    listen: config.listen,
+    publicOrigin: config.publicOrigin,
+    viewerMode: selected.mode
+  };
+  if (!fs.existsSync(dbPath)) {
+    fs.mkdirSync(path.dirname(dbPath), {recursive: true, mode: 0o700});
+    fs.closeSync(fs.openSync(dbPath, 'wx', 0o600));
+  }
+  if (!fs.existsSync(secretPath)) {
+    fs.mkdirSync(path.dirname(secretPath), {recursive: true, mode: 0o700});
+    writeChanged(secretPath, json({schemaVersion: 1, secrets: {}}), 0o600);
+  } else if (process.platform !== 'win32') {
+    fs.chmodSync(secretPath, 0o600);
+  }
+  let changed = false;
+  changed = writeChanged(file('analytics.json'), json(config), 0o600) || changed;
+  changed = writeChanged(file('analytics.env'), environmentText(basicEnv), 0o600) || changed;
+  changed = writeChanged(file('connection.json'), json(connection), 0o600) || changed;
+  return {ready: true, changed, publicOrigin: config.publicOrigin, listen: config.listen, viewerMode: selected.mode};
+}
+

@@ -1,91 +1,105 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import {configureApplication} from '../configure-application.mjs';
-import {readEnvironment,readJSON,selectConfiguration,validateConfiguration,writeChanged,treeDigest,readPublication} from '../publish-config.mjs';
-import {validateInfrastructure,unitDigest,assertInfrastructureFile} from '../ubuntu-layout.mjs';
-const identity={tailnetIP:'100.69.11.74',hostname:'host.example.ts.net'};
-const hubs=[{id:'hub-a',url:'https://hub.example.com',secret:'test-independent-hub-secret'}];
-function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tma configuration '));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;}
-test('empty managed configuration is publishable and configure preserves UI settings',async t=>{
- const dir=fixture(t);
- assert.equal(configureApplication({dir,identity}).ready,true);
- const before=treeDigest(dir);
- assert.deepEqual(configureApplication({dir,identity}),{ready:true,changed:false,publicOrigin:'http://host.example.ts.net:8788'});
- assert.equal(treeDigest(dir),before);
- const {saveHubsTransaction}=await import('../../analytics/runtime/hubs.mjs');
- await saveHubsTransaction(path.join(dir,'hubs.json'),0,({createSecretRef})=>[{id:'ui-hub',label:'UI Hub',url:'https://ui.example.com',status:'active',secretRef:createSecretRef('ui-independent-secret')}]);
- const after=treeDigest(dir);
- assert.equal(configureApplication({dir,identity}).changed,false);
- assert.equal(treeDigest(dir),after);
- assert.throws(()=>configureApplication({dir,identity,hubs}),/UI/);
- assert.equal(treeDigest(dir),after);
- const plan=readJSON(path.join(dir,'connection.json'));
- const config=validateConfiguration(plan,selectConfiguration({},dir));
- assert.equal(config.analytics.hubs.length,1);
- assert.equal(config.analytics.tailnetViewer.host,identity.tailnetIP);
- assert.equal(config.analytics.update?.enabled,true);
- assert.equal(config.analytics.update?.branch,'main');
-});
-test('explicit reset removes old Hub secrets and preserves ingest credentials',t=>{
- const dir=fixture(t);configureApplication({dir,identity,hubs});
- const token=readEnvironment(path.join(dir,'collector.env')).TMA_INGEST_TOKEN;
- const before=treeDigest(dir);
- assert.throws(()=>configureApplication({dir,identity,management:true}),/reset-hubs/);
- assert.equal(treeDigest(dir),before);
- configureApplication({dir,identity,resetHubs:true});
- const c=readJSON(path.join(dir,'collector.json'));
- assert.equal(c.hubs,undefined);assert.equal(c.hubs_path,'./hubs.json');
- assert.deepEqual(readJSON(path.join(dir,'hubs.json')).hubs,[]);
- assert.deepEqual(readJSON(path.join(dir,'hub-secrets.json')).secrets,{});
- assert.deepEqual({...readEnvironment(path.join(dir,'collector.env'))},{TMA_INGEST_TOKEN:token});
- const plan=readJSON(path.join(dir,'connection.json'));
- assert.equal(validateConfiguration(plan,selectConfiguration({},dir)).analytics.management.enabled,true);
- const after=treeDigest(dir);assert.equal(configureApplication({dir,identity}).changed,false);assert.equal(treeDigest(dir),after);
+import {readEnvironment,readJSON,selectConfiguration,validateConfiguration,writeChanged,treeDigest,readPublication,configurationId,withPublicationLock,assertOldLayout} from '../publish-config.mjs';
+import {validateInfrastructure,unitDigest,appUnits,managedUnits,infrastructureVersion,configVersion,serviceContractVersion,runnerVersion} from '../ubuntu-layout.mjs';
+
+function fixture(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tma publication '));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  return directory;
+}
+
+test('new configuration creates an empty DB/Secret and no legacy Collector inputs', t => {
+  const dir = fixture(t);
+  const result = configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}, port: 8788});
+  assert.equal(result.ready, true);
+  assert.equal(fs.existsSync(path.join(dir, 'analytics.db')), true);
+  assert.deepEqual(readJSON(path.join(dir, 'hub-secrets.json')), {schemaVersion: 1, secrets: {}});
+  assert.deepEqual({...readEnvironment(path.join(dir, 'analytics.env'))}, {});
+  const config = readJSON(path.join(dir, 'analytics.json'));
+  assert.equal(config.version, 2);
+  assert.deepEqual(config.listen, {host: '127.0.0.1', port: 8788});
+  assert.equal(config.tailnetViewer, undefined);
+  assert.equal(config.hubs, undefined);
+  assert.equal(config.ingestTokenEnv, undefined);
+  assert.equal(fs.existsSync(path.join(dir, 'collector.json')), false);
+  const before = treeDigest(dir);
+  assert.equal(configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}, port: 8788}).changed, false);
+  assert.equal(treeDigest(dir), before);
+  const validated = validateConfiguration({}, selectConfiguration({}, dir));
+  assert.equal(validated.analytics.viewerAuth.mode, 'loopback');
 });
 
-test('invalid Hub updates leave existing configuration intact and preserve contracts',t=>{
- const dir=fixture(t);configureApplication({dir,identity,hubs});const before=treeDigest(dir);
- for(const bad of [{...hubs[0],url:'http://localhost:8765'},{...hubs[0],secret:'demo-hub-secret'}])assert.throws(()=>configureApplication({dir,identity,hubs:[bad]}));
- assert.equal(treeDigest(dir),before);
- const a=path.join(dir,'analytics.json'),raw=readJSON(a);raw.contracts=[{hubId:'hub-a'}];fs.writeFileSync(a,JSON.stringify(raw));
- assert.throws(()=>configureApplication({dir,identity,hubs:[{...hubs[0],id:'hub-b'}]}),/contract/);
- assert.deepEqual(readJSON(a).contracts,raw.contracts);
+test('configurationId excludes DB/Hub rows/Secret contents but includes startup paths', t => {
+  const dir = fixture(t);
+  configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}});
+  const config = readJSON(path.join(dir, 'analytics.json'));
+  const service = ['[Service]\nExecStart=/opt/token-monitor-analytics/current/node\n'];
+  const base = configurationId({config, serviceUnits: service});
+  fs.writeFileSync(config.databasePath, 'observation rows changed');
+  fs.writeFileSync(config.hubSecretsPath, JSON.stringify({schemaVersion: 1, secrets: {new: 'private'}}), {mode: 0o600});
+  assert.equal(configurationId({config, serviceUnits: service}), base);
+  // The configuration hash carries paths as startup behavior; the same path
+  // is required to compare DB/Secret content changes above.
+  assert.notEqual(configurationId({config: {...config, databasePath: path.join(dir, 'other.db')}, serviceUnits: service}), base);
+  assert.notEqual(configurationId({config: {...config, hubSecretsPath: path.join(dir, 'other-secret.json')}, serviceUnits: service}), base);
+  assert.notEqual(configurationId({config, serviceUnits: [...service, 'new unit']}), base);
 });
-test('environment parser preserves literal secrets and rejects ambiguous syntax',t=>{
- const file=path.join(fixture(t),'private.env');fs.writeFileSync(file,'TOKEN="$(command); $literal value"\n',{mode:0o600});assert.equal(readEnvironment(file).TOKEN,'$(command); $literal value');
- for(const text of ['TOKEN=a\nTOKEN=b\n','export TOKEN=x\n','TOKEN=unquoted space\n']){fs.writeFileSync(file,text);assert.throws(()=>readEnvironment(file));}
- if(process.platform!=='win32'){fs.chmodSync(file,0o644);assert.throws(()=>readEnvironment(file),/0600/);}
+
+test('environment parser preserves literals and rejects ambiguous syntax', t => {
+  const file = path.join(fixture(t), 'private.env');
+  fs.writeFileSync(file, 'TOKEN="$(command); $literal value"\n', {mode: 0o600});
+  assert.equal(readEnvironment(file).TOKEN, '$(command); $literal value');
+  for (const text of ['TOKEN=a\nTOKEN=b\n', 'export TOKEN=x\n', 'TOKEN=unquoted space\n']) { fs.writeFileSync(file, text); assert.throws(() => readEnvironment(file)); }
+  if (process.platform !== 'win32') { fs.chmodSync(file, 0o644); assert.throws(() => readEnvironment(file), /0600/); }
 });
-test('release identity ignores timestamps and unchanged managed files retain mtime',t=>{
- const dir=fixture(t),file=path.join(dir,'unit.service');assert.equal(writeChanged(file,'first'),true);const id=treeDigest(dir);
- fs.utimesSync(file,1,1);const stamp=fs.statSync(file).mtimeMs;assert.equal(treeDigest(dir),id);
- assert.equal(writeChanged(file,'first'),false);assert.equal(fs.statSync(file).mtimeMs,stamp);
- assert.equal(writeChanged(file,'second'),true);assert.notEqual(treeDigest(dir),id);
+
+test('publication lock uses the shared flock inode and releases after callback', async t => {
+  if (process.platform !== 'linux') { t.skip('Requires Ubuntu flock'); return; }
+  const dir = fixture(t), lock = path.join(dir, 'deploy.lock');
+  await withPublicationLock(lock, async () => {
+    const held = spawnSync('/usr/bin/flock', ['-n', lock, '-c', 'true']);
+    assert.equal(held.status, 1);
+    assert.equal(fs.existsSync(lock), true);
+  });
+  assert.equal(fs.existsSync(lock), true);
+  assert.equal(spawnSync('/usr/bin/flock', ['-n', lock, '-c', 'true']).status, 0);
 });
-test('publication requires the provisioned UID and current user service definitions',()=>{
- const record={version:2,uid:1000,unitDigest:unitDigest()};assert.doesNotThrow(()=>validateInfrastructure(record,1000));
- for(const delta of [{version:1},{uid:1001},{unitDigest:'old'}])assert.throws(()=>validateInfrastructure({...record,...delta},1000),/provision:ubuntu/);
+
+test('old layout guard runs before publication and rejects Collector files', t => {
+  const dir = fixture(t);
+  assert.doesNotThrow(() => assertOldLayout({destination: dir}));
+  fs.writeFileSync(path.join(dir, 'collector.json'), '{}');
+  assert.throws(() => assertOldLayout({destination: dir}), error => error.code === 'old_layout');
 });
-test('ordinary user cannot forge a root-owned infrastructure record',t=>{
- if(process.platform==='win32'||process.getuid?.()===0){t.skip('Requires ordinary Unix user');return;}
- const file=path.join(fixture(t),'infrastructure.json');fs.writeFileSync(file,'{}',{mode:0o600});assert.throws(()=>assertInfrastructureFile(file),/root-owned/);
+
+test('publication requires the current one-app infrastructure contract', () => {
+  const record = {version: infrastructureVersion, uid: 1000, configVersion, serviceContractVersion, runnerVersion, appUnits: [...appUnits], managedUnits: [...managedUnits], unitDigest: unitDigest()};
+  assert.doesNotThrow(() => validateInfrastructure(record, 1000));
+  for (const delta of [{version: 2}, {uid: 1001}, {appUnits: ['tma-collector.service']}, {unitDigest: 'old'}]) assert.throws(() => validateInfrastructure({...record, ...delta}, 1000), /provision:ubuntu/);
 });
-test('readPublication reads commit info or handles legacy/missing file gracefully',t=>{
-  const dir=fixture(t);
-  const file=path.join(dir,'publication.json');
-  assert.equal(readPublication(path.join(dir,'nonexistent.json')),null);
-  fs.writeFileSync(file,JSON.stringify({releaseId:'rel-legacy',configurationId:'cfg-1',publicOrigin:'http://localhost:8788'}));
-  const legacy=readPublication(file);
-  assert.equal(legacy.releaseId,'rel-legacy');
-  assert.equal(legacy.commitSha,null);
-  assert.equal(legacy.commitDate,null);
-  fs.writeFileSync(file,JSON.stringify({releaseId:'rel-new',configurationId:'cfg-2',publicOrigin:'http://localhost:8788',commitSha:'abc1234567890abcdef1234567890abcdef1234',commitDate:'2026-09-06T12:00:00Z',publishedAt:'2026-09-06T12:01:00Z'}));
-  const modern=readPublication(file);
-  assert.equal(modern.releaseId,'rel-new');
-  assert.equal(modern.commitSha,'abc1234567890abcdef1234567890abcdef1234');
-  assert.equal(modern.commitDate,'2026-09-06T12:00:00Z');
-  assert.equal(modern.publishedAt,'2026-09-06T12:01:00Z');
+
+test('readPublication handles legacy and verified records without exposing extra fields', t => {
+  const dir = fixture(t), file = path.join(dir, 'publication.json');
+  assert.equal(readPublication(path.join(dir, 'missing.json')), null);
+  fs.writeFileSync(file, JSON.stringify({releaseId: 'rel-old', configurationId: 'cfg-old', publicOrigin: 'http://127.0.0.1:8788'}));
+  assert.equal(readPublication(file).commitSha, null);
+  fs.writeFileSync(file, JSON.stringify({schemaVersion: 1, releaseId: 'rel-new', targetCommitSha: 'a'.repeat(40), contentHash: 'b'.repeat(64), archiveSha256: 'c'.repeat(64), configurationId: 'cfg-new'}));
+  const result = readPublication(file);
+  assert.equal(result.commitSha, 'a'.repeat(40));
+  assert.equal(result.contentHash, 'b'.repeat(64));
+});
+
+test('writeChanged preserves mtime for identical managed files', t => {
+  const dir = fixture(t), file = path.join(dir, 'unit.service');
+  assert.equal(writeChanged(file, 'first'), true);
+  fs.utimesSync(file, 1, 1);
+  const stamp = fs.statSync(file).mtimeMs;
+  assert.equal(writeChanged(file, 'first'), false);
+  assert.equal(fs.statSync(file).mtimeMs, stamp);
 });

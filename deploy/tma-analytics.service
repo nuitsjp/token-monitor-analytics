@@ -8,10 +8,10 @@ StartLimitBurst=6
 Type=simple
 User=tma-analytics
 Group=tma-analytics
-WorkingDirectory=/opt/token-monitor-analytics/analytics
+WorkingDirectory=/opt/token-monitor-analytics/current
 Environment=NODE_ENV=production
-EnvironmentFile=/etc/token-monitor-analytics/analytics.env
-ExecStart=/usr/bin/node --experimental-strip-types /opt/token-monitor-analytics/analytics/runtime/server.mjs --config /etc/token-monitor-analytics/analytics.json
+EnvironmentFile=/var/lib/tma-deploy/config/analytics.env
+ExecStart=/opt/token-monitor-analytics/current/node --experimental-strip-types /opt/token-monitor-analytics/current/analytics/runtime/server.mjs --config /var/lib/tma-deploy/config/analytics.json
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=15
