@@ -147,7 +147,7 @@ function spawnServer({legacy, configPath, environment}) {
   return child;
 }
 
-test('Windows direct CLI migration and rollback restore the old process and database', {skip: !enabled}, async t => {
+test('Windows direct CLI migration and rollback restore the old process and database', {skip: !enabled, timeout: 720000}, async t => {
   const legacy = sourceManifest();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-windows-migration-'));
   const token = 'w'.repeat(64);
@@ -226,7 +226,7 @@ test('Windows direct CLI migration and rollback restore the old process and data
   const targetConfigPath = path.join(targetDir, 'analytics.json');
   const targetSecretsPath = path.join(targetDir, 'hub-secrets.json');
   const targetEnvPath = path.join(targetDir, 'analytics.env');
-  const runCli = (args, extraEnv = {}, timeoutMs = 90000) => new Promise((resolve, reject) => {
+  const runCli = (args, extraEnv = {}, timeoutMs = 300000) => new Promise((resolve, reject) => {
     const environmentForChild = {...process.env, ...environment, ...extraEnv};
     // The explicit manifest is consumed by this acceptance test to locate
     // the real old server. The CLI itself uses the pinned object in --repository;

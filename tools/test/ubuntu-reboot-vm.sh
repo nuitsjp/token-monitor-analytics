@@ -46,6 +46,7 @@ node_npm_cli="$node_root/lib/node_modules/npm/bin/npm-cli.js"
 [[ -x "$node_root/bin/npm" ]] || { echo "fixed Node installation must include npm: $node_root" >&2; exit 2; }
 [[ -f "$node_npm_cli" ]] || { echo "fixed Node installation must include the npm package: $node_npm_cli" >&2; exit 2; }
 [[ -x "$mise_bin" ]] || { echo "fixed mise binary is not executable: $mise_bin" >&2; exit 2; }
+[[ "$(git -C "$source_dir" rev-parse --is-shallow-repository)" == false ]] || { echo "VM fixture requires full Git history for its update remote" >&2; exit 2; }
 git -C "$source_dir" diff --exit-code
 git -C "$source_dir" diff --cached --exit-code
 
