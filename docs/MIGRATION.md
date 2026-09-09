@@ -56,33 +56,36 @@ Ubuntuの実service停止・provision・再起動、WindowsのCtrl+C/ACL/ロッ�
 自動起動はこの開発環境では未実行です。実機切替前に`--dry-run`と保護バックアップを
 確認し、停止・復旧の手動責任者を決めてください。
 
-## 旧Cloudflare版から0.3.0同居版へ
+実行前にUbuntuの管理者シェルで、発行先の通常ユーザーを明示します。
 
-## コピー元と継承部分
+```sh
+export TMA_DEPLOY_USER=tma-analytics
+sudo -E node --experimental-strip-types tools/migrate.mjs \
+  --target-sha <40文字の対象SHA> --target-artifact <検証済みtar.gz> \
+  --analytics-config /etc/token-monitor-analytics/analytics.json \
+  --collector-config /etc/token-monitor-analytics/collector.json
+```
 
-この版は`token-monitor-analytics-web-ubuntu-starter-20260905.zip`を元に修正しています。古いWails/デスクトップ版は元にしていません。Go Collectorの実装とプロトコル、純粋な推定処理、3画面を継承しています。
+`--publication-user`を指定した場合は`TMA_DEPLOY_USER`より優先されます。旧systemd
+EnvironmentFileをCLIへ明示する場合は`--analytics-env`と`--collector-env`を使います。
+省略時は各設定ファイルと同じディレクトリーの`analytics.env`/`collector.env`を読みます。
+CLIへ渡した環境変数はファイル値より優先されます。AnalyticsとCollectorのingest環境変数名
+は一致している必要があります。旧ingest tokenとBasic閲覧資格情報はdrainと候補設定の検証に
+メモリー上でだけ使い、移行stateへ保存しません。新しいSecret fileへ旧Hub Secretをコピー
+しません。
 
-## ローカルデモ
+復旧は同じ管理者ユーザーで、移行stateと対象ユーザーのサービス情報を指定します。
 
-旧版の模擬Hub・Collector・Wranglerを停止し、新しいフォルダーへ展開してください。新しい起動コマンドはREADMEの3ターミナル方式です。`.wrangler`内の開発D1は新SQLiteへ自動移行しません。0.2.0のディレクトリー/DB/ローカル設定を削除しないでください。
+```sh
+sudo -E node --experimental-strip-types tools/migrate.mjs --restore \
+  --state /var/lib/tma-deploy/migration-state.json \
+  --publication-user "$TMA_DEPLOY_USER" \
+  --analytics-pid <新AnalyticsのPID> \
+  --legacy-command <旧Analyticsの起動コマンド> \
+  --legacy-args '["--config","/etc/token-monitor-analytics/analytics.json"]'
+```
 
-新旧を上書き混在させるとwrangler.jsoncや古いnode_modules、開発コマンドが残るため、別フォルダーを推奨します。既存Gitリポジトリーに適用する場合は作業ブランチで比較し、削除されたファイルも反映してください。単なるZIPの上書き展開は削除を反映しません。
-
-## 実設定
-
-CollectorのJSON形式はv1のまま。`analytics_url`を`http://127.0.0.1:8787`に変更します。Hub URL、Hub ID、secret_envは維持できます。実体が同じHubのIDは変えません。
-
-契約定義は旧`analytics/src/settings.ts`から新`analytics/config.local.json`の`contracts`へ、Hub定義は`hubs`へ移します。新しい本番設定では`demo: false`にします。JSONなのでコメント・TypeScriptの型注釈・末尾カンマは使えません。
-
-新Analyticsに対する送信トークンを設定します。デモ用tokenは本番で拒否します。ブラウザー認証はCloudflare Accessではなく、localhost限定、Basic認証、または明示的なTailscale境界モードです。現在のUbuntu発行タスクはTailscale境界モードを使用し、閲覧資格情報の入力は不要です。
-
-## 0.3.0のWindows本番データをUbuntuへ引継ぐ場合
-
-1. Windows Collectorの`pending_bytes`が0になったことを確認して停止します。残件がある場合は削除せず、まずWindows Analyticsへ排出してください。
-2. READMEのbackupコマンドで**本番DB**の整合したバックアップを作ります。以後Windows Analyticsも停止します。
-3. Ubuntu側の両サービスを止めた状態で、バックアップを`/var/lib/tma-analytics/analytics.db`として配置し、所有者を`tma-analytics:tma-analytics`、modeを0600へ設定します。Ubuntu側に既存履歴がある場合は先に別途バックアップしてください。
-4. Ubuntu側の契約/Hub ID、タイムゾーンを合わせて起動します。新しいCollector接続になるため、推定基準は最初のsnapshotで作り直します。保存済みの日次履歴は保持します。
-
-バックアップ復元時に稼働中DBへ直接上書きしません。既存の`.db`/`-wal`/`-shm`を別の安全な場所へ退避したうえで、新しいバックアップを配置します。デモDBを本番へ移しません。
-
-0.2.0のCloudflare D1からの自動インポーターは含めません。既に本番D1へ履歴を蓄積している場合、旧環境を残し、別途エクスポート/移行を実施する必要があります。
+Windowsではsudo/systemdの手順を使わず、`--collector-pid`、`--analytics-pid`、
+`--windows-install-dir`を指定します。移行stateに保存された新Analytics PIDは実行ファイル・
+配置先・設定ファイルを照合してから停止します。旧Analyticsを起動する復旧時だけ
+`--legacy-command`と必要な`--legacy-args`を指定してください。

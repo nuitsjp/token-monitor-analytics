@@ -143,6 +143,23 @@ function safeFailure(error) {
   return {code, message: error?.message && !/[\r\n]/.test(error.message) ? error.message.slice(0, 240) : 'Migration failed'};
 }
 
+// Platform hooks are injected in isolated tests and may return their whole
+// context.  Never let a hook accidentally persist the in-memory legacy token,
+// environment, or Secret values in the resumable state file.
+function safeStateValue(value, seen = new WeakSet()) {
+  if (value === null || typeof value !== 'object') return typeof value === 'function' ? undefined : value;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+  if (Array.isArray(value)) return value.map(item => safeStateValue(item, seen)).filter(item => item !== undefined);
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'legacy' || key === 'environment' || key === 'token' || key === 'secret' || key === 'secrets' || /password/i.test(key)) continue;
+    const safe = safeStateValue(item, seen);
+    if (safe !== undefined) result[key] = safe;
+  }
+  return result;
+}
+
 function resolveRelative(configFile, value, fallback) {
   if (typeof value !== 'string' || !value.trim()) return path.resolve(path.dirname(configFile), fallback);
   return path.resolve(path.dirname(configFile), value);
@@ -200,7 +217,12 @@ function parseLegacyLayout({analyticsConfigPath, collectorConfigPath, analyticsE
   const outboxPath = resolveRelative(collectorFile, collector.spool_dir, './data/outbox');
   const ingestEnv = collector.ingest_token_env;
   if (typeof ingestEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ingestEnv)) throw errorWithCode('Legacy Collector ingest token name is invalid', 'invalid_legacy_config');
-  const token = environment[ingestEnv];
+  const analyticsIngestEnv = analytics.ingestTokenEnv;
+  if (typeof analyticsIngestEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(analyticsIngestEnv) || analyticsIngestEnv !== ingestEnv) {
+    throw errorWithCode('Legacy Analytics and Collector ingest token names do not match', 'invalid_legacy_config');
+  }
+  const runtimeEnvironment = loadLegacyEnvironment({analyticsEnvPath: resolvedAnalyticsEnvPath, collectorEnvPath: resolvedCollectorEnvPath, environment});
+  const token = runtimeEnvironment[ingestEnv];
   if (typeof token !== 'string' || token.length < 1 || /[\r\n\0]/.test(token)) throw errorWithCode('Legacy Collector ingest token is unavailable', 'missing_legacy_secret');
   const hubs = readLegacyHubs(analytics, analyticsFile, collector, collectorFile);
   const contracts = Array.isArray(analytics.contracts) ? analytics.contracts : [];
@@ -209,7 +231,7 @@ function parseLegacyLayout({analyticsConfigPath, collectorConfigPath, analyticsE
   return {
     analyticsFile, collectorFile, analyticsEnvPath: resolvedAnalyticsEnvPath, collectorEnvPath: resolvedCollectorEnvPath,
     analytics, collector, databasePath, outboxPath,
-    ingestEnv, token, hubs: hubs.hubs, hubsFile: hubs.hubsFile, secretsFile: hubs.secretsFile,
+    ingestEnv, token, environment: runtimeEnvironment, hubs: hubs.hubs, hubsFile: hubs.hubsFile, secretsFile: hubs.secretsFile,
     contracts, hubIds,
     fingerprint: sha256(stable({
       analytics: fileSha256(analyticsFile), collector: fileSha256(collectorFile),
@@ -242,11 +264,18 @@ function legacyDescriptor(legacy) {
   };
 }
 
-function legacyFromDescriptor(descriptor, environment = process.env) {
-  const token = typeof environment[descriptor.ingestEnv] === 'string' ? environment[descriptor.ingestEnv] : '';
+function legacyFromDescriptor(descriptor, environment = process.env, {protectedBackup = null} = {}) {
+  const tokenEnvironment = loadLegacyEnvironment({
+    analyticsEnvPath: descriptor.analyticsEnvPath,
+    collectorEnvPath: descriptor.collectorEnvPath,
+    environment,
+    fallbackAnalyticsEnvPath: protectedBackup ? path.join(protectedBackup, 'legacy-analytics-env') : null,
+    fallbackCollectorEnvPath: protectedBackup ? path.join(protectedBackup, 'legacy-collector-env') : null,
+  });
+  const token = typeof tokenEnvironment[descriptor.ingestEnv] === 'string' ? tokenEnvironment[descriptor.ingestEnv] : '';
   return {
     ...descriptor,
-    token,
+    token, environment: tokenEnvironment,
     collector: {version: 1, ingest_token_env: descriptor.ingestEnv},
   };
 }
@@ -408,9 +437,16 @@ function ownsPublishedProcess(pid, {installDir, configPath} = {}) {
   const expectedConfig = comparableProcessText(path.resolve(configPath));
   if (!expectedInstall || !expectedConfig) return false;
   if (process.platform === 'win32') {
-    const script = `$p=Get-CimInstance Win32_Process -Filter \"ProcessId=${pid}\"; if ($null -ne $p) { $p | Select-Object ExecutablePath,CommandLine | ConvertTo-Json -Compress }`;
+    const script = `$ErrorActionPreference='Stop';$env:PSModulePath=(Join-Path $PSHOME 'Modules');$module=Join-Path $PSHOME 'Modules/CimCmdlets/CimCmdlets.psd1';if (Test-Path $module) { Import-Module $module -Force -ErrorAction Stop };$p=Get-CimInstance Win32_Process -Filter \"ProcessId=${pid}\";if ($null -ne $p) { $p | Select-Object ExecutablePath,CommandLine | ConvertTo-Json -Compress }`;
+    const powershell = process.env.SystemRoot
+      ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+      : 'powershell.exe';
     try {
-      const raw = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim();
+      const raw = execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+        env: {...process.env, PSModulePath: `${process.env.SystemRoot ?? ''}\\System32\\WindowsPowerShell\\v1.0\\Modules`},
+        timeout: 5000, killSignal: 'SIGTERM', windowsHide: true,
+      }).trim();
       if (!raw) return false;
       const row = JSON.parse(raw);
       const executable = comparableProcessText(row.ExecutablePath);
@@ -456,9 +492,9 @@ function windowsDatabaseProbe(databasePath) {
   } finally { fs.rmSync(probe, {force: true}); }
 }
 
-function parseEnvironmentFile(filename) {
+function parseEnvironmentFile(filename, label = 'Environment') {
   if (!filename || !fs.existsSync(filename)) return {};
-  regularFile(filename, 'Analytics environment');
+  regularFile(filename, label);
   const result = {};
   for (const line of fs.readFileSync(filename, 'utf8').split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -471,6 +507,31 @@ function parseEnvironmentFile(filename) {
     result[match[1]] = value;
   }
   return result;
+}
+
+/**
+ * Load the environment visible to the pinned Analytics process.  A service
+ * launched by systemd gets both files even when the migration CLI is entered
+ * through sudo, so relying on process.env alone would drain with the wrong
+ * token.  Explicit CLI/inherited values take precedence over file values;
+ * conflicting file values fail closed unless an explicit value resolves the
+ * conflict.  The merged object stays in memory and is never persisted.
+ */
+function loadLegacyEnvironment({analyticsEnvPath, collectorEnvPath, environment = process.env, fallbackAnalyticsEnvPath = null, fallbackCollectorEnvPath = null} = {}) {
+  const analyticsPath = (analyticsEnvPath && fs.existsSync(analyticsEnvPath)) ? analyticsEnvPath : fallbackAnalyticsEnvPath;
+  const collectorPath = (collectorEnvPath && fs.existsSync(collectorEnvPath)) ? collectorEnvPath : fallbackCollectorEnvPath;
+  const analyticsValues = parseEnvironmentFile(analyticsPath, 'Legacy Analytics environment');
+  const collectorValues = parseEnvironmentFile(collectorPath, 'Legacy Collector environment');
+  const explicit = {};
+  if (environment && typeof environment === 'object') {
+    for (const [name, value] of Object.entries(environment)) if (typeof value === 'string') explicit[name] = value;
+  }
+  for (const [name, value] of Object.entries(collectorValues)) {
+    if (Object.hasOwn(analyticsValues, name) && analyticsValues[name] !== value && !Object.hasOwn(explicit, name)) {
+      throw errorWithCode(`Legacy environment files disagree for ${name}`, 'legacy_env_conflict');
+    }
+  }
+  return {...collectorValues, ...analyticsValues, ...explicit};
 }
 
 function copyDirectReleaseTree(source, destination) {
@@ -488,9 +549,12 @@ function copyDirectReleaseTree(source, destination) {
 }
 
 async function stopDirectProcess(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  try { process.kill(pid, 'SIGTERM'); } catch {}
-  await new Promise(resolve => setTimeout(resolve, 250));
+  if (!Number.isInteger(pid) || pid <= 0) return {alreadyStopped: true};
+  try {
+    return await stopProcessByPid(pid, 'published Analytics');
+  } catch (error) {
+    throw errorWithCode('Published Analytics process did not stop after failed startup proof', 'publish_cleanup_failed', {cause: error});
+  }
 }
 
 /**
@@ -972,11 +1036,15 @@ async function verifyTargetGate({targetArtifact, targetCommitSha, options, stage
     const existingTargetWasV2 = fs.existsSync(targetConfigPath) && readJson(targetConfigPath, 'Target Analytics configuration', 262144).version === 2;
     const content = environmentSourcePath === targetEnvPath && existingTargetWasV2
       ? fs.readFileSync(environmentSourcePath)
-      : targetEnvironmentContent(candidate, environmentSourcePath);
+      : targetEnvironmentContent(candidate, environmentSourcePath, options.environment ?? process.env);
     fs.writeFileSync(gateEnvPath, content, {flag: 'wx', mode: 0o600});
     fs.chmodSync(gateEnvPath, 0o600);
   } else if (candidate.viewerAuth?.mode === 'basic') {
-    const environment = options.environment ?? process.env;
+    const environment = legacy.environment ?? loadLegacyEnvironment({
+      analyticsEnvPath: legacy.analyticsEnvPath,
+      collectorEnvPath: legacy.collectorEnvPath,
+      environment: options.environment ?? process.env,
+    });
     const content = `${formatEnvironmentAssignment(candidate.viewerAuth.userEnv, environment[candidate.viewerAuth.userEnv])}\n${formatEnvironmentAssignment(candidate.viewerAuth.passwordEnv, environment[candidate.viewerAuth.passwordEnv])}\n`;
     fs.writeFileSync(gateEnvPath, content, {flag: 'wx', mode: 0o600});
   }
@@ -1071,7 +1139,8 @@ function formatEnvironmentAssignment(name, value) {
 
 function targetEnvironmentContent(config, sourcePath, environment) {
   if (config.viewerAuth?.mode !== 'basic') return '';
-  const values = environment ?? parseEnvironmentFile(sourcePath);
+  const fileValues = parseEnvironmentFile(sourcePath, 'Legacy Analytics environment');
+  const values = {...fileValues, ...(environment ?? process.env)};
   const user = values[config.viewerAuth.userEnv];
   const password = values[config.viewerAuth.passwordEnv];
   if (typeof user !== 'string' || typeof password !== 'string' || !user || !password) throw errorWithCode('Target Basic-auth environment is unavailable', 'target_credentials_invalid');
@@ -1087,7 +1156,7 @@ function ensureTargetAnalyticsEnvironment({config, legacy, options, targetConfig
   const legacyEnvironmentPath = legacy.analyticsEnvPath ?? options.analyticsEnvPath ?? path.join(path.dirname(legacy.analyticsFile), 'analytics.env');
   if (fs.existsSync(legacyEnvironmentPath) && path.resolve(legacyEnvironmentPath) !== environmentPath) {
     regularFile(legacyEnvironmentPath, 'Legacy Analytics environment');
-    return writeAtomic(environmentPath, targetEnvironmentContent(config, legacyEnvironmentPath), 0o600);
+    return writeAtomic(environmentPath, targetEnvironmentContent(config, legacyEnvironmentPath, options.environment ?? process.env), 0o600);
   }
   if (config.viewerAuth?.mode !== 'basic') return writeAtomic(environmentPath, '', 0o600);
   const environment = options.environment ?? process.env;
@@ -1463,7 +1532,7 @@ async function prepareContext(options) {
   }
   if (!options.analyticsConfigPath || !options.collectorConfigPath) throw errorWithCode('Legacy Analytics and Collector config paths are required', 'invalid_path');
   const legacy = state?.legacyLayout && PHASE_INDEX.get(state.phase) >= PHASE_INDEX.get('finalbackup')
-    ? legacyFromDescriptor(state.legacyLayout, options.environment ?? process.env)
+    ? legacyFromDescriptor(state.legacyLayout, options.environment ?? process.env, {protectedBackup: state.protectedBackup})
     : parseLegacyLayout({
       analyticsConfigPath: options.analyticsConfigPath,
       collectorConfigPath: options.collectorConfigPath,
@@ -1514,7 +1583,13 @@ async function executeMigration(context) {
   return withPublicationLock(lockPath, async () => {
     let state = loadMigrationState(statePath);
     if (state?.phase === 'complete') return {alreadyComplete: true, state};
-    const environment = options.environment ?? process.env;
+    const environment = legacy.environment ?? loadLegacyEnvironment({
+      analyticsEnvPath: legacy.analyticsEnvPath,
+      collectorEnvPath: legacy.collectorEnvPath,
+      environment: options.environment ?? process.env,
+      fallbackAnalyticsEnvPath: state?.protectedBackup ? path.join(state.protectedBackup, 'legacy-analytics-env') : null,
+      fallbackCollectorEnvPath: state?.protectedBackup ? path.join(state.protectedBackup, 'legacy-collector-env') : null,
+    });
     const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-migration-run-'));
     let legacySource;
     let targetArtifact;
@@ -1621,7 +1696,7 @@ async function executeMigration(context) {
 
       if (PHASE_INDEX.get(state.phase) < PHASE_INDEX.get('provision')) {
         const provisioned = await invokePhaseHook(platform, 'provision', {...phaseContext, state, lock: lockContext(lockPath, 'provision')});
-        state = saveMigrationState(statePath, nextState(state, 'provision', {provisioned: provisioned ?? true, error: null}));
+        state = saveMigrationState(statePath, nextState(state, 'provision', {provisioned: safeStateValue(provisioned ?? true), error: null}));
         phaseContext.state = state;
       }
       if (PHASE_INDEX.get(state.phase) < PHASE_INDEX.get('publish')) {
@@ -1630,8 +1705,8 @@ async function executeMigration(context) {
         publishedThisRun = true;
         if (published?.targetCommitSha && String(published.targetCommitSha).toLowerCase() !== targetCommitSha) throw errorWithCode('Published artifact proof does not match target SHA', 'publish_proof_invalid');
         state = saveMigrationState(statePath, nextState(state, 'publish', {
-          published: published ?? true,
-          ...(published?.windowsProcess ? {windowsProcess: published.windowsProcess} : {}),
+          published: safeStateValue(published ?? true),
+          ...(published?.windowsProcess ? {windowsProcess: safeStateValue(published.windowsProcess)} : {}),
           error: null,
         }));
         phaseContext.state = state;

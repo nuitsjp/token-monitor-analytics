@@ -216,6 +216,47 @@ test('migration drains pinned legacy outbox, archives IDs without active URL/Sec
   assert.deepEqual(fs.readFileSync(f.options.statePath), before);
 });
 
+test('migration loads systemd environment files and lets explicit values win without persisting secrets', async t => {
+  const f = await setup(t);
+  const analytics = JSON.parse(fs.readFileSync(f.options.analyticsConfigPath, 'utf8'));
+  analytics.viewerAuth = {mode: 'basic', userEnv: 'TMA_VIEWER_USER', passwordEnv: 'TMA_VIEWER_PASSWORD'};
+  fs.writeFileSync(f.options.analyticsConfigPath, `${JSON.stringify(analytics, null, 2)}\n`, {mode: 0o600});
+  const fileToken = 'f'.repeat(64);
+  const fileUser = 'file-viewer';
+  const filePassword = 'file-password-0123456789';
+  fs.writeFileSync(path.join(f.dir, 'analytics.env'), `TMA_VIEWER_USER=${fileUser}\nTMA_VIEWER_PASSWORD=${filePassword}\n`, {mode: 0o600});
+  fs.writeFileSync(path.join(f.dir, 'collector.env'), `TMA_INGEST_TOKEN=${fileToken}\n`, {mode: 0o600});
+  const explicitToken = 'e'.repeat(64);
+  const explicitUser = 'cli-viewer';
+  const explicitPassword = 'cli-password-9876543210';
+  const calls = [];
+  f.options.environment = {TMA_INGEST_TOKEN: explicitToken, TMA_VIEWER_USER: explicitUser, TMA_VIEWER_PASSWORD: explicitPassword};
+  f.options.send = async (url, init) => {
+    assert.equal(init.headers.Authorization, `Bearer ${explicitToken}`);
+    return fetch(url, init);
+  };
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, calls);
+  await runMigration(f.options);
+  const targetEnvironment = fs.readFileSync(f.options.targetAnalyticsEnvPath, 'utf8');
+  assert.match(targetEnvironment, new RegExp(`^TMA_VIEWER_USER=${explicitUser}$`, 'm'));
+  assert.match(targetEnvironment, new RegExp(`^TMA_VIEWER_PASSWORD=${explicitPassword}$`, 'm'));
+  assert.doesNotMatch(targetEnvironment, /TMA_INGEST_TOKEN/);
+  const stateText = fs.readFileSync(f.options.statePath, 'utf8');
+  for (const secret of [fileToken, filePassword, explicitToken, explicitPassword]) assert.equal(stateText.includes(secret), false, `state leaked ${secret.slice(0, 4)}`);
+});
+
+test('conflicting Analytics and Collector environment files fail before mutation', async t => {
+  const f = await setup(t);
+  fs.writeFileSync(path.join(f.dir, 'analytics.env'), `TMA_INGEST_TOKEN=${'a'.repeat(64)}\n`, {mode: 0o600});
+  fs.writeFileSync(path.join(f.dir, 'collector.env'), `TMA_INGEST_TOKEN=${'b'.repeat(64)}\n`, {mode: 0o600});
+  let stopped = false;
+  f.options.environment = {};
+  f.options.platform = {...migrationPlatform({databasePath: f.databasePath}, []), stopCollector: async () => { stopped = true; }};
+  await assert.rejects(() => preflightMigration(f.options), error => error.code === 'legacy_env_conflict');
+  assert.equal(stopped, false);
+  assert.equal(fs.existsSync(f.options.statePath), false);
+});
+
 test('direct publication installs and proves the real Analytics server entrypoint', async t => {
   const f = await setup(t);
   const configDir = path.join(f.dir, 'direct-config');
