@@ -1,5 +1,6 @@
-import {openDatabase} from '../runtime/sqlite.mjs';
+import {openDatabase,transaction} from '../runtime/sqlite.mjs';
 export const database=(filename=':memory:')=>openDatabase(filename);
+export {transaction};
 export const contract={id:'test-weekly',label:'Test',hubId:'hub-a',provider:'claude',accountKey:'account',clientIds:['claude'],deviceIds:['pc'],windowKind:'weekly',windowHours:168,monthlyFeeUsd:200,attributionConfirmed:true,minDeltaPercent:5,maxSourceSkewSeconds:120,maxGapSeconds:1800};
 export function observation(n=0,opts={}){
  const at=new Date(Date.parse('2026-09-05T00:00:00Z')+n*60000).toISOString();

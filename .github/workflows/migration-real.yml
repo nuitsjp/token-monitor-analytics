@@ -1,0 +1,71 @@
+name: migration-real-acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/migration-real.yml'
+      - 'tools/migrate.mjs'
+      - 'tools/migration-source.mjs'
+      - 'tools/test/migrat*.test.mjs'
+      - 'analytics/migrations/**'
+
+permissions:
+  contents: read
+
+# This dedicated workflow prepares the pinned legacy
+# source in the job workspace before enabling the opt-in tests; the ordinary
+# release gate never fetches or depends on old Git objects.
+jobs:
+  pinned-source:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: workspace with spaces
+    steps:
+      - name: Checkout current and pinned legacy history
+        uses: actions/checkout@v4
+        with:
+          path: workspace with spaces
+          fetch-depth: 0
+      - name: Use the fixed Node runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.20.0'
+      - name: Prepare the pinned legacy source archive (Unix)
+        if: ${{ matrix.os != 'windows-latest' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          legacy_dir="$RUNNER_TEMP/tma-pinned-legacy"
+          mkdir -p "$legacy_dir/source"
+          node --experimental-strip-types tools/migration-source.mjs \
+            --repository "$GITHUB_WORKSPACE/workspace with spaces" \
+            --output "$legacy_dir/source" \
+            --archive "$legacy_dir/legacy.tar" \
+            --manifest "$legacy_dir/manifest.json"
+          {
+            echo 'TMA_MIGRATION_REAL=1'
+            echo "TMA_MIGRATION_LEGACY_SOURCE_MANIFEST=$legacy_dir/manifest.json"
+          } >> "$GITHUB_ENV"
+      - name: Prepare the pinned legacy source archive (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $legacyDir = Join-Path $env:RUNNER_TEMP 'tma-pinned-legacy'
+          New-Item -ItemType Directory -Force (Join-Path $legacyDir 'source') | Out-Null
+          node --experimental-strip-types tools/migration-source.mjs `
+            --repository "$env:GITHUB_WORKSPACE/workspace with spaces" `
+            --output (Join-Path $legacyDir 'source') `
+            --archive (Join-Path $legacyDir 'legacy.tar') `
+            --manifest (Join-Path $legacyDir 'manifest.json')
+          "TMA_MIGRATION_REAL=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TMA_MIGRATION_LEGACY_SOURCE_MANIFEST=$(Join-Path $legacyDir 'manifest.json')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Run the explicit real-source migration fixtures
+        run: node --experimental-strip-types --test --test-concurrency=1 tools/test/migration-real.test.mjs tools/test/migration-windows.test.mjs

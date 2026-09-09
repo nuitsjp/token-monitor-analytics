@@ -1,3 +1,6 @@
+import {boundedUsageRange,createUsageHistoryController,historyFetchErrorText} from './usage-history.mjs';
+import {createUpdateRestartController,isRestartRecoveryStage} from './update-restart.mjs';
+
 const $=id=>document.getElementById(id);
 const money=n=>typeof n==='number'&&Number.isFinite(n)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(n):'—';
 let displayZone='Asia/Tokyo';
@@ -6,16 +9,31 @@ const reasons={estimate_out_of_range:'推定値が計算範囲外',baseline_star
 const status=s=>({estimated:'参考推定',observing:'観測中',unavailable:'推定不可'}[s]??s);
 function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
 function notice(s){$('notice').textContent=s;$('notice').hidden=!s;}
-async function get(path){const r=await fetch(path,{cache:'no-store'});if(r.status===401)throw new Error('閲覧認証が必要です。画面を再読み込みし、設定したユーザー名・パスワードでログインしてください。');if(!r.ok)throw new Error(`APIの読み込みに失敗しました (${r.status})。保存済みの表示は更新されていません。`);return r.json();}
+async function get(path,options={}){const r=await fetch(path,{cache:'no-store',...options});if(r.status===401)throw new Error('閲覧認証が必要です。画面を再読み込みし、設定したユーザー名・パスワードでログインしてください。');if(!r.ok)throw new Error(`APIの読み込みに失敗しました (${r.status})。保存済みの表示は更新されていません。`);return r.json();}
 let data=null,view='dashboard',feed=null,stopped=false,loading=false,dirty=false;
+let usageHistoryHubs=[],usageHistoryRows=null,usageHistoryDisplayedQuery=null;
+const usageHistoryController=createUsageHistoryController({
+ getQuery:()=>usageHistoryQuery(),
+ fetchQuery:query=>get(`/api/usage-history?hubId=${encodeURIComponent(query.hubId)}&deviceId=${encodeURIComponent(query.deviceId)}&granularity=${query.granularity}&from=${encodeURIComponent(query.from)}&to=${encodeURIComponent(query.to)}`),
+ onApplied:(result,query)=>{
+  usageHistoryRows=result;usageHistoryDisplayedQuery=query;
+  drawUsageHistoryRows(result);drawUsageHistoryControls();
+ }
+});
 function options(select,entries){const old=select.value;select.replaceChildren(...entries.map(([value,text])=>{const e=el('option',text);e.value=value;return e;}));if(entries.some(x=>x[0]===old))select.value=old;}
+function contractOptions(){
+ const entries=[];const seen=new Set();
+ for(const contract of data?.contractHistory??data?.contracts??[]){if(seen.has(contract.id))continue;seen.add(contract.id);entries.push([contract.id,`${contract.label}${contract.active===false?' (inactive)':''}`]);}
+ for(const contract of data?.contracts??[]){if(seen.has(contract.id))continue;seen.add(contract.id);entries.push([contract.id,contract.label]);}
+ return entries;
+}
 function draw(){if(!data)return;displayZone=data.timeZone??'Asia/Tokyo';
  options($('hub-select'),data.configuredHubs.map(h=>[h.id,h.label]));
- options($('contract-select'),data.contracts.map(c=>[c.id,c.label]));
+ options($('contract-select'),contractOptions());
  const h=data.hubs.find(h=>h.hubId===$('hub-select').value),p=h?.stats.periods;
  $('today').textContent=money(p?.today?.costUsd);$('month').textContent=money(p?.month?.costUsd);$('alltime').textContent=money(p?.allTime?.costUsd);
  const age=h?Math.floor((Date.now()-Date.parse(h.observedAt))/60000):0;
- $('observed').textContent=h?`最終観測 ${when(h.observedAt)} ${displayZone}${age>=5?` · ${age}分前の観測値`:''}`:'まだ観測データがありません。Collectorのログと接続設定を確認してください。';
+ $('observed').textContent=h?`最終観測 ${when(h.observedAt)} ${displayZone}${age>=5?` · ${age}分前の観測値`:''}`:'まだ観測データがありません。Hubの接続状態を確認してください。';
  $('estimates').replaceChildren();
  const cs=data.contracts.filter(c=>c.hubId===$('hub-select').value);
  if(!cs.length)$('estimates').append(el('div','契約の紐付けは未設定です。利用額の収集はこのまま継続できます。','empty'));
@@ -23,8 +41,9 @@ function draw(){if(!data)return;displayZone=data.timeZone??'Asia/Tokyo';
  $('limits').replaceChildren();for(const a of h?.stats.limits.providers??[]){for(const w of a.windows){const tr=el('tr');const name=el('td',a.provider);name.append(el('small',a.accountKey.slice(0,18)));const used=el('td',w.usedPercent===null?'—':`${w.usedPercent.toFixed(1)}%`);if(w.usedPercent!==null){const bar=el('div',undefined,'bar'),fill=el('i');fill.style.width=`${Math.max(0,Math.min(100,w.usedPercent))}%`;bar.append(fill);used.append(bar);}tr.append(name,el('td',w.kind),used,el('td',when(w.resetsAt)),el('td',a.stale===true?'古い観測値':a.status));$('limits').append(tr);}}
  if(!$('limits').children.length){const tr=el('tr'),td=el('td','利用率はまだ届いていません。');td.colSpan=5;tr.append(td);$('limits').append(tr);}
  $('connections').replaceChildren();for(const h of data.configuredHubs){const o=data.hubs.find(x=>x.hubId===h.id);const card=el('div',undefined,'callout');card.append(el('strong',`${h.label} / ${h.id}`),el('p',o?`最後の観測: ${when(o.observedAt)} ${displayZone}`:'未受信'));if(o){const details=el('details'),summary=el('summary','紐付け用の識別子');details.append(summary);for(const d of o.stats.devices){details.append(el('p',`deviceId: ${d.deviceId} / clients: ${Object.keys(d.periods.allTime?.clientCosts??{}).join(', ')}`));}for(const p of o.stats.limits.providers){details.append(el('p',`${p.provider} / accountKey: ${p.accountKey}`));}card.append(details);}$('connections').append(card);}
+ drawUsageHistoryControls();
 }
-async function refresh(){dirty=true;if(loading)return;loading=true;try{do{dirty=false;data=await get('/api/state');notice(data.demo?'DEMO：合成データです。実サービスの料金・利用枠ではありません。':'');$('nav-manage').hidden=!data.management?.enabled;$('nav-update').hidden=!data.management?.enabled;draw();if(view==='history')await loadHistory();if(view==='manage')await loadManage();if(view==='update')await loadUpdate();}while(dirty);}catch(e){notice(e.message);}finally{loading=false;}}
+async function refresh(){dirty=true;if(loading)return;loading=true;try{do{dirty=false;data=await get('/api/state');notice(data.demo?'DEMO：合成データです。実サービスの料金・利用枠ではありません。':'');$('nav-manage').hidden=!data.management?.enabled;$('nav-update').hidden=!data.management?.enabled;draw();if(view==='history'){await loadHistory();await loadUsageHistoryHubs();}if(view==='manage')await loadManage();if(view==='update')await loadUpdate();}while(dirty);}catch(e){notice(e.message);}finally{loading=false;}}
 async function loadHistory(){const id=$('contract-select').value;$('daily').replaceChildren();$('chart').replaceChildren();if(!id){$('chart').append(el('p','契約が未設定です。','muted'));return;}
  const result=await get(`/api/history?contract=${encodeURIComponent(id)}`);if($('contract-select').value!==id)return;
  for(const row of result.rows){const tr=el('tr');tr.append(el('td',row.day),el('td',money(row.monthly_capacity_usd)),el('td',money(row.window_capacity_usd)),el('td',when(row.last_valid_at)),el('td',`${status(row.status)} / ${reasons[row.reason]??row.reason}`));$('daily').append(tr);}
@@ -36,6 +55,85 @@ function chart(rows){const valid=rows.filter(r=>r.monthly_capacity_usd!==null).r
  const flush=()=>{if(segment.length>1)svg.append(make('polyline',{points:segment.join(' ')}));segment=[];};
  for(const r of valid){const day=Date.parse(r.day),x=valid.length===1?400:70+(day-start)/span*680,y=150-r.monthly_capacity_usd/max*125;if(lastDay&&day-lastDay>86400000)flush();segment.push(`${x},${y}`);svg.append(make('circle',{cx:x,cy:y,r:3}));lastDay=day;}flush();
  for(const [text,x,y]of (valid.length===1?[[money(max),0,24],['$0',0,154],[valid[0].day,365,177],[money(valid[0].monthly_capacity_usd),415,Math.max(18,145-valid[0].monthly_capacity_usd/max*125)]]:[[money(max),0,24],['$0',0,154],[valid[0].day,70,177],[valid.at(-1).day,680,177]])){const t=make('text',{x,y});t.textContent=text;svg.append(t);}$('chart').append(svg);}
+
+function usageHub(){return usageHistoryHubs.find(h=>h.id===$('usage-hub-select').value)??null;}
+function usageSource(){return usageHub()?.devices?.find(d=>d.deviceId===$('usage-device-select').value)??null;}
+function usageHistoryQuery(){
+ const hub=usageHub(),source=usageSource();
+ if(!hub||!source)return null;
+ return {
+  hubId:hub.id,deviceId:source.deviceId,granularity:$('usage-granularity').value,
+  from:$('usage-from').value,to:$('usage-to').value,
+ };
+}
+function usageDate(value,granularity){
+ const daily=granularity==='daily';
+ const pattern=daily?/^\d{4}-\d{2}-\d{2}$/:/^\d{4}-\d{2}$/;
+ return pattern.test(value??'')?value:'';
+}
+function setUsageRange(source,force=false){
+ const granularity=$('usage-granularity').value;
+ const defaults=boundedUsageRange(source,granularity);
+ const currentFrom=$('usage-from').value,currentTo=$('usage-to').value;
+ if(force||!usageDate(currentFrom,granularity))$('usage-from').value=defaults.from;
+ if(force||!usageDate(currentTo,granularity))$('usage-to').value=defaults.to;
+ $('usage-from').placeholder=granularity==='daily'?'YYYY-MM-DD':'YYYY-MM';$('usage-to').placeholder=granularity==='daily'?'YYYY-MM-DD':'YYYY-MM';
+}
+function drawUsageHistoryControls(resetRange=false){
+ if(!$('usage-hub-select'))return;
+ options($('usage-hub-select'),usageHistoryHubs.map(h=>[h.id,`${h.label}${h.status==='archived'?' (archived)':''}`]));
+ const hub=usageHub();
+ options($('usage-device-select'),hub?.devices?.map(d=>[d.deviceId,d.deviceId])??[]);
+ const source=usageSource();
+ setUsageRange(source,resetRange);
+ const active=hub?.status==='active';
+ $('usage-history-fetch').disabled=!active||!data?.management?.enabled;
+ const fetchError=historyFetchErrorText(hub?.fetch);
+ const fetchSuccess=hub?.fetch?.latestSuccessAt;
+ const fetchState=hub?.fetch?.lastStatus;
+ const fetchNote=fetchError?`直近取得エラー: ${fetchError}`:fetchState==='running'?'現在Hubから取得中です。':'';
+ const confirmation=source?.lastConfirmedAt??fetchSuccess;
+ if(!hub){$('usage-history-state').textContent='未選択';$('usage-history-state').className='badge';$('usage-history-meta').textContent='履歴を保存したHubがありません。';return;}
+ if(!source){
+  $('usage-history-state').textContent=fetchError?'取得エラー':'端末未選択';
+  $('usage-history-state').className=`badge ${fetchError?'warn':''}`;
+  $('usage-history-meta').textContent=`${hub.label} · 最終成功確認 ${when(confirmation)} · ${fetchNote||'このHubには保存済みの端末履歴がありません。'}`;
+  return;
+ }
+ const labels={available:'利用可能',disabled:'無効',unavailable:'上流で利用不可',missing:'応答に履歴なし',missing_capability:'可用性不明',deleted:'Hubから削除済み'};
+ const stateText=fetchError?'取得エラー':fetchState==='running'?'取得中':labels[source.historyState]??source.historyState;
+ $('usage-history-state').textContent=stateText;$('usage-history-state').className=`badge ${fetchError||source.historyState!=='available'?'warn':'active'}`;
+ $('usage-history-meta').textContent=`${hub.label} / ${source.deviceId} · 最終成功確認 ${when(confirmation)} · ${source.historyState==='available'?'保存された日付範囲を表示できます。':'この状態では新しい実績を表示できません。'}${fetchNote?` · ${fetchNote}`:''}${source.timeZone?` · 現在のウィンドウ基準時刻 ${source.timeZone}（過去行の日付基準: 不明）`:''}`;
+}
+async function loadUsageHistoryHubs({refreshRows=true}={}){
+ usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);
+ const result=await get('/api/usage-history/hubs');usageHistoryHubs=result.hubs??[];drawUsageHistoryControls();
+ if(refreshRows&&view==='history'){
+  try{await loadUsageHistory({silent:true});}catch(error){notice(error.message);}
+ }
+}
+function drawUsageHistoryRows(result){
+ const body=$('usage-history-rows');body.replaceChildren();
+ if(!result){return;}
+ if(!result.rows?.length){const row=el('tr'),cell=el('td','指定期間に保存済みの実績がありません。','muted');cell.colSpan=6;row.append(cell);body.append(row);return;}
+ for(const value of result.rows){const row=el('tr');row.append(el('td',value.periodKey),el('td',value.tokens===null?'—':String(value.tokens)),el('td',money(value.costUsd)),el('td',value.messages===null?'—':String(value.messages)),el('td',when(value.confirmedAt)),el('td',value.current?'現在の保存値':'過去の保存値'));body.append(row);}
+}
+async function loadUsageHistory({silent=false}={}){
+ const query=usageHistoryQuery();
+ if(!query){usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);drawUsageHistoryControls();return null;}
+ if(!usageDate(query.from,query.granularity)||!usageDate(query.to,query.granularity)){
+  if(!silent)notice(`期間は${query.granularity==='daily'?'YYYY-MM-DD':'YYYY-MM'}形式で指定してください。`);
+  return null;
+ }
+ usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);
+ try{return await usageHistoryController.load();}
+ catch(error){if(!silent)throw error;notice(error.message);return null;}
+}
+async function requestUsageHistory(){
+ const hub=usageHub();if(!hub||hub.status!=='active')return;
+ try{await post(`/api/manage/hubs/${encodeURIComponent(hub.id)}/history`,{});await loadUsageHistoryHubs();notice('Hubへ履歴の再取得を依頼しました。完了後に表示を更新します。');}
+ catch(error){notice(error.message);}
+}
 
 let manageData=null;
 async function post(path,body,method='POST'){
@@ -52,19 +150,10 @@ async function loadManage(){
 }
 function drawManage(){
  if(!manageData)return;
- const {revision,hubs,collector}=manageData;
+ const {hubs}=manageData;
  $('manage-status').replaceChildren();
- $('manage-status').append(el('span',`保存済み: rev ${revision}`));
- if(!collector||collector.status==='unknown'){
-  $('manage-status').append(el('span','Collector状態不明','badge warn'));
- }else if(collector.appliedRevision<revision){
-  $('manage-status').append(el('span',`反映待ち (要求 rev ${revision} / 適用 rev ${collector.appliedRevision})`,'badge sync'));
- }else{
-  $('manage-status').append(el('span',`設定反映済み (rev ${revision})`,'badge active'));
- }
- if(collector?.lastReportAt){
-  $('manage-status').append(el('small',`最終報告: ${when(collector.lastReportAt)}`,'muted'));
- }
+ $('manage-status').append(el('span','SQLiteへ保存済み','badge active'));
+ $('manage-status').append(el('small','設定の保存とHub接続の状態を別々に表示しています。','muted'));
 
  if(!hubs.length){
   $('manage-empty').hidden=false;
@@ -83,22 +172,20 @@ function drawManage(){
   const statusTd=el('td');
   statusTd.append(el('span',h.status==='active'?'有効':'停止',`badge ${h.status==='active'?'active':'disabled'}`));
 
-  const applied=collector?.appliedRevision>=revision;
-  const syncTd=el('td');
-  syncTd.append(el('span',applied?'反映済み':'反映待ち',`badge ${applied?'active':'sync'}`));
-
-  const cHub=collector?.hubs?.[h.id];
+  const cHub=h.connection;
   const connTd=el('td');
   let connLabel='不明',connCls='disabled';
   if(h.status==='disabled'){
    connLabel='停止中';connCls='disabled';
   }else if(cHub){
-   if(cHub.status==='connected'){connLabel='接続中';connCls='active';}
-   else if(cHub.status==='connecting'){connLabel='接続試行中';connCls='sync';}
-   else if(cHub.status==='error'){connLabel=cHub.errorCode?`エラー (${cHub.errorCode})`:'エラー';connCls='error';}
-   else if(cHub.status==='disabled'){connLabel='停止中';connCls='disabled';}
+   if(cHub.state==='connected'){connLabel='接続中';connCls='active';}
+   else if(cHub.state==='connecting'){connLabel='接続試行中';connCls='sync';}
+   else if(cHub.state==='error'){connLabel=cHub.errorCode==='missing_secret'?'Secret未設定':cHub.errorCode?`エラー (${cHub.errorCode})`:'エラー';connCls='error';}
+   else if(cHub.state==='stopped'){connLabel='停止中';connCls='disabled';}
   }
   connTd.append(el('span',connLabel,`badge ${connCls}`));
+
+  const observedTd=el('td',h.connection?.lastObservationAt?when(h.connection.lastObservationAt):'—');
 
   const actTd=el('td');
   const actWrap=el('div',undefined,'table-actions');
@@ -106,12 +193,15 @@ function drawManage(){
   editBtn.onclick=()=>openEditDialog(h);
   const toggleBtn=el('button',h.status==='active'?'停止':'有効化','outline');
   toggleBtn.onclick=()=>toggleHubStatus(h);
+  const reconnectBtn=el('button','再接続','outline');
+  reconnectBtn.disabled=h.status!=='active';
+  reconnectBtn.onclick=()=>reconnectHub(h);
   const delBtn=el('button','削除','outline danger');
   delBtn.onclick=()=>openDeleteDialog(h);
-  actWrap.append(editBtn,toggleBtn,delBtn);
+  actWrap.append(editBtn,toggleBtn,reconnectBtn,delBtn);
   actTd.append(actWrap);
 
-  tr.append(nameTd,urlTd,statusTd,syncTd,connTd,actTd);
+  tr.append(nameTd,urlTd,statusTd,connTd,observedTd,actTd);
   $('manage-hubs-body').append(tr);
  }
 }
@@ -157,7 +247,6 @@ $('hub-form').onsubmit=async e=>{
  try{
   if(dialogMode==='add'){
    await post('/api/manage/hubs',{
-    expectedRevision:manageData.revision,
     id:$('input-hub-id').value.trim(),
     label:$('input-hub-label').value.trim(),
     url:$('input-hub-url').value.trim(),
@@ -165,7 +254,7 @@ $('hub-form').onsubmit=async e=>{
    });
   }else{
    const body={
-    expectedRevision:manageData.revision,
+    expectedVersion:manageData.hubs.find(h=>h.id===editingHub.id)?.version,
     label:$('input-hub-label').value.trim(),
     url:$('input-hub-url').value.trim(),
     status:$('select-hub-status').value
@@ -195,7 +284,7 @@ $('hub-delete-form').onsubmit=async e=>{
  e.preventDefault();
  $('delete-dialog-error').hidden=true;
  try{
-  await post(`/api/manage/hubs/${encodeURIComponent(deletingHub.id)}`,{expectedRevision:manageData.revision},'DELETE');
+  await post(`/api/manage/hubs/${encodeURIComponent(deletingHub.id)}`,{expectedVersion:manageData.hubs.find(h=>h.id===deletingHub.id)?.version},'DELETE');
   $('hub-delete-dialog').close();
   await loadManage();
  }catch(err){
@@ -206,16 +295,44 @@ $('hub-delete-form').onsubmit=async e=>{
 async function toggleHubStatus(h){
  try{
   await post(`/api/manage/hubs/${encodeURIComponent(h.id)}`,{
-   expectedRevision:manageData.revision,
+   expectedVersion:h.version,
    status:h.status==='active'?'disabled':'active'
   },'PUT');
   await loadManage();
  }catch(err){notice(err.message);}
 }
+async function reconnectHub(h){
+ try{await post(`/api/manage/hubs/${encodeURIComponent(h.id)}/reconnect`,{});await loadManage();}
+ catch(err){notice(err.message);}
+}
 
-let updateData=null,pollingRestart=false;
-const updateErrors={lock_conflict:'他の発行タスクまたは更新処理が実行中です。',fetch_failed:'mainブランチの最新コミット取得に失敗しました。ネットワーク接続を確認してください。',commit_not_found:'指定されたコミットがリモートのmainに見つかりません。',verification_failed:'新バージョンのローカル検証（テストまたはビルド）に失敗したため、適用を中止しました。現在のバージョンは維持されています。',deploy_failed:'成果物の配置またはSQLiteバックアップに失敗しました。',health_check_failed:'新バージョンの起動または疎通確認に失敗しました。ホストログを確認してください。',job_aborted:'更新処理が途中で中断されました（プロセス終了またはサービス停止）。',system_restarted:'OS再起動により更新処理が中断されました。',save_state_failed:'状態ファイルの保存に失敗しました。',unknown_error:'予期せぬエラーが発生しました。'};
+let updateData=null,pollingRestart=false,restartRefreshPromise=null;
+const updateErrors={lock_conflict:'他の発行タスクまたは更新処理が実行中です。',fetch_failed:'mainブランチの最新コミット取得に失敗しました。ネットワーク接続を確認してください。',invalid_remote_commit:'リモートブランチのコミット識別子を検証できないため、更新を中止しました。',main_moved:'確認後にmainが進んだため、指定SHAへの更新を中止しました。',already_current:'選択したコミットはすでに発行済みです。',commit_not_found:'指定されたコミットがリモートのmainに見つかりません。',verification_failed:'新バージョンのローカル検証（テストまたはビルド）に失敗したため、適用を中止しました。現在のバージョンは維持されます。',deploy_failed:'成果物の配置またはSQLiteバックアップに失敗しました。',health_check_failed:'新バージョンの起動または疎通確認に失敗しました。ホストログを確認してください。',configuration_changed:'受付後に起動設定が変更されたため、停止前に更新を中止しました。',migration_required:'新しいサービス構成には管理者による移行が必要です。',provision_required:'更新に必要な固定ツールがありません。管理者にprovision:ubuntuを依頼してください。',job_aborted:'更新処理が途中で中断されました（プロセス終了またはサービス停止）。',system_restarted:'OS再起動により更新処理が中断されました。',save_state_failed:'状態ファイルの保存に失敗しました。',unknown_error:'予期せぬエラーが発生しました。'};
 const stageNames={accepted:'受付済み',fetching:'取得中',verifying:'検証中',deploying:'配置中',restarting:'再起動中',success:'成功',failed:'失敗',aborted:'中断・状態不明'};
+
+const restartController=createUpdateRestartController({
+ fetchHealth:()=>fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(1500)}),
+ fetchStatus:()=>fetch('/api/manage/update',{cache:'no-store',signal:AbortSignal.timeout(1500)}),
+ onProgress:job=>{
+  if(job.stage)$('restarting-text').textContent=`${stageNames[job.stage]??job.stage}...`;
+ },
+ onSuccess:async({unchanged})=>{
+  pollingRestart=false;$('update-restarting-overlay').hidden=true;
+  await refresh();
+  if(view==='update')await loadUpdate();
+  if(unchanged)notice('選択したコミットは内容と設定が同一のため、サービスは再起動されませんでした。');
+ },
+ onFailure:async job=>{
+  pollingRestart=false;$('update-restarting-overlay').hidden=true;
+  await loadUpdate();
+  notice(updateErrors[job.errorCode]??`更新に失敗しました (${job.errorCode??'unknown_error'})`);
+ },
+ onTimeout:async()=>{
+  pollingRestart=false;$('update-restarting-overlay').hidden=true;
+  await loadUpdate();
+  notice('再起動の確認がタイムアウトしました。SSHでホストの状態を確認してください。');
+ }
+});
 
 async function loadUpdate(){
  try{
@@ -264,7 +381,7 @@ function drawUpdate(){
   }
  }
 
- const stageBadge=$('job-stage-badge'),jobErr=$('job-error'),jobRecovery=$('job-recovery');
+ const stageBadge=$('job-stage-badge'),jobErr=$('job-error'),jobRecovery=$('job-recovery'),jobRecoveryTitle=$('job-recovery-title'),jobRecoveryMessage=$('job-recovery-message'),jobRecoveryCommands=$('job-recovery-commands');
  if(!job){
   $('job-id').textContent='—';stageBadge.textContent='待機中';stageBadge.className='badge';
   $('job-started-at').textContent='';$('job-finished-at').textContent='';
@@ -281,7 +398,12 @@ function drawUpdate(){
   }else{
    jobErr.hidden=true;
   }
-  if(job.stage==='failed'&&(job.errorCode==='health_check_failed'||job.errorCode==='deploy_failed')){
+  const recovery=job.recovery;
+  if(recovery){
+   jobRecoveryTitle.textContent=recovery.title||'ホスト復旧手順';
+   jobRecoveryMessage.textContent=recovery.message||'';
+   jobRecoveryCommands.textContent=Array.isArray(recovery.commands)?recovery.commands.join('\n'):'';
+   jobRecoveryCommands.parentElement.hidden=!jobRecoveryCommands.textContent;
    jobRecovery.hidden=false;
   }else{
    jobRecovery.hidden=true;
@@ -318,54 +440,68 @@ $('update-confirm-form').onsubmit=async e=>{
  try{
   await post('/api/manage/update/apply',{targetCommitSha:updateData.candidate.targetCommitSha});
   await loadUpdate();
-  waitForRestart();
  }catch(err){notice(err.message);}
 };
 
-function waitForRestart(){
+function waitForRestart(jobId,targetCommitSha){
  if(pollingRestart)return;
  pollingRestart=true;
  $('update-restarting-overlay').hidden=false;
- let attempts=0;
- const maxAttempts=90;
- const timer=setInterval(async()=>{
-  attempts++;
+ $('restarting-text').textContent='再起動を確認しています...';
+ if(!restartController.start(jobId,targetCommitSha))pollingRestart=false;
+}
+
+async function refreshUpdateAfterDisconnect(){
+ if(restartRefreshPromise)return restartRefreshPromise;
+ if(updateData?.job?.status!=='running')return;
+ restartRefreshPromise=(async()=>{
   try{
-   const res=await fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(1500)});
-   if(res.ok){
-    clearInterval(timer);
-    pollingRestart=false;
-    $('update-restarting-overlay').hidden=true;
-    await refresh();
-    if(view==='update')await loadUpdate();
-    return;
-   }
+   // A state-file SSE event can race the service stop. Fetch one fresh DTO so
+   // a disconnect seen while the cached stage is verifying cannot hide a
+   // restart that has already entered deploying/restarting. This is a single
+   // bounded check; verification-stage disconnects never start the long poll.
+   const latest=await get('/api/manage/update',{signal:AbortSignal.timeout(1500)});
+   updateData=latest;drawUpdate();
+   if(isRestartRecoveryStage(latest?.job))waitForRestart(latest.job.jobId,latest.job.targetCommitSha);
   }catch{}
-  if(attempts>=maxAttempts){
-   clearInterval(timer);
-   $('restarting-text').textContent='再起動が完了しませんでした。SSHでホストに接続し、サービス状態を確認してください。';
-  }
- },2000);
+  finally{restartRefreshPromise=null;}
+ })();
+ return restartRefreshPromise;
 }
 
 function connection(s,on=false){$('live').textContent=s;$('dot').classList.toggle('on',on);}
 function connect(){
  if(stopped||feed)return;
  const current=new EventSource('/api/live');feed=current;
- current.onopen=()=>connection('ライブ接続中',true);
+ current.onopen=()=>{connection('ライブ接続中',true);if(updateData?.job?.status==='running')void refreshUpdateAfterDisconnect();};
  current.addEventListener('ready',()=>refresh());
  current.addEventListener('updated',()=>refresh());
  current.addEventListener('manage_updated',()=>refresh());
  current.addEventListener('update_candidate_updated',()=>loadUpdate());
- current.addEventListener('update_job_changed',()=>loadUpdate());
+ current.addEventListener('update_job_changed',event=>{
+  // Apply the event payload before the follow-up GET. If the app is about to
+  // stop, the GET may lose the race even though this SSE frame was delivered.
+  try{
+   const job=JSON.parse(event.data||'').job;
+   if(job&&updateData){updateData={...updateData,job};drawUpdate();}
+  }catch{}
+  loadUpdate();
+ });
  current.onerror=()=>{
   connection('ライブ再接続待ち');
-  if(updateData?.job?.status==='running')waitForRestart();
+  if(isRestartRecoveryStage(updateData?.job))waitForRestart(updateData.job.jobId,updateData.job.targetCommitSha);
+  else if(updateData?.job?.status==='running')void refreshUpdateAfterDisconnect();
  };
 }
 $('refresh').onclick=refresh;$('hub-select').onchange=draw;$('contract-select').onchange=()=>loadHistory().catch(e=>notice(e.message));
-for(const b of document.querySelectorAll('nav button'))b.onclick=()=>{view=b.dataset.view;for(const t of document.querySelectorAll('nav button'))t.removeAttribute('aria-current');b.setAttribute('aria-current','page');for(const s of document.querySelectorAll('.view'))s.hidden=s.id!==view;$('title').textContent=b.textContent;if(view==='history')loadHistory().catch(e=>notice(e.message));if(view==='manage')loadManage().catch(e=>notice(e.message));if(view==='update')loadUpdate().catch(e=>notice(e.message));};
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();connect();}});window.addEventListener('pagehide',()=>{stopped=true;feed?.close();feed=null;});
+$('usage-hub-select').onchange=()=>{usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);drawUsageHistoryControls(true);};
+$('usage-device-select').onchange=()=>{usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);drawUsageHistoryControls(true);};
+$('usage-granularity').onchange=()=>{usageHistoryController.invalidate();setUsageRange(usageSource(),true);usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);drawUsageHistoryControls();};
+ const invalidateUsageHistoryInput=()=>{usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);};
+ for(const id of ['usage-from','usage-to']){$(id).oninput=invalidateUsageHistoryInput;$(id).onchange=invalidateUsageHistoryInput;}
+$('usage-history-load').onclick=()=>loadUsageHistory().catch(e=>notice(e.message));
+$('usage-history-fetch').onclick=requestUsageHistory;
+for(const b of document.querySelectorAll('nav button'))b.onclick=()=>{view=b.dataset.view;for(const t of document.querySelectorAll('nav button'))t.removeAttribute('aria-current');b.setAttribute('aria-current','page');for(const s of document.querySelectorAll('.view'))s.hidden=s.id!==view;$('title').textContent=b.textContent;if(view==='history'){loadHistory().catch(e=>notice(e.message));loadUsageHistoryHubs().catch(e=>notice(e.message));}if(view==='manage')loadManage().catch(e=>notice(e.message));if(view==='update')loadUpdate().catch(e=>notice(e.message));};
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();connect();}});window.addEventListener('pagehide',()=>{stopped=true;restartController.stop();pollingRestart=false;feed?.close();feed=null;});
 window.addEventListener('pageshow',()=>{stopped=false;refresh();connect();});
 refresh();connect();
-

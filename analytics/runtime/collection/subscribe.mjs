@@ -1,5 +1,6 @@
 import {randomBytes} from 'node:crypto';
 import {streamHub, isPermanent, HTTPError} from './sse.mjs';
+import {historyRevisionFromSseData} from '../../src/history.ts';
 
 export const BACKOFF_MIN_MS = 1_000;
 export const BACKOFF_MAX_MS = 30_000;
@@ -43,6 +44,8 @@ export async function subscribeLoop({
   hub,
   onObservation = async () => {},
   onStatus,
+  onConnected,
+  onRevision,
   onFatal,
   idleMs = 90_000,
   headerTimeoutMs,
@@ -69,11 +72,18 @@ export async function subscribeLoop({
         headerTimeoutMs,
         signal,
         fetchImpl,
-        onConnected: () => emit('connected'),
+        onConnected: () => {
+          emit('connected');
+          if (isCurrent() && !signal?.aborted) onConnected?.({hubId: hub.id, streamId});
+        },
         onEvent: async (event) => {
           if (!isCurrent() || signal?.aborted) return;
           if (event.name !== 'snapshot' && event.name !== 'stats') return;
           await onObservation({hubId: hub.id, name: event.name, data: event.data, streamId});
+          const revision = historyRevisionFromSseData(event.data);
+          if (revision !== null && isCurrent() && !signal?.aborted) {
+            await onRevision?.({hubId: hub.id, revision, streamId});
+          }
           if (isCurrent() && !signal?.aborted) delivered = true;
         },
       });

@@ -58,7 +58,7 @@ test('readSSE applies the 8 MiB limit in UTF-8 bytes', async () => {
   await assert.rejects(() => readSSE(stream(`data: ${'😀'.repeat(Math.ceil(MAX_EVENT_BYTES / 4))}\n\n`), async () => {}), /SSE event exceeds/);
 });
 
-test('compactHubEvent mirrors Go normalization and strips private fields', () => {
+test('compactHubEvent normalizes Hub data and strips private fields', () => {
   const observation = compactHubEvent({name: 'snapshot', data: payload()}, 'hub-a', 'a'.repeat(32), Date.parse(at));
   assert.deepEqual(observation.stats.periods, {today: {costUsd: 1}, month: {costUsd: 2}, allTime: {costUsd: 3}});
   assert.deepEqual(Object.keys(observation.stats.devices[0].periods), ['allTime']);
@@ -138,6 +138,13 @@ test('subscribeLoop stops on permanent input/auth errors and backs off transient
 
 test('collection manager isolates Hubs and replaces old generations after they finish', async () => {
   const observations = [];
+  const waitForObservations = async expected => {
+    const deadline = Date.now() + 5000;
+    while (observations.length < expected && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(observations.length, expected);
+  };
   const servers = [];
   const makeHub = value => http.createServer((_req, res) => {
     res.writeHead(200, {'Content-Type': 'text/event-stream'});
@@ -148,12 +155,10 @@ test('collection manager isolates Hubs and replaces old generations after they f
   const manager = createCollectionManager({idleMs: 1000, onObservation: async observation => { observations.push(observation); }});
   try {
     await manager.applyHubs([{id: 'a', url: urlA, secret: 's', status: 'active'}, {id: 'b', url: urlB, secret: 's', status: 'disabled'}]);
-    await new Promise(resolve => setTimeout(resolve, 40));
-    assert.equal(observations.length, 1);
+    await waitForObservations(1);
     assert.equal(observations[0].hubId, 'a');
     await manager.applyHubs([{id: 'a', url: urlA, secret: 's', status: 'disabled'}, {id: 'b', url: urlB, secret: 's', status: 'active'}]);
-    await new Promise(resolve => setTimeout(resolve, 40));
-    assert.equal(observations.length, 2);
+    await waitForObservations(2);
     assert.equal(observations[1].hubId, 'b');
     assert.equal(manager.getStatus().some(status => status.hubId === 'a'), false);
   } finally { await manager.stop(); for (const server of servers) server.close(); }
@@ -187,6 +192,51 @@ test('collection manager serializes reconnect behind configuration removal', asy
   } finally { await manager.stop(); }
 });
 
+test('collection manager fences a newer commit while an older reconciliation waits for retirement', async () => {
+  const oldUrl = 'http://127.0.0.1:10001';
+  const newUrl = 'http://127.0.0.1:10002';
+  const calls = [];
+  let first = true;
+  let markObservation;
+  const observationStarted = new Promise(resolve => { markObservation = resolve; });
+  let releaseObservation;
+  const observationGate = new Promise(resolve => { releaseObservation = resolve; });
+  const event = new TextEncoder().encode('event: snapshot\ndata: {}\n\n');
+  const manager = createCollectionManager({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (first) {
+        first = false;
+        return new Response(new ReadableStream({start(controller) { controller.enqueue(event); controller.close(); }}), {
+          status: 200, headers: {'Content-Type': 'text/event-stream'},
+        });
+      }
+      return new Response(null, {status: 500});
+    },
+    onObservation: async () => { markObservation(); await observationGate; },
+    jitterFn: () => 0,
+  });
+  try {
+    await manager.applyHubs([{id: 'h', url: oldUrl, secret: 's1', status: 'active'}]);
+    await observationStarted;
+    const staleApply = manager.applyHubs([{id: 'h', url: oldUrl, secret: 's2', status: 'active'}]);
+    const deadline = Date.now() + 1000;
+    while (manager.getStatus().length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+    assert.deepEqual(manager.getStatus(), []);
+    // The first reconciliation has already removed the runner.  The second
+    // commit must still invalidate its pending start through the token.
+    assert.equal(manager.invalidateHub('h'), false);
+    const currentApply = manager.applyHubs([{id: 'h', url: newUrl, secret: 's3', status: 'active'}]);
+    releaseObservation();
+    await Promise.all([staleApply, currentApply]);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(calls.filter(url => url.startsWith(oldUrl + '/')).length, 1);
+    assert.ok(calls.some(url => url.startsWith(newUrl + '/')));
+  } finally {
+    await manager.stop();
+  }
+});
+
 test('startServer stores Node-collected observations only after the SQLite commit', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-collection-server-'));
   const hub = http.createServer((_req, res) => {
@@ -200,7 +250,6 @@ test('startServer stores Node-collected observations only after the SQLite commi
   fs.writeFileSync(configFile, JSON.stringify(configRaw));
   const config = loadConfig(configFile); config.listen.port = 0;
   const app = await startServer(config, {
-    env: {TMA_INGEST_TOKEN: 'server-ingest-token-000000000000000000000000000000'},
     logger: {info() {}, error() {}}, collectionIdleMs: 1000,
     collectionHubs: [{id: 'hub-a', url: hubUrl, secret: 'hub-secret', status: 'active'}],
   });
@@ -209,7 +258,7 @@ test('startServer stores Node-collected observations only after the SQLite commi
       const deadline = Date.now() + 1000;
       const check = () => {
         try {
-          if (app.db.sql.prepare('SELECT count(*) n FROM observations').get().n > 0) { resolve(); return; }
+          if (app.db.prepare('SELECT count(*) n FROM observations').get().n > 0) { resolve(); return; }
           if (Date.now() >= deadline) { reject(new Error('Node collection did not persist an observation')); return; }
           setTimeout(check, 10).unref();
         } catch (error) { reject(error); }
@@ -236,7 +285,6 @@ test('startServer closes and marks the process failed after a storage error', as
   fs.writeFileSync(configFile, JSON.stringify(configRaw));
   const config = loadConfig(configFile); config.listen.port = 0;
   const app = await startServer(config, {
-    env: {TMA_INGEST_TOKEN: 'server-ingest-token-000000000000000000000000000000'},
     logger: {info() {}, error() {}}, collectionIdleMs: 1000,
     collectionHubs: [{id: 'hub-a', url: hubUrl, secret: 'hub-secret', status: 'active'}],
   });
@@ -244,7 +292,11 @@ test('startServer closes and marks the process failed after a storage error', as
     const deadline = Date.now() + 1000;
     while (!sendEvent && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(typeof sendEvent, 'function');
-    app.db.transaction = () => { throw new Error('injected storage failure'); };
+    const nativeExec = app.db.exec.bind(app.db);
+    app.db.exec = sql => {
+      if (sql === 'BEGIN IMMEDIATE') throw new Error('injected storage failure');
+      return nativeExec(sql);
+    };
     sendEvent();
     while ((app.server.listening || process.exitCode !== 1) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(app.server.listening, false);

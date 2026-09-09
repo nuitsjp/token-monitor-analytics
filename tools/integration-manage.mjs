@@ -1,216 +1,287 @@
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import {fileURLToPath} from 'node:url';
-import {execFileSync, spawn} from 'node:child_process';
-import assert from 'node:assert/strict';
 import {setTimeout as delay} from 'node:timers/promises';
+import {loadConfig} from '../analytics/runtime/config.mjs';
 import {startServer} from '../analytics/runtime/server.mjs';
-import {writeAtomicFile} from '../analytics/runtime/hubs.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-integration-manage-'));
-const children = [];
-let app, liveReader;
-const token = 'integration-ingest-000000000000000000000000000';
-const env = {...process.env, CGO_ENABLED: '0', TMA_INGEST_TOKEN: token};
-const suffix = process.platform === 'win32' ? '.exe' : '';
+let app;
+let liveReader;
+let mock;
 
-async function freePort() {
-  const server = net.createServer();
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
-  await new Promise(resolve => server.close(resolve));
-  return port;
+async function listen(server) {
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return `http://127.0.0.1:${server.address().port}`;
 }
 
-async function until(predicate, label, timeout = 25000) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
+async function until(predicate, label, timeout = 15000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
     try {
-      const v = await predicate();
-      if (v) return v;
+      const result = await predicate();
+      if (result) return result;
     } catch {}
-    await delay(150);
+    await delay(50);
   }
   throw new Error(`Timed out: ${label}`);
 }
 
-function child(file, args, name = '') {
-  const p = spawn(file, args, {env, stdio: ['ignore', 'pipe', 'pipe']});
-  children.push(p);
-  p.on('error', error => console.error(`[${name}] error:`, error.message));
-  p.stdout.on('data', d => process.stdout.write(`[${name} stdout] ` + d));
-  p.stderr.on('data', d => process.stderr.write(`[${name} stderr] ` + d));
-  return p;
+function payload(at) {
+  return JSON.stringify({
+    type: 'stats',
+    at,
+    stats: {
+      updatedAt: at,
+      periods: {
+        today: {costUsd: 1},
+        month: {costUsd: 2},
+        allTime: {costUsd: 3},
+      },
+      devices: [],
+      limits: {providers: []},
+    },
+  });
 }
 
-async function stop(p) {
-  if (p.exitCode !== null || p.signalCode !== null) return;
-  const ended = new Promise(resolve => p.once('exit', resolve));
-  p.kill('SIGTERM');
-  const timer = setTimeout(() => p.kill('SIGKILL'), 3000);
-  timer.unref();
-  await ended;
-  clearTimeout(timer);
-}
-
-async function frame(reader, contains) {
-  let text = '';
-  const decoder = new TextDecoder();
-  const deadline = setTimeout(() => reader.cancel(), 15000);
-  try {
-    while (!text.includes(contains)) {
-      const r = await reader.read();
-      if (r.done) throw new Error('SSE ended');
-      text += decoder.decode(r.value, {stream: true});
+function createMockHub() {
+  let requestCount = 0;
+  let eventCount = 0;
+  const baseTime = Date.now() - 60000;
+  const server = http.createServer((request, response) => {
+    if (request.url === '/api/devices') {
+      response.writeHead(200, {'Content-Type': 'application/json'});
+      response.end(JSON.stringify({devices: [{
+        deviceId: 'device-managed', historyAvailable: true, updatedAt: '2026-09-09T00:00:00.000Z',
+        history: {daily: [{date: '2026-09-09', tokens: 12, cost: 1.2}], monthly: [{month: '2026-09', tokens: 12, cost: 1.2}]},
+      }]}));
+      return;
     }
-    return text;
-  } finally {
-    clearTimeout(deadline);
+    if (request.url !== '/api/stats/stream') {
+      response.writeHead(404).end();
+      return;
+    }
+    requestCount++;
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+    });
+    const send = () => {
+      const at = new Date(baseTime + (++eventCount * 1000)).toISOString();
+      response.write(`event: snapshot\ndata: ${payload(at)}\n\n`);
+    };
+    send();
+    const timer = setInterval(send, 100);
+    request.on('close', () => clearInterval(timer));
+  });
+  return {
+    server,
+    get requestCount() { return requestCount; },
+  };
+}
+
+async function closeServer(server) {
+  if (!server) return;
+  await new Promise(resolve => server.close(() => resolve()));
+}
+
+class SseQueue {
+  constructor(reader) {
+    this.reader = reader;
+    this.buffer = '';
+  }
+
+  async next(timeout = 15000) {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const end = this.buffer.indexOf('\n\n');
+      if (end >= 0) {
+        const frame = this.buffer.slice(0, end);
+        this.buffer = this.buffer.slice(end + 2);
+        return frame;
+      }
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for live SSE');
+      const remaining = deadline - Date.now();
+      let timer;
+      const timeout = new Promise(resolve => { timer = setTimeout(() => resolve({timeout: true}), remaining); });
+      let read;
+      try { read = await Promise.race([this.reader.read(), timeout]); }
+      finally { clearTimeout(timer); }
+      if (read.timeout) throw new Error('Timed out waiting for live SSE');
+      if (read.done) throw new Error('Live SSE ended');
+      this.buffer += new TextDecoder().decode(read.value, {stream: true});
+    }
+  }
+
+  async waitFor(text, timeout = 15000) {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const frame = await this.next(Math.max(1, deadline - Date.now()));
+      if (frame.includes(text)) return frame;
+    }
   }
 }
 
+async function jsonResponse(url, init) {
+  const response = await fetch(url, init);
+  const body = await response.json();
+  return {response, body};
+}
+
 try {
-  const mock = path.join(temp, 'mockhub' + suffix);
-  const collector = path.join(temp, 'collector' + suffix);
-  execFileSync('go', ['build', '-o', mock, './cmd/mockhub'], {cwd: path.join(root, 'collector'), env, stdio: 'inherit'});
-  execFileSync('go', ['build', '-o', collector, './cmd/collector'], {cwd: path.join(root, 'collector'), env, stdio: 'inherit'});
+  const hub = createMockHub();
+  mock = hub.server;
+  const hubOrigin = await listen(mock);
+  const appPort = await (async () => {
+    const probe = http.createServer();
+    const origin = await listen(probe);
+    await closeServer(probe);
+    return Number(new URL(origin).port);
+  })();
 
-  const portHub = await freePort();
-  const mockHub = child(mock, ['-listen', `127.0.0.1:${portHub}`], 'mock');
-  await until(async () => {
-    const r = await fetch(`http://127.0.0.1:${portHub}/api/health`);
-    return r.ok;
-  }, 'mock health');
+  const rawConfig = JSON.parse(fs.readFileSync(path.join(root, 'analytics/configs/demo.json'), 'utf8'));
+  rawConfig.demo = false;
+  rawConfig.listen.port = appPort;
+  rawConfig.publicOrigin = `http://127.0.0.1:${appPort}`;
+  rawConfig.databasePath = path.join(temp, 'analytics.db');
+  rawConfig.hubSecretsPath = path.join(temp, 'hub-secrets.json');
+  rawConfig.management = {enabled: true};
+  rawConfig.contracts = [];
+  const configPath = path.join(temp, 'analytics.json');
+  fs.writeFileSync(configPath, JSON.stringify(rawConfig));
+  const config = loadConfig(configPath);
 
-  // Shared hubs.json and hub-secrets.json with 0 hubs
-  const hubsPath = path.join(temp, 'hubs.json');
-  const secretsPath = path.join(temp, 'hub-secrets.json');
-  writeAtomicFile(secretsPath, JSON.stringify({schemaVersion: 1, secrets: {}}));
-  writeAtomicFile(hubsPath, JSON.stringify({schemaVersion: 1, revision: 0, secretsPath: './hub-secrets.json', hubs: []}));
+  app = await startServer(config, {
+    collectionIdleMs: 5000,
+    collectionHeaderTimeoutMs: 3000,
+    historyMinIntervalMs: 0,
+    logger: {info() {}, error: (...args) => console.error(...args)},
+  });
+  const origin = config.publicOrigin;
+  const live = await fetch(`${origin}/api/live`);
+  assert.equal(live.status, 200);
+  liveReader = live.body.getReader();
+  const liveEvents = new SseQueue(liveReader);
+  await liveEvents.waitFor('event: ready');
 
-  // Analytics config
-  const aConfig = JSON.parse(fs.readFileSync(path.join(root, 'analytics/configs/demo.json'), 'utf8'));
-  delete aConfig.hubs;
-  aConfig.listen.port = 0;
-  aConfig.databasePath = path.join(temp, 'analytics.db');
-  aConfig.hubsPath = hubsPath;
-  aConfig.management = {enabled: true};
-  aConfig.contracts = [];
+  let managed = await jsonResponse(`${origin}/api/manage/hubs`);
+  assert.equal(managed.response.status, 200);
+  assert.deepEqual(managed.body.hubs, []);
+  console.log('PASS: v2 SQLite manager starts with no registered Hubs');
 
-  app = await startServer(aConfig, {env, logger: {info(){}, error: console.error}});
-  aConfig.listen.port = app.server.address().port;
-  aConfig.publicOrigin = `http://127.0.0.1:${aConfig.listen.port}`;
-  const origin = aConfig.publicOrigin;
-
-  // Collector config
-  const spool = path.join(temp, 'outbox');
-  const cConfig = {
-    version: 1,
-    analytics_url: origin,
-    ingest_token_env: 'TMA_INGEST_TOKEN',
-    spool_dir: spool,
-    max_spool_bytes: 268435456,
-    flush_seconds: 1,
-    batch_size: 2,
-    idle_seconds: 90,
-    hubs_path: './hubs.json'
-  };
-  const cFile = path.join(temp, 'collector.json');
-  fs.writeFileSync(cFile, JSON.stringify(cConfig));
-
-  // Start Collector with 0 Hubs
-  const bridge = child(collector, ['-config', cFile], 'collector');
-
-  // Connect to live SSE feed
-  const source = await fetch(origin + '/api/live');
-  liveReader = source.body.getReader();
-  await frame(liveReader, 'event: ready');
-
-  // Verify initial 0 hubs
-  const initManage = await (await fetch(origin + '/api/manage/hubs')).json();
-  assert.equal(initManage.revision, 0);
-  assert.equal(initManage.hubs.length, 0);
-  console.log('PASS: Started with 0 Hubs and management enabled');
-
-  // Register first Hub via Management API
-  const addRes = await fetch(origin + '/api/manage/hubs', {
+  const secret = 'integration-secret-value';
+  const added = await jsonResponse(`${origin}/api/manage/hubs`, {
     method: 'POST',
-    headers: {'Content-Type': 'application/json', 'Origin': origin},
-    body: JSON.stringify({
-      expectedRevision: 0,
-      id: 'hub-dynamic-1',
-      label: 'Dynamic Hub 1',
-      url: `http://127.0.0.1:${portHub}`,
-      secret: 'demo-hub-secret'
-    })
+    headers: {'Content-Type': 'application/json', Origin: origin},
+    body: JSON.stringify({id: 'hub-managed', label: 'Managed Hub', url: hubOrigin, secret}),
   });
-  assert.equal(addRes.status, 200);
-  console.log('PASS: Registered Hub via Management API');
+  assert.equal(added.response.status, 200);
+  assert.equal(added.body.hub.version, 1);
+  assert.equal(added.body.hub.hasSecret, true);
+  assert.equal(Object.hasOwn(added.body.hub, 'secret'), false);
+  assert.equal(Object.hasOwn(added.body.hub, 'secretRef'), false);
+  assert.equal(JSON.stringify(added.body).includes(secret), false);
+  await liveEvents.waitFor('event: manage_updated');
+  console.log('PASS: UI management create persists an opaque secret reference and emits SSE');
 
-  // Wait for Collector to pick up the file, connect, and send observations
-  await frame(liveReader, 'event: updated');
   await until(async () => {
-    const s = await (await fetch(origin + '/api/state')).json();
-    return s.hubs.length === 1 && s.hubs[0].hubId === 'hub-dynamic-1';
-  }, 'observation received from dynamically added Hub');
-  console.log('PASS: Collector dynamically loaded hubs.json and collected observations');
-
-  // Wait for Collector status report
+    managed = (await jsonResponse(`${origin}/api/manage/hubs`)).body;
+    return managed.hubs[0]?.connection.state === 'connected';
+  }, 'Hub connects after management create');
+  const firstRequestCount = hub.requestCount;
   await until(async () => {
-    const m = await (await fetch(origin + '/api/manage/hubs')).json();
-    return m.collector.status === 'active' &&
-           m.collector.appliedRevision >= 1 &&
-           m.collector.hubs['hub-dynamic-1']?.status === 'connected';
-  }, 'Collector reported applied revision and connected status');
-  console.log('PASS: Collector status reporting verified');
+    const state = (await jsonResponse(`${origin}/api/state`)).body;
+    return state.hubs.length === 1 && state.configuredHubs[0]?.lastObservationAt;
+  }, 'first Hub observation');
+  assert.equal(firstRequestCount, 1);
+  console.log('PASS: created Hub connects and stores observations in the single Analytics process');
 
-  // Disable Hub
-  const disRes = await fetch(origin + '/api/manage/hubs/hub-dynamic-1', {
+  await until(async () => {
+    const result = (await jsonResponse(`${origin}/api/usage-history/hubs`)).body;
+    return result.hubs[0]?.devices[0]?.deviceId === 'device-managed';
+  }, 'Hub device history is saved');
+  const usage = await jsonResponse(`${origin}/api/usage-history?hubId=hub-managed&deviceId=device-managed&granularity=daily&from=2026-09-09&to=2026-09-09`);
+  assert.equal(usage.response.status, 200);
+  assert.equal(usage.body.rows[0].tokens, 12);
+  const manual = await jsonResponse(`${origin}/api/manage/hubs/hub-managed/history`, {
+    method: 'POST', headers: {'Content-Type': 'application/json', Origin: origin}, body: '{}'
+  });
+  assert.equal(manual.response.status, 202);
+  console.log('PASS: device history is readable and manual fetch uses the management boundary');
+
+  const renamed = await jsonResponse(`${origin}/api/manage/hubs/hub-managed`, {
     method: 'PUT',
-    headers: {'Content-Type': 'application/json', 'Origin': origin},
-    body: JSON.stringify({
-      expectedRevision: 1,
-      status: 'disabled'
-    })
+    headers: {'Content-Type': 'application/json', Origin: origin},
+    body: JSON.stringify({expectedVersion: 1, label: 'Renamed Hub'}),
   });
-  assert.equal(disRes.status, 200);
+  assert.equal(renamed.response.status, 200);
+  assert.equal(renamed.body.hub.version, 2);
+  await liveEvents.waitFor('event: manage_updated');
+  await delay(250);
+  assert.equal(hub.requestCount, firstRequestCount);
+  console.log('PASS: metadata edit keeps the existing Hub connection generation');
 
-  await until(async () => {
-    const m = await (await fetch(origin + '/api/manage/hubs')).json();
-    return m.collector.appliedRevision >= 2;
-  }, 'Collector applied disabled revision');
-  console.log('PASS: Collector stopped disabled hub without process restart');
-
-  const enabled = await fetch(origin + '/api/manage/hubs/hub-dynamic-1', {
-    method: 'PUT', headers: {'Content-Type': 'application/json', Origin: origin},
-    body: JSON.stringify({expectedRevision: 2, status: 'active'})
+  const disabled = await jsonResponse(`${origin}/api/manage/hubs/hub-managed`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json', Origin: origin},
+    body: JSON.stringify({expectedVersion: 2, status: 'disabled'}),
   });
-  assert.equal(enabled.status, 200);
-  const previousCount = app.db.sql.prepare('SELECT count(*) n FROM observations').get().n;
+  assert.equal(disabled.response.status, 200);
+  assert.equal(disabled.body.hub.version, 3);
+  await liveEvents.waitFor('event: manage_updated');
   await until(async () => {
-    const state = await (await fetch(origin + '/api/manage/hubs')).json();
-    return state.collector.appliedRevision === 3 &&
-      state.collector.hubs['hub-dynamic-1']?.status === 'connected' &&
-      app.db.sql.prepare('SELECT count(*) n FROM observations').get().n > previousCount;
-  }, 're-enabled Hub reconnects and resumes observations');
-  assert.equal(bridge.exitCode, null);
-  console.log('PASS: Re-enabled Hub reconnects and receives data without Collector restart');
+    managed = (await jsonResponse(`${origin}/api/manage/hubs`)).body;
+    return managed.hubs[0]?.connection.state === 'stopped';
+  }, 'disabled Hub stops');
+  const disabledRequestCount = hub.requestCount;
+  console.log('PASS: disable fences the active stream without restarting Analytics');
 
+  const enabled = await jsonResponse(`${origin}/api/manage/hubs/hub-managed`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json', Origin: origin},
+    body: JSON.stringify({expectedVersion: 3, status: 'active'}),
+  });
+  assert.equal(enabled.response.status, 200);
+  assert.equal(enabled.body.hub.version, 4);
+  await liveEvents.waitFor('event: manage_updated');
+  await until(async () => {
+    managed = (await jsonResponse(`${origin}/api/manage/hubs`)).body;
+    return managed.hubs[0]?.connection.state === 'connected' && hub.requestCount > disabledRequestCount;
+  }, 're-enabled Hub reconnects');
+  await until(async () => {
+    const state = (await jsonResponse(`${origin}/api/state`)).body;
+    return state.hubs[0]?.observedAt;
+  }, 're-enabled Hub stores observations');
+  console.log('PASS: re-enable reconnects and resumes observations without a process restart');
+
+  const archived = await jsonResponse(`${origin}/api/manage/hubs/hub-managed`, {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json', Origin: origin},
+    body: JSON.stringify({expectedVersion: 4}),
+  });
+  assert.equal(archived.response.status, 200);
+  const retained = await jsonResponse(`${origin}/api/usage-history?hubId=hub-managed&deviceId=device-managed&granularity=daily&from=2026-09-09&to=2026-09-09`);
+  assert.equal(retained.response.status, 200);
+  assert.equal(retained.body.archived, true);
+  console.log('PASS: archived Hub history remains readable and is marked historical');
 
   await liveReader.cancel();
   liveReader = null;
-  await stop(bridge);
-  await stop(mockHub);
   await app.close();
   app = null;
-
+  await closeServer(mock);
+  mock = null;
   console.log('MANAGEMENT INTEGRATION OK');
 } finally {
   if (liveReader) await liveReader.cancel().catch(() => {});
-  for (const p of children) await stop(p);
   if (app) await app.close().catch(() => {});
+  await closeServer(mock);
   fs.rmSync(temp, {recursive: true, force: true});
 }

@@ -1,0 +1,781 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import {createReleaseArtifact} from '../release.mjs';
+import {LEGACY_COMMIT_SHA, backupProtectedLayout, preflightMigration, publishWindowsMigrationArtifact, runMigration, restoreMigration, startLegacyProcess} from '../migrate.mjs';
+import {verifyReleaseArtifact} from '../release.mjs';
+
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const TARGET_SHA = 'b'.repeat(40);
+
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+
+function fixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-migration-'));
+  t.after(() => fs.promises.rm(dir, {recursive: true, force: true, maxRetries: 20, retryDelay: 50}));
+  return dir;
+}
+
+test('protected symlink backup leaves the live release permissions unchanged', {skip: process.platform === 'win32'}, t => {
+  const dir = fixture(t);
+  const release = path.join(dir, 'release');
+  const current = path.join(dir, 'current');
+  fs.mkdirSync(release, {mode: 0o700});
+  fs.symlinkSync(release, current);
+  const backupDir = path.join(dir, 'backup');
+  backupProtectedLayout({backupDir, sources: [{key: 'legacy-code', path: current, exists: true}], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
+  assert.equal(fs.statSync(release).mode & 0o777, 0o700);
+  assert.equal(fs.readlinkSync(path.join(backupDir, 'protected', 'legacy-code')), release);
+});
+
+test('protected backup snapshots a service enablement link removed during inhibition', {skip: process.platform !== 'linux'}, t => {
+  const dir = fixture(t);
+  const wants = path.join(dir, 'default.target.wants');
+  fs.mkdirSync(wants, {recursive: true});
+  const linkPath = path.join(wants, 'tma-analytics.service');
+  fs.symlinkSync('../tma-analytics.service', linkPath);
+  const stat = fs.lstatSync(linkPath);
+  const source = {
+    key: 'legacy-service-2',
+    path: linkPath,
+    exists: true,
+    type: 'symlink',
+    link: fs.readlinkSync(linkPath),
+    uid: stat.uid,
+    gid: stat.gid,
+    mode: stat.mode & 0o777,
+  };
+  // Linux systemctl disable removes this target.wants link after the
+  // inventory snapshot and before protected-layout backup.
+  fs.unlinkSync(linkPath);
+
+  const backupDir = path.join(dir, 'backup');
+  const manifest = backupProtectedLayout({backupDir, sources: [source], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
+  const entry = manifest.entries[0];
+  assert.equal(entry.snapshotAfterInhibit, true);
+  assert.equal(fs.readlinkSync(path.join(backupDir, 'protected', source.key)), source.link);
+  assert.deepEqual(entry.sourceMetadata, {uid: source.uid, gid: source.gid, mode: source.mode, acl: null});
+});
+
+test('protected backup records metadata for every nested POSIX entry', {skip: process.platform === 'win32'}, t => {
+  const dir = fixture(t);
+  const source = path.join(dir, 'legacy-tree');
+  const nested = path.join(source, 'nested');
+  const secret = path.join(nested, 'hub-secret.env');
+  fs.mkdirSync(nested, {recursive: true});
+  fs.writeFileSync(secret, 'TOKEN=private\n');
+  fs.chmodSync(source, 0o750);
+  fs.chmodSync(nested, 0o710);
+  fs.chmodSync(secret, 0o640);
+
+  const backupDir = path.join(dir, 'backup');
+  const manifest = backupProtectedLayout({backupDir, sources: [{key: 'legacy-tree', path: source, exists: true}], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
+  const entry = manifest.entries[0];
+  assert.deepEqual(Object.keys(entry.sourceMetadataTree).sort(), ['', 'nested', 'nested/hub-secret.env']);
+  assert.equal(entry.sourceMetadataTree[''].mode & 0o777, 0o750);
+  assert.equal(entry.sourceMetadataTree.nested.mode & 0o777, 0o710);
+  assert.equal(entry.sourceMetadataTree['nested/hub-secret.env'].mode & 0o777, 0o640);
+  assert.equal(fs.statSync(path.join(backupDir, 'protected', 'legacy-tree', 'nested', 'hub-secret.env')).mode & 0o777, 0o640);
+});
+
+test('Windows protected backup records recursive ACL metadata', {skip: process.platform !== 'win32'}, t => {
+  const dir = fixture(t);
+  const source = path.join(dir, 'legacy-tree');
+  fs.mkdirSync(path.join(source, 'nested'), {recursive: true});
+  fs.writeFileSync(path.join(source, 'nested', 'hub-secret.env'), 'TOKEN=private\n');
+  const manifest = backupProtectedLayout({
+    backupDir: path.join(dir, 'backup'),
+    sources: [{key: 'legacy-tree', path: source, exists: true}],
+    state: {oldCommitSha: LEGACY_COMMIT_SHA},
+  });
+  const metadata = manifest.entries[0].sourceMetadataTree;
+  assert.equal(typeof metadata[''].acl, 'string');
+  assert.equal(typeof metadata.nested.acl, 'string');
+  assert.equal(typeof metadata['nested/hub-secret.env'].acl, 'string');
+});
+
+test('protected manifest accepts a bounded large metadata record', {skip: process.platform === 'win32'}, t => {
+  const dir = fixture(t);
+  const backupDir = path.join(dir, 'backup');
+  const protectedDir = path.join(backupDir, 'protected');
+  fs.mkdirSync(protectedDir, {recursive: true});
+  const padding = 'metadata-'.repeat(150000);
+  const manifest = {schemaVersion: 1, entries: [{key: 'legacy-tree', backedUp: true, sourceMetadataTree: {'': {mode: 0o600, acl: null}}, padding}]};
+  fs.writeFileSync(path.join(protectedDir, 'manifest.json'), `${JSON.stringify(manifest)}\n`, {mode: 0o600});
+  assert.ok(fs.statSync(path.join(protectedDir, 'manifest.json')).size > 1024 * 1024);
+  const loaded = backupProtectedLayout({backupDir, sources: [], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
+  assert.equal(loaded.entries[0].padding, padding);
+});
+
+test('direct legacy launcher loads protected env and waits for a live health endpoint', async t => {
+  const dir = fixture(t);
+  const port = await freePort();
+  const token = 'l'.repeat(64);
+  const configPath = path.join(dir, 'analytics.json');
+  const analyticsEnvPath = path.join(dir, 'analytics.env');
+  const collectorEnvPath = path.join(dir, 'collector.env');
+  const protectedBackup = path.join(dir, 'protected');
+  const launcherPath = path.join(dir, 'legacy-launcher.mjs');
+  fs.writeFileSync(configPath, `${JSON.stringify({listen: {host: '127.0.0.1', port}, ingestTokenEnv: 'TMA_INGEST_TOKEN', viewerAuth: {mode: 'loopback'}}, null, 2)}\n`, {mode: 0o600});
+  fs.mkdirSync(protectedBackup, {recursive: true, mode: 0o700});
+  fs.writeFileSync(path.join(protectedBackup, 'legacy-analytics-env'), `TMA_INGEST_TOKEN=${token}\n`, {mode: 0o600});
+  fs.writeFileSync(path.join(protectedBackup, 'legacy-collector-env'), `TMA_INGEST_TOKEN=${token}\n`, {mode: 0o600});
+  fs.writeFileSync(launcherPath, `import http from 'node:http';\nif (process.env.TMA_INGEST_TOKEN !== ${JSON.stringify(token)} || process.argv[3] === 'fail') process.exit(1);\nconst server = http.createServer((request, response) => { if (request.method === 'GET' && request.url === '/api/health') { response.writeHead(200, {'content-type': 'application/json'}); response.end(JSON.stringify({ok: true})); return; } response.writeHead(404); response.end(); });\nserver.listen(Number(process.argv[2]), '127.0.0.1');\n`, {mode: 0o600});
+  const legacyLayout = {
+    analyticsFile: configPath,
+    analyticsEnvPath,
+    collectorEnvPath,
+    ingestEnv: 'TMA_INGEST_TOKEN',
+    analytics: {ingestTokenEnv: 'TMA_INGEST_TOKEN', listen: {host: '127.0.0.1', port}, viewerAuth: {mode: 'loopback'}},
+  };
+  let started = null;
+  t.after(async () => {
+    if (!started?.pid) return;
+    try { process.kill(started.pid, 'SIGTERM'); } catch {}
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try { process.kill(started.pid, 0); } catch { return; }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error('direct legacy test child did not stop');
+  });
+  started = await startLegacyProcess({
+    command: process.execPath,
+    args: [launcherPath, String(port)],
+    cwd: dir,
+    environment: {},
+    layout: {state: {legacyLayout, protectedBackup}},
+    readinessTimeoutMs: 3000,
+  });
+  assert.equal(typeof started.pid, 'number');
+  assert.equal(started.origin, `http://127.0.0.1:${port}`);
+  assert.deepEqual(started.healthPath, '/api/health');
+
+  const emptyBackup = path.join(dir, 'empty-protected');
+  fs.mkdirSync(emptyBackup, {recursive: true, mode: 0o700});
+  await assert.rejects(() => startLegacyProcess({
+    command: process.execPath,
+    args: [launcherPath, String(port), 'fail'],
+    cwd: dir,
+    environment: {},
+    layout: {state: {legacyLayout, protectedBackup: emptyBackup}},
+    readinessTimeoutMs: 500,
+  }), error => error.code === 'missing_legacy_secret');
+  try { process.kill(started.pid, 'SIGTERM'); } catch {}
+  const stoppedDeadline = Date.now() + 5000;
+  while (Date.now() < stoppedDeadline) {
+    try { process.kill(started.pid, 0); } catch { break; }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  await assert.rejects(() => startLegacyProcess({
+    command: process.execPath,
+    args: [launcherPath, String(port), 'fail'],
+    cwd: dir,
+    environment: {},
+    layout: {state: {legacyLayout, protectedBackup}},
+    readinessTimeoutMs: 3000,
+  }), error => error.code === 'windows_restore_start_failed');
+});
+
+async function oldRuntime() {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-old-runtime-'));
+  const oldMigrationChecksum = createHash('sha256').update(fs.readFileSync(path.join(root, 'analytics/migrations/0001_initial.sql'))).digest('hex');
+  const runtimeDirectory = path.join(directory, 'analytics', 'runtime');
+  const toolDirectory = path.join(directory, 'tools');
+  fs.mkdirSync(runtimeDirectory, {recursive: true, mode: 0o700});
+  fs.mkdirSync(toolDirectory, {recursive: true, mode: 0o700});
+  fs.writeFileSync(path.join(runtimeDirectory, 'sqlite.mjs'), `
+import fs from 'node:fs';
+import path from 'node:path';
+import {DatabaseSync, backup} from 'node:sqlite';
+export function openDatabase(filename) {
+  fs.mkdirSync(path.dirname(filename), {recursive: true});
+  const db = new DatabaseSync(filename);
+  db.exec(\`PRAGMA journal_mode=WAL;
+    CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS observations (hub_id TEXT NOT NULL, event_id TEXT NOT NULL, observed_at TEXT NOT NULL, received_at TEXT NOT NULL, stream_id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(hub_id,event_id));
+    CREATE INDEX IF NOT EXISTS observations_retention ON observations(observed_at);
+    CREATE TABLE IF NOT EXISTS hub_latest (hub_id TEXT PRIMARY KEY NOT NULL, event_id TEXT NOT NULL, observed_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS contract_state (contract_id TEXT PRIMARY KEY NOT NULL, state_json TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS daily_estimates (contract_id TEXT NOT NULL, day TEXT NOT NULL, last_observed_at TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL, last_valid_at TEXT, window_capacity_usd REAL, monthly_capacity_usd REAL, estimate_json TEXT, PRIMARY KEY(contract_id,day));\`);
+  if (!db.prepare('SELECT 1 FROM schema_migrations WHERE name=?').get('0001_initial.sql')) db.prepare('INSERT INTO schema_migrations(name, checksum) VALUES(?, ?)').run('0001_initial.sql', '${oldMigrationChecksum}');
+  return db;
+}
+export async function backupDatabase(source, destination) {
+  fs.mkdirSync(path.dirname(destination), {recursive: true});
+  const sourceDb = new DatabaseSync(source, {readOnly: true});
+  try { await backup(sourceDb, destination); } finally { sourceDb.close(); }
+}
+`);
+  fs.writeFileSync(path.join(runtimeDirectory, 'config.mjs'), `
+import fs from 'node:fs';
+import path from 'node:path';
+export function loadConfig(filename) { const config = JSON.parse(fs.readFileSync(filename, 'utf8')); return {...config, configFile: path.resolve(filename), databasePath: path.isAbsolute(config.databasePath) ? config.databasePath : path.resolve(path.dirname(filename), config.databasePath)}; }
+`);
+  fs.writeFileSync(path.join(runtimeDirectory, 'server.mjs'), `
+import http from 'node:http';
+import {DatabaseSync} from 'node:sqlite';
+export async function startServer(config) {
+  const db = new DatabaseSync(config.databasePath);
+  const insert = db.prepare('INSERT OR IGNORE INTO observations(hub_id,event_id,observed_at,received_at,stream_id,payload) VALUES(?,?,?,?,?,?)');
+  const server = http.createServer((request, response) => {
+    if (request.method !== 'POST' || request.url !== '/api/ingest') { response.writeHead(404); response.end(); return; }
+    const chunks = []; request.on('data', chunk => chunks.push(chunk)); request.on('end', () => {
+      try { const body = JSON.parse(Buffer.concat(chunks)); const events = Array.isArray(body.events) ? body.events : []; const acked = []; db.exec('BEGIN'); for (const event of events) { insert.run(event.hubId, event.eventId, event.observedAt, event.receivedAt, event.streamId, JSON.stringify(event.stats ?? {})); acked.push(event.eventId); } db.exec('COMMIT'); response.writeHead(200, {'content-type': 'application/json'}); response.end(JSON.stringify({ok: true, acked})); }
+      catch { try { db.exec('ROLLBACK'); } catch {} response.writeHead(400, {'content-type': 'application/json'}); response.end(JSON.stringify({ok: false, acked: []})); }
+    });
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.listen.port, config.listen.host, resolve); });
+  return {close: async () => { await new Promise(resolve => server.close(resolve)); db.close(); }};
+}
+`);
+  fs.writeFileSync(path.join(toolDirectory, 'reset-hubs.mjs'), `
+import fs from 'node:fs'; import path from 'node:path';
+export async function drainOutbox({directory, origin, token, send = fetch}) {
+  const names = fs.readdirSync(directory).filter(name => name.endsWith('.json')).sort(); let count = 0;
+  for (let index = 0; index < names.length; index += 2) { const batch = names.slice(index, index + 2); const events = batch.map(name => JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8'))); const response = await send(origin + '/api/ingest', {method: 'POST', headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'}, body: JSON.stringify({schemaVersion: 1, events})}); const ack = await response.json(); if (!response.ok || !ack.ok || !batch.every(name => ack.acked.includes(events[batch.indexOf(name)].eventId))) throw new Error('ack failed'); for (const name of batch) { fs.unlinkSync(path.join(directory, name)); count++; } }
+  return count;
+}
+`);
+  const source = {root: directory};
+  const sqlite = await import(new URL('./analytics/runtime/sqlite.mjs', `file://${directory}/`).href);
+  return {source, sqlite, cleanup: () => fs.rmSync(directory, {recursive: true, force: true})};
+}
+
+function oldConfig(dir, databasePath) {
+  const analytics = path.join(dir, 'analytics.json');
+  const collector = path.join(dir, 'collector.json');
+  fs.writeFileSync(analytics, `${JSON.stringify({
+    version: 1,
+    listen: {host: '127.0.0.1', port: 8787},
+    publicOrigin: 'http://127.0.0.1:8787',
+    databasePath,
+    timeZone: 'UTC',
+    detailRetentionDays: 7,
+    ingestTokenEnv: 'TMA_INGEST_TOKEN',
+    viewerAuth: {mode: 'loopback'},
+    hubs: [{id: 'old-hub', label: 'Old Hub'}],
+    contracts: [],
+    demo: false,
+  }, null, 2)}\n`, {mode: 0o600});
+  fs.writeFileSync(collector, `${JSON.stringify({
+    version: 1,
+    analytics_url: 'http://127.0.0.1:8787',
+    ingest_token_env: 'TMA_INGEST_TOKEN',
+    spool_dir: './outbox',
+    max_spool_bytes: 1024 * 1024,
+    flush_seconds: 2,
+    batch_size: 2,
+    idle_seconds: 90,
+    hubs: [{id: 'old-hub', url: 'https://old.example.invalid', secret_env: 'OLD_HUB_SECRET'}],
+  }, null, 2)}\n`, {mode: 0o600});
+  return {analytics, collector};
+}
+
+function legacyEvent() {
+  return {
+    schemaVersion: 1,
+    eventId: 'a'.repeat(32),
+    hubId: 'old-hub',
+    streamId: 'c'.repeat(32),
+    kind: 'snapshot',
+    observedAt: '2026-09-09T00:00:00.000Z',
+    receivedAt: '2026-09-09T00:00:01.000Z',
+    stats: {
+      updatedAt: '2026-09-09T00:00:00.000Z',
+      periods: {today: {costUsd: 1, totalTokens: 3}},
+      devices: [],
+      limits: {providers: []},
+    },
+  };
+}
+
+function migrationPlatform(events, calls, {failAt = null} = {}) {
+  const hook = name => async value => {
+    calls.push(name);
+    if (failAt === name) throw Object.assign(new Error(`${name} fixture failure`), {code: `fixture_${name}`});
+    return value;
+  };
+  return {
+    inspectServices: async () => [{scope: 'fixture', unit: 'tma-collector.service', active: true, enabled: true, pid: 10}, {scope: 'fixture', unit: 'tma-analytics.service', active: true, enabled: true, pid: 11}],
+    updateState: () => null,
+    isUpdateActive: () => false,
+    stopCollector: hook('stopCollector'),
+    stopAnalytics: hook('stopAnalytics'),
+    inhibitAutostart: hook('inhibitAutostart'),
+    verifyStopped: hook('verifyStopped'),
+    provision: hook('provision'),
+    configure: hook('configure'),
+    publish: async ({targetCommitSha}) => { calls.push('publish'); if (failAt === 'publish') throw Object.assign(new Error('publish fixture failure'), {code: 'fixture_publish'}); return {targetCommitSha}; },
+    preserveCutoverDatabase: async ({backupDir}) => { const target = path.join(backupDir, 'post-cutover.db'); fs.copyFileSync(events.databasePath, target); return target; },
+    stopNew: hook('stopNew'),
+    verifyNoDatabaseWriter: hook('verifyNoDatabaseWriter'),
+    restoreDatabase: async ({source, destination}) => { calls.push('restoreDatabase'); fs.copyFileSync(source, destination); },
+    restoreProtected: hook('restoreProtected'),
+    startLegacy: hook('startLegacy'),
+  };
+}
+
+async function setup(t) {
+  const dir = fixture(t);
+  const databasePath = path.join(dir, 'analytics.db');
+  const outboxPath = path.join(dir, 'outbox');
+  fs.mkdirSync(outboxPath, {recursive: true, mode: 0o700});
+  const configs = oldConfig(dir, databasePath);
+  const old = await oldRuntime();
+  t.after(() => old.cleanup());
+  const db = old.sqlite.openDatabase(databasePath);
+  db.close();
+  fs.writeFileSync(path.join(outboxPath, `00000000000000000001-${'a'.repeat(32)}.json`), JSON.stringify(legacyEvent()), {mode: 0o600});
+  const artifact = createReleaseArtifact({root, architecture: 'amd64', outputDir: path.join(dir, 'artifact'), targetCommitSha: TARGET_SHA, certified: true, verification: {level: 'release', checks: ['fixture']}});
+  const options = {
+    oldCommitSha: LEGACY_COMMIT_SHA,
+    targetCommitSha: TARGET_SHA,
+    targetArtifactPath: artifact.archivePath,
+    analyticsConfigPath: configs.analytics,
+    collectorConfigPath: configs.collector,
+    environment: {TMA_INGEST_TOKEN: 'i'.repeat(64), OLD_HUB_SECRET: 'h'.repeat(40)},
+    repositoryRoot: root,
+    legacySourceRoot: old.source.root,
+    legacyCodeRoot: path.join(dir, 'legacy-current'),
+    legacyRunnerDir: path.join(dir, 'legacy-updater'),
+    legacyNodePath: path.join(dir, 'legacy-updater', 'node'),
+    infrastructurePath: path.join(dir, 'infrastructure.json'),
+    publicationPath: path.join(dir, 'publication.json'),
+    updateStatePath: path.join(dir, 'update-state.json'),
+    serviceUnitPaths: [],
+    statePath: path.join(dir, 'migration-state.json'),
+    backupDir: path.join(dir, 'migration-backup'),
+    lockPath: path.join(dir, 'deploy.lock'),
+    targetConfigPath: path.join(dir, 'target', 'analytics.json'),
+    targetSecretsPath: path.join(dir, 'target', 'hub-secrets.json'),
+    targetAnalyticsEnvPath: path.join(dir, 'target', 'analytics.env'),
+    verifyTargetRelease: () => ({checks: ['fixture']}),
+  };
+  return {dir, databasePath, outboxPath, artifact, options};
+}
+
+test('migration drains pinned legacy outbox, archives IDs without active URL/Secret, and resumes idempotently', async t => {
+  const f = await setup(t);
+  f.options.collectorPid = 101;
+  f.options.analyticsPid = 102;
+  const calls = [];
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, calls);
+  const result = await runMigration(f.options);
+  assert.equal(result.state.phase, 'complete');
+  assert.ok(result.state.inventory.files.every(file => file.path.startsWith(f.dir + path.sep)), 'fixture inventory must never read production paths');
+  assert.deepEqual(calls.slice(0, 5), ['stopCollector', 'stopAnalytics', 'inhibitAutostart', 'verifyStopped', 'verifyNoDatabaseWriter']);
+  assert.equal(fs.readdirSync(f.outboxPath).length, 0);
+  const state = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
+  assert.deepEqual(state.legacyPids, {collector: 101, analytics: 102});
+  assert.equal(state.rollbackDatabase, path.join(f.options.backupDir, 'post-drain-analytics.db'));
+  assert.equal(state.protectedManifest.path, path.join(f.options.backupDir, 'protected', 'manifest.json'));
+  assert.equal(Object.hasOwn(state.protectedManifest, 'entries'), false);
+  const protectedManifest = JSON.parse(fs.readFileSync(state.protectedManifest.path, 'utf8'));
+  assert.ok(protectedManifest.entries[0].sourceMetadataTree);
+  assert.equal(Object.hasOwn(protectedManifest.entries[0].copied, 'metadataTree'), false);
+  const {DatabaseSync} = await import('node:sqlite');
+  const db = new DatabaseSync(f.databasePath, {readOnly: true});
+  try {
+    const hub = db.prepare('SELECT id,label,url,secret_ref,status FROM hubs WHERE id=?').get('old-hub');
+    assert.deepEqual({...hub}, {id: 'old-hub', label: 'Old Hub', url: null, secret_ref: null, status: 'archived'});
+    assert.equal(db.prepare('SELECT count(*) n FROM hub_snapshots WHERE hub_id=?').get('old-hub').n, 0);
+    assert.equal(db.prepare('SELECT count(*) n FROM observations').get().n, 1);
+    assert.equal(db.prepare('SELECT count(*) n FROM schema_migrations').get().n, 4);
+  } finally { db.close(); }
+  const before = fs.readFileSync(f.options.statePath);
+  const second = await runMigration(f.options);
+  assert.equal(second.alreadyComplete, true);
+  await assert.rejects(() => runMigration({...f.options, targetCommitSha: 'f'.repeat(40)}), error => error.code === 'state_revision_mismatch');
+  assert.deepEqual(fs.readFileSync(f.options.statePath), before);
+});
+
+test('migration loads systemd environment files and lets explicit values win without persisting secrets', async t => {
+  const f = await setup(t);
+  const analytics = JSON.parse(fs.readFileSync(f.options.analyticsConfigPath, 'utf8'));
+  analytics.viewerAuth = {mode: 'basic', userEnv: 'TMA_VIEWER_USER', passwordEnv: 'TMA_VIEWER_PASSWORD'};
+  fs.writeFileSync(f.options.analyticsConfigPath, `${JSON.stringify(analytics, null, 2)}\n`, {mode: 0o600});
+  const fileToken = 'f'.repeat(64);
+  const fileUser = 'file-viewer';
+  const filePassword = 'file-password-0123456789';
+  fs.writeFileSync(path.join(f.dir, 'analytics.env'), `TMA_VIEWER_USER=${fileUser}\nTMA_VIEWER_PASSWORD=${filePassword}\n`, {mode: 0o600});
+  fs.writeFileSync(path.join(f.dir, 'collector.env'), `TMA_INGEST_TOKEN=${fileToken}\n`, {mode: 0o600});
+  const explicitToken = 'e'.repeat(64);
+  const explicitUser = 'cli-viewer';
+  const explicitPassword = 'cli-password-9876543210';
+  const calls = [];
+  f.options.environment = {TMA_INGEST_TOKEN: explicitToken, TMA_VIEWER_USER: explicitUser, TMA_VIEWER_PASSWORD: explicitPassword};
+  f.options.send = async (url, init) => {
+    assert.equal(init.headers.Authorization, `Bearer ${explicitToken}`);
+    return fetch(url, init);
+  };
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, calls);
+  await runMigration(f.options);
+  const targetEnvironment = fs.readFileSync(f.options.targetAnalyticsEnvPath, 'utf8');
+  assert.match(targetEnvironment, new RegExp(`^TMA_VIEWER_USER=${explicitUser}$`, 'm'));
+  assert.match(targetEnvironment, new RegExp(`^TMA_VIEWER_PASSWORD=${explicitPassword}$`, 'm'));
+  assert.doesNotMatch(targetEnvironment, /TMA_INGEST_TOKEN/);
+  const stateText = fs.readFileSync(f.options.statePath, 'utf8');
+  for (const secret of [fileToken, filePassword, explicitToken, explicitPassword]) assert.equal(stateText.includes(secret), false, `state leaked ${secret.slice(0, 4)}`);
+});
+
+test('conflicting Analytics and Collector environment files fail before mutation', async t => {
+  const f = await setup(t);
+  fs.writeFileSync(path.join(f.dir, 'analytics.env'), `TMA_INGEST_TOKEN=${'a'.repeat(64)}\n`, {mode: 0o600});
+  fs.writeFileSync(path.join(f.dir, 'collector.env'), `TMA_INGEST_TOKEN=${'b'.repeat(64)}\n`, {mode: 0o600});
+  let stopped = false;
+  f.options.environment = {};
+  f.options.platform = {...migrationPlatform({databasePath: f.databasePath}, []), stopCollector: async () => { stopped = true; }};
+  await assert.rejects(() => preflightMigration(f.options), error => error.code === 'legacy_env_conflict');
+  assert.equal(stopped, false);
+  assert.equal(fs.existsSync(f.options.statePath), false);
+});
+
+test('distinct legacy ingest variable names are accepted only for matching credentials', async t => {
+  const f = await setup(t);
+  const config = JSON.parse(fs.readFileSync(f.options.analyticsConfigPath, 'utf8'));
+  config.ingestTokenEnv = 'ANALYTICS_INGEST';
+  fs.writeFileSync(f.options.analyticsConfigPath, JSON.stringify(config));
+  f.options.environment.ANALYTICS_INGEST = f.options.environment.TMA_INGEST_TOKEN;
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, []);
+  await preflightMigration(f.options);
+  f.options.environment.ANALYTICS_INGEST = 'different-credential';
+  await assert.rejects(() => preflightMigration(f.options), error => error.code === 'legacy_ingest_mismatch');
+  assert.equal(fs.existsSync(f.options.statePath), false);
+});
+
+test('direct publication installs and proves the real Analytics server entrypoint', async t => {
+  const f = await setup(t);
+  const configDir = path.join(f.dir, 'direct-config');
+  const installDir = path.join(f.dir, 'direct-app');
+  fs.mkdirSync(configDir, {recursive: true, mode: 0o700});
+  const portServer = await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port;
+      server.close(() => resolve(port));
+    });
+  });
+  const targetConfigPath = path.join(configDir, 'analytics.json');
+  const targetSecretsPath = path.join(configDir, 'hub-secrets.json');
+  fs.writeFileSync(targetConfigPath, JSON.stringify({
+    version: 2, listen: {host: '127.0.0.1', port: portServer}, publicOrigin: `http://127.0.0.1:${portServer}`,
+    databasePath: f.databasePath, timeZone: 'UTC', detailRetentionDays: 7,
+    viewerAuth: {mode: 'loopback'}, hubSecretsPath: targetSecretsPath,
+    contracts: [], demo: false, management: {enabled: true}, update: {enabled: false},
+  }, null, 2));
+  fs.writeFileSync(targetSecretsPath, '{"schemaVersion":1,"secrets":{}}\n', {mode: 0o600});
+  const targetArtifact = verifyReleaseArtifact({
+    archivePath: f.artifact.archivePath, checksumPath: f.artifact.checksumPath,
+    expectedTargetCommitSha: TARGET_SHA, expectedArchitecture: 'amd64',
+    extractDir: path.join(f.dir, 'direct-artifact'),
+  });
+  const proof = await publishWindowsMigrationArtifact({
+    state: {targetConfigPath, targetSecretsPath, targetAnalyticsEnvPath: path.join(configDir, 'analytics.env'), windowsInstallDir: installDir},
+    targetArtifact,
+  }, {windowsInstallDir: installDir, environment: {}});
+  try {
+    assert.equal(proof.direct, true);
+    assert.equal(proof.targetCommitSha, TARGET_SHA);
+    assert.equal(proof.health && proof.state && proof.sse, true);
+  } finally {
+    // Stop before fixture()'s directory cleanup hook. Windows retains the
+    // child working directory and SQLite handles until the process exits.
+    try { process.kill(proof.processId, 'SIGTERM'); } catch {}
+    const deadline = Date.now() + 10000;
+    for (;;) {
+      try { process.kill(proof.processId, 0); } catch (error) {
+        if (error.code === 'ESRCH') break;
+        throw error;
+      }
+      assert.ok(Date.now() < deadline, 'direct Analytics process must exit before fixture cleanup');
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  }
+});
+
+test('restore recovers a stopped partial drain without replacing the current database', async t => {
+  const f = await setup(t);
+  const second = `${'00000000000000000002'}-${'b'.repeat(32)}.json`;
+  const third = `${'00000000000000000003'}-${'c'.repeat(32)}.json`;
+  fs.writeFileSync(path.join(f.outboxPath, second), JSON.stringify({...legacyEvent(), eventId: 'event-2'}), {mode: 0o600});
+  fs.writeFileSync(path.join(f.outboxPath, third), JSON.stringify({...legacyEvent(), eventId: 'event-3'}), {mode: 0o600});
+  const calls = [];
+  f.options.send = async (url, init) => {
+    if (calls.filter(call => call === 'send').length) throw new Error('fixture ACK uncertainty');
+    calls.push('send');
+    return fetch(url, init);
+  };
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, calls);
+  await assert.rejects(() => runMigration(f.options), /fixture ACK uncertainty/);
+  const before = new (await import('node:sqlite')).DatabaseSync(f.databasePath, {readOnly: true});
+  assert.equal(before.prepare('SELECT count(*) AS n FROM observations').get().n, 2);
+  before.close();
+  const state = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
+  assert.equal(state.phase, 'stop');
+  const restoreCalls = [];
+  const restored = await restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: {
+    verifyNoDatabaseWriter: async () => restoreCalls.push('verifyNoDatabaseWriter'),
+    preserveCutoverDatabase: async ({backupDir}) => { restoreCalls.push('preserve'); const target = path.join(backupDir, 'pre-final-current.db'); fs.copyFileSync(f.databasePath, target); return target; },
+    restoreDatabase: async () => restoreCalls.push('restoreDatabase'),
+    restoreProtected: async () => restoreCalls.push('restoreProtected'),
+    startLegacy: async () => { restoreCalls.push('startLegacy'); return true; },
+  }});
+  assert.equal(restored.state.restore.preFinalRecovery, true);
+  assert.equal(restoreCalls.includes('restoreDatabase'), false);
+  assert.deepEqual(restoreCalls, ['verifyNoDatabaseWriter', 'preserve', 'restoreProtected', 'startLegacy']);
+  assert.equal(fs.existsSync(path.join(f.outboxPath, third)), true);
+});
+
+test('restore recovers a crash after the durable stop handoff without a rollback database', async t => {
+  const f = await setup(t);
+  f.options.collectorPid = 201;
+  f.options.analyticsPid = 202;
+  const migrationCalls = [];
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, migrationCalls, {failAt: 'stopCollector'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_stopCollector');
+  const failed = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
+  assert.equal(failed.phase, 'prepare');
+  assert.equal(typeof failed.stopAttemptedAt, 'string');
+  assert.equal(Array.isArray(failed.legacyServices), true);
+  assert.deepEqual(failed.legacyPids, {collector: 201, analytics: 202});
+  const restoreCalls = [];
+  const restored = await restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: {
+    stopCollector: async layout => { assert.deepEqual(layout.legacyPids, {collector: 201, analytics: 202}); restoreCalls.push('stopCollector'); },
+    stopAnalytics: async layout => { assert.deepEqual(layout.legacyPids, {collector: 201, analytics: 202}); restoreCalls.push('stopAnalytics'); },
+    verifyStopped: async layout => { assert.deepEqual(layout.legacyPids, {collector: 201, analytics: 202}); restoreCalls.push('verifyStopped'); },
+    verifyNoDatabaseWriter: async () => restoreCalls.push('verifyNoDatabaseWriter'),
+    preserveCutoverDatabase: async ({backupDir}) => { restoreCalls.push('preserve'); const p = path.join(backupDir, 'early-current.db'); fs.copyFileSync(f.databasePath, p); return p; },
+    restoreProtected: async () => restoreCalls.push('restoreProtected'),
+    startLegacy: async () => { restoreCalls.push('startLegacy'); return true; },
+  }});
+  assert.equal(restored.state.restore.earlyRecovery, true);
+  assert.equal(restored.state.restore.preFinalRecovery, false);
+  assert.deepEqual(restoreCalls, ['stopCollector', 'stopAnalytics', 'verifyStopped', 'verifyNoDatabaseWriter', 'preserve', 'startLegacy']);
+  assert.equal(fs.existsSync(f.databasePath), true);
+});
+
+test('unsafe outbox and Web runner invocation fail before a service mutation', async t => {
+  const f = await setup(t);
+  fs.writeFileSync(path.join(f.outboxPath, '.tmp-crash'), 'pending');
+  let mutated = false;
+  f.options.platform = {...migrationPlatform({databasePath: f.databasePath}, []), stopCollector: async () => {mutated = true;}};
+  await assert.rejects(() => preflightMigration(f.options), error => error.code === 'outbox_unsafe');
+  assert.equal(mutated, false);
+  fs.rmSync(path.join(f.outboxPath, '.tmp-crash'));
+  await assert.rejects(() => preflightMigration({...f.options, webRunner: true}), error => error.code === 'web_runner_migration_rejected');
+  assert.equal(fs.existsSync(f.options.statePath), false);
+});
+
+test('an unverified target artifact is rejected before the stop phase', async t => {
+  const f = await setup(t);
+  const unverified = createReleaseArtifact({root, architecture: 'amd64', outputDir: path.join(f.dir, 'unverified-artifact'), targetCommitSha: TARGET_SHA, certified: false});
+  let stopped = false;
+  f.options.targetArtifactPath = unverified.archivePath;
+  f.options.verifyTargetRelease = undefined;
+  f.options.platform = {...migrationPlatform({databasePath: f.databasePath}, []), stopCollector: async () => { stopped = true; }};
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'target_release_unverified');
+  assert.equal(stopped, false);
+  assert.equal(fs.existsSync(f.options.statePath), false);
+});
+
+test('a failed phase keeps the monotonic state and restore preserves cutover data before rollback', async t => {
+  const f = await setup(t);
+  const calls = [];
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, calls, {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  const failed = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
+  assert.equal(failed.phase, 'archive');
+  assert.equal(failed.error.code, 'fixture_provision');
+  const restoreCalls = [];
+  const restored = await restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: {
+    stopNew: async () => restoreCalls.push('stopNew'),
+    verifyNoDatabaseWriter: async () => restoreCalls.push('verifyNoDatabaseWriter'),
+    preserveCutoverDatabase: async ({backupDir}) => {restoreCalls.push('preserve'); const p = path.join(backupDir, 'post-cutover-test.db'); fs.copyFileSync(f.databasePath, p); return p;},
+    restoreDatabase: async ({source, destination}) => {restoreCalls.push('restoreDatabase'); fs.copyFileSync(source, destination);},
+    restoreProtected: async () => restoreCalls.push('restoreProtected'),
+    startLegacy: async () => { restoreCalls.push('startLegacy'); },
+  }});
+  assert.equal(restored.state.restore.legacyStarted, true);
+  assert.equal(restored.state.status, 'restored');
+  assert.deepEqual(restoreCalls, ['stopNew', 'verifyNoDatabaseWriter', 'preserve', 'restoreDatabase', 'restoreProtected', 'startLegacy']);
+});
+
+test('restore rejects a corrupted post-drain backup before destructive cutover changes', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  const state = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
+  fs.appendFileSync(state.rollbackDatabase, Buffer.from('corruption'));
+  const restoreCalls = [];
+  await assert.rejects(() => restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: {
+    stopNew: async () => restoreCalls.push('stopNew'),
+    verifyNoDatabaseWriter: async () => restoreCalls.push('verifyNoDatabaseWriter'),
+    preserveCutoverDatabase: async () => restoreCalls.push('preserve'),
+    restoreDatabase: async () => restoreCalls.push('restoreDatabase'),
+    restoreProtected: async () => restoreCalls.push('restoreProtected'),
+    startLegacy: async () => restoreCalls.push('startLegacy'),
+  }}), error => error.code === 'rollback_backup_invalid');
+  assert.deepEqual(restoreCalls, []);
+  assert.equal(fs.existsSync(f.databasePath), true);
+});
+
+test('restore verifies a temporary database before replacing the live database and can retry', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  const before = fs.readFileSync(f.databasePath);
+  let attempts = 0;
+  let preserves = 0;
+  const restorePlatform = {
+    stopNew: async () => {},
+    verifyNoDatabaseWriter: async () => {},
+    preserveCutoverDatabase: async ({backupDir}) => {
+      preserves += 1;
+      if (preserves > 1) throw new Error('preserved copy must be reused on retry');
+      const target = path.join(backupDir, 'post-cutover-retry.db');
+      fs.copyFileSync(f.databasePath, target);
+      return target;
+    },
+    restoreDatabase: async ({source, destination}) => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error('restore destination unavailable'), {code: 'fixture_restore'});
+      fs.copyFileSync(source, destination);
+    },
+    restoreProtected: async () => {},
+    startLegacy: async () => true,
+  };
+  await assert.rejects(() => restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: restorePlatform}), error => error.code === 'fixture_restore');
+  assert.deepEqual(fs.readFileSync(f.databasePath), before, 'failed restore must leave the live DB untouched');
+  assert.equal(fs.existsSync(f.databasePath), true);
+  const pending = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
+  assert.equal(pending.restore.status, 'restoring');
+  assert.equal(typeof pending.restore.postCutoverPreserved, 'string');
+  fs.rmSync(f.databasePath);
+  const restored = await restoreMigration({statePath: f.options.statePath, lockPath: f.options.lockPath, platform: restorePlatform});
+  assert.equal(restored.state.status, 'restored');
+  assert.equal(attempts, 2);
+  assert.equal(preserves, 1);
+  assert.equal(fs.existsSync(f.databasePath), true);
+});
+
+test('migration resume rejects a missing live database before archive', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  fs.rmSync(f.databasePath);
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'legacy_database_invalid');
+  assert.equal(fs.existsSync(f.databasePath), false);
+});
+
+test('migration resume rejects a valid replacement database that lost legacy rows', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  fs.rmSync(f.databasePath);
+  const current = await import('../../analytics/runtime/sqlite.mjs');
+  current.openDatabase(f.databasePath).close();
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'legacy_database_changed');
+  assert.equal(fs.existsSync(f.databasePath), true);
+});
+
+test('migration resume keeps a new active Hub after archive already committed', async t => {
+  const f = await setup(t);
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, [], {failAt: 'provision'});
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'fixture_provision');
+  const {DatabaseSync} = await import('node:sqlite');
+  const db = new DatabaseSync(f.databasePath);
+  db.prepare('INSERT INTO hubs(id,label,url,status,secret_ref,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run('new-hub', 'New Hub', 'https://new.example.invalid', 'active', 'new-secret', 1, '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z');
+  db.close();
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, []);
+  const resumed = await runMigration(f.options);
+  assert.equal(resumed.state.phase, 'complete');
+  const check = new DatabaseSync(f.databasePath, {readOnly: true});
+  try {
+    assert.deepEqual({...check.prepare('SELECT id,label,url,status,secret_ref FROM hubs WHERE id=?').get('new-hub')}, {
+      id: 'new-hub', label: 'New Hub', url: 'https://new.example.invalid', status: 'active', secret_ref: 'new-secret',
+    });
+  } finally { check.close(); }
+});
+
+test('a partial pre-drain outbox copy is rebuilt with a completion marker', async t => {
+  const f = await setup(t);
+  const name = fs.readdirSync(f.outboxPath)[0];
+  const target = path.join(f.options.backupDir, 'outbox-pre-drain');
+  fs.mkdirSync(target, {recursive: true, mode: 0o700});
+  fs.writeFileSync(path.join(target, name), 'partial copy', {mode: 0o600});
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, []);
+  await runMigration(f.options);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(target, name), 'utf8')).eventId, legacyEvent().eventId);
+  assert.equal(fs.existsSync(path.join(target, '.migration-complete')), true);
+});
+
+async function partialDrainFixture(t) {
+  const f = await setup(t);
+  const second = `${'00000000000000000002'}-${'b'.repeat(32)}.json`;
+  const third = `${'00000000000000000003'}-${'c'.repeat(32)}.json`;
+  fs.writeFileSync(path.join(f.outboxPath, second), JSON.stringify({...legacyEvent(), eventId: 'event-2'}), {mode: 0o600});
+  fs.writeFileSync(path.join(f.outboxPath, third), JSON.stringify({...legacyEvent(), eventId: 'event-3'}), {mode: 0o600});
+  let sends = 0;
+  f.options.send = async (url, init) => {
+    sends += 1;
+    if (sends > 1) throw new Error('fixture ACK uncertainty');
+    return fetch(url, init);
+  };
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, []);
+  await assert.rejects(() => runMigration(f.options), /fixture ACK uncertainty/);
+  return {f, third};
+}
+
+test('migration resume accepts an ACKed deletion subset after partial drain', async t => {
+  const {f} = await partialDrainFixture(t);
+  f.options.send = fetch;
+  const result = await runMigration(f.options);
+  assert.equal(result.state.phase, 'complete');
+  assert.equal(fs.readdirSync(f.outboxPath).length, 0);
+  const {DatabaseSync} = await import('node:sqlite');
+  const db = new DatabaseSync(f.databasePath, {readOnly: true});
+  try { assert.equal(db.prepare('SELECT count(*) AS n FROM observations').get().n, 3); } finally { db.close(); }
+});
+
+test('migration resume rejects a changed remaining outbox payload', async t => {
+  const {f, third} = await partialDrainFixture(t);
+  fs.writeFileSync(path.join(f.outboxPath, third), JSON.stringify({...legacyEvent(), eventId: 'changed-event'}), {mode: 0o600});
+  let resumedSends = 0;
+  f.options.send = async (...args) => { resumedSends += 1; return fetch(...args); };
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'outbox_changed');
+  assert.equal(resumedSends, 0);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.outboxPath, third), 'utf8')).eventId, 'changed-event');
+});
+
+test('migration resume rejects a new outbox file after the stop handoff', async t => {
+  const {f} = await partialDrainFixture(t);
+  const added = `${'00000000000000000004'}-${'d'.repeat(32)}.json`;
+  fs.writeFileSync(path.join(f.outboxPath, added), JSON.stringify({...legacyEvent(), eventId: 'event-4'}), {mode: 0o600});
+  f.options.send = fetch;
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'outbox_changed');
+  assert.equal(fs.existsSync(path.join(f.outboxPath, added)), true);
+});
+
+test('migration resume requires deleted outbox events to be present in legacy observations', async t => {
+  const {f} = await partialDrainFixture(t);
+  const {DatabaseSync} = await import('node:sqlite');
+  const db = new DatabaseSync(f.databasePath);
+  db.prepare('DELETE FROM observations WHERE event_id=?').run(legacyEvent().eventId);
+  db.close();
+  f.options.send = fetch;
+  await assert.rejects(() => runMigration(f.options), error => error.code === 'outbox_ack_unproven');
+});

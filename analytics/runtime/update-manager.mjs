@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {promisify} from 'node:util';
 import {readUpdateState, saveUpdateState} from './update-state.mjs';
+import {publicUpdateJob} from './update-recovery.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -15,8 +16,10 @@ function defaultReadPublication(pubPath) {
       releaseId: typeof raw.releaseId === 'string' ? raw.releaseId : null,
       configurationId: typeof raw.configurationId === 'string' ? raw.configurationId : null,
       publicOrigin: typeof raw.publicOrigin === 'string' ? raw.publicOrigin : null,
-      commitSha: typeof raw.commitSha === 'string' ? raw.commitSha : null,
-      commitDate: typeof raw.commitDate === 'string' ? raw.commitDate : null,
+      commitSha: typeof raw.commitSha === 'string' ? raw.commitSha : (typeof raw.targetCommitSha === 'string' ? raw.targetCommitSha : null),
+      commitDate: typeof raw.commitDate === 'string' ? raw.commitDate : (typeof raw.targetCommitDate === 'string' ? raw.targetCommitDate : null),
+      contentHash: typeof raw.contentHash === 'string' ? raw.contentHash : null,
+      archiveSha256: typeof raw.archiveSha256 === 'string' ? raw.archiveSha256 : null,
       publishedAt: typeof raw.publishedAt === 'string' ? raw.publishedAt : null
     };
   } catch {
@@ -64,6 +67,7 @@ function defaultIsServiceActive(unitName = 'tma-update.service') {
 
 export class UpdateManager {
   #config;
+  #closed = false;
   #live;
   #timer = null;
   #watchTimer = null;
@@ -144,6 +148,7 @@ export class UpdateManager {
   }
 
   close() {
+    this.#closed = true;
     if (this.#timer) {
       clearInterval(this.#timer);
       this.#timer = null;
@@ -158,16 +163,17 @@ export class UpdateManager {
     }
   }
 
-  pollJobState() {
+  pollJobState(force = false, {reconcile = true} = {}) {
     const statePath = this.#config.update?.statePath ?? '/var/lib/tma-deploy/update-state.json';
-    const job = this.#readState(statePath, {checkServiceActive: this.#isServiceActive});
-    const key = job ? `${job.jobId}:${job.status}:${job.stage}:${job.errorCode}` : null;
-    if (key !== this.#lastJobKey) {
+    const job = this.#readState(statePath, {checkServiceActive: reconcile && !this.#closed ? this.#isServiceActive : () => true});
+    const publicJob = publicUpdateJob(job);
+    const key = publicJob ? `${publicJob.jobId}:${publicJob.status}:${publicJob.stage}:${publicJob.failedStage}:${publicJob.errorCode}` : null;
+    if (force || key !== this.#lastJobKey) {
       this.#lastJobKey = key;
-      if (this.#live && job) {
+      if (this.#live && publicJob) {
         this.#live.broadcast('update_job_changed', {
           type: 'update_job_changed',
-          job
+          job: publicJob
         });
       }
     }
@@ -194,7 +200,10 @@ export class UpdateManager {
 
     try {
       const remote = await this.#fetchRemoteCommit({repositoryUrl, branch});
-      const targetSha = remote.commitSha;
+      const targetSha = typeof remote.commitSha === 'string' ? remote.commitSha.toLowerCase() : remote.commitSha;
+      if (!/^[0-9a-f]{40}$/i.test(targetSha)) {
+        throw Object.assign(new Error('Remote branch did not return a full commit SHA'), {code: 'invalid_remote_commit'});
+      }
       const hasUpdate = Boolean(currentSha ? currentSha !== targetSha : true);
       const webBase = repositoryUrl.replace(/\.git$/, '');
       const compareUrl = currentSha && currentSha !== targetSha
@@ -238,7 +247,9 @@ export class UpdateManager {
       releaseId: pub?.releaseId ?? null,
       commitSha: pub?.commitSha ?? null,
       commitDate: pub?.commitDate ?? null,
-      configurationId: pub?.configurationId ?? null
+      configurationId: pub?.configurationId ?? null,
+      contentHash: pub?.contentHash ?? null,
+      archiveSha256: pub?.archiveSha256 ?? null
     };
 
     const statePath = this.#config.update?.statePath ?? '/var/lib/tma-deploy/update-state.json';
@@ -250,7 +261,7 @@ export class UpdateManager {
       reason: reason ?? undefined,
       current,
       candidate: this.#candidate,
-      job
+      job: publicUpdateJob(job)
     };
   }
 
@@ -268,6 +279,9 @@ export class UpdateManager {
     if (!this.#candidate || this.#candidate.targetCommitSha !== targetCommitSha) {
       throw Object.assign(new Error('Target commit SHA does not match current candidate. Please refresh update candidate.'), {status: 409, code: 'candidate_mismatch'});
     }
+    if (!this.#candidate.hasUpdate) {
+      throw Object.assign(new Error('The selected commit is already published'), {status: 409, code: 'already_current'});
+    }
 
     const statePath = this.#config.update.statePath;
     const currentJob = this.#readState(statePath, {checkServiceActive: this.#isServiceActive});
@@ -281,8 +295,17 @@ export class UpdateManager {
       targetCommitSha,
       targetCommitDate: this.#candidate.commitDate,
       targetMessage: this.#candidate.message,
+      repositoryUrl: this.#config.update.repositoryUrl,
+      branch: this.#config.update.branch,
+      initialConfigurationId: this.#readPublication(this.#config.update.publicationPath)?.configurationId ?? null,
+      expectedReleaseId: null,
+      contentHash: null,
+      archiveSha256: null,
+      configurationId: null,
+      outcome: null,
       status: 'running',
       stage: 'accepted',
+      failedStage: null,
       errorCode: null,
       startedAt: new Date().toISOString(),
       finishedAt: null
@@ -295,18 +318,19 @@ export class UpdateManager {
     } catch (err) {
       newJob.status = 'failed';
       newJob.stage = 'failed';
+      newJob.failedStage = newJob.failedStage ?? 'accepted';
       newJob.errorCode = 'job_aborted';
       newJob.finishedAt = new Date().toISOString();
       this.#saveState(statePath, newJob);
       throw Object.assign(new Error(`Failed to trigger update service: ${err.message}`), {status: 500});
     }
 
-    this.#lastJobKey = `${newJob.jobId}:${newJob.status}:${newJob.stage}:${newJob.errorCode}`;
+    this.#lastJobKey = `${newJob.jobId}:${newJob.status}:${newJob.stage}:${newJob.failedStage}:${newJob.errorCode}`;
 
     if (this.#live) {
       this.#live.broadcast('update_job_changed', {
         type: 'update_job_changed',
-        job: newJob
+        job: publicUpdateJob(newJob)
       });
     }
 

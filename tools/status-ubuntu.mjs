@@ -1,59 +1,46 @@
 import fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
-import {destination,infrastructureFile,appUnits,prefix,updateStateFile,validateInfrastructure,assertInfrastructureFile} from './ubuntu-layout.mjs';
-import {readJSON,validateConfiguration,selectConfiguration} from './publish-config.mjs';
-import {tailnetIdentity,userEnvironment,report} from './ubuntu-common.mjs';
-async function main(){
- userEnvironment();let incomplete=false;
- const check=(label,ok)=>{console.log(`${ok?'OK':'MISSING'}: ${label}`);if(!ok)incomplete=true;};
- check('environment provisioned',fs.existsSync(infrastructureFile));
- if(fs.existsSync(infrastructureFile)){try{assertInfrastructureFile();validateInfrastructure(readJSON(infrastructureFile),process.getuid());check('publication user and service definitions',true);}catch{check('publication user and service definitions',false);}}
- check('boot persistence (linger)',spawnSync('loginctl',['show-user',String(process.getuid()),'-p','Linger','--value'],{encoding:'utf8'}).stdout?.trim()==='yes');
- let identity;try{identity=tailnetIdentity();check('Tailscale connected',true);}catch{check('Tailscale connected',false);}
- const configured=['analytics.json','collector.json','analytics.env','collector.env','connection.json'].every(n=>fs.existsSync(`${destination}/${n}`));check('Hub/application configuration',configured);
- for(const unit of appUnits){check(`${unit} active`,spawnSync('systemctl',['--user','is-active','--quiet',unit]).status===0);check(`${unit} enabled`,spawnSync('systemctl',['--user','is-enabled','--quiet',unit]).status===0);}
- if(configured){
-  try{
-   const plan=readJSON(`${destination}/connection.json`),config=validateConfiguration(plan,selectConfiguration({}));
-   check('configured address matches Tailscale',identity?.tailnetIP===plan.tailnetIP&&identity?.hostname===plan.hostname);
-   const response=await fetch(plan.publicOrigin+'/api/state',{headers:config.analytics.viewerAuth.mode==='basic'?{Authorization:'Basic '+Buffer.from(config.auth.user+':'+config.auth.password).toString('base64')}:{},signal:AbortSignal.timeout(5000)});
-   check('tailnet viewer HTTP',response.status===200);
-   if(response.status===200){
-    const state=await response.json();console.log(`Verified viewer URL: ${plan.publicOrigin}`);
-    if(config.analytics.hubsPath&&config.analytics.management.enabled){
-     const r=await fetch(plan.publicOrigin+'/api/manage/hubs',{headers:config.analytics.viewerAuth.mode==='basic'?{Authorization:'Basic '+Buffer.from(config.auth.user+':'+config.auth.password).toString('base64')}:{},signal:AbortSignal.timeout(5000)});
-     check('Hub management HTTP',r.ok);
-     if(r.ok){
-      const m=await r.json();
-      if(!m.hubs.length)console.log('OK: No Hubs registered; add a Hub in the Hubs screen.');
-      else if(m.hubs.every(h=>h.status==='disabled'))console.log('OK: All Hubs intentionally disabled.');
-      else {
-       check('Collector status known',m.collector.status!=='unknown');
-       check('Hub settings applied',m.collector.appliedRevision===m.revision);
-       for(const h of m.hubs){
-        const report=m.collector.hubs[h.id];
-        if(h.status==='disabled')console.log('OK: Hub intentionally disabled.');
-        else check(report?.errorCode==='auth_failed'?'Hub authentication valid':'Hub connected',m.collector.status!=='unknown'&&report?.status==='connected');
-       }
-      }
-     }
-    }else check('Hub observations received',state.hubs?.length>0);
-   }
-  }catch{check('valid configuration and reachable viewer',false);}
- }
- const publicationPath=`${prefix}/publication.json`;
- if(fs.existsSync(publicationPath)){
-  try{
-   const pub=readJSON(publicationPath);
-   console.log(`Current version: ${pub.commitSha?pub.commitSha.slice(0,12):'unknown'} (${pub.commitDate??'unknown date'}) [release: ${pub.releaseId?.slice(0,12)??'unknown'}]`);
-  }catch{}
- }
- if(fs.existsSync(updateStateFile)){
-  try{
-   const uState=readJSON(updateStateFile);
-   console.log(`Recent update: ${uState.stage} (${uState.status}) - target: ${uState.targetCommitSha?.slice(0,12)??'none'} [error: ${uState.errorCode??'none'}]`);
-  }catch{}
- }
- if(incomplete)process.exitCode=1;
+import {destination,infrastructureFile,appUnits,updateUnit,publicationFile,updateStateFile,validateInfrastructure,assertInfrastructureFile} from './ubuntu-layout.mjs';
+import {readJSON,validateConfiguration,selectConfiguration,readPublication} from './publish-config.mjs';
+import {userEnvironment,report} from './ubuntu-common.mjs';
+
+const serviceState = (name, action) => spawnSync('/usr/bin/systemctl', ['--user', action, '--quiet', name], {stdio: 'ignore'}).status === 0;
+
+export async function readStatus({configDir = destination, infrastructurePath = infrastructureFile, service = serviceState, fetchImpl = fetch} = {}) {
+  const result = {infrastructure: false, configured: false, appUnits: {}, updateUnit: {}, health: null, publication: null, update: null};
+  if (fs.existsSync(infrastructurePath)) {
+    try { assertInfrastructureFile(infrastructurePath); validateInfrastructure(readJSON(infrastructurePath), process.getuid?.()); result.infrastructure = true; } catch { result.infrastructure = false; }
+  }
+  const selected = selectConfiguration({}, configDir);
+  if (selected.analyticsConfig && fs.existsSync(selected.analyticsConfig)) {
+    try {
+      const config = validateConfiguration({}, selected);
+      result.config = {publicOrigin: config.analytics.publicOrigin, listen: config.analytics.listen, viewerMode: config.analytics.viewerAuth.mode};
+      result.configured = true;
+      try {
+        const response = await fetchImpl(`${config.analytics.publicOrigin}/api/health`, {signal: AbortSignal.timeout(5000)});
+        result.health = response.ok;
+      } catch { result.health = false; }
+    } catch { result.configured = false; }
+  }
+  for (const unit of appUnits) result.appUnits[unit] = {active: Boolean(service(unit, 'is-active')), enabled: Boolean(service(unit, 'is-enabled'))};
+  result.updateUnit = {active: Boolean(service(updateUnit, 'is-active')), enabled: Boolean(service(updateUnit, 'is-enabled'))};
+  result.publication = readPublication(publicationFile);
+  if (fs.existsSync(updateStateFile)) {
+    try {
+      const state = readJSON(updateStateFile);
+      result.update = {status: state.status ?? null, stage: state.stage ?? null, errorCode: state.errorCode ?? null, targetCommitSha: state.targetCommitSha ?? null};
+    } catch { result.update = null; }
+  }
+  result.ok = result.infrastructure && result.configured && result.health === true && appUnits.every(unit => result.appUnits[unit].active && result.appUnits[unit].enabled) && !result.updateUnit.active && !result.updateUnit.enabled;
+  return result;
 }
+
+async function main() {
+  userEnvironment();
+  const status = await readStatus();
+  console.log(JSON.stringify(status, null, 2));
+  if (!status.ok) process.exitCode = 1;
+}
+
 main().catch(report);

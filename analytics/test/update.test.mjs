@@ -9,6 +9,46 @@ import {UpdateManager} from '../runtime/update-manager.mjs';
 import {createManagementHandler} from '../runtime/management.mjs';
 import {LiveFeed} from '../runtime/live.mjs';
 
+test('service shutdown sends the final update stage before browser SSE ends', {skip: process.platform !== 'linux', timeout: 10000}, async t => {
+  const {startServer} = await import('../runtime/server.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-update-shutdown-'));
+  const config = {
+    version: 2, demo: false, listen: {host: '127.0.0.1', port: 0},
+    publicOrigin: 'http://127.0.0.1:0', databasePath: path.join(dir, 'analytics.db'),
+    hubSecretsPath: path.join(dir, 'secrets.json'), timeZone: 'UTC', detailRetentionDays: 7,
+    viewerAuth: {mode: 'loopback'}, management: {enabled: true}, contracts: [],
+    update: {enabled: true, statePath: path.join(dir, 'update-state.json'), checkIntervalSeconds: 300},
+  };
+  let job = {jobId: 'shutdown-race', status: 'running', stage: 'verifying', targetCommitSha: 'a'.repeat(40), startedAt:'2020-01-01T00:00:00.000Z'};
+  saveUpdateState(config.update.statePath,job);
+  let serviceActive=true;
+  const app = await startServer(config, {logger: {info(){}, error(){}}, updateManagerOptions: {
+    isServiceActive: () => serviceActive, fetchRemoteCommit: async () => null,
+  }});
+  t.after(async () => {await app.close(); fs.rmSync(dir, {recursive: true, force: true});});
+  config.publicOrigin = `http://127.0.0.1:${app.server.address().port}`;
+  const response = await fetch(`${config.publicOrigin}/api/live`, {signal: AbortSignal.timeout(8000)});
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  let frames = new TextDecoder().decode((await reader.read()).value);
+  // No file-system event or polling interval announces this transition.
+  job = {...job, stage: 'deploying'};
+  saveUpdateState(config.update.statePath,job);
+  serviceActive=false; // Query failure while systemd terminates this app.
+  const closing = app.close();
+  app.updateManager.pollJobState(); // A watcher callback already queued at close.
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    frames += new TextDecoder().decode(value);
+  }
+  await closing;
+  assert.match(frames, /event: update_job_changed/);
+  assert.match(frames, /"jobId":"shutdown-race"/);
+  assert.match(frames, /"stage":"deploying"/);
+  assert.equal(JSON.parse(fs.readFileSync(config.update.statePath,'utf8')).status,'running');
+});
+
 test('readUpdateState and saveUpdateState atomically manage job state and reconcile with service status', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-update-state-'));
   const statePath = path.join(dir, 'update-state.json');
@@ -44,6 +84,7 @@ test('readUpdateState and saveUpdateState atomically manage job state and reconc
     });
     assert.equal(readInactive.status, 'aborted');
     assert.equal(readInactive.stage, 'aborted');
+    assert.equal(readInactive.failedStage, 'accepted');
     assert.equal(readInactive.errorCode, 'job_aborted');
     assert.equal(readInactive.finishedAt, '2026-09-06T12:05:00Z');
 
@@ -173,7 +214,7 @@ test('HTTP Management API protects /api/manage/update endpoints and handles chec
     }
   };
 
-  const auth = {ingest: 'token-test'};
+  const auth = {};
   const live = new LiveFeed({heartbeatMs: 60000});
 
   let serviceStarted = false;
@@ -206,7 +247,7 @@ test('HTTP Management API protects /api/manage/update endpoints and handles chec
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, config.publicOrigin);
     if (url.pathname.startsWith('/api/manage/update')) {
-      await management.handleUpdate(req, res, url);
+      await management.handleManage(req, res, url);
       return;
     }
     res.writeHead(404);
@@ -303,6 +344,7 @@ test('readUpdateState preserves running status during grace period even if servi
     });
     assert.equal(afterGrace.status, 'aborted');
     assert.equal(afterGrace.stage, 'aborted');
+    assert.equal(afterGrace.failedStage, 'accepted');
     assert.equal(afterGrace.errorCode, 'job_aborted');
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
@@ -402,6 +444,61 @@ test('UpdateManager coalesces concurrent checkUpdate calls and broadcasts state 
   }
 });
 
+test('UpdateManager exposes the actual failed stage and inspection-only recovery guidance', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-update-recovery-'));
+  const statePath = path.join(dir, 'update-state.json');
+  const pubPath = path.join(dir, 'publication.json');
+  fs.writeFileSync(pubPath, JSON.stringify({releaseId: 'rel-current', commitSha: '1'.repeat(40)}));
+  const config = {
+    demo: false,
+    management: {enabled: true},
+    update: {
+      enabled: true,
+      repositoryUrl: 'https://example.invalid/repository.git',
+      branch: 'main',
+      statePath,
+      publicationPath: pubPath
+    }
+  };
+  const job = {
+    jobId: 'job-recovery',
+    targetCommitSha: '2'.repeat(40),
+    status: 'failed',
+    stage: 'failed',
+    failedStage: 'restarting',
+    errorCode: 'health_check_failed',
+    startedAt: '2026-09-09T00:00:00Z',
+    finishedAt: '2026-09-09T00:01:00Z'
+  };
+  saveUpdateState(statePath, job);
+  const mgr = new UpdateManager(config, null, {isServiceActive: () => false});
+  mgr.isSupported = () => true;
+  try {
+    const status = mgr.getStatus();
+    assert.equal(status.job.failedStage, 'restarting');
+    assert.equal(status.job.recovery.stage, 'restarting');
+    assert.equal(status.job.recovery.kind, 'post_restart');
+    assert.match(status.job.recovery.message, /停止後/);
+    assert.ok(status.job.recovery.commands.some(command => command.includes('update-state.json')));
+    assert.equal(status.job.recovery.commands.some(command => /restart|rollback|restore/.test(command)), false);
+
+    // Preserve compatibility with terminal states written before failedStage
+    // was added, while still choosing a stage from a known safe error code.
+    saveUpdateState(statePath, {...job, failedStage: null, errorCode: 'deploy_failed'});
+    const legacy = mgr.getStatus().job;
+    assert.equal(legacy.failedStage, 'deploying');
+    assert.equal(legacy.recovery.kind, 'post_deploy');
+
+    saveUpdateState(statePath, {...job, failedStage: null, stage: 'aborted', status: 'aborted', errorCode: 'job_aborted'});
+    const unknownAbort = mgr.getStatus().job;
+    assert.equal(unknownAbort.failedStage, null);
+    assert.equal(unknownAbort.recovery, null);
+  } finally {
+    mgr.close();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
 test('readUpdateState does not overwrite completed status if runner finishes during service check', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-reconcile-race-'));
   const statePath = path.join(dir, 'update-state.json');
@@ -444,6 +541,88 @@ test('readUpdateState does not overwrite completed status if runner finishes dur
     assert.equal(onDisk.status, 'completed');
     assert.equal(onDisk.stage, 'success');
     assert.equal(onDisk.finishedAt, '2026-09-06T12:02:00Z');
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('readUpdateState never resurrects an older job after a replacement during service check', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-reconcile-replacement-'));
+  const statePath = path.join(dir, 'update-state.json');
+  const oldJob = {
+    jobId: 'job-old',
+    targetCommitSha: '0123456789abcdef0123456789abcdef01234567',
+    status: 'running',
+    stage: 'deploying',
+    startedAt: '2026-09-06T12:00:00Z',
+    finishedAt: null
+  };
+  const newJob = {
+    ...oldJob,
+    jobId: 'job-new',
+    targetCommitSha: 'fedcba9876543210fedcba9876543210fedcba98',
+    stage: 'accepted',
+    startedAt: '2026-09-06T12:04:00Z'
+  };
+  try {
+    saveUpdateState(statePath, oldJob);
+    const result = readUpdateState(statePath, {
+      checkServiceActive: () => {
+        saveUpdateState(statePath, newJob);
+        return false;
+      },
+      now: () => '2026-09-06T12:05:00Z'
+    });
+    assert.equal(result.jobId, 'job-new');
+    assert.equal(result.status, 'running');
+    assert.equal(readUpdateState(statePath, {checkServiceActive: () => true}).jobId, 'job-new');
+
+    saveUpdateState(statePath, oldJob);
+    const missing = readUpdateState(statePath, {
+      checkServiceActive: () => {
+        fs.rmSync(statePath);
+        return false;
+      },
+      now: () => '2026-09-06T12:05:00Z'
+    });
+    assert.equal(missing, null);
+    assert.equal(fs.existsSync(statePath), false);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('update state preserves pinned repository and verified release metadata through terminal reconciliation', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-update-metadata-'));
+  const statePath = path.join(dir, 'update-state.json');
+  const state = {
+    jobId: 'job-metadata',
+    targetCommitSha: '0123456789abcdef0123456789abcdef01234567',
+    targetCommitDate: '2026-09-09T00:00:00Z',
+    targetMessage: 'Verified release',
+    repositoryUrl: 'https://example.invalid/repository.git',
+    branch: 'main',
+    initialConfigurationId: 'cfg-before',
+    expectedReleaseId: 'rel-after',
+    contentHash: 'b'.repeat(64),
+    archiveSha256: 'a'.repeat(64),
+    configurationId: 'cfg-after',
+    status: 'completed',
+    stage: 'success',
+    errorCode: null,
+    startedAt: '2026-09-09T00:00:01Z',
+    finishedAt: '2026-09-09T00:01:00Z'
+  };
+  try {
+    saveUpdateState(statePath, state);
+    const read = readUpdateState(statePath, {checkServiceActive: () => false});
+    assert.equal(read.repositoryUrl, state.repositoryUrl);
+    assert.equal(read.branch, state.branch);
+    assert.equal(read.expectedReleaseId, state.expectedReleaseId);
+    assert.equal(read.contentHash, state.contentHash);
+    assert.equal(read.archiveSha256, state.archiveSha256);
+    assert.equal(read.configurationId, state.configurationId);
+    assert.equal(read.status, 'completed');
   } finally {
     fs.rmSync(dir, {recursive: true, force: true});
   }

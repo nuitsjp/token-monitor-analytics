@@ -3,7 +3,7 @@
 <body>
 <aside><a class="brand" href="/"><span class="mark">T</span><span>Token Monitor<br><strong>Analytics</strong></span></a>
 <p class="eyebrow">WORKSPACE</p><nav aria-label="メイン"><button data-view="dashboard" aria-current="page">Overview</button><button data-view="history">Daily history</button><button data-view="settings">Connections</button><button data-view="manage" id="nav-manage" hidden>Hubs</button><button data-view="update" id="nav-update" hidden>Update</button></nav>
-<div class="aside-foot"><span class="dot" id="dot"></span><span id="live">接続準備中</span><small>SSE → Collector → Analytics<br>観測値と参考推定を区別します。</small></div></aside>
+<div class="aside-foot"><span class="dot" id="dot"></span><span id="live">接続準備中</span><small>Hub → Analytics<br>観測値と参考推定を区別します。</small></div></aside>
 <main><header><div><p class="eyebrow">SUBSCRIPTION INTELLIGENCE</p><h1 id="title">Overview</h1><p class="lead">利用額と、契約で使える金額の推定推移。</p></div><button id="refresh" class="outline">更新</button></header>
 <div id="notice" role="status" hidden></div>
 <section id="dashboard" class="view">
@@ -15,13 +15,14 @@
 <div class="section-heading"><h2>アカウントの利用率</h2></div>
 <div class="table-wrap"><table><thead><tr><th>サービス / アカウント</th><th>制限枠</th><th>消費割合</th><th>リセット予定</th><th>状態</th></tr></thead><tbody id="limits"></tbody></table></div>
 </section>
-<section id="history" class="view" hidden><div class="section-heading"><h2>日次の推定履歴</h2><select id="contract-select" aria-label="履歴の契約"></select></div><p class="muted">その日の最後の有効推定を保存します。最新判定と推定の観測時刻を別々に表示します。</p><div id="chart" class="chart"></div><div class="table-wrap"><table><thead><tr><th>日付</th><th>月換算・参考</th><th>期間枠・参考</th><th>推定の観測時刻</th><th>その日の最新判定</th></tr></thead><tbody id="daily"></tbody></table></div></section>
-<section id="settings" class="view" hidden><h2>接続と契約の設定</h2><p class="muted">初期版では設定ファイルを編集します。Hubシークレットや送信用トークンは、この画面へ送信しません。</p><div id="connections"></div><div class="callout"><strong>収集と閲覧は独立しています。</strong><p>ブラウザーを閉じてもUbuntuのCollectorが収集を継続します。画面のライブ接続状態は、HubやCollectorの稼働状態を意味しません。最終観測時刻も確認してください。</p></div><p>Collector: <code>collector/config.local.json</code><br>契約の紐付け: <code>analytics/config.local.json</code></p><p class="muted">新しい実体のHubや契約には新しいIDを割り当ててください。</p></section>
+<section id="history" class="view" hidden><div class="section-heading"><h2>契約の参考推定履歴</h2><select id="contract-select" aria-label="履歴の契約"></select></div><p class="muted">契約の参考推定と、Hubが保持する端末別の利用実績を分けて表示します。inactiveになった契約定義の履歴も参照できます。</p><div id="chart" class="chart"></div><div class="table-wrap"><table><thead><tr><th>日付</th><th>月換算・参考</th><th>期間枠・参考</th><th>推定の観測時刻</th><th>その日の最新判定</th></tr></thead><tbody id="daily"></tbody></table></div>
+<section class="usage-history card" aria-labelledby="usage-history-title"><div class="section-heading"><h2 id="usage-history-title">端末別の利用実績</h2><span id="usage-history-state" class="badge">未選択</span></div><p class="muted">Hubから最後に確認した保存値を表示します。現在値・過去の保存値・契約の参考推定は合算しません。</p><div class="history-controls"><label>Hub<select id="usage-hub-select" aria-label="利用実績のHub"></select></label><label>端末<select id="usage-device-select" aria-label="利用実績の端末"></select></label><label>粒度<select id="usage-granularity" aria-label="利用実績の粒度"><option value="daily">日次</option><option value="monthly">月次</option></select></label><label>開始<input id="usage-from" type="text" inputmode="numeric" placeholder="YYYY-MM-DD"></label><label>終了<input id="usage-to" type="text" inputmode="numeric" placeholder="YYYY-MM-DD"></label><button id="usage-history-load" class="outline primary">表示</button><button id="usage-history-fetch" class="outline" disabled>Hubから再取得</button></div><p id="usage-history-meta" class="muted">端末を選択すると最終確認時刻と可用性を表示します。</p><div class="table-wrap"><table><thead><tr><th>期間</th><th>Tokens</th><th>Cost (USD)</th><th>Messages</th><th>確認時刻</th><th>状態</th></tr></thead><tbody id="usage-history-rows"></tbody></table></div></section></section>
+<section id="settings" class="view" hidden><h2>接続と契約の設定</h2><p class="muted">Hubの接続設定は「Hubs」画面から管理します。Hub Secretは保存済みの値を画面へ返しません。</p><div id="connections"></div><div class="callout"><strong>収集と閲覧は独立しています。</strong><p>ブラウザーを閉じてもAnalyticsがHubから収集を続けます。接続状態と最終観測時刻を確認してください。</p></div><p>契約の紐付けと計算設定: <code>analytics.json</code></p><p class="muted">新しい実体のHubや契約には新しいIDを割り当ててください。</p></section>
 <section id="manage" class="view" hidden>
 <div class="section-heading"><h2>Hubの管理</h2><button id="btn-add-hub" class="outline primary">+ Hubを追加</button></div>
 <div id="manage-status" class="manage-status-bar"></div>
 <div id="manage-empty" class="empty" hidden>登録されているHubがありません。「+ Hubを追加」から最初のHubを登録してください。</div>
-<div id="manage-table-wrap" class="table-wrap"><table><thead><tr><th>Hub ID / 表示名</th><th>Hub URL</th><th>設定状態</th><th>Collector反映</th><th>Hub接続</th><th>操作</th></tr></thead><tbody id="manage-hubs-body"></tbody></table></div>
+<div id="manage-table-wrap" class="table-wrap"><table><thead><tr><th>Hub ID / 表示名</th><th>Hub URL</th><th>設定状態</th><th>Hub接続</th><th>最終観測</th><th>操作</th></tr></thead><tbody id="manage-hubs-body"></tbody></table></div>
 <dialog id="hub-dialog"><form id="hub-form" method="dialog">
 <h3 id="dialog-title">Hubを追加</h3>
 <div id="dialog-error" class="dialog-error" hidden></div>
@@ -30,14 +31,14 @@
 <label>Hub URL <small>(https:// またはローカルhttp://)</small><input type="url" id="input-hub-url" required placeholder="https://hub.example.com"></label>
 <div id="status-group" hidden><label>収集状態<select id="select-hub-status"><option value="active">有効 (active)</option><option value="disabled">停止 (disabled)</option></select></label></div>
 <div id="secret-replace-group" hidden><label class="inline-label"><input type="checkbox" id="check-replace-secret"> Secretを差し替える</label></div>
-<div id="secret-input-group"><label>Hub Secret <small id="secret-hint">(平文で保存されCollectorが読み込みます)</small><input type="password" id="input-hub-secret" placeholder="••••••••"></label></div>
+<div id="secret-input-group"><label>Hub Secret <small id="secret-hint">(Analyticsが保護された別ファイルへ保存します)</small><input type="password" id="input-hub-secret" placeholder="••••••••"></label></div>
 <div class="dialog-actions"><button type="button" id="btn-dialog-cancel" class="outline">キャンセル</button><button type="submit" id="btn-dialog-submit" class="outline primary">保存</button></div>
 </form></dialog>
 <dialog id="hub-delete-dialog"><form id="hub-delete-form" method="dialog">
 <h3>Hubの削除（アーカイブ）</h3>
 <div id="delete-dialog-error" class="dialog-error" hidden></div>
 <p>Hub <strong id="del-hub-name"></strong> のデータ収集を停止し、アーカイブします。</p>
-<p class="muted">過去の観測履歴や未送信バッチは消去されず保持されます。契約が紐付いているHubは削除できません（停止をご利用ください）。</p>
+<p class="muted">過去の観測履歴は消去されず保持されます。契約が紐付いているHubは削除できません（停止をご利用ください）。</p>
 <div class="dialog-actions"><button type="button" id="btn-del-cancel" class="outline">キャンセル</button><button type="submit" id="btn-del-confirm" class="outline danger">削除（アーカイブ）</button></div>
 </form></dialog>
 </section>
@@ -86,11 +87,9 @@
 </div>
 <div id="job-error" class="dialog-error" hidden></div>
 <div id="job-recovery" class="callout danger" hidden>
-<strong>ホスト復旧手順</strong>
-<p>サービスの起動またはヘルスチェックに失敗しました。SSHでホストに接続し、以下のコマンドで状態を確認してください:</p>
-<pre><code>systemctl --user status tma-analytics.service tma-collector.service
-journalctl --user -u tma-analytics.service -e</code></pre>
-<p>必要に応じて <code>/var/lib/tma-analytics/backups/</code> のバックアップからデータベースを復元してください。</p>
+<strong id="job-recovery-title">ホスト復旧手順</strong>
+<p id="job-recovery-message"></p>
+<pre><code id="job-recovery-commands"></code></pre>
 </div>
 </div>
 <dialog id="update-confirm-dialog"><form id="update-confirm-form" method="dialog">

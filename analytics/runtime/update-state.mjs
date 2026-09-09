@@ -2,6 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 
+// This state reader is copied into the fixed updater bootstrap. Keep its
+// schema normalization independent of the Analytics runtime modules.
+const OPERATIONAL_STAGES = new Set(['accepted', 'fetching', 'verifying', 'deploying', 'restarting']);
+function normalizeFailedStage(value) {
+  return typeof value === 'string' && OPERATIONAL_STAGES.has(value) ? value : null;
+}
+
 export const VALID_STAGES = new Set([
   'accepted',
   'fetching',
@@ -54,8 +61,20 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
   let status = VALID_STATUSES.has(raw.status) ? raw.status : 'aborted';
   let stage = VALID_STAGES.has(raw.stage) ? raw.stage : 'aborted';
   let errorCode = typeof raw.errorCode === 'string' ? raw.errorCode : null;
+  let failedStage = normalizeFailedStage(raw.failedStage);
   const startedAt = typeof raw.startedAt === 'string' ? raw.startedAt : now();
   let finishedAt = typeof raw.finishedAt === 'string' ? raw.finishedAt : null;
+  const metadata = {
+    repositoryUrl: typeof raw.repositoryUrl === 'string' ? raw.repositoryUrl : null,
+    branch: typeof raw.branch === 'string' ? raw.branch : null,
+    initialConfigurationId: typeof raw.initialConfigurationId === 'string' ? raw.initialConfigurationId : null,
+    expectedReleaseId: typeof raw.expectedReleaseId === 'string' ? raw.expectedReleaseId : null,
+    contentHash: typeof raw.contentHash === 'string' ? raw.contentHash : null,
+    archiveSha256: typeof raw.archiveSha256 === 'string' ? raw.archiveSha256 : null,
+    configurationId: typeof raw.configurationId === 'string' ? raw.configurationId : null,
+    outcome: raw.outcome === 'updated' || raw.outcome === 'unchanged' ? raw.outcome : null,
+    failedStage
+  };
 
   // Reconcile running status against systemd
   if (status === 'running') {
@@ -69,23 +88,62 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
         latestRaw = JSON.parse(fs.readFileSync(statePath, 'utf8').replace(/^\uFEFF/, ''));
       } catch {}
 
-      if (latestRaw && typeof latestRaw === 'object' && latestRaw.jobId === jobId) {
-        if (latestRaw.status !== 'running') {
-          // Runner already saved terminal status (completed/failed/aborted); do not overwrite!
-          return {
-            jobId,
-            targetCommitSha: typeof latestRaw.targetCommitSha === 'string' ? latestRaw.targetCommitSha : targetCommitSha,
-            targetCommitDate: latestRaw.targetCommitDate || null,
-            targetMessage: latestRaw.targetMessage || null,
-            status: VALID_STATUSES.has(latestRaw.status) ? latestRaw.status : 'aborted',
-            stage: VALID_STAGES.has(latestRaw.stage) ? latestRaw.stage : 'aborted',
-            errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
-            startedAt: typeof latestRaw.startedAt === 'string' ? latestRaw.startedAt : startedAt,
-            finishedAt: typeof latestRaw.finishedAt === 'string' ? latestRaw.finishedAt : null
-          };
-        }
+      const latestJobId = latestRaw && typeof latestRaw === 'object' && typeof latestRaw.jobId === 'string' ? latestRaw.jobId : null;
+      if (!latestJobId || latestJobId !== jobId) {
+        // A replacement job (or a removed state file) wins over this stale
+        // read. Returning null for a missing/invalid file avoids resurrecting
+        // the old job in a UI poll.
+        if (!latestJobId) return null;
+        const latestStatus = VALID_STATUSES.has(latestRaw.status) ? latestRaw.status : 'aborted';
+        const latestStage = VALID_STAGES.has(latestRaw.stage) ? latestRaw.stage : 'aborted';
+        return {
+          jobId: latestJobId,
+          targetCommitSha: typeof latestRaw.targetCommitSha === 'string' ? latestRaw.targetCommitSha : null,
+          targetCommitDate: latestRaw.targetCommitDate || null,
+          targetMessage: latestRaw.targetMessage || null,
+          repositoryUrl: latestRaw.repositoryUrl || null,
+          branch: latestRaw.branch || null,
+          initialConfigurationId: latestRaw.initialConfigurationId || null,
+          expectedReleaseId: latestRaw.expectedReleaseId || null,
+          contentHash: latestRaw.contentHash || null,
+          archiveSha256: latestRaw.archiveSha256 || null,
+          configurationId: latestRaw.configurationId || null,
+          outcome: latestRaw.outcome === 'updated' || latestRaw.outcome === 'unchanged' ? latestRaw.outcome : null,
+          failedStage: normalizeFailedStage(latestRaw.failedStage),
+          status: latestStatus,
+          stage: latestStage,
+          errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
+          startedAt: typeof latestRaw.startedAt === 'string' ? latestRaw.startedAt : now(),
+          finishedAt: typeof latestRaw.finishedAt === 'string' ? latestRaw.finishedAt : null
+        };
+      }
+      if (latestRaw.status !== 'running') {
+        // Runner already saved terminal status (completed/failed/aborted); do not overwrite!
+        return {
+          jobId,
+          targetCommitSha: typeof latestRaw.targetCommitSha === 'string' ? latestRaw.targetCommitSha : targetCommitSha,
+          targetCommitDate: latestRaw.targetCommitDate || null,
+          targetMessage: latestRaw.targetMessage || null,
+          repositoryUrl: latestRaw.repositoryUrl || null,
+          branch: latestRaw.branch || null,
+          initialConfigurationId: latestRaw.initialConfigurationId || null,
+          expectedReleaseId: latestRaw.expectedReleaseId || null,
+          contentHash: latestRaw.contentHash || null,
+          archiveSha256: latestRaw.archiveSha256 || null,
+          configurationId: latestRaw.configurationId || null,
+          outcome: latestRaw.outcome === 'updated' || latestRaw.outcome === 'unchanged' ? latestRaw.outcome : null,
+          failedStage: normalizeFailedStage(latestRaw.failedStage),
+          status: VALID_STATUSES.has(latestRaw.status) ? latestRaw.status : 'aborted',
+          stage: VALID_STAGES.has(latestRaw.stage) ? latestRaw.stage : 'aborted',
+          errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
+          startedAt: typeof latestRaw.startedAt === 'string' ? latestRaw.startedAt : startedAt,
+          finishedAt: typeof latestRaw.finishedAt === 'string' ? latestRaw.finishedAt : null
+        };
       }
 
+      // Keep the last operational stage so the UI can distinguish an abort
+      // during deployment from one after the application was stopped.
+      failedStage = failedStage ?? normalizeFailedStage(stage);
       status = 'aborted';
       stage = 'aborted';
       errorCode = errorCode || 'job_aborted';
@@ -96,6 +154,8 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
         targetCommitSha,
         targetCommitDate: raw.targetCommitDate || null,
         targetMessage: raw.targetMessage || null,
+        ...metadata,
+        failedStage,
         status,
         stage,
         errorCode,
@@ -114,6 +174,8 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
     targetCommitSha,
     targetCommitDate: raw.targetCommitDate || null,
     targetMessage: raw.targetMessage || null,
+    ...metadata,
+    failedStage,
     status,
     stage,
     errorCode,
@@ -134,6 +196,15 @@ export function saveUpdateState(statePath, state) {
     targetCommitSha: state.targetCommitSha,
     targetCommitDate: state.targetCommitDate ?? null,
     targetMessage: state.targetMessage ?? null,
+    repositoryUrl: state.repositoryUrl ?? null,
+    branch: state.branch ?? null,
+    initialConfigurationId: state.initialConfigurationId ?? null,
+    expectedReleaseId: state.expectedReleaseId ?? null,
+    contentHash: state.contentHash ?? null,
+    archiveSha256: state.archiveSha256 ?? null,
+    configurationId: state.configurationId ?? null,
+    outcome: state.outcome ?? null,
+    failedStage: normalizeFailedStage(state.failedStage),
     status: state.status,
     stage: state.stage,
     errorCode: state.errorCode ?? null,

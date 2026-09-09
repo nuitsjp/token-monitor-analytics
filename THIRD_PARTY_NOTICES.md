@@ -1,11 +1,8 @@
-# Dependencies and licensing
+# Third-party notices
 
-Go Collectorは標準ライブラリーのみ。Go本体のライセンスは公式配布に従います。
+- Node.js runtime and `node:sqlite` are provided by Node.js. The deployed runtime uses the fixed Node release selected by the repository tooling.
+- TypeScript is a development-only dependency used for `npm run typecheck`; it is not loaded by the production service as a package.
+- `@types/node` is a development-only type declaration package matching the Node 24 runtime APIs.
+- The Hub remains an external Token Monitor service. Its API and worker sources are referenced through `external/token-monitor`; they are not bundled into Analytics.
 
-AnalyticsはNode.js組込みモジュールとSQLiteを利用します。Node/SQLiteの配布条件は各公式配布に従います。Nodeのランタイム本体はZIPに含めません。
-
-npmの開発依存はTypeScript 5.8.3（型検査専用、Apache-2.0）だけです。パッケージ本体はZIPに含めず、package-lock.jsonで版とintegrityを固定しています。通常の起動・テスト・Ubuntu運用にnpm installは不要です。
-
-Token Monitorの上流コード本体は含みません。前版のAPI契約に合わせた独自Collectorを引き継いでいます。
-
-生成リポジトリー自体の公開ライセンスは未選択です。OSS公開前にリポジトリー所有者が選択してください。
+The release archive contains no Hub credentials, database, local configuration, development dependency tree, or source checkout.

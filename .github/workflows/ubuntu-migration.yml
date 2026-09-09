@@ -1,0 +1,89 @@
+name: ubuntu-migration-rollback
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/ubuntu-migration.yml'
+      - '.github/workflows/ubuntu-reboot.yml'
+      - 'tools/test/ubuntu-reboot-vm.sh'
+      - 'tools/test/ubuntu-migration-guest-stage.sh'
+      - 'tools/migrate.mjs'
+      - 'tools/migration-source.mjs'
+      - 'tools/release.mjs'
+      - 'tools/provision-ubuntu.mjs'
+      - 'tools/publish-ubuntu.mjs'
+      - 'tools/configure-ubuntu.mjs'
+      - 'tools/ubuntu-layout.mjs'
+      - 'deploy/**'
+      - 'analytics/**'
+      - 'package.json'
+      - '.mise.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-migration-rollback-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guest:
+    # All privileged provisioning, systemd, and reboot operations happen in
+    # the disposable QEMU guest. The Actions host only builds and transfers a
+    # verified release archive.
+    timeout-minutes: 90
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The guest builds a Git bundle containing the pinned legacy commit;
+          # a shallow checkout cannot prove or transfer that source history.
+          fetch-depth: 0
+
+      - uses: jdx/mise-action@v4
+        with:
+          version: '2026.9.1'
+
+      - name: Install the fixed Node runtime and repository dependencies
+        run: mise run setup
+
+      - name: Build the full release artifact used by the migration CLI
+        run: node tools/package-ubuntu.mjs amd64 --release
+
+      - name: Install QEMU and cloud-init seed tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cloud-image-utils qemu-system-x86
+          # Give this disposable runner user access to nested KVM when it is
+          # available. QEMU still falls back to TCG when it is absent.
+          if [[ -c /dev/kvm ]]; then
+            sudo chown "$(id -u):$(id -g)" /dev/kvm
+            sudo chmod 0600 /dev/kvm
+          fi
+
+      - name: Run migration and rollback inside the isolated Ubuntu guest
+        run: |
+          mkdir -p "$RUNNER_TEMP/tma-ubuntu-migration"
+          bash tools/test/ubuntu-reboot-vm.sh \
+            --source-dir "$GITHUB_WORKSPACE" \
+            --node-bin "$(command -v node)" \
+            --mise-bin "$(command -v mise)" \
+            --artifact-dir "$RUNNER_TEMP/tma-ubuntu-migration" \
+            --guest-stage-script "$GITHUB_WORKSPACE/tools/test/ubuntu-migration-guest-stage.sh" \
+            --target-artifact "$GITHUB_WORKSPACE/dist/tma-ubuntu-amd64.tar.gz" \
+            --image-url "$TMA_UBUNTU_IMAGE_URL" \
+            --image-sha256 "$TMA_UBUNTU_IMAGE_SHA256"
+        env:
+          # Pinned Canonical Ubuntu 24.04 image. Update the URL and digest
+          # together when selecting a newer disposable guest.
+          TMA_UBUNTU_IMAGE_URL: https://cloud-images.ubuntu.com/releases/releases/noble/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img
+          TMA_UBUNTU_IMAGE_SHA256: d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30
+
+      - name: Upload migration and rollback evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-migration-rollback-${{ github.run_id }}
+          path: ${{ runner.temp }}/tma-ubuntu-migration
+          if-no-files-found: warn

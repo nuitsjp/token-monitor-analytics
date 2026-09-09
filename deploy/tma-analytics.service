@@ -1,28 +1,27 @@
 [Unit]
-Description=Token Monitor Analytics (native Node.js + SQLite)
-After=network.target
 StartLimitIntervalSec=120
 StartLimitBurst=6
+Description=Token Monitor Analytics (native Node.js + SQLite)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/token-monitor-analytics/current/node
 
 [Service]
 Type=simple
-User=tma-analytics
-Group=tma-analytics
-WorkingDirectory=/opt/token-monitor-analytics/analytics
+WorkingDirectory=/opt/token-monitor-analytics/current
 Environment=NODE_ENV=production
-EnvironmentFile=/etc/token-monitor-analytics/analytics.env
-ExecStart=/usr/bin/node --experimental-strip-types /opt/token-monitor-analytics/analytics/runtime/server.mjs --config /etc/token-monitor-analytics/analytics.json
+EnvironmentFile=/var/lib/tma-deploy/config/analytics.env
+ExecStart=/opt/token-monitor-analytics/current/node --experimental-strip-types /opt/token-monitor-analytics/current/analytics/runtime/server.mjs --config /var/lib/tma-deploy/config/analytics.json
 Restart=on-failure
 RestartSec=10
-TimeoutStopSec=15
-StateDirectory=tma-analytics
-StateDirectoryMode=0700
+TimeoutStopSec=30
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+ReadWritePaths=/var/lib/tma-analytics /var/lib/tma-deploy
 RestrictSUIDSGID=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

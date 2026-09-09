@@ -9,15 +9,29 @@ export function createCollectionManager({
   onObservation,
   onStatus,
   onFatal,
+  // Optional lifecycle hooks are used by the history scheduler. They share
+  // this manager's generation fence and shutdown wait.
+  onConnected,
+  onRevision,
+  onStopped,
   idleMs = 90_000,
   headerTimeoutMs,
   fetchImpl,
   jitterFn,
 } = {}) {
   const runners = new Map();
+  // Runners removed by the synchronous generation fence remain here until
+  // their stream and any awaited observation callback have finished.  This
+  // prevents replacement and shutdown from overtaking old work.
+  const retiring = new Set();
   let stopped = false;
   let stopPromise = null;
   let applyTail = Promise.resolve();
+  // Every desired-state submission gets a token.  A queued reconciliation may
+  // be waiting for an old runner; a later commit must prevent that stale
+  // reconciliation from starting its old settings when the wait completes.
+  let desiredGeneration = 0;
+  let nextRunnerGeneration = 0;
 
   const publish = (runner, state, errorCode = '') => {
     runner.state = state;
@@ -29,10 +43,42 @@ export function createCollectionManager({
   const stopRunner = (id) => {
     const runner = runners.get(id);
     if (!runner) return Promise.resolve();
-    // Removing it first is the generation fence for callbacks already in flight.
+    invalidateHub(id, {fence: false});
+    return runner.completion || runner.done || Promise.resolve();
+  };
+
+  /**
+   * Invalidate a Hub synchronously.  Management calls this directly after its
+   * SQLite COMMIT, before awaiting any stream shutdown or reconciliation.
+   * Removing the runner first makes callbacks that are already queued observe
+   * a stale generation and skip their write.
+   */
+  function invalidateHub(id, {fence = true} = {}) {
+    if (fence) desiredGeneration++;
+    const runner = runners.get(id);
+    if (!runner) return false;
     runners.delete(id);
+    runner.invalidated = true;
+    retiring.add(runner);
+    try {
+      const stoppedHook = onStopped?.({hub: runner.hub, generation: runner.generation});
+      runner.stopHook = stoppedHook && typeof stoppedHook.then === 'function'
+        ? stoppedHook
+        : Promise.resolve();
+    } catch (error) {
+      runner.stopHook = Promise.reject(error);
+      runner.stopHook.catch(() => {});
+    }
     runner.controller.abort();
-    return runner.done || Promise.resolve();
+    runner.completion = Promise.all([runner.done || Promise.resolve(), runner.stopHook || Promise.resolve()]);
+    runner.completion.finally(() => retiring.delete(runner)).catch(() => {});
+    return true;
+  }
+
+  const waitForRetiring = async () => {
+    do {
+      await Promise.all([...retiring].map(runner => runner.completion || runner.done || Promise.resolve()));
+    } while (retiring.size);
   };
 
   const startRunner = (hub) => {
@@ -41,6 +87,10 @@ export function createCollectionManager({
       hub: {id: hub.id, url: hub.url, secret: hub.secret},
       controller,
       done: null,
+      completion: null,
+      stopHook: null,
+      generation: ++nextRunnerGeneration,
+      invalidated: false,
       state: 'connecting',
       errorCode: '',
       updatedAt: new Date().toISOString(),
@@ -55,9 +105,19 @@ export function createCollectionManager({
       jitterFn,
       signal: controller.signal,
       isCurrent: () => runners.get(hub.id) === runner,
+      onConnected: (event) => {
+        if (runners.get(hub.id) === runner) onConnected?.({hub: runner.hub, generation: runner.generation, ...event});
+      },
+      onRevision: (event) => {
+        if (runners.get(hub.id) === runner) onRevision?.({hub: runner.hub, generation: runner.generation, ...event});
+      },
       onObservation: async (observation) => {
-        if (runners.get(hub.id) !== runner) return;
-        await onObservation?.(observation);
+        if (runners.get(hub.id) !== runner || runner.invalidated) return;
+        await onObservation?.(observation, {
+          hubId: hub.id,
+          generation: runner.generation,
+          isCurrent: () => runners.get(hub.id) === runner && !runner.invalidated,
+        });
       },
       onStatus: (status) => {
         if (runners.get(hub.id) === runner) publish(runner, status.state, status.errorCode || '');
@@ -71,7 +131,7 @@ export function createCollectionManager({
     });
   };
 
-  async function applyHubsNow(hubs) {
+  async function applyHubsNow(hubs, generation) {
     if (stopped) return;
     const active = new Map();
     for (const hub of Array.isArray(hubs) ? hubs : []) {
@@ -86,8 +146,10 @@ export function createCollectionManager({
     }
     // Do not start a replacement until the previous generation's stream and
     // awaited observation callback have finished.
-    await Promise.all(stopping);
-    if (stopped) return;
+    await Promise.all([...stopping, waitForRetiring()]);
+    // A management commit can fence this operation while it is waiting for
+    // the retired stream.  Never start the superseded URL/secret generation.
+    if (stopped || generation !== desiredGeneration) return;
     for (const [id, hub] of active) if (!runners.has(id)) startRunner(hub);
   }
 
@@ -98,7 +160,8 @@ export function createCollectionManager({
   }
 
   function applyHubs(hubs) {
-    return enqueue(() => applyHubsNow(hubs));
+    const generation = ++desiredGeneration;
+    return enqueue(() => applyHubsNow(hubs, generation));
   }
 
   async function start(hubs = []) {
@@ -107,20 +170,26 @@ export function createCollectionManager({
   }
 
   async function reconnectHub(id) {
+    const generation = ++desiredGeneration;
     return enqueue(async () => {
       const runner = runners.get(id);
       if (!runner || stopped) return false;
       const hub = {...runner.hub, status: 'active'};
       await stopRunner(id);
-      if (!stopped) startRunner(hub);
+      await waitForRetiring();
+      if (!stopped && generation === desiredGeneration) startRunner(hub);
       return true;
     });
   }
 
   async function stopHub(id) {
+    // A direct stop is also a desired-state change.  Fence a reconciliation
+    // that may still be waiting for this Hub's retiring stream.
+    desiredGeneration++;
     return enqueue(async () => {
       if (!runners.has(id)) return false;
       await stopRunner(id);
+      await waitForRetiring();
       return true;
     });
   }
@@ -128,7 +197,11 @@ export function createCollectionManager({
   async function stop() {
     if (stopPromise) return stopPromise;
     stopped = true;
-    stopPromise = enqueue(() => Promise.all([...runners.keys()].map(stopRunner)));
+    desiredGeneration++;
+    stopPromise = enqueue(async () => {
+      const stopping = [...runners.keys()].map(stopRunner);
+      await Promise.all([...stopping, waitForRetiring()]);
+    });
     return stopPromise;
   }
 
@@ -136,5 +209,5 @@ export function createCollectionManager({
     return [...runners.values()].map(r => ({hubId: r.hub.id, state: r.state, errorCode: r.errorCode, updatedAt: r.updatedAt}));
   }
 
-  return {start, applyHubs, stopHub, reconnectHub, reconnect: reconnectHub, stop, getStatus};
+  return {start, applyHubs, invalidateHub, stopHub, reconnectHub, reconnect: reconnectHub, stop, getStatus};
 }
