@@ -75,16 +75,16 @@ test('native SQLite migration is idempotent across reopen',t=>{
 test('demo database cannot be reused for real observations',t=>{
  const c=configFile(t).config();const db=openDatabase(c.databasePath,{demo:true});db.close();assert.throws(()=>openDatabase(c.databasePath,{demo:false}),/mixing/);
 });
-test('entire ingest transaction rolls back on a storage failure',async t=>{
+test('entire observation transaction rolls back on a storage failure',t=>{
  const c=configFile(t).config(),db=openDatabase(c.databasePath);cleanup(t,()=>db.close());
  db.sql.exec("CREATE TRIGGER fail_daily BEFORE INSERT ON daily_estimates BEGIN SELECT RAISE(ABORT, 'test failure'); END;");
- await assert.rejects(db.transaction(()=>ingest(db,{events:[observation()]},[contract],'Asia/Tokyo')));
+ assert.throws(()=>db.transaction(()=>ingest(db,{events:[observation()]},[contract],'Asia/Tokyo')));
  assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,0);
  assert.equal(db.sql.prepare('SELECT count(*) n FROM hub_latest').get().n,0);
 });
 test('backup includes committed WAL data while the source remains open',async t=>{
  const f=configFile(t),db=openDatabase(f.config().databasePath);cleanup(t,()=>db.close());
- await db.transaction(()=>ingest(db,{events:[observation(),observation(1)]},[contract],'Asia/Tokyo'));
+ db.transaction(()=>ingest(db,{events:[observation(),observation(1)]},[contract],'Asia/Tokyo'));
  const output=path.join(f.dir,'backup.db');await backupDatabase(f.config().databasePath,output);
  const copy=new DatabaseSync(output,{readOnly:true});assert.equal(copy.prepare('SELECT count(*) n FROM observations').get().n,2);copy.close();
  await assert.rejects(backupDatabase(f.config().databasePath,output));

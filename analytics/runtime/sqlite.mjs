@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 
-// Synchronous native statements keep each batch indivisible within the JS event loop.
-// The server serializes every DB operation and wraps ingest's reads+writes in transaction().
+// Synchronous native statements keep each observation indivisible within the JS event loop.
+// Callers serialize writers and wrap reads+writes in transaction(). No Promise DB wrappers.
 export function openDatabase(filename, {demo=false}={}) {
  if (filename !== ':memory:') fs.mkdirSync(path.dirname(path.resolve(filename)),{recursive:true,mode:0o700});
  const sql=new DatabaseSync(filename);
@@ -32,23 +32,17 @@ export function openDatabase(filename, {demo=false}={}) {
  let inTransaction=false;
  const wrap=(text,args=[])=>({
   bind(...values){return wrap(text,values);},
-  async all(){return {results:sql.prepare(text).all(...args),success:true,meta:{}};},
-  async first(){return sql.prepare(text).get(...args)??null;},
-  async run(){const r=sql.prepare(text).run(...args);return {results:[],success:true,meta:{changes:Number(r.changes)}};},
-  execute(){const r=sql.prepare(text).run(...args);return {results:[],success:true,meta:{changes:Number(r.changes)}};}
+  all(){return sql.prepare(text).all(...args);},
+  get(){return sql.prepare(text).get(...args)??null;},
+  run(){const r=sql.prepare(text).run(...args);return {changes:Number(r.changes)};}
  });
  const database={
   sql,prepare:wrap,
-  async batch(statements){
-   const own=!inTransaction;
-   if(own)sql.exec('BEGIN IMMEDIATE');
-   try{const results=statements.map(s=>s.execute());if(own)sql.exec('COMMIT');return results;}
-   catch(error){if(own)sql.exec('ROLLBACK');throw error;}
-  },
-  async transaction(callback){
+  exec(text){sql.exec(text);},
+  transaction(callback){
    if(inTransaction)throw new Error('Nested/concurrent transaction; serialize callers');
    sql.exec('BEGIN IMMEDIATE');inTransaction=true;
-   try{const result=await callback();sql.exec('COMMIT');return result;}
+   try{const result=callback();sql.exec('COMMIT');return result;}
    catch(error){sql.exec('ROLLBACK');throw error;}
    finally{inTransaction=false;}
   },

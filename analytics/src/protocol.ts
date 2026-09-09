@@ -3,8 +3,12 @@ export interface Device { deviceId: string; updatedAt: string; stale: boolean | 
 export interface LimitWindow { kind: string; usedPercent: number | null; resetsAt: string }
 export interface Provider {provider: string; accountKey: string; updatedAt: string; status: string; stale: boolean | null; windows: LimitWindow[]}
 export interface Stats {updatedAt: string; periods: Record<string, Period>; devices: Device[]; limits: {providers: Provider[]}}
-export interface Observation {schemaVersion: 1; hubId: string; eventId: string; streamId: string; kind: 'snapshot'|'stats'; observedAt: string; receivedAt: string; stats: Stats}
-export interface Batch {schemaVersion: 1; events: Observation[]}
+// Internal observation passed from collection to storage. Transport metadata such
+// as schemaVersion and the upstream eventId is intentionally not required here.
+export interface Observation {hubId: string; streamId: string; kind: 'snapshot'|'stats'; observedAt: string; receivedAt: string; stats: Stats}
+// Transitional HTTP input. The old endpoint is the only caller that needs these fields.
+export interface TransportObservation extends Observation {schemaVersion: 1; eventId: string}
+export interface Batch {schemaVersion: 1; events: TransportObservation[]}
 const obj=(v:unknown):v is Record<string,unknown> => v!==null&&typeof v==='object'&&!Array.isArray(v);
 const str=(v:unknown,max=256):v is string => typeof v==='string'&&v.length<=max;
 const finite=(v:unknown):boolean => v===null||(typeof v==='number'&&Number.isFinite(v)&&v>=0);
@@ -29,7 +33,7 @@ function stats(v:unknown):v is Stats{
 // Normalize dates before SQL lexical comparisons. Reject unknown event shape, not missing metrics.
 export function parseBatch(input: unknown, allowedHubs: string[], now=Date.now()): Batch {
  if(!obj(input)||input.schemaVersion!==1||!Array.isArray(input.events)||input.events.length<1||input.events.length>2)throw new Error('expected schemaVersion=1 and 1..2 events');
- const events: Observation[]=[];const seen=new Set<string>();
+ const events: TransportObservation[]=[];const seen=new Set<string>();
  for(const o of input.events){
   if(!obj(o)||o.schemaVersion!==1||!str(o.hubId,64)||!allowedHubs.includes(o.hubId)||!str(o.eventId,32)||!/^[a-f0-9]{32}$/.test(o.eventId)||!str(o.streamId,32)||!/^[a-f0-9]{32}$/.test(o.streamId)||!['snapshot','stats'].includes(o.kind as string)||!date(o.observedAt)||!date(o.receivedAt)||!stats(o.stats))throw new Error('invalid observation');
   if(Date.parse(o.observedAt)>now+300000||Date.parse(o.receivedAt)>now+300000)throw new Error('clock too far ahead');
