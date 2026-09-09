@@ -39,27 +39,26 @@ function assertPrivateSecretAcl(filename) {
   const acl = `${result.stdout}\n${result.stderr}`;
   assert.doesNotMatch(acl, /(?:Everyone|Authenticated Users|(?:BUILTIN\\)?Users)\s*:/i, `secret ACL is broader than the owner/system administrators: ${acl}`);
 
-  // icacls is useful for the human-readable proof above. SDDL makes the
-  // assertion independent of the localized account names: exactly the
-  // creating account, LocalSystem, and local Administrators may have full
-  // control, with no inherited ACEs.
-  const sddlScript = '$ErrorActionPreference="Stop"; $securityModule=Join-Path $PSHOME "Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1"; Import-Module -Name $securityModule -Force; $acl=Get-Acl -LiteralPath $env:TMA_ACL_PATH; $acl.Sddl';
-  const sddlEncoded = Buffer.from(sddlScript, 'utf16le').toString('base64');
-  const sddlResult = spawnSync('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-EncodedCommand', sddlEncoded
+  // Resolve the access rules as SIDs rather than parsing localized icacls or
+  // SDDL aliases. The file owner is not necessarily the creating identity
+  // (Windows may canonicalize it to BUILTIN\\Administrators), so compare the
+  // creating SID reported by WindowsIdentity with the exact ACE trustees.
+  const aclScript = '$ErrorActionPreference="Stop"; $securityModule=Join-Path $PSHOME "Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1"; Import-Module -Name $securityModule -Force; $acl=Get-Acl -LiteralPath $env:TMA_ACL_PATH; $creator=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; Write-Output "CREATOR=$creator"; foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) { Write-Output ((@($rule.AccessControlType,$rule.FileSystemRights.ToString(),$rule.IsInherited,$rule.InheritanceFlags.ToString(),$rule.PropagationFlags.ToString(),$rule.IdentityReference.Value) -join "`t")) }';
+  const aclEncoded = Buffer.from(aclScript, 'utf16le').toString('base64');
+  const aclResult = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-EncodedCommand', aclEncoded
   ], {encoding: 'utf8', env: {...process.env, TMA_ACL_PATH: filename}});
-  assert.equal(sddlResult.status, 0, sddlResult.stderr || 'PowerShell Get-Acl failed');
-  const sddl = sddlResult.stdout.trim();
-  const groupIndex = sddl.indexOf('G:', 2);
-  const daclIndex = sddl.indexOf('D:', groupIndex + 2);
-  assert.ok(groupIndex > 2 && daclIndex > groupIndex, `invalid security descriptor: ${sddl}`);
-  const ownerSid = sddl.slice(2, groupIndex);
-  const daclEnd = sddl.indexOf('S:', daclIndex + 2);
-  const dacl = sddl.slice(daclIndex + 2, daclEnd < 0 ? sddl.length : daclEnd);
-  const aces = [...dacl.matchAll(/\(([^()]*)\)/g)].map(match => match[1].split(';'));
-  assert.equal(aces.length, 3, `unexpected secret ACL entries: ${sddl}`);
-  assert.ok(aces.every(([type, flags, rights, objectGuid, inheritGuid]) => type === 'A' && !flags && rights === 'FA' && !objectGuid && !inheritGuid), `secret ACL has unexpected rights or inheritance: ${sddl}`);
-  assert.deepEqual(new Set(aces.map(ace => ace[5])), new Set([ownerSid, 'S-1-5-18', 'S-1-5-32-544']), `secret ACL principals are not owner/SYSTEM/Administrators: ${sddl}`);
+  assert.equal(aclResult.status, 0, aclResult.stderr || 'PowerShell ACL inspection failed');
+  const lines = aclResult.stdout.trim().split(/\r?\n/).filter(Boolean);
+  const creatorLine = lines.shift();
+  assert.match(creatorLine ?? '', /^CREATOR=S-1-\d+(?:-\d+)+$/);
+  const rules = lines.map(line => {
+    const [type, rights, inherited, inheritance, propagation, sid] = line.split('\t');
+    return {type, rights, inherited, inheritance, propagation, sid};
+  });
+  assert.equal(rules.length, 3, `unexpected secret ACL entries: ${aclResult.stdout}`);
+  assert.ok(rules.every(rule => rule.type === 'Allow' && rule.rights === 'FullControl' && rule.inherited === 'False' && rule.inheritance === 'None' && rule.propagation === 'None' && /^S-1-\d+(?:-\d+)+$/.test(rule.sid)), `secret ACL has unexpected rights or inheritance: ${aclResult.stdout}`);
+  assert.deepEqual(new Set(rules.map(rule => rule.sid)), new Set([creatorLine.slice('CREATOR='.length), 'S-1-5-18', 'S-1-5-32-544']), `secret ACL principals are not creator/SYSTEM/Administrators: ${aclResult.stdout}`);
 }
 
 function grantBroadParentAcl(directory) {
