@@ -272,8 +272,8 @@ config.update={...(config.update??{}),enabled:true,repositoryUrl:'https://accept
 fs.writeFileSync(filename,`${JSON.stringify(config,null,2)}\n`,{mode:0o600});
 NODE
 
-sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}' > /tmp/tma-config-before-update.sha
-sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}' > /tmp/tma-secret-before-update.sha
+sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}' > /home/tma/config-before-update.sha
+sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}' > /home/tma/secret-before-update.sha
 systemctl --user stop tma-analytics.service
 /home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
 import fs from 'node:fs';
@@ -356,8 +356,8 @@ const history=await fetchWithTimeout('http://127.0.0.1:18787/api/usage-history/h
 if(history.status!==200)throw new Error('History API did not reopen after update');
 NODE
 
-test "$(cat /tmp/tma-config-before-update.sha)" = "$(sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}')"
-test "$(cat /tmp/tma-secret-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}')"
+test "$(cat /home/tma/config-before-update.sha)" = "$(sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}')"
+test "$(cat /home/tma/secret-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}')"
 main_pid_after=$(systemctl --user show -p MainPID --value tma-analytics.service)
 if ! [[ "$main_pid_after" =~ ^[1-9][0-9]*$ ]] || [[ "$main_pid_before" == "$main_pid_after" ]]; then
   echo "Analytics MainPID did not change across the release update: before=$main_pid_before after=$main_pid_after" >&2
@@ -432,8 +432,8 @@ curl --connect-timeout 5 --max-time 30 --fail --silent --show-error http://127.0
 test -s /var/lib/tma-analytics/analytics.db
 test -f /var/lib/tma-analytics/hub-secrets.json
 systemctl --user status --no-pager tma-analytics.service
-test "$(cat /tmp/tma-config-before-update.sha)" = "$(sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}')"
-test "$(cat /tmp/tma-secret-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}')"
+test "$(cat /home/tma/config-before-update.sha)" = "$(sha256sum /var/lib/tma-deploy/config/analytics.json | awk '{print $1}')"
+test "$(cat /home/tma/secret-before-update.sha)" = "$(sha256sum /var/lib/tma-analytics/hub-secrets.json | awk '{print $1}')"
 /home/tma/node-runtime/bin/node --input-type=module - <<'NODE'
 import fs from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
