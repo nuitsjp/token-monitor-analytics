@@ -319,10 +319,13 @@ fs.writeFileSync('/tmp/tma-update-request.json',JSON.stringify({jobId:applied.jo
 NODE
 
 for attempt in $(seq 1 300); do
+  date --iso-8601=seconds >> /tmp/tma-update-service-trace.txt
+  systemctl --user show -p ActiveState -p SubState -p MainPID tma-update.service >> /tmp/tma-update-service-trace.txt
   if grep -q '"status": "completed"' /var/lib/tma-deploy/update-state.json; then break; fi
   if grep -q '"status": "failed"\|"status": "aborted"' /var/lib/tma-deploy/update-state.json; then
     cat /var/lib/tma-deploy/update-state.json >&2
-    journalctl --user -u tma-update.service --no-pager -n 250 >&2 || true
+    tail -60 /tmp/tma-update-service-trace.txt >&2
+    journalctl --user -u tma-analytics.service -u tma-update.service --no-pager -n 250 >&2 || true
     exit 1
   fi
   if ((attempt == 300)); then echo 'Timed out waiting for the isolated update oneshot' >&2; cat /var/lib/tma-deploy/update-state.json >&2; exit 1; fi
