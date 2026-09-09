@@ -329,7 +329,7 @@ function sourceOptions(fixture, artifact, legacy, {partial = false} = {}) {
     stopNew: async () => {
       calls.push('stopNew');
       await stopPublished();
-      removeEntry(fixture.installDir);
+      await removeTreeEventually(fixture.installDir);
     },
     restoreDatabase: async ({source, destination}) => {
       calls.push('restoreDatabase');

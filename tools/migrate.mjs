@@ -1053,7 +1053,7 @@ async function verifyTargetGate({targetArtifact, targetCommitSha, options, stage
   const services = {isActive: () => false, isEnabled: () => false};
   let releaseChecks = null;
   const prepared = await publication.preparePublication({
-    root: gateRoot,
+    root: targetSource.root,
     sourceProof: targetSource,
     targetCommitSha,
     artifactPath: targetArtifact.archivePath,
