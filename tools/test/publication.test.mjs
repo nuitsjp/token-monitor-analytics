@@ -185,7 +185,7 @@ test('custom publication destinations cannot bypass pinned source verification',
   const artifact = createReleaseArtifact({root: fileURLToPath(new URL('../../', import.meta.url)), architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
   let stopped = false;
   const services = {stop: async () => { stopped = true; }, start: async () => {}, daemonReload() {}, installUnit() {}};
-  await assert.rejects(() => preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current: path.join(dir, 'current'), publicationPath: path.join(dir, 'publication.json'), uid: undefined, services}), /pinned commit SHA/);
+  await assert.rejects(() => preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current: path.join(dir, 'current'), publicationPath: path.join(dir, 'publication.json'), uid: undefined, services}), /pinned commit SHA|internally verified pinned archive/);
   assert.equal(stopped, false);
 });
 
