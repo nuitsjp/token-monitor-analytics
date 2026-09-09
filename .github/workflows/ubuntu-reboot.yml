@@ -47,6 +47,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes cloud-image-utils qemu-system-x86
+          # Give this disposable runner user access to its nested KVM device.
+          # QEMU still falls back to TCG when hardware acceleration is absent.
+          if [[ -c /dev/kvm ]]; then
+            sudo chown "$(id -u):$(id -g)" /dev/kvm
+            sudo chmod 0600 /dev/kvm
+          fi
 
       - name: Provision, publish, and reboot the isolated Ubuntu guest
         run: |
