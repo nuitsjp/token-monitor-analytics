@@ -247,13 +247,24 @@ test('direct publication installs and proves the real Analytics server entrypoin
     state: {targetConfigPath, targetSecretsPath, targetAnalyticsEnvPath: path.join(configDir, 'analytics.env'), windowsInstallDir: installDir},
     targetArtifact,
   }, {windowsInstallDir: installDir, environment: {}});
-  assert.equal(proof.direct, true);
-  assert.equal(proof.targetCommitSha, TARGET_SHA);
-  assert.equal(proof.health && proof.state && proof.sse, true);
-  t.after(async () => {
+  try {
+    assert.equal(proof.direct, true);
+    assert.equal(proof.targetCommitSha, TARGET_SHA);
+    assert.equal(proof.health && proof.state && proof.sse, true);
+  } finally {
+    // Stop before fixture()'s directory cleanup hook. Windows retains the
+    // child working directory and SQLite handles until the process exits.
     try { process.kill(proof.processId, 'SIGTERM'); } catch {}
-    await new Promise(resolve => setTimeout(resolve, 150));
-  });
+    const deadline = Date.now() + 10000;
+    for (;;) {
+      try { process.kill(proof.processId, 0); } catch (error) {
+        if (error.code === 'ESRCH') break;
+        throw error;
+      }
+      assert.ok(Date.now() < deadline, 'direct Analytics process must exit before fixture cleanup');
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  }
 });
 
 test('restore recovers a stopped partial drain without replacing the current database', async t => {
