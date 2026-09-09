@@ -27,10 +27,22 @@ function windowsPrivateAcl(filename) {
     'foreach ($sid in @($current, $system, $administrators)) { $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, $full, $none, $propagation, $allow)) }',
     'Set-Acl -LiteralPath $path -AclObject $acl'
   ].join('; ');
+  // Encode the command as UTF-16LE as required by PowerShell's
+  // -EncodedCommand. This avoids a second command-line parser interpreting
+  // the semicolons, quotes, and `$` variables in the ACL program.
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  const debug = process.env.TMA_WINDOWS_ACL_DEBUG === '1';
   const result = spawnSync('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script
-  ], {stdio: 'ignore', env: {...process.env, TMA_PRIVATE_PATH: filename}});
-  if (result.error || result.status !== 0) throw new Error('Cannot protect private storage with a Windows ACL');
+    '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded
+  ], {
+    encoding: 'utf8',
+    stdio: debug ? ['ignore', 'pipe', 'pipe'] : 'ignore',
+    env: {...process.env, TMA_PRIVATE_PATH: filename}
+  });
+  if (result.error || result.status !== 0) {
+    const detail = debug ? String(result.stderr ?? result.stdout ?? '').trim() : '';
+    throw new Error(`Cannot protect private storage with a Windows ACL${detail ? `: ${detail}` : ''}`);
+  }
 }
 
 function writeAtomicPrivateFile(targetPath, content) {

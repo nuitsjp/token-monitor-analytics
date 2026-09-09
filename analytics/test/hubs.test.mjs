@@ -15,6 +15,8 @@ import {openDatabase} from '../runtime/sqlite.mjs';
 import {startServer} from '../runtime/server.mjs';
 import {contract as fixtureContract} from './adapter.mjs';
 
+if (process.platform === 'win32') process.env.TMA_WINDOWS_ACL_DEBUG = '1';
+
 function createTempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-hubs-test-'));
   t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
