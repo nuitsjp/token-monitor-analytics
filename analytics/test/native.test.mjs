@@ -82,13 +82,16 @@ test('entire observation transaction rolls back on a storage failure',t=>{
  assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,0);
  assert.equal(db.sql.prepare('SELECT count(*) n FROM hub_latest').get().n,0);
 });
-test('async transaction callbacks are rejected before commit',t=>{
+test('async transaction callbacks are rejected before execution',async t=>{
  const c=configFile(t).config(),db=openDatabase(c.databasePath);cleanup(t,()=>db.close());
+ let executed=false;
  assert.throws(()=>db.transaction(async()=>{
-  ingest(db,{events:[observation()]},[contract],'Asia/Tokyo');
+  executed=true;
   await Promise.resolve();
-  throw new Error('callback failure');
+  ingest(db,{events:[observation()]},[contract],'Asia/Tokyo');
  }),/synchronous/);
+ await Promise.resolve();
+ assert.equal(executed,false);
  assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,0);
 });
 test('backup includes committed WAL data while the source remains open',async t=>{

@@ -36,12 +36,15 @@ export function openDatabase(filename, {demo=false}={}) {
   get(){return sql.prepare(text).get(...args)??null;},
   run(){const r=sql.prepare(text).run(...args);return {changes:Number(r.changes)};}
  });
+ const asyncFunctionPrototype=Object.getPrototypeOf(async function(){});
+ const isAsyncFunction=value=>typeof value==='function'&&Object.getPrototypeOf(value)===asyncFunctionPrototype;
  const isThenable=value=>value!==null&&(typeof value==='object'||typeof value==='function')&&typeof value.then==='function';
  const database={
   sql,prepare:wrap,
   exec(text){sql.exec(text);},
   transaction(callback){
    if(inTransaction)throw new Error('Nested/concurrent transaction; serialize callers');
+   if(isAsyncFunction(callback))throw new TypeError('transaction callback must be synchronous');
    sql.exec('BEGIN IMMEDIATE');inTransaction=true;
    try{
     const result=callback();
