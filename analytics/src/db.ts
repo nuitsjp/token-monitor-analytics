@@ -191,8 +191,11 @@ function historyAvailability(value:boolean|null):number|null {
 }
 
 function storeHistoryDevice(db:Database,hubId:string,device:NormalizedHistoryDevice,fetchId:number,confirmedAt:string):void {
- const [dailyFrom,dailyTo]=sourceRange(device.rows,'daily');
- const [monthlyFrom,monthlyTo]=sourceRange(device.rows,'monthly');
+ // A disabled/unavailable capability may still carry legacy or malformed rows;
+ // only rows accepted as current History may establish source ranges.
+ const currentRows=device.historyState==='available'?device.rows:[];
+ const [dailyFrom,dailyTo]=sourceRange(currentRows,'daily');
+ const [monthlyFrom,monthlyTo]=sourceRange(currentRows,'monthly');
  db.prepare(`INSERT INTO usage_sources(
    hub_id,device_id,presence,history_state,history_available,time_zone,
    today_key,today_ends_at,month_key,month_ends_at,daily_from,daily_to,

@@ -124,7 +124,7 @@ test('History storage distinguishes deletion, disabled, null, and missing capabi
     const id = db.transaction(() => beginHistoryFetch(db, 'hub-a', at));
     db.transaction(() => storeHistorySnapshot(db, 'hub-a', initial, id, at));
     const next = normalizeHistoryResponse({devices: [
-      device('device-a', {historyAvailable: false, history: null}),
+      device('device-a', {historyAvailable: false, history: device().history}),
     ]});
     const nextAt = '2026-09-08T12:02:00.000Z';
     const nextId = db.transaction(() => beginHistoryFetch(db, 'hub-a', nextAt));
@@ -135,6 +135,8 @@ test('History storage distinguishes deletion, disabled, null, and missing capabi
     assert.equal(disabled.source.presence, 'present');
     assert.equal(disabled.rows.length, 2);
     assert.equal(disabled.rows.every(row => row.current === false), true);
+    assert.equal(disabled.source.dailyFrom, null);
+    assert.equal(disabled.source.monthlyFrom, null);
     assert.equal(deleted.source.historyState, 'deleted');
     assert.equal(deleted.source.presence, 'deleted');
     assert.equal(deleted.source.timeZone, null);
@@ -405,6 +407,37 @@ test('History scheduler keeps the next run in flight after a synchronous follow-
   releaseSecond();
   await waitFor(() => fetchStartCount === 3);
   await scheduler.stop();
+});
+
+test('History scheduler stop waits when status reenters during run launch', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let callbackStarted = false;
+  let callbackEnded = false;
+  let stopResolved = false;
+  let scheduler;
+  scheduler = createHistoryScheduler({
+    minIntervalMs: 0,
+    maxRetries: 0,
+    onStatus: status => {
+      if (status.state === 'fetching') scheduler.stop().then(() => { stopResolved = true; });
+    },
+    onFetchStart: async () => {
+      callbackStarted = true;
+      await gate;
+      callbackEnded = true;
+    },
+    fetchImpl: async () => responseFor([]),
+  });
+  const started = scheduler.startHub(hub, 1);
+  await waitFor(() => callbackStarted);
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(stopResolved, false);
+  release();
+  await Promise.all([started, scheduler.stop()]);
+  assert.equal(callbackEnded, true);
+  assert.equal(stopResolved, true);
+  assert.deepEqual(scheduler.getStatus(), []);
 });
 
 test('History persistence callback failures are fatal and concurrent starts are serialized', async () => {

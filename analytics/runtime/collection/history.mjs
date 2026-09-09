@@ -203,16 +203,22 @@ export function createHistoryScheduler({
     runner.pendingReason=reason||runner.pendingReason||'revision';
     const elapsed=now()-runner.lastStartAt;
     const delay=Math.max(0,minIntervalMs-elapsed);
+    // Publish the completion promise before entering `run`. Callbacks from
+    // its first status/fetch hook may synchronously stop or replace the Hub;
+    // retirement must then wait for the complete invocation, not a missing
+    // `runner.done` placeholder.
+    const launch=()=>{
+      runner.done=Promise.resolve().then(()=>{
+        runner.scheduled=false;
+        return run(runner);
+      });
+    };
     runner.scheduled=true;
     if(delay===0){
-      runner.scheduled=false;
-      runner.done=run(runner);
+      launch();
       return;
     }
-    runner.timer=setTimeout(()=>{
-      runner.timer=null;runner.scheduled=false;
-      runner.done=run(runner);
-    },delay);
+    runner.timer=setTimeout(()=>{runner.timer=null;launch();},delay);
     runner.timer.unref?.();
   };
 
@@ -315,6 +321,9 @@ export function createHistoryScheduler({
     const id=hub?.id;
     if(stopped)return null;
     const state=hubState(id);
+    // Queued starts represent the latest desired generation: a newer request
+    // supersedes an older one that has not begun, while an active generation
+    // is still retired and awaited before the replacement starts.
     const token=nextStartToken++;
     state.desiredToken=token;
     const record={id,token,cancelled:false,promise:null};
