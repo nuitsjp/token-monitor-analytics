@@ -1,46 +1,55 @@
-# 同居版の運用
+# 運用
 
-## 現在のUbuntu運用
+## 常駐プロセス
 
-Tailscale経由の閲覧ではID・パスワード入力は不要です。環境変更は`mise run provision:ubuntu`、Hub設定変更はWeb画面の「Hubs」、更新発行は`mise run publish:ubuntu`、状態確認は`mise run status:ubuntu`を使います。sudoが必要なのは環境構築です。[詳細手順](PUBLICATION.md)を参照してください。
+通常運用はAnalytics 1プロセス、SQLite 1ファイル、HTTP listener 1つです。Hub管理、SSE購読、履歴取得、保存、推定、ブラウザー配信は同じプロセスにあります。更新時だけ`tma-update.service`を起動します。runnerは通常の収集やDB書込みを担当しません。
 
-`status:ubuntu`の「Hub observations received」は保存済み観測の存在を示し、継続受信や鮮度を保証しません。閲覧URLが疎通していてもこの項目がMISSINGなら、Collectorの接続とHubのURL・DNS・認証を確認します。
+```text
+mise run provision:ubuntu   # 管理者: Node、service、権限
+mise run configure:ubuntu   # 通常ユーザー: listener/DB/Secret設定
+mise run publish:ubuntu     # 通常ユーザー: 検証済み配布と再起動
+mise run status:ubuntu      # 通常ユーザー: 状態確認
+```
 
-Hubの日常管理をWeb UIから行う機能が利用できます（詳細は[Issue #16](https://github.com/nuitsjp/token-monitor-analytics/issues/16)）。既存CLI登録は`configure:ubuntu -- --reset-hubs`で破棄してからUIで登録します。通常のconfigure/publishは登録済み情報を保持します。管理モード（`management.enabled: true`）では、Analyticsが設定（`hubs.json`）および秘密情報（`hub-secrets.json`）をアトミックに保存し、Collectorがファイルの定期確認（2秒間隔）で動的に反映します。プロセスの再起動は不要です。Hubの停止・削除（アーカイブ）を行っても、過去の観測履歴や未送信outboxは消去されません。
+`tma-analytics.service`は失敗時に再起動します。`tma-update.service`は常駐有効化せず、WebまたはCLIの明示的な更新要求でだけ実行します。`/api/health`はHTTP listenerの生存だけを示し、Hub接続や最新保存を保証しません。
 
-## 費用とデータの所在
+## Hub管理
 
-AnalyticsはUbuntu上のNode/SQLiteで動くため、Analytics用CloudflareのWorker/D1/DO枠は使いません。Ubuntu本体・電力・ストレージ・バックアップの維持は必要です。Hub側は引き続きCloudflareでSSEを配信するため、その利用量評価まで不要になったわけではありません。
+管理モードを有効にすると、UIの登録・停止・再接続・archive・Secret差し替えを使えます。Hub行はSQLiteの`hubs`テーブル、Secret値は専用`hub-secrets.json`が正本です。Hub IDを再利用せず、archive後も観測と履歴を保持します。複数タブの競合は行versionで409にします。
 
-## 保存期間
+保存transactionがCOMMITした直後に購読世代を更新します。URL・Secret・状態が変わると旧SSEをabortしてから新世代を開始します。欠損SecretやHub入力エラーはそのHubだけ停止します。SQLite保存エラーは全収集を停止し、ログにはSecretやSQL詳細を出しません。
 
-小型snapshotは既定7日。起動時および5分ごとに、期限を過ぎた最大500行を削除します。各Hubの最新snapshotは保持期間にかかわらず維持し、日次推定は長期保持します。削除が追い付かなければ7日を超えて残るため、日数はディスク容量のハード上限ではありません。
+## 履歴補完と保持
 
-SQLiteのDELETEでファイルサイズが直ちに縮むとは限りません。自動VACUUMによる長時間停止は初期には導入していません。データディレクトリーの空き容量とバックアップのサイズを監視してください。単一Node/SQLiteプロセス、最大8契約・制限枠という小規模構成が対象です。
+Hub履歴は起動、登録、再接続、revision通知、手動要求で取得します。SSEを定期pollingへ置き換えません。取得中の変更はdirty状態にまとめ、1 Hubにつき1件だけ実行します。端末別のdaily/monthly行は同じ主キーをupsertし、再取得で加算しません。端末削除、History無効、欠測、非対応はsource状態として表示し、既存の過去行を偽の0で上書きしません。
 
-## Collectorとoutbox
+観測詳細の既定保持期間は7日です。起動時と定期保守で古い詳細を小さい単位で削除し、Hub最新snapshotは残します。日次推定と端末履歴は長期参照用に保持します。SQLiteのファイルサイズは自動的に上限へ収束するとは限らないため、容量とバックアップを運用で確認します。
 
-既定256 MiBのoutboxに未送信イベントを1件1ファイルで保管。バッチ最大2件、通常の送信待ちは最大約2秒。上限到達時は古いデータを削除せず受信側を待機させ、送信側で排出します。待機が長ければHubのSSE切断や欠測が起こり得ます。
+## 障害対応
 
-受信済みデータの再送と、未受信期間の復元は別です。Ubuntu全体が落ちていた期間、Hubへ接続していなかった期間を補完したことにはしません。
+| 状態 | 対応 |
+| --- | --- |
+| Hub接続エラー | UIの接続状態、URL、Secret、Hub側SSEを確認。対象Hubだけを再接続 |
+| 履歴取得エラー | 最終成功行を保持し、Hub登録または手動取得で再試行 |
+| SQLite保存エラー | Analyticsが収集を停止。ディスク、権限、整合性を確認してから再起動 |
+| HTTP listener停止 | systemd status/journalとhealthを確認。viewer境界を変更して迂回しない |
+| DB破損の疑い | アプリを停止し、バックアップと`PRAGMA integrity_check`を別DBで検査。空DBへ置換しない |
+| 更新失敗 | update stateのstage/errorCodeを確認。runnerが示す復旧手順を使い、Hub/Secret/DBを手作業で消さない |
 
-## 障害の扱い
+未受信の過去観測を推測して埋めません。停止中の利用実績はHubの端末別履歴が提供する範囲だけ補完できます。limit時系列、過去の推定、アカウント帰属は復元しません。
 
-| 状況 | 動作 |
-|---|---|
-| Analytics停止 | Collectorはoutboxに保留し、送信を再試行 |
-| SQLite保存失敗 | トランザクションを取り消し、成功ACKを返さない |
-| 保存後に応答だけ喪失 | 同じeventIdで再送。保持中の同一イベントは二重保存しない |
-| HubとのSSE切断 | 新streamIdで再接続。推定基準を作り直す |
-| ブラウザー通知切断 | 自動再接続時に保存済み状態を再取得 |
-| 認証/設定の恒常的な4xx | Collectorはoutboxを残して停止。設定を修正 |
-| Web UIシステム更新失敗 | 検証失敗時はアプリ無停止。配置後の起動失敗時は手動復旧（バックアップあり） |
-| Ubuntu全体の停止 | Collector/Analyticsとも停止。自動補完はしない |
+## バックアップ
 
-同じHubのCollectorをWindowsとUbuntuで二重稼働させず、同じoutboxを複数プロセスから書きません。Analyticsは1プロセスだけにします。
+Analytics停止中またはバックアップAPIを使ってSQLiteをバックアップします。
 
-## 観測する項目
+```text
+node --experimental-strip-types analytics/runtime/backup.mjs \
+  --config /path/to/analytics.json \
+  --output /path/to/backups/analytics-YYYYMMDD.db
+```
 
-`journalctl`、Collectorの`pending_bytes`、Web画面の最終観測時刻、ディスク使用量、バックアップの完了を確認します。`/api/health`はHTTPサーバーの生存確認であり、Hubの接続継続や最終保存の新しさまで保証しません。画面の「ライブ接続中」はブラウザー↔Analyticsの接続状態です。
+バックアップ先は既存ファイルへ上書きしません。DB、Secret、設定、release identityを同じ運用記録で管理し、ログや静的配信へ秘密値を出しません。
 
-初回は実Hub接続、契約と金額の帰属、サービス再起動、Ubuntu再起動、24時間程度の連続運用を実機で確認します。ログ/DB/outboxも秘密情報と同様に保護してください。
+## 確認
+
+ブラウザーの「ライブ接続」はブラウザーとAnalyticsのSSE状態です。Hubの接続継続は管理画面のHub状態、最終観測時刻、履歴取得時刻で別に確認します。Ubuntuの再起動・Tailscale・自己更新は実機または隔離ゲストで実行した証跡だけを成功と記録します。

@@ -1,44 +1,31 @@
 {
   "version": "0.3.0",
-  "date": "2026-09-05",
+  "date": "2026-09-09",
   "environment": {
-    "os": "Linux amd64 container",
-    "mise": "2026.9.1",
-    "go": "1.26.8",
+    "os": "Linux development environment",
     "node": "24.20.0",
     "typescript": "5.8.3"
   },
-  "command": "mise run 'release:ubuntu:*'",
-  "exit_code": 0,
-  "setup": "npm ci --include=dev and native runtime checks passed",
-  "go_tests": {
-    "status": "passed",
-    "race": true,
-    "vet": "passed",
-    "gofmt": "passed"
-  },
-  "node_tests": {
-    "passed": 43,
+  "analytics_tests": {
+    "passed": 103,
     "failed": 0,
     "sqlite": "native node:sqlite",
     "http": "native node:http"
   },
+  "publication_tests": {
+    "passed": 43,
+    "skipped": 3,
+    "failed": 0
+  },
   "typecheck": "passed",
-  "integration": "two mock Hubs / Go Collector / native Analytics / SQLite / SSE / restart retry / backup passed",
-  "cross_build": [
-    "linux/amd64",
-    "linux/arm64"
-  ],
-  "package_smoke": "both architectures: SHA-256 / private file exclusion / ELF target / extracted Analytics HTTP and SQLite passed",
+  "integration": "Hub SSE / native Analytics / SQLite / browser SSE / management / update / backup checks passed",
   "not_executed": [
-    "Windows runtime",
-    "PowerShell",
+    "Windows runtime and PowerShell",
     "GitHub Actions",
-    "Ubuntu systemd",
-    "SSH forwarding",
-    "arm64 binary execution",
-    "real upstream Hub",
-    "browser UI",
+    "Ubuntu systemd and OS reboot",
+    "Tailscale separate-device verification",
+    "amd64/arm64 package smoke after this change",
+    "real upstream Hub and real billing account",
     "24h soak",
     "Cloudflare D1 data import"
   ]

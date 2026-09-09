@@ -1,15 +1,11 @@
-# 0.3.0 — self-hosted first (2026-09-05)
+# 0.3.x — Node単一アプリ構成
 
-- 0.2.0 Web/Ubuntu版を元に修正。Go Collector・SSE購読・outbox・推定ステートマシン・3画面を継承。
-- AnalyticsをNode.js HTTPサーバー＋ローカルSQLiteへ変更。Windows/Ubuntu共通ランタイム。
-- D1/Worker/LiveRoom/Cloudflare Access/Wranglerを削除。残っていた旧エントリーポイント・設定・検証ホストを整理し、認証テストをネイティブNode版へ移行。
-- ブラウザーのライブ通知をWebSocketからSSEへ変更。Hub側のSSEは変更なし。
-- SQLiteの起動時マイグレーション・取込み全体のトランザクション・バックアップを追加。
-- 設定をTypeScriptソースからJSONへ移動。環境変数でシークレットを供給。
-- UbuntuでAnalyticsとCollectorの2サービスを常駐。既定はloopback＋SSH転送。
-- デモと本番を別DBへ分離し、誤ったDBの共用を起動時に拒否。
-- ブラウザーの1観測日グラフ表示と保存先表示を改善。
-- Web UIにシステム更新機能を統合（Issue #17）。GitHub mainの更新確認、手動適用、独立したsystemd oneshotサービス（tma-update.service）による発行、再起動後の結果表示。
-- 発行記録にコミットSHA・コミット日時を保持。status:ubuntuでバージョンと直近更新状態を表示。
+- Hub購読、端末別履歴、Hub管理、保存、推定、ブラウザー配信を1つのNode.js Analyticsへ統合。
+- 常駐DB writerとHTTP listenerをそれぞれ1つに統一し、同期native SQLite transactionとCOMMIT後通知へ整理。
+- SQLiteのmigration checksum、WAL/`synchronous=FULL`、バックアップ、デモ/本番DB分離を維持。
+- Hub SecretをSQLiteと起動設定から分離し、専用ファイルとOS権限で保護。
+- NodeのSSE購読・再接続と認証付き端末履歴取得を追加。欠測はHubが保持する範囲だけ補完。
+- UbuntuのAnalytics常駐serviceと更新時だけ動くoneshot runnerを分離。発行物はallowlistで作成し、同一content/configurationの再発行は再起動しない。
+- 旧Collector、内部ingest、Batch/ACK、outbox、二重listener、共有Hub設定の定期同期を通常構成から撤去。既存環境の初回切替は移行専用手順で行う。
 
-古い.wranglerのD1データは自動移行しません。元のディレクトリーは残してください。
+旧Cloudflare/D1のデータや旧構成のHub登録は自動移行しません。初回切替は[移行手順](docs/MIGRATION.md)を読み、バックアップと復旧確認を済ませてから実行してください。

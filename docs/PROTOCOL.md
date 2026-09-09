@@ -1,52 +1,55 @@
-# 接続プロトコル v1
+# 接続プロトコル
 
-## 上流（確認基準: Token Monitor v0.54.0）
+## HubからAnalytics
 
-`GET {hubOrigin}/api/stats/stream`、`Authorization: Bearer <Hub shared secret>`。初回は`event: snapshot`、以後`event: stats`。dataは`{type:"stats",stats:{...},at:"ISO8601"}`。コメント形式のハートビートを活性監視に使うが保存・転送しない。[S6]
+AnalyticsはHub originの`GET /api/stats/stream`へ接続し、`Authorization: Bearer <Hub Secret>`を送ります。初回の`snapshot`、以後の`stats`を受け取り、data JSONの`type`、`at`、`stats`を検証します。Hubのheartbeatコメントは接続活性だけに使い、観測として保存しません。
 
-LF/CRLF/CR、複数data行、BOM、コメントに対応。不完全なEOFフレームは破棄し、再接続で新しいstreamIdを作る。`id`/`Last-Event-ID`によるバックフィルは、上流の再送契約がないので実装しない。HTTPSを必須にし、ループバックだけHTTPを許可する。リダイレクトには認証情報を追従させない。
+SSE parserはUTF-8チャンク境界、BOM、LF/CRLF/CR、複数`data`行、コメント、未知field、不完全EOF、1イベント8 MiB上限を扱います。redirectは追従しません。HTTPS originを必須とし、loopback開発時だけHTTPを許可します。`at`が現在より5分以上未来のイベント、未知の構造、許可されていない情報、上限超過は当該Hubの入力エラーにします。
 
-## Collector → Analytics
-
-`POST /api/ingest`、`Content-Type: application/json`、`Authorization: Bearer <TMA_INGEST_TOKEN>`。
+正規化した内部`Observation`は次の項目だけを持ちます。
 
 ```json
 {
-  "schemaVersion": 1,
-  "events": [{
-    "schemaVersion": 1,
-    "hubId": "hub-a",
-    "eventId": "ランダム16bytesのhex32桁",
-    "streamId": "接続ごとに新しいhex32桁",
-    "kind": "snapshot",
-    "observedAt": "2026-09-05T00:00:00Z",
-    "receivedAt": "2026-09-05T00:00:00Z",
-    "stats": {
-      "updatedAt": "2026-09-05T00:00:00Z",
-      "periods": {}, "devices": [], "limits": {"providers": []}
-    }
-  }]
+  "hubId": "hub-a",
+  "streamId": "connection-local-id",
+  "kind": "snapshot",
+  "observedAt": "2026-09-05T00:00:00.000Z",
+  "receivedAt": "2026-09-05T00:00:01.000Z",
+  "stats": {
+    "updatedAt": "2026-09-05T00:00:00.000Z",
+    "periods": {},
+    "devices": [],
+    "limits": {"providers": []}
+  }
 }
 ```
 
-この例のeventId/streamIdは説明文なので、そのまま送信しない。1バッチ1〜2件、1イベント128 KiB以下、HTTP本文270,000 bytes以下。`stats.periods`はtoday/month/allTimeのcostUsd/totalTokens/clientCostsのみ。端末はdeviceId/updatedAt/stale/allTimeの金額だけ。providerはprovider/accountKey/updatedAt/status/stale/windowsだけ。プロジェクト名、セッション明細、メール、認証情報は送らない。
+`event_id`はAnalyticsが16バイトの乱数から生成します。Hubの再送ID、Batch envelope、送信資格情報を内部APIへ渡しません。古い観測は履歴として保存できますが、Hub最新値や推定基準を逆行させません。保存transactionのCOMMIT後にだけブラウザー通知を出します。
 
-成功は`200 {"ok":true,"acked":["eventId",...]}`。全イベントのIDが確認されてから対応ファイルを削除する。エラー/応答不明はファイルを維持する。再送時には新しいIDを振らない。`(hub_id,event_id)`が保存中イベントの重複キー。詳細保持期間を過ぎて削除したイベントを再受信しても、古い観測時刻は最新値/推定基準へ適用しない。
+通信断・5xx・408・429は1秒から最大30秒のjitter付き指数backoffです。401/403などの恒常的な認証エラー、redirect、入力不正は当該Hubを停止し、管理操作または再接続で再開します。Hubごとの障害は他Hubとブラウザーへ波及させません。SQLite保存不能は全収集を停止します。
 
-通信停止や5xx/408/429は上限付きバックオフで再試行する。その他の4xx/3xxは設定やスキーマ不整合として停止する。無限フォールバックやデータ自動破棄はしない。
+## Hub履歴
 
-## Web閲覧
+履歴補完は認証付き`GET /api/devices`を使います。取得全体を検証し、`devices[].history`の端末別daily/monthly行を保存します。1応答16 MiB、端末数・行数・map entriesに上限があります。重複device ID、日/月キー、構造不正、数値不正は既存保存を壊さずに失敗します。
 
-`GET /api/state`: 設定済みHub、Hubごとの最新小型snapshot、最新推定、契約設定。Hub秘密情報は含まない。
+起動、Hub登録、SSE再接続、Hubの`deviceHistoryRevision`/`historyRevision`通知、手動要求で取得します。revisionは変更通知であり、GET応答の版番号とはみなしません。取得中の通知はdirty状態として次回へまとめ、Hubごとの取得を直列化します。通信失敗は有限回再試行し、404/非対応はそのHubの補完非対応として表示します。
 
-`GET /api/history?contract=id`: その契約の最新90観測日の最新判定と最後の有効推定。
+## ブラウザーAPI
 
-`GET /api/live`: 同一originのSSE。Content-Typeはtext/event-stream。`event: ready`と`event: updated`は再取得通知で、履歴イベントログではない。再接続はEventSourceに任せ、readyで最新状態を再取得する。25秒ごとのコメントheartbeatを送信する。[S3]
+同じHTTP listenerが以下を提供します。
 
-閲覧は設定に応じてloopback限定、Basic認証、または専用Tailscale待受を認証境界とする認証入力不要モード。Tailscale閲覧側ではingestを常に拒否する。CollectorのBearer認証とは独立。POSTはCOMMIT後のみ成功ACKを返す。
+| Endpoint | 用途 |
+| --- | --- |
+| `GET /api/health` | 秘密を含まないプロセスhealthとrelease identity |
+| `GET /api/state` | 最新Hub観測、推定、Hub接続状態、契約、release identity |
+| `GET /api/live` | `ready`とCOMMIT後の再取得通知、heartbeatコメント |
+| `GET /api/history?contract=id` | 契約の日次推定履歴 |
+| `GET /api/usage-history/...` | 端末別daily/monthly履歴 |
+| `/api/manage/hubs` | 明示的に有効にしたHub管理 |
+| `/api/manage/update` | 更新候補確認と適用要求 |
 
-`GET /api/health`: 秘密情報を含まない固定ヘルス情報。DB/Hubの疎通を保証しない。
+`/api/ingest`と`/api/collector/status`は存在しません。Analytics内部のHub認証、閲覧認証、管理Origin/Host検査は独立しています。loopback、Basic、または専用Tailscale待受で閲覧境界を作ります。Hub Secret、secretRef、設定ファイル全体、DBパス、環境変数名をレスポンスへ含めません。
 
 ## 時刻と欠測
 
-観測時刻はHubの`at`、受信時刻はCollectorのUTC時刻。サーバーは保存時にISO文字列をミリ秒単位へ正規化する。未来5分超の値を拒否する。SSEの切断履歴そのものを別テーブルへは書かないが、streamIdの変化を保持して推定区間を分離する。画面のライブ接続表示はブラウザー↔Analyticsだけの状態であり、Collectorの生存確認ではない。
+Hubの`at`が観測時刻、Analyticsの`receivedAt`が受信時刻です。ISO文字列をミリ秒精度へ正規化し、未来5分超を拒否します。SSE切断そのものは履歴イベントにせず、`streamId`の変化で推定区間を切り分けます。Hub停止中の値はHubが保持する端末履歴の範囲だけを補完し、limit時系列や過去の推定値を生成しません。

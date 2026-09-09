@@ -1,51 +1,44 @@
-# アーキテクチャ — 0.3.0
+# アーキテクチャ
 
-## 実行配置
+## 実行形態
 
-初期運用はUbuntu 1台にGo CollectorとNode.js Analyticsを同居させる。開発はWindows上に同じ2プロセスを起動する。別プロセスだが、HTTP APIの相手は通常loopbackであり、別サーバーやメッセージブローカーを必要としない。
+```text
+Hub A ── HTTPS SSE ──┐
+Hub B ── HTTPS SSE ──┤
+                     ▼
+             Node.js Analytics 1プロセス
+             ├─ Hub購読・再接続・履歴取得
+             ├─ SQLite 1つ / 同期writer 1つ
+             ├─ 管理HTTPと閲覧HTTP 1 listener
+             └─ ブラウザーSSE
+```
 
-Hubは既存のCloudflare版を使用し、1 Hub = 1 Cloudflareアカウントという前提を変更しない。Analytics側のCloudflareアカウント・Worker・D1・Durable Objects・Access・Wranglerは使用しない。
+Node.jsがHubごとのSSE購読、入力の正規化、履歴取得、Hub管理、推定、SQLite保存、HTTP配信を担当します。ブラウザーを閉じてもHub購読は続きます。通常時に常駐する別プロセス、内部HTTP、outbox、ACK、追加のDBやキューはありません。Web更新時だけ`tools/update-runner.mjs`をoneshot serviceとして動かしますが、runnerは収集とDB書込みを行いません。
 
-Ubuntuの発行構成では、Analyticsの同一プロセスがloopback取込み用とTailscale IPv4閲覧用の二つの待受を持つ。SQLiteと取込み直列化・ライブ通知は共有する。Tailscaleを閲覧の認証境界とし、アプリの閲覧資格情報を要求しない。閲覧側のingestは遮断し、loopback取込みのBearer認証は維持する。環境構築はsudoを使う`provision:ubuntu`、設定・発行は通常ユーザーの`configure:ubuntu`・`publish:ubuntu`に分離する。
+## SQLite境界
 
-## 責務
+`analytics/runtime/sqlite.mjs`はNodeのnative `DatabaseSync`を開き、WAL、`synchronous=FULL`、外部キー、migration checksumを設定します。同期statementを直接呼び出し、`bind()`互換層やPromise DB wrapperは使いません。transaction helperは`BEGIN IMMEDIATE`、同期callback、COMMITまたはROLLBACKだけを扱います。
 
-Go CollectorはHubのSSEを購読し、API金額・利用率などの必要な観測値だけを取り出す。ファイルoutboxに記録したイベントを短いHTTP POSTでAnalyticsに送り、保存確認後だけ削除する。API料金の再計算、推定、履歴照会、Web配信はしない。
+観測のtransactionは基準値の読取り、観測保存、Hub最新値、契約state、日次推定を一単位にします。履歴snapshotのtransactionは完全検証済みの端末履歴、source状態、取得状態を一単位にします。履歴行のupsert statementはtransaction単位で再利用します。ネットワーク、JSON受信、SecretファイルI/Oはtransaction外です。
 
-AnalyticsはNode.jsのHTTPサーバー。既存のTypeScriptコード（protocol/estimate/db）を引き継ぎ、runtime/のコードがSQLite・認証・HTTP・ライブ通知を担当する。実行時はNodeのTypeScript型除去を使用し、ビルドツールや第三者のランタイムパッケージを要求しない。型検査は別途TypeScriptで実施する。[S1][S2]
+保存がCOMMITする前にブラウザー通知や収集成功を返しません。COMMIT後に`LiveFeed`へ再取得通知を送り、通知が失われてもSQLiteを再読込みすれば復旧できます。SQLite保存不能は全体の永続化障害として収集を止めます。
 
-## 保存トランザクション
+## Hub購読
 
-SQLiteが観測・最新値・推定状態・日次履歴の正本。1 Analyticsプロセスだけが扱う。`BEGIN IMMEDIATE`からCOMMITまで、基準値SELECT→観測保存→最新値更新→推定→日次値保存の全体を1トランザクションとする。API呼出しと保守処理をキューで直列化し、未コミットの中間状態を別HTTP要求へ返さない。
+`analytics/runtime/collection/`のmanagerがHubごとにAbortController、購読世代、終了待ちを持ちます。`event: snapshot`と`event: stats`のデータだけを`compactHubEvent`で許可リストへ正規化し、`Observation`を同期保存へ渡します。SSE parserはBOM、UTF-8チャンク分割、LF/CRLF/CR、複数data行、コメントheartbeat、未知イベント、不完全EOF、8 MiB上限を扱います。
 
-収集モジュールから保存層へ渡す内部APIは、`recordObservation(db, observation, contracts, timeZone)`（複数件は`recordObservations`）である。`observation`は`hubId`、`streamId`、`kind`、`observedAt`、`receivedAt`、正規化済み`stats`だけを持ち、Batch/schemaVersion/ACKや上流の再送IDを要求しない。入力に余分な`eventId`があっても内部APIは無視し、保存用の`event_id`は保存処理が16バイトのランダム値から生成する。保存payloadには既存の状態再送互換のため`schemaVersion: 1`とこのローカルIDを付加する。APIは同期関数で、呼出し側が`db.transaction(() => ...)`で囲む。トランザクションcallbackが`PromiseLike`を返す場合は型・実行時の両方で拒否し、COMMITしない。旧`/api/ingest`だけが移行期間の薄い橋として上流の再送IDを保持し、通常の内部収集経路では使わない。
+Hub URLはHTTPS originに限定し、loopback開発時だけHTTPを許可します。Hub SecretはBearer headerだけに設定し、URL、レスポンス、例外、ログへ出しません。接続断と5xx/408/429はjitter付き指数backoff、恒常的な認証・入力エラーは当該Hubだけ停止します。古い購読世代の保存callbackは管理変更後に破棄します。
 
-WAL＋synchronous=FULLを使用する。スキーマは起動時に番号順に適用し、適用済みマイグレーションの書換えをchecksumで検出する。デモ/本番の識別をDBへ保存し、混在させる設定では起動しない。CPUとSQLite I/Oは同じNodeイベントループで実行するため、小規模・個人利用のスターターが対象。大量データを処理する汎用分析基盤ではない。
+## 設定と管理
 
-## ライブ更新
+起動設定`analytics.json`にはlistener、SQLite、Secretファイル、閲覧認証、保持期間、timezone、契約、更新設定を置きます。Hub行はSQLiteの`hubs`が正本で、Secret値は`hub-secrets.json`だけに保存します。Secret変更は新しいopaque参照を安全に保存し、DB COMMIT後に購読世代を切り替えます。保存済みSecretや内部パスをUI/APIへ返しません。
 
-ブラウザーはGET /api/stateで初期状態を取得する。GET /api/liveをEventSourceで購読し、ready/updated通知で状態を再取得する。**Hub→CollectorもSSE、Analytics→ブラウザーもSSEだが、別の接続**である。旧版のWebSocket/LiveRoomは廃止した。
+listenerは常に1つです。loopback/Basicでは選択したloopback addressを使い、Tailscale modeでは専用Tailscale IPv4だけをbindします。管理API、state、health、history、browser SSE、静的配信は同じlistenerです。別のingest listenerやCollector status endpointはありません。
 
-通知はCOMMIT後。通知自体の永続キューや完全配信保証は設けない。通知が欠けても履歴はSQLiteに残り、再接続・タブ復帰・手動更新で読み直す。25秒ごとのコメントheartbeat、最大16閲覧接続、遅いブラウザーの切断を実装。ブラウザーを閉じても収集は止めない。[S3]
+## 履歴補完
 
-## 障害境界
+停止・起動・再接続・Hubの履歴revision通知・手動要求を契機に、認証付き`GET /api/devices`を取得します。これはSSEの代替pollingではありません。1 Hubにつき1件を直列化し、取得中の変更はdirty状態として次の取得へまとめます。応答全体を検証してから、端末別`usage_sources`と日/月別`usage_periods`をupsertします。端末削除はsourceをdeletedにしますが、過去行は明示的な履歴として保持します。
 
-Analyticsだけ停止した場合はCollectorがoutboxへ保留する。Ubuntu全体の停止やHubへの接続断で未受信だった更新は復元できない。再接続時の最新snapshotから再開し、streamIdを変えて推定の基準を再設定する。
+## 更新と配置
 
-outboxはwrite→fsync→rename後に送信対象とするが、rename後のディレクトリーfsyncまでは実施しない。したがって**電源断を含む全障害に対する完全な永続保証はしない**。プロセス停止/通信断からの再送が主対象。1 outboxにつき1 Collectorだけを起動する。
-
-## 拡張の境界
-
-純粋な推定ロジックとNode組込みSQLiteの同期`Database`/`Statement`境界を維持する。Promiseで同期SQLiteを包む互換層、Cloudflare/クラウドStoreの実装、クラウドへの自動切替、DB同期は含めない。実要件が発生する前から複数運用形態を抱え込まない。
-
-## Node Hub収集（Issue #21）
-
-Nodeの収集経路は`analytics/runtime/collection/`に置く。`createCollectionManager`は`start(hubs)`、`applyHubs(hubs)`、`reconnectHub(id)`、`stop()`、`getStatus()`を公開し、Hubごとに独立した購読と終了待ちを持つ。購読入力の型は`{id, url, secret, status}`で、`status: "active"`だけを接続対象とする。`secret`は内部引数に限り、状態通知へ含めない。現在のファイル管理・旧Collectorと二重収集しないため、`startServer`は`collectionHubs`を明示した時だけ`start()`し、管理Issueで正本と接続反映を統合する。
-
-`readSSE`はUTF-8チャンク境界、BOM、LF/CRLF/CR、複数`data`行、コメントheartbeat、未知イベント、8 MiBのイベント上限を処理する。不完全なEOFフレームは保存せず、`snapshot`/`stats`だけを`compactHubEvent`で許可リストへ正規化する。正規化済みの`Observation`は`recordObservation(db, observation, contracts, timeZone)`へ渡し、呼出し側の同期SQLite transactionがCOMMITした後にブラウザーへ通知する。
-
-接続はBearerヘッダー、HTTPS origin（開発時のloopback HTTPのみ例外）、リダイレクト拒否、接続・ヘッダー待ち20秒、無通信90秒を適用する。通信断・5xx・408・429は1秒から最大30秒のjitter付き指数バックオフ、3xx・その他4xx・上流入力エラーは当該Hubだけ停止する。購読世代を差し替える際は旧AbortControllerと保存callbackの完了を待つ。SQLite保存エラーは入力エラーと区別して全収集を停止し、未COMMITの観測を成功扱いしない。
-
-## Hub管理UI（基本機能実装済み）
-
-AnalyticsをHub設定の更新窓口とし、Collectorが共有設定ファイルを定期確認する。[Hub管理UIの実装計画](https://github.com/nuitsjp/token-monitor-analytics/issues/16)を参照。Analytics→CollectorのSSEは追加せず、既存の観測・ブラウザー通知経路を維持する。通常設定と平文の秘密情報は別ファイルに置き、OS権限で保護する。状態表示のためのCollector→Analyticsのloopback POSTを追加している。configure/publish/statusは管理モードに対応する。既存登録の移行は行わず、明示的なリセットとUIでの再登録を使用する。
+発行物は`tools/release.mjs`のallowlistから作るAnalytics runtime、静的資産、migration、設定例、systemd unit、更新runnerだけを含みます。開発checkout、Hub submodule、秘密、DB、旧構成は含めません。更新runnerはcandidate SHA、release identity、deployment lock、バックアップ、サービス再起動を管理し、同一content/configurationなら再起動しません。初回の旧環境切替は通常publishから分離した#27の移行CLIで行います。
