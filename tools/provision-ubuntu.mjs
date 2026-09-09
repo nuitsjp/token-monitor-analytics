@@ -8,7 +8,7 @@ import {withPublicationLock} from './release.mjs';
 import {
  prefix,releasesDir,destination,appUnits,managedUnits,legacySystemUnits,
  updaterDir,repoDir,infrastructureFile,deploymentLock,userUnit,unitDigest,updaterRunnerFiles,
- infrastructureVersion,configVersion,serviceContractVersion,runnerVersion,runtimeContract
+ infrastructureVersion,configVersion,serviceContractVersion,runnerVersion,runtimeContract,assertInfrastructureFile
 } from './ubuntu-layout.mjs';
 import {run,inherit,report} from './ubuntu-common.mjs';
 
@@ -77,10 +77,29 @@ function userUnitLoadState(username,uid,unit){
  return result.stdout.trim()||'not-found';
 }
 
+/** Recognize the one-app layout even when its service/runner digest is old. */
+export function isIntegratedInfrastructureRecord(record,uid){
+ return record?.version===infrastructureVersion&&record.uid===uid&&record.configVersion===configVersion&&
+  Array.isArray(record.appUnits)&&JSON.stringify(record.appUnits)===JSON.stringify(appUnits)&&
+  Array.isArray(record.managedUnits)&&JSON.stringify(record.managedUnits)===JSON.stringify(managedUnits)&&
+  Number.isSafeInteger(record.serviceContractVersion)&&record.serviceContractVersion>=0&&
+  Number.isSafeInteger(record.runnerVersion)&&record.runnerVersion>=0&&
+  typeof record.unitDigest==='string'&&/^[0-9a-f]{64}$/i.test(record.unitDigest);
+}
+
+function integratedInfrastructure(uid){
+ try{
+  assertInfrastructureFile(infrastructureFile);
+  return isIntegratedInfrastructureRecord(readJSON(infrastructureFile),uid);
+ }catch{return false;}
+}
+
+/** Check the complete current service/runner requirements separately. */
 function currentInfrastructure(uid){
  try{
+  assertInfrastructureFile(infrastructureFile);
   const record=readJSON(infrastructureFile);
-  return record?.uid===uid&&record.version===infrastructureVersion&&record.configVersion===configVersion&&record.serviceContractVersion===serviceContractVersion&&record.runnerVersion===runnerVersion&&JSON.stringify(record.appUnits)===JSON.stringify(appUnits)&&JSON.stringify(record.managedUnits)===JSON.stringify(managedUnits)&&record.unitDigest===unitDigest();
+  return isIntegratedInfrastructureRecord(record,uid)&&record.serviceContractVersion===serviceContractVersion&&record.runnerVersion===runnerVersion&&record.unitDigest===unitDigest();
  }catch{return false;}
 }
 
@@ -193,7 +212,7 @@ export async function main(argv=process.argv.slice(2)){
   // This read-only preflight must happen before lock creation, package
   // installation, ownership changes, unit writes, or user-manager startup.
   assertLegacySystemUnitsAbsent();
-  assertLegacyUserUnitsAbsent({home,loadState:unit=>userUnitLoadState(username,uid,unit),hasCurrentInfrastructure:()=>currentInfrastructure(uid)});
+  assertLegacyUserUnitsAbsent({home,loadState:unit=>userUnitLoadState(username,uid,unit),hasCurrentInfrastructure:()=>integratedInfrastructure(uid)});
   assertOldLayout({root:prefix,destination,currentDir:path.join(prefix,'current')});
   deploymentLockDirectory();
   noLink(deploymentLock);

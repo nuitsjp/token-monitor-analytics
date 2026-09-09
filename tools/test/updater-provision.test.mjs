@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {updaterRunnerFiles,legacySystemUnits,userUnit} from '../ubuntu-layout.mjs';
-import {assertLegacySystemUnitsAbsent,assertLegacyUserUnitsAbsent,bootstrapTailscale,ensureDirectory,requiredPackages} from '../provision-ubuntu.mjs';
+import {updaterRunnerFiles,legacySystemUnits,userUnit,infrastructureVersion,appUnits,managedUnits,serviceContractVersion,runnerVersion} from '../ubuntu-layout.mjs';
+import {assertLegacySystemUnitsAbsent,assertLegacyUserUnitsAbsent,bootstrapTailscale,ensureDirectory,isIntegratedInfrastructureRecord,requiredPackages} from '../provision-ubuntu.mjs';
 import {RUNNER_CONTRACT,validateRunnerContract} from '../runner-contract.mjs';
 
 test('updater runner dependency closure is isolated from app config and source checkout', t => {
@@ -107,6 +107,24 @@ test('current Analytics user unit may be retained only with matching infrastruct
     assert.doesNotThrow(() => assertLegacyUserUnitsAbsent({home, loadState: unit => unit === 'tma-analytics.service' ? 'loaded' : 'not-found', hasCurrentInfrastructure: () => true}));
     assert.throws(() => assertLegacyUserUnitsAbsent({home, loadState: unit => unit === 'tma-analytics.service' ? 'loaded' : 'not-found', hasCurrentInfrastructure: () => false}), error => error.code === 'legacy_user_unit' && error.unit === 'tma-analytics.service');
   } finally { fs.rmSync(home, {recursive: true, force: true}); }
+});
+
+test('integrated infrastructure marker allows re-provision with an older service digest', () => {
+  const record = {
+    version: infrastructureVersion,
+    uid: 1000,
+    configVersion: 2,
+    serviceContractVersion,
+    runnerVersion,
+    appUnits: [...appUnits],
+    managedUnits: [...managedUnits],
+    unitDigest: '0'.repeat(64)
+  };
+  assert.equal(isIntegratedInfrastructureRecord(record, 1000), true);
+  assert.equal(isIntegratedInfrastructureRecord(record, 1001), false);
+  assert.equal(isIntegratedInfrastructureRecord({...record, configVersion: 1}, 1000), false);
+  assert.equal(isIntegratedInfrastructureRecord({...record, appUnits: ['tma-collector.service']}, 1000), false);
+  assert.equal(isIntegratedInfrastructureRecord({...record, unitDigest: 'old'}, 1000), false);
 });
 
 test('provisioning keeps the nonempty wrong-owner guard and Node-only dependencies', t => {
