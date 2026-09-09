@@ -2,7 +2,7 @@
 
 この一覧は、現在の単一 Analytics 構成で参照する資料を示します。上流HubやNodeの更新で挙動が変わる可能性がある項目は、固定した検証結果と実行時のruntimeを分けて記録します。
 
-- **S1 — Node.js組込みSQLite**: [Node.js SQLite API](https://nodejs.org/api/sqlite.html)。`DatabaseSync`、`StatementSync`、prepared statement、backupを参照する。アプリの最小runtime条件はNode.js 22.16.0、配布・受入の固定runtimeはNode.js 24.20.0。
+- **S1 — Node.js組込みSQLite**: [Node.js SQLite API](https://nodejs.org/api/sqlite.html)。`DatabaseSync`、`StatementSync`、prepared statement、backupを参照する。`package.json`と更新runnerの互換性下限はNode.js 22.16.0だが、このcheckoutで実行を確認したruntimeはNode.js 24.20.0のみである。配布・受入の固定runtimeもNode.js 24.20.0とする。
 - **S2 — Node.js TypeScript実行**: [Node.js TypeScript](https://nodejs.org/docs/latest-v24.x/api/typescript.html)。型除去で直接実行し、型検査はTypeScriptを別に実行する。
 - **S3 — Server-sent events**: [WHATWG Server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html)。`event`、`data`、heartbeat、再接続の境界を確認する。
 - **S4 — SQLite WALとバックアップ**: [SQLite WAL](https://www.sqlite.org/wal.html) と [SQLite backup](https://sqlite.org/backup.html)。稼働中DBを単純コピーせず、Nodeのbackup APIを使う。

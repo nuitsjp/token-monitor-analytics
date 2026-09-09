@@ -4,7 +4,7 @@
 
 ## 実行環境
 
-`.mise.toml` の Node.js 24.20.0、TypeScript 5.8.3を使用します。Node.js 22.16.0以上でも組込み`node:sqlite`の使用条件を満たしますが、配布・受入の固定runtimeは24.20.0です。Analyticsの本番依存はNode組込みHTTP/SQLiteだけで、TypeScriptと`@types/node`は開発時の型検査用です。
+この記録で使用したruntimeは`.mise.toml`のNode.js 24.20.0、TypeScript 5.8.3です。`package.json`と更新runnerの互換性下限はNode.js 22.16.0ですが、このcheckoutの検査結果はNode.js 22系の実行成功を示しません。配布・受入の固定runtimeは24.20.0です。Analyticsの本番依存はNode組込みHTTP/SQLiteだけで、TypeScriptと`@types/node`は開発時の型検査用です。
 
 ## この checkout で実行した検査
 
