@@ -3,18 +3,20 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {execFileSync, spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {loadConfig} from '../analytics/runtime/config.mjs';
 import {startServer} from '../analytics/runtime/server.mjs';
 import {saveUpdateState, readUpdateState} from '../analytics/runtime/update-state.mjs';
+import {runUpdate} from './update-runner.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-integration-update-'));
-const children = new Set();
 let app = null;
 let liveReader = null;
+let runningChild = null;
 
 async function freePort() {
   const server = net.createServer();
@@ -24,7 +26,7 @@ async function freePort() {
   return port;
 }
 
-async function until(predicate, label, timeout = 15000) {
+async function until(predicate, label, timeout = 30000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     try { const value = await predicate(); if (value) return value; } catch {}
@@ -49,7 +51,7 @@ async function jsonResponse(url, init) {
   return {response, body};
 }
 
-async function waitFile(filename, timeout = 10000) {
+async function waitFile(filename, timeout = 15000) {
   return until(() => fs.existsSync(filename), `file ${filename}`, timeout);
 }
 
@@ -73,71 +75,105 @@ function createRemoteFixture() {
   return {bare, sha, url: `file://${bare}`};
 }
 
-function writeChildAppFixture() {
-  const child = path.join(temp, 'packaged-app.mjs');
-  fs.writeFileSync(child, `
-import fs from 'node:fs';
-const appRoot=process.env.APP_ROOT;
-const configModule=await import(new URL('analytics/runtime/config.mjs', 'file://'+appRoot+'/'));
-const serverModule=await import(new URL('analytics/runtime/server.mjs', 'file://'+appRoot+'/'));
-const config=configModule.loadConfig(process.env.CONFIG_PATH);
-const app=await serverModule.startServer(config,{logger:{info(){},error(){}}});
-const pidFile=process.env.PID_FILE;
-fs.writeFileSync(pidFile,String(process.pid),{mode:0o600});
-const close=async()=>{try{await app.close();}finally{fs.rmSync(pidFile,{force:true});process.exit(0);}};
-process.on('SIGTERM',()=>void close());process.on('SIGINT',()=>void close());
-`, {mode: 0o600});
-  return child;
+function copySourceFixture() {
+  const source = path.join(temp, 'source-work');
+  fs.cpSync(root, source, {
+    recursive: true,
+    filter(filename) {
+      return !filename.includes(`${path.sep}node_modules${path.sep}`) && !filename.includes(`${path.sep}.git${path.sep}`);
+    }
+  });
+  // The real release gate invokes these entry points. Replace only the
+  // fixture checkout's recursive integration calls; production code and the
+  // publisher remain the exact target source used by the runner.
+  for (const name of ['integration.mjs', 'integration-manage.mjs', 'integration-update.mjs']) {
+    fs.writeFileSync(path.join(source, 'tools', name), "console.log('fixture release gate entry point');\n", {mode: 0o600});
+  }
+  const tests = path.join(source, 'tools', 'test');
+  fs.rmSync(tests, {recursive: true, force: true});
+  fs.mkdirSync(tests, {recursive: true});
+  fs.writeFileSync(path.join(tests, 'fixture-release.test.mjs'), "import test from 'node:test'; test('fixture release gate', () => {});\n", {mode: 0o600});
+  git('init', ['-q'], source);
+  git('config', ['user.email', 'fixture@example.invalid'], source);
+  git('config', ['user.name', 'Release fixture'], source);
+  git('add', ['-A'], source);
+  git('commit', ['-qm', 'fixture verified release'], source);
+  const firstSha = git('rev-parse', ['HEAD'], source);
+  fs.writeFileSync(path.join(source, 'fixture-only.txt'), 'excluded from the release allowlist\n', {mode: 0o600});
+  git('add', ['fixture-only.txt'], source);
+  git('commit', ['-qm', 'fixture metadata-only revision'], source);
+  const secondSha = git('rev-parse', ['HEAD'], source);
+  const bare = path.join(temp, 'source.git');
+  git('init', ['--bare', '-q', bare], temp);
+  git('push', ['-q', bare, 'HEAD:refs/heads/main'], source);
+  return {source, bare, firstSha, secondSha};
 }
 
-function copyPackagedApp(releaseRoot, releaseId, commitSha, contentHash) {
-  fs.mkdirSync(releaseRoot, {recursive: true, mode: 0o700});
-  fs.cpSync(path.join(root, 'analytics'), path.join(releaseRoot, 'analytics'), {recursive: true, errorOnExist: true});
-  fs.writeFileSync(path.join(releaseRoot, 'release-manifest.json'), `${JSON.stringify({schemaVersion: 1, releaseId, targetCommitSha: commitSha, commitSha, contentHash, commitDate: '2026-09-09T00:00:00Z'}, null, 2)}\n`, {mode: 0o600});
+function setFixtureBranch(repository, sha) {
+  git('update-ref', ['refs/heads/main', sha], repository);
 }
 
-function writeFixtureReleaseModule(filename) {
+function fixtureAppScript() {
+  const filename = path.join(temp, 'fixture-app.mjs');
   fs.writeFileSync(filename, `
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawn} from 'node:child_process';
-export async function preparePublication({root:sourceDirectory,targetCommitSha}){
- const archivePath=path.join(sourceDirectory,'fixture-release.tar.gz');
- fs.writeFileSync(archivePath,'fixture archive bytes');
- const manifest={releaseId:'rel-integ-new',targetCommitSha,contentHash:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',runtimeContract:{}};
- return {artifact:{archivePath,checksumPath:archivePath+'.sha256',archiveSha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',manifest},manifest,configurationId:'cfg-after'};
-}
-async function waitUntilFile(file,present){for(let i=0;i<300;i++){if(fs.existsSync(file)===present)return;await new Promise(r=>setTimeout(r,20));}throw new Error('fixture process transition timed out');}
-async function json(url){const r=await fetch(url);if(!r.ok)throw new Error('fixture app request failed');return r.json();}
-export async function applyPublication(prepared,{targetCommitSha,jobId,paths,onStage}){
- const {releaseId,contentHash}=prepared.manifest,archiveSha256=prepared.artifact.archiveSha256;
- const pid=Number(fs.readFileSync(paths.fixturePidFile,'utf8'));process.kill(pid,'SIGTERM');await waitUntilFile(paths.fixturePidFile,false);onStage('restarting');
- fs.rmSync(paths.currentLink,{force:true});fs.symlinkSync(paths.fixtureNewRelease,paths.currentLink,'dir');
- const child=spawn(process.execPath,[paths.fixtureChildApp],{env:{...process.env,APP_ROOT:paths.currentLink,CONFIG_PATH:paths.fixtureConfig,PID_FILE:paths.fixturePidFile},stdio:'ignore',detached:true});child.unref();
- await waitUntilFile(paths.fixturePidFile,true);const health=await json(paths.fixtureOrigin+'/api/health');const state=await json(paths.fixtureOrigin+'/api/state');
- const sse=await fetch(paths.fixtureOrigin+'/api/live');const reader=sse.body.getReader();const first=await reader.read();await reader.cancel();
- return {proof:{jobId,commitSha:health.release?.commitSha,releaseId:health.release?.releaseId,contentHash:health.release?.contentHash,archiveSha256,configurationId:'cfg-after',health:health.release?.commitSha===targetCommitSha,state:state.release?.commitSha===targetCommitSha,viewer:true,sse:new TextDecoder().decode(first.value).includes('event: ready')}};
-}
+import {pathToFileURL} from 'node:url';
+const appRoot=fs.realpathSync(process.env.APP_ROOT);
+const runtime=await import(pathToFileURL(path.join(appRoot,'analytics/runtime/server.mjs')).href);
+const configModule=await import(pathToFileURL(path.join(appRoot,'analytics/runtime/config.mjs')).href);
+const config=configModule.loadConfig(process.env.CONFIG_PATH);
+const app=await runtime.startServer(config,{logger:{info(){},error(){}}});
+const pidFile=process.env.PID_FILE;
+fs.writeFileSync(pidFile,String(process.pid),{mode:0o600});
+let closing=false;
+const close=async()=>{if(closing)return;closing=true;try{await app.close();}finally{fs.rmSync(pidFile,{force:true});process.exit(0);}};
+process.on('SIGTERM',()=>void close());process.on('SIGINT',()=>void close());
 `, {mode: 0o600});
+  return filename;
 }
 
-function writeFixtureContract(filename) {
-  fs.writeFileSync(filename, 'export const RUNNER_CONTRACT={}; export function validateRunnerContract(){return true;} export function validateInfrastructureRecord(){return true;}\n', {mode: 0o600});
+async function startFixtureApp({currentLink, configPath, pidFile, appScript}) {
+  const child = spawn(process.execPath, ['--experimental-strip-types', appScript], {
+    env: {...process.env, APP_ROOT: currentLink, CONFIG_PATH: configPath, PID_FILE: pidFile},
+    stdio: 'ignore'
+  });
+  await waitFile(pidFile);
+  return child;
 }
 
-function runnerInvocation({runner, statePath, contract, release, source, paths}) {
-  return `
-import {runUpdate} from ${JSON.stringify(new URL(`file://${runner}`).href)};
-import fs from 'node:fs';
-import path from 'node:path';
-const paths=${JSON.stringify({...paths,statePath})};
-const repositoryOps={prepare:async({workRoot})=>{const snapshotDirectory=path.join(workRoot,'fixture-source');fs.mkdirSync(path.join(snapshotDirectory,'tools'),{recursive:true});fs.copyFileSync(${JSON.stringify(release)},path.join(snapshotDirectory,'tools','publish-ubuntu.mjs'));return {snapshotDirectory,commitDate:'2026-09-09T00:00:00Z',commitMessage:'fixture release',branchSha:${JSON.stringify(paths.targetCommitSha)}};}};
-const result=await runUpdate({paths,contractModulePath:${JSON.stringify(contract)},repositoryOps,preflight:async()=>{},misePath:null});
-if(result?.errorCode)process.exitCode=2;
-`;
+function fixtureServices({currentLink, configPath, pidFile, appScript}) {
+  return {
+    isActive: () => Boolean(runningChild && runningChild.exitCode === null && runningChild.signalCode === null),
+    isEnabled: () => true,
+    stop: async () => {
+      await stopChild(runningChild);
+      runningChild = null;
+    },
+    start: async () => {
+      runningChild = await startFixtureApp({currentLink, configPath, pidFile, appScript});
+    },
+    installUnit: () => {},
+    daemonReload: () => {}
+  };
 }
 
-async function main() {
+async function readReadySSE(origin) {
+  const response = await fetch(`${origin}/api/live`);
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  let text = '';
+  try {
+    while (!text.includes('event: ready')) {
+      const chunk = await reader.read();
+      assert.equal(chunk.done, false);
+      text += new TextDecoder().decode(chunk.value);
+    }
+  } finally { await reader.cancel(); }
+  return text;
+}
+
+async function runManagementAPIFixture() {
   const remote = createRemoteFixture();
   const appPort = await freePort();
   const configRaw = {
@@ -160,7 +196,7 @@ async function main() {
   app = await startServer(loadConfig(configPath), {logger: {info() {}, error: (...args) => console.error(...args)}});
   const origin = configRaw.publicOrigin;
   const live = await fetch(`${origin}/api/live`); assert.equal(live.status, 200); liveReader = live.body.getReader();
-  const first = await liveReader.read(); assert.match(new TextDecoder().decode(first.value), /event: ready/);
+  assert.match(new TextDecoder().decode((await liveReader.read()).value), /event: ready/);
 
   const status = await jsonResponse(`${origin}/api/manage/update`);
   assert.equal(status.response.status, 200); assert.equal(status.body.current.commitSha, '0000000000000000000000000000000000000000');
@@ -171,49 +207,116 @@ async function main() {
   const invalidApply = await jsonResponse(`${origin}/api/manage/update/apply`, {method: 'POST', headers: {'Content-Type': 'application/json', Origin: origin}, body: JSON.stringify({targetCommitSha: 'invalid'})});
   assert.equal(invalidApply.response.status, 400);
   console.log('PASS: update API enforces origin, checks the remote SHA, and rejects invalid apply input');
+}
 
-  const childApp = writeChildAppFixture();
-  const oldRelease = path.join(temp, 'release-old'); const newRelease = path.join(temp, 'release-new');
-  const contentHash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-  copyPackagedApp(oldRelease, 'rel-integ-old', '0000000000000000000000000000000000000000', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc');
-  copyPackagedApp(newRelease, 'rel-integ-new', remote.sha, contentHash);
-  const currentLink = path.join(temp, 'current'); fs.symlinkSync(oldRelease, currentLink, 'dir');
-  const childPort = await freePort();
-  const childConfig = {...configRaw, listen: {host: '127.0.0.1', port: childPort}, publicOrigin: `http://127.0.0.1:${childPort}`,
-    databasePath: path.join(temp, 'packaged.db'), hubSecretsPath: path.join(temp, 'packaged-secrets.json'), management: {enabled: false}, update: {enabled: false}};
-  fs.writeFileSync(childConfig.hubSecretsPath, JSON.stringify({schemaVersion: 1, secrets: {}}), {mode: 0o600});
-  const childConfigPath = path.join(temp, 'packaged-config.json'); fs.writeFileSync(childConfigPath, JSON.stringify(childConfig), {mode: 0o600});
-  const pidFile = path.join(temp, 'packaged.pid');
-  const oldChild = spawn(process.execPath, [childApp], {env: {...process.env, APP_ROOT: currentLink, CONFIG_PATH: childConfigPath, PID_FILE: pidFile}, stdio: 'ignore'}); children.add(oldChild);
-  await waitFile(pidFile);
-  const packagedOrigin = childConfig.publicOrigin;
-  const healthBefore = await (await fetch(`${packagedOrigin}/api/health`)).json();
-  assert.equal(healthBefore.release.commitSha, '0000000000000000000000000000000000000000');
+async function runRealPublicationFixture() {
+  const fixture = copySourceFixture();
+  const appScript = fixtureAppScript();
+  const configDir = path.join(temp, 'deployment-config');
+  const install = path.join(temp, 'install');
+  const currentLink = path.join(install, 'current');
+  const oldRelease = path.join(install, 'old-release');
+  const publicationPath = path.join(install, 'publication.json');
+  const databasePath = path.join(temp, 'publication.db');
+  const secretsPath = path.join(configDir, 'hub-secrets.json');
+  const envPath = path.join(configDir, 'analytics.env');
+  const appPort = await freePort();
+  fs.mkdirSync(configDir, {recursive: true, mode: 0o700});
+  fs.mkdirSync(oldRelease, {recursive: true, mode: 0o755});
+  fs.mkdirSync(path.join(install, 'releases'), {recursive: true, mode: 0o755});
+  fs.cpSync(path.join(fixture.source, 'analytics'), path.join(oldRelease, 'analytics'), {recursive: true});
+  fs.writeFileSync(path.join(oldRelease, 'release-manifest.json'), JSON.stringify({schemaVersion: 1, releaseId: 'rel-old', targetCommitSha: '1111111111111111111111111111111111111111', commitSha: '1111111111111111111111111111111111111111', contentHash: 'c'.repeat(64), commitDate: '2026-09-09T00:00:00Z'}), {mode: 0o644});
+  fs.symlinkSync(oldRelease, currentLink, 'dir');
+  const config = {
+    version: 2,
+    listen: {host: '127.0.0.1', port: appPort},
+    publicOrigin: `http://127.0.0.1:${appPort}`,
+    databasePath,
+    timeZone: 'UTC',
+    detailRetentionDays: 7,
+    hubSecretsPath: secretsPath,
+    viewerAuth: {mode: 'loopback'},
+    contracts: [],
+    demo: false,
+    management: {enabled: false},
+    update: {enabled: false}
+  };
+  fs.writeFileSync(path.join(configDir, 'analytics.json'), JSON.stringify(config), {mode: 0o600});
+  fs.writeFileSync(envPath, '', {mode: 0o600});
+  fs.writeFileSync(secretsPath, JSON.stringify({schemaVersion: 1, secrets: {}}), {mode: 0o600});
+  fs.writeFileSync(publicationPath, JSON.stringify({schemaVersion: 1, releaseId: 'rel-old', targetCommitSha: '1111111111111111111111111111111111111111', contentHash: 'c'.repeat(64), archiveSha256: 'a'.repeat(64), configurationId: 'cfg-old'}), {mode: 0o600});
+  const configPath = path.join(configDir, 'analytics.json');
+  const pidFile = path.join(temp, 'app.pid');
+  runningChild = await startFixtureApp({currentLink, configPath, pidFile, appScript});
+  const origin = config.publicOrigin;
+  await until(async () => (await (await fetch(`${origin}/api/health`)).json()).ok, 'old packaged app health');
+  const marker = new DatabaseSync(databasePath);
+  marker.exec('CREATE TABLE IF NOT EXISTS fixture_marker (value TEXT NOT NULL)');
+  marker.prepare('INSERT INTO fixture_marker VALUES (?)').run('committed-before-update');
+  marker.close();
 
-  const statePath = path.join(temp, 'runner-state.json');
-  const runnerPublication = path.join(temp, 'runner-publication.json');
-  fs.writeFileSync(runnerPublication, JSON.stringify({releaseId: 'rel-integ-old', commitSha: '0000000000000000000000000000000000000000', configurationId: 'cfg-before'}), {mode: 0o600});
-  saveUpdateState(statePath, {jobId: 'job-integ-self-update', targetCommitSha: remote.sha, targetCommitDate: '2026-09-09T00:00:00Z', targetMessage: 'fixture release', repositoryUrl: 'https://fixture.invalid/repository.git', branch: 'main', initialConfigurationId: 'cfg-before', status: 'running', stage: 'accepted', errorCode: null, startedAt: new Date().toISOString(), finishedAt: null});
-  const source = path.join(temp, 'source'); fs.mkdirSync(source);
-  const releaseModule = path.join(temp, 'fixture-release.mjs'); writeFixtureReleaseModule(releaseModule);
-  const contract = path.join(temp, 'fixture-contract.mjs'); writeFixtureContract(contract);
-  const paths = {verifyRoot: path.join(temp, 'verify'), publicationPath: runnerPublication, currentLink, fixtureNewRelease: newRelease, fixtureChildApp: childApp, fixtureConfig: childConfigPath, fixturePidFile: pidFile, fixtureOrigin: packagedOrigin, targetCommitSha: remote.sha, infrastructurePath: path.join(temp, 'infrastructure.json')};
-  fs.writeFileSync(paths.infrastructurePath, JSON.stringify({version: 2}), {mode: 0o600});
-  const invocation = runnerInvocation({runner: path.join(root, 'tools/update-runner.mjs'), statePath, contract, release: releaseModule, source, paths});
-  execFileSync(process.execPath, ['--input-type=module', '-e', invocation], {stdio: 'inherit'});
+  const statePath = path.join(temp, 'publication-state.json');
+  const verifyRoot = path.join(temp, 'verify');
+  saveUpdateState(statePath, {
+    jobId: 'job-real-publication', targetCommitSha: fixture.firstSha, targetCommitDate: '2026-09-09T00:00:00Z', targetMessage: 'fixture verified release',
+    repositoryUrl: 'https://fixture.invalid/token-monitor-analytics.git', branch: 'main', initialConfigurationId: 'cfg-old', status: 'running', stage: 'accepted', startedAt: new Date().toISOString(), finishedAt: null
+  });
+  setFixtureBranch(fixture.bare, fixture.firstSha);
+  const services = fixtureServices({currentLink, configPath, pidFile, appScript});
+  const repositoryOps = {
+    prepare: async ({targetCommitSha, workRoot}) => {
+      const snapshotDirectory = path.join(workRoot, 'source');
+      fs.mkdirSync(path.dirname(snapshotDirectory), {recursive: true, mode: 0o700});
+      git('worktree', ['add', '--detach', '--force', snapshotDirectory, targetCommitSha], fixture.bare);
+      return {
+        snapshotDirectory, commitDate: '2026-09-09T00:00:00Z', commitMessage: 'fixture verified release',
+        branchSha: git('rev-parse', ['refs/heads/main'], fixture.bare),
+        cleanup: () => { try { git('worktree', ['remove', '--force', snapshotDirectory], fixture.bare); } catch {} }
+      };
+    }
+  };
+  const paths = {statePath, verifyRoot, repositoryPath: fixture.bare, configPath, infrastructurePath: path.join(temp, 'infrastructure.json'), currentLink, publicationPath, backupPath: path.join(install, 'backups'), prefix: install, appUnit: 'tma-analytics.service', updateUnit: 'tma-update.service'};
+  const first = await runUpdate({paths, repositoryOps, services, preflight: async () => {}, enforceInfrastructure: false});
+  assert.equal(first.errorCode, undefined);
   const finished = readUpdateState(statePath, {checkServiceActive: () => true});
-  assert.equal(finished.status, 'completed'); assert.equal(finished.stage, 'success'); assert.equal(finished.jobId, 'job-integ-self-update'); assert.equal(finished.targetCommitSha, remote.sha); assert.equal(finished.expectedReleaseId, 'rel-integ-new'); assert.equal(finished.contentHash, contentHash);
-  const healthAfter = await (await fetch(`${packagedOrigin}/api/health`)).json(); const stateAfter = await (await fetch(`${packagedOrigin}/api/state`)).json();
-  assert.equal(healthAfter.release.commitSha, remote.sha); assert.equal(healthAfter.release.releaseId, 'rel-integ-new'); assert.equal(stateAfter.release.commitSha, remote.sha);
-  app.updateManager.pollJobState();
-  await delay(50);
-  console.log('PASS: isolated runner stopped/restarted the packaged Analytics app and proved SHA, release hash, job, viewer state, and browser SSE');
+  assert.equal(finished.status, 'completed'); assert.equal(finished.stage, 'success'); assert.equal(finished.outcome, 'updated'); assert.equal(finished.jobId, 'job-real-publication'); assert.equal(finished.targetCommitSha, fixture.firstSha);
+  assert.equal(fs.realpathSync(currentLink), path.join(install, 'releases', finished.expectedReleaseId));
+  const health = await (await fetch(`${origin}/api/health`)).json();
+  const state = await (await fetch(`${origin}/api/state`)).json();
+  assert.equal(health.release.targetCommitSha, fixture.firstSha); assert.equal(health.release.contentHash, finished.contentHash); assert.equal(state.release.targetCommitSha, fixture.firstSha);
+  await readReadySSE(origin);
+  const backupRoot = path.join(path.dirname(databasePath), 'backups');
+  const backupDirectories = fs.readdirSync(backupRoot);
+  assert.equal(backupDirectories.length, 1);
+  const backup = path.join(backupRoot, backupDirectories[0]);
+  assert.equal(fs.existsSync(path.join(backup, 'analytics.db')), true); assert.equal(fs.existsSync(path.join(backup, 'config', 'analytics.json')), true);
+  const backupDb = new DatabaseSync(path.join(backup, 'analytics.db'), {readOnly: true});
+  assert.equal(backupDb.prepare('SELECT value FROM fixture_marker').get().value, 'committed-before-update'); backupDb.close();
+  console.log('PASS: real prepare/apply packaged Analytics, backed up SQLite/config, stopped/restarted the app, and proved release identity plus browser SSE');
+
+  const oldPid = Number(fs.readFileSync(pidFile, 'utf8'));
+  setFixtureBranch(fixture.bare, fixture.secondSha);
+  saveUpdateState(statePath, {
+    jobId: 'job-real-noop', targetCommitSha: fixture.secondSha, targetCommitDate: '2026-09-09T00:00:00Z', targetMessage: 'fixture metadata-only revision',
+    repositoryUrl: 'https://fixture.invalid/token-monitor-analytics.git', branch: 'main', initialConfigurationId: JSON.parse(fs.readFileSync(publicationPath, 'utf8')).configurationId, status: 'running', stage: 'accepted', startedAt: new Date().toISOString(), finishedAt: null
+  });
+  const second = await runUpdate({paths, repositoryOps, services, preflight: async () => {}, enforceInfrastructure: false});
+  assert.equal(second.errorCode, undefined);
+  const noOp = readUpdateState(statePath, {checkServiceActive: () => true});
+  assert.equal(noOp.status, 'completed'); assert.equal(noOp.outcome, 'unchanged'); assert.equal(Number(fs.readFileSync(pidFile, 'utf8')), oldPid);
+  const stillCurrent = await (await fetch(`${origin}/api/health`)).json(); assert.equal(stillCurrent.release.targetCommitSha, fixture.firstSha);
+  console.log('PASS: identical payload on a newer SHA completed as unchanged without a restart or false SHA claim');
+}
+
+async function main() {
+  await runManagementAPIFixture();
+  await runRealPublicationFixture();
   console.log('UPDATE INTEGRATION OK');
 }
 
 main().catch(error => { console.error('UPDATE INTEGRATION FAILED:', error.message); process.exitCode = 1; }).finally(async () => {
   if (liveReader) await liveReader.cancel().catch(() => {});
-  for (const child of children) await stopChild(child);
+  await stopChild(runningChild);
   if (app) await app.close().catch(() => {});
   fs.rmSync(temp, {recursive: true, force: true});
 });

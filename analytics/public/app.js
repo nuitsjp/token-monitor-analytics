@@ -1,4 +1,5 @@
 import {boundedUsageRange,createUsageHistoryController,historyFetchErrorText} from './usage-history.mjs';
+import {createUpdateRestartController} from './update-restart.mjs';
 
 const $=id=>document.getElementById(id);
 const money=n=>typeof n==='number'&&Number.isFinite(n)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(n):'—';
@@ -309,6 +310,30 @@ let updateData=null,pollingRestart=false;
 const updateErrors={lock_conflict:'他の発行タスクまたは更新処理が実行中です。',fetch_failed:'mainブランチの最新コミット取得に失敗しました。ネットワーク接続を確認してください。',invalid_remote_commit:'リモートブランチのコミット識別子を検証できないため、更新を中止しました。',main_moved:'確認後にmainが進んだため、指定SHAへの更新を中止しました。',already_current:'選択したコミットはすでに発行済みです。',commit_not_found:'指定されたコミットがリモートのmainに見つかりません。',verification_failed:'新バージョンのローカル検証（テストまたはビルド）に失敗したため、適用を中止しました。現在のバージョンは維持されます。',deploy_failed:'成果物の配置またはSQLiteバックアップに失敗しました。',health_check_failed:'新バージョンの起動または疎通確認に失敗しました。ホストログを確認してください。',configuration_changed:'受付後に起動設定が変更されたため、停止前に更新を中止しました。',migration_required:'新しいサービス構成には管理者による移行が必要です。',provision_required:'更新に必要な固定ツールがありません。管理者にprovision:ubuntuを依頼してください。',job_aborted:'更新処理が途中で中断されました（プロセス終了またはサービス停止）。',system_restarted:'OS再起動により更新処理が中断されました。',save_state_failed:'状態ファイルの保存に失敗しました。',unknown_error:'予期せぬエラーが発生しました。'};
 const stageNames={accepted:'受付済み',fetching:'取得中',verifying:'検証中',deploying:'配置中',restarting:'再起動中',success:'成功',failed:'失敗',aborted:'中断・状態不明'};
 
+const restartController=createUpdateRestartController({
+ fetchHealth:()=>fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(1500)}),
+ fetchStatus:()=>fetch('/api/manage/update',{cache:'no-store',signal:AbortSignal.timeout(1500)}),
+ onProgress:job=>{
+  if(job.stage)$('restarting-text').textContent=`${stageNames[job.stage]??job.stage}...`;
+ },
+ onSuccess:async({unchanged})=>{
+  pollingRestart=false;$('update-restarting-overlay').hidden=true;
+  await refresh();
+  if(view==='update')await loadUpdate();
+  if(unchanged)notice('選択したコミットは内容と設定が同一のため、サービスは再起動されませんでした。');
+ },
+ onFailure:async job=>{
+  pollingRestart=false;$('update-restarting-overlay').hidden=true;
+  await loadUpdate();
+  notice(updateErrors[job.errorCode]??`更新に失敗しました (${job.errorCode??'unknown_error'})`);
+ },
+ onTimeout:async()=>{
+  pollingRestart=false;$('update-restarting-overlay').hidden=true;
+  await loadUpdate();
+  notice('再起動の確認がタイムアウトしました。SSHでホストの状態を確認してください。');
+ }
+});
+
 async function loadUpdate(){
  try{
   updateData=await get('/api/manage/update');
@@ -418,33 +443,8 @@ function waitForRestart(jobId,targetCommitSha){
  if(pollingRestart)return;
  pollingRestart=true;
  $('update-restarting-overlay').hidden=false;
- let attempts=0;
- const maxAttempts=90;
-  const timer=setInterval(async()=>{
-  attempts++;
-  try{
-   const [health,state]=await Promise.all([
-    fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(1500)}),
-    fetch('/api/manage/update',{cache:'no-store',signal:AbortSignal.timeout(1500)})
-   ]);
-   if(health.ok&&state.ok){
-    const body=await state.json();
-    const current=body.current??{},job=body.job??null;
-    if(current.commitSha===targetCommitSha&&job?.jobId===jobId&&job?.status==='completed'&&job?.stage==='success'){
-     clearInterval(timer);
-     pollingRestart=false;
-     $('update-restarting-overlay').hidden=true;
-     await refresh();
-     if(view==='update')await loadUpdate();
-     return;
-    }
-   }
-  }catch{}
-  if(attempts>=maxAttempts){
-   clearInterval(timer);
-   $('restarting-text').textContent='再起動が完了しませんでした。SSHでホストに接続し、サービス状態を確認してください。';
-  }
- },2000);
+ $('restarting-text').textContent='再起動を確認しています...';
+ if(!restartController.start(jobId,targetCommitSha))pollingRestart=false;
 }
 
 function connection(s,on=false){$('live').textContent=s;$('dot').classList.toggle('on',on);}
@@ -471,6 +471,6 @@ $('usage-granularity').onchange=()=>{usageHistoryController.invalidate();setUsag
 $('usage-history-load').onclick=()=>loadUsageHistory().catch(e=>notice(e.message));
 $('usage-history-fetch').onclick=requestUsageHistory;
 for(const b of document.querySelectorAll('nav button'))b.onclick=()=>{view=b.dataset.view;for(const t of document.querySelectorAll('nav button'))t.removeAttribute('aria-current');b.setAttribute('aria-current','page');for(const s of document.querySelectorAll('.view'))s.hidden=s.id!==view;$('title').textContent=b.textContent;if(view==='history'){loadHistory().catch(e=>notice(e.message));loadUsageHistoryHubs().catch(e=>notice(e.message));}if(view==='manage')loadManage().catch(e=>notice(e.message));if(view==='update')loadUpdate().catch(e=>notice(e.message));};
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();connect();}});window.addEventListener('pagehide',()=>{stopped=true;feed?.close();feed=null;});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();connect();}});window.addEventListener('pagehide',()=>{stopped=true;restartController.stop();pollingRestart=false;feed?.close();feed=null;});
 window.addEventListener('pageshow',()=>{stopped=false;refresh();connect();});
 refresh();connect();

@@ -169,7 +169,15 @@ function artifactInfo(prepared, targetCommitSha, workRoot, runnerContract) {
 function publicationProof(result, expected, jobId) {
   const proof = result?.proof && typeof result.proof === 'object' ? result.proof : result;
   if (!proof || proof.jobId !== jobId) throw safeError('The publication result belongs to another update job.', 'health_check_failed');
-  if (proof.commitSha !== expected.targetCommitSha || proof.releaseId !== expected.releaseId || proof.contentHash !== expected.contentHash || proof.archiveSha256 !== expected.archiveSha256) throw safeError('The restarted application did not prove the expected release.', 'health_check_failed');
+  if (result?.changed === false) {
+    // A verified target can have the same payload/configuration as the live
+    // release while carrying a newer Git SHA. The publisher must report both
+    // identities; accept the no-op only when its requested manifest is the
+    // verified target and its live proof remains internally consistent.
+    const requested = result.requestedManifest;
+    if (!requested || requested.targetCommitSha !== expected.targetCommitSha || requested.releaseId !== expected.releaseId || requested.contentHash !== expected.contentHash) throw safeError('The no-op publication result does not describe the verified target.', 'health_check_failed');
+    if (!SHA.test(proof.commitSha || '') || !HASH.test(proof.archiveSha256 || '') || proof.contentHash !== expected.contentHash || typeof proof.releaseId !== 'string' || !proof.releaseId) throw safeError('The unchanged application did not prove its live release.', 'health_check_failed');
+  } else if (proof.commitSha !== expected.targetCommitSha || proof.releaseId !== expected.releaseId || proof.contentHash !== expected.contentHash || proof.archiveSha256 !== expected.archiveSha256) throw safeError('The restarted application did not prove the expected release.', 'health_check_failed');
   if (proof.health !== true || proof.state !== true || proof.viewer !== true || proof.sse !== true) throw safeError('The restarted application did not pass the required viewer/state/SSE checks.', 'health_check_failed');
   return proof;
 }
@@ -192,6 +200,7 @@ export async function runUpdate({
   misePath = path.join(process.env.HOME || os.homedir(), '.local', 'bin', 'mise'),
   preflight = defaultPreflight,
   repositoryOps,
+  services = null,
   enforceInfrastructure = true
 } = {}) {
   const paths = {...DEFAULT_RUNNER_PATHS, ...providedPaths};
@@ -256,7 +265,7 @@ export async function runUpdate({
       : path.join(source.snapshotDirectory, 'tools', 'publish-ubuntu.mjs');
     const publication = await loadPublicationApi(sourcePublicationModulePath);
     const architecture = process.arch === 'x64' ? 'amd64' : 'arm64';
-    const prepared = await publication.preparePublication({
+    const prepareOptions = {
       root: source.snapshotDirectory,
       architecture,
       targetCommitSha: targetCommitSha.toLowerCase(),
@@ -266,13 +275,15 @@ export async function runUpdate({
       publicationPath: paths.publicationPath,
       uid: process.getuid?.(),
       serviceUnits: [paths.appUnit, paths.updateUnit]
-    });
+    };
+    if (services) prepareOptions.services = services;
+    const prepared = await publication.preparePublication(prepareOptions);
     const artifact = artifactInfo(prepared, targetCommitSha.toLowerCase(), workRoot, runnerContract);
     setStage('verifying', {targetCommitDate: commitDate, targetMessage: commitMessage, expectedReleaseId: artifact.releaseId, contentHash: artifact.contentHash, archiveSha256: artifact.archiveSha256});
 
     stage = 'deploying';
     if (!setStage(stage, {expectedReleaseId: artifact.releaseId, contentHash: artifact.contentHash, archiveSha256: artifact.archiveSha256})) return null;
-    const result = await publication.applyPublication(prepared, {
+    const applyOptions = {
       jobId,
       targetCommitSha: targetCommitSha.toLowerCase(),
       targetCommitDate: commitDate,
@@ -283,9 +294,11 @@ export async function runUpdate({
           setStage('restarting', {expectedReleaseId: artifact.releaseId, contentHash: artifact.contentHash, archiveSha256: artifact.archiveSha256});
         }
       }
-    });
+    };
+    if (services) applyOptions.services = services;
+    const result = await publication.applyPublication(prepared, applyOptions);
     const proof = publicationProof(result, {targetCommitSha: targetCommitSha.toLowerCase(), releaseId: artifact.releaseId, contentHash: artifact.contentHash, archiveSha256: artifact.archiveSha256}, jobId);
-    setStage('success', {status: 'completed', expectedReleaseId: artifact.releaseId, contentHash: artifact.contentHash, archiveSha256: artifact.archiveSha256, configurationId: proof.configurationId ?? null, finishedAt: now()});
+    setStage('success', {status: 'completed', outcome: result?.changed === false ? 'unchanged' : 'updated', expectedReleaseId: artifact.releaseId, contentHash: artifact.contentHash, archiveSha256: artifact.archiveSha256, configurationId: proof.configurationId ?? null, finishedAt: now()});
     return {jobId, targetCommitSha: targetCommitSha.toLowerCase(), releaseId: artifact.releaseId, proof};
   } catch (error) {
     const code = failureCode(error, stage);

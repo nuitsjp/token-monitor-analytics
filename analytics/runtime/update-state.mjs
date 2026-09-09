@@ -63,7 +63,8 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
     expectedReleaseId: typeof raw.expectedReleaseId === 'string' ? raw.expectedReleaseId : null,
     contentHash: typeof raw.contentHash === 'string' ? raw.contentHash : null,
     archiveSha256: typeof raw.archiveSha256 === 'string' ? raw.archiveSha256 : null,
-    configurationId: typeof raw.configurationId === 'string' ? raw.configurationId : null
+    configurationId: typeof raw.configurationId === 'string' ? raw.configurationId : null,
+    outcome: raw.outcome === 'updated' || raw.outcome === 'unchanged' ? raw.outcome : null
   };
 
   // Reconcile running status against systemd
@@ -98,6 +99,7 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
           contentHash: latestRaw.contentHash || null,
           archiveSha256: latestRaw.archiveSha256 || null,
           configurationId: latestRaw.configurationId || null,
+          outcome: latestRaw.outcome === 'updated' || latestRaw.outcome === 'unchanged' ? latestRaw.outcome : null,
           status: latestStatus,
           stage: latestStage,
           errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
@@ -119,6 +121,7 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
           contentHash: latestRaw.contentHash || null,
           archiveSha256: latestRaw.archiveSha256 || null,
           configurationId: latestRaw.configurationId || null,
+          outcome: latestRaw.outcome === 'updated' || latestRaw.outcome === 'unchanged' ? latestRaw.outcome : null,
           status: VALID_STATUSES.has(latestRaw.status) ? latestRaw.status : 'aborted',
           stage: VALID_STAGES.has(latestRaw.stage) ? latestRaw.stage : 'aborted',
           errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
@@ -184,6 +187,7 @@ export function saveUpdateState(statePath, state) {
     contentHash: state.contentHash ?? null,
     archiveSha256: state.archiveSha256 ?? null,
     configurationId: state.configurationId ?? null,
+    outcome: state.outcome ?? null,
     status: state.status,
     stage: state.stage,
     errorCode: state.errorCode ?? null,

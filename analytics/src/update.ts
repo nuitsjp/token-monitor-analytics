@@ -58,6 +58,7 @@ export interface UpdateJobState {
   contentHash?: string | null;
   archiveSha256?: string | null;
   configurationId?: string | null;
+  outcome?: 'updated' | 'unchanged' | null;
   status: UpdateStatus;
   stage: UpdateStage;
   errorCode: SafeUpdateErrorCode | null;
