@@ -450,7 +450,8 @@ const entries=[];
 const digest=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const visit=filename=>{
  const stat=fs.lstatSync(filename);
- const entry={path:filename,type:stat.isDirectory()?'directory':stat.isFile()?'file':stat.isSymbolicLink()?'symlink':'other',uid:stat.uid,gid:stat.gid,mode:stat.mode&0o7777,size:stat.size};
+ const entry={path:filename,type:stat.isDirectory()?'directory':stat.isFile()?'file':stat.isSymbolicLink()?'symlink':'other',uid:stat.uid,gid:stat.gid,mode:stat.mode&0o7777};
+ if(stat.isFile())entry.size=stat.size;
  if(stat.isSymbolicLink())entry.link=fs.readlinkSync(filename);
  if(stat.isFile()&&!sensitive.has(path.basename(filename)))entry.sha256=digest(filename);
  entries.push(entry);
