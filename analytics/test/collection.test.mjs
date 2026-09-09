@@ -187,6 +187,51 @@ test('collection manager serializes reconnect behind configuration removal', asy
   } finally { await manager.stop(); }
 });
 
+test('collection manager fences a newer commit while an older reconciliation waits for retirement', async () => {
+  const oldUrl = 'http://127.0.0.1:10001';
+  const newUrl = 'http://127.0.0.1:10002';
+  const calls = [];
+  let first = true;
+  let markObservation;
+  const observationStarted = new Promise(resolve => { markObservation = resolve; });
+  let releaseObservation;
+  const observationGate = new Promise(resolve => { releaseObservation = resolve; });
+  const event = new TextEncoder().encode('event: snapshot\ndata: {}\n\n');
+  const manager = createCollectionManager({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (first) {
+        first = false;
+        return new Response(new ReadableStream({start(controller) { controller.enqueue(event); controller.close(); }}), {
+          status: 200, headers: {'Content-Type': 'text/event-stream'},
+        });
+      }
+      return new Response(null, {status: 500});
+    },
+    onObservation: async () => { markObservation(); await observationGate; },
+    jitterFn: () => 0,
+  });
+  try {
+    await manager.applyHubs([{id: 'h', url: oldUrl, secret: 's1', status: 'active'}]);
+    await observationStarted;
+    const staleApply = manager.applyHubs([{id: 'h', url: oldUrl, secret: 's2', status: 'active'}]);
+    const deadline = Date.now() + 1000;
+    while (manager.getStatus().length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+    assert.deepEqual(manager.getStatus(), []);
+    // The first reconciliation has already removed the runner.  The second
+    // commit must still invalidate its pending start through the token.
+    assert.equal(manager.invalidateHub('h'), false);
+    const currentApply = manager.applyHubs([{id: 'h', url: newUrl, secret: 's3', status: 'active'}]);
+    releaseObservation();
+    await Promise.all([staleApply, currentApply]);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(calls.filter(url => url.startsWith(oldUrl + '/')).length, 1);
+    assert.ok(calls.some(url => url.startsWith(newUrl + '/')));
+  } finally {
+    await manager.stop();
+  }
+});
+
 test('startServer stores Node-collected observations only after the SQLite commit', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-collection-server-'));
   const hub = http.createServer((_req, res) => {

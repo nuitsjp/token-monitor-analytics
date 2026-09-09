@@ -15,7 +15,7 @@ function draw(){if(!data)return;displayZone=data.timeZone??'Asia/Tokyo';
  const h=data.hubs.find(h=>h.hubId===$('hub-select').value),p=h?.stats.periods;
  $('today').textContent=money(p?.today?.costUsd);$('month').textContent=money(p?.month?.costUsd);$('alltime').textContent=money(p?.allTime?.costUsd);
  const age=h?Math.floor((Date.now()-Date.parse(h.observedAt))/60000):0;
- $('observed').textContent=h?`最終観測 ${when(h.observedAt)} ${displayZone}${age>=5?` · ${age}分前の観測値`:''}`:'まだ観測データがありません。Collectorのログと接続設定を確認してください。';
+ $('observed').textContent=h?`最終観測 ${when(h.observedAt)} ${displayZone}${age>=5?` · ${age}分前の観測値`:''}`:'まだ観測データがありません。Hubの接続状態を確認してください。';
  $('estimates').replaceChildren();
  const cs=data.contracts.filter(c=>c.hubId===$('hub-select').value);
  if(!cs.length)$('estimates').append(el('div','契約の紐付けは未設定です。利用額の収集はこのまま継続できます。','empty'));
@@ -52,19 +52,10 @@ async function loadManage(){
 }
 function drawManage(){
  if(!manageData)return;
- const {revision,hubs,collector}=manageData;
+ const {hubs}=manageData;
  $('manage-status').replaceChildren();
- $('manage-status').append(el('span',`保存済み: rev ${revision}`));
- if(!collector||collector.status==='unknown'){
-  $('manage-status').append(el('span','Collector状態不明','badge warn'));
- }else if(collector.appliedRevision<revision){
-  $('manage-status').append(el('span',`反映待ち (要求 rev ${revision} / 適用 rev ${collector.appliedRevision})`,'badge sync'));
- }else{
-  $('manage-status').append(el('span',`設定反映済み (rev ${revision})`,'badge active'));
- }
- if(collector?.lastReportAt){
-  $('manage-status').append(el('small',`最終報告: ${when(collector.lastReportAt)}`,'muted'));
- }
+ $('manage-status').append(el('span','SQLiteへ保存済み','badge active'));
+ $('manage-status').append(el('small','設定の保存とHub接続の状態を別々に表示しています。','muted'));
 
  if(!hubs.length){
   $('manage-empty').hidden=false;
@@ -83,22 +74,20 @@ function drawManage(){
   const statusTd=el('td');
   statusTd.append(el('span',h.status==='active'?'有効':'停止',`badge ${h.status==='active'?'active':'disabled'}`));
 
-  const applied=collector?.appliedRevision>=revision;
-  const syncTd=el('td');
-  syncTd.append(el('span',applied?'反映済み':'反映待ち',`badge ${applied?'active':'sync'}`));
-
-  const cHub=collector?.hubs?.[h.id];
+  const cHub=h.connection;
   const connTd=el('td');
   let connLabel='不明',connCls='disabled';
   if(h.status==='disabled'){
    connLabel='停止中';connCls='disabled';
   }else if(cHub){
-   if(cHub.status==='connected'){connLabel='接続中';connCls='active';}
-   else if(cHub.status==='connecting'){connLabel='接続試行中';connCls='sync';}
-   else if(cHub.status==='error'){connLabel=cHub.errorCode?`エラー (${cHub.errorCode})`:'エラー';connCls='error';}
-   else if(cHub.status==='disabled'){connLabel='停止中';connCls='disabled';}
+   if(cHub.state==='connected'){connLabel='接続中';connCls='active';}
+   else if(cHub.state==='connecting'){connLabel='接続試行中';connCls='sync';}
+   else if(cHub.state==='error'){connLabel=cHub.errorCode==='missing_secret'?'Secret未設定':cHub.errorCode?`エラー (${cHub.errorCode})`:'エラー';connCls='error';}
+   else if(cHub.state==='stopped'){connLabel='停止中';connCls='disabled';}
   }
   connTd.append(el('span',connLabel,`badge ${connCls}`));
+
+  const observedTd=el('td',h.connection?.lastObservationAt?when(h.connection.lastObservationAt):'—');
 
   const actTd=el('td');
   const actWrap=el('div',undefined,'table-actions');
@@ -106,12 +95,15 @@ function drawManage(){
   editBtn.onclick=()=>openEditDialog(h);
   const toggleBtn=el('button',h.status==='active'?'停止':'有効化','outline');
   toggleBtn.onclick=()=>toggleHubStatus(h);
+  const reconnectBtn=el('button','再接続','outline');
+  reconnectBtn.disabled=h.status!=='active';
+  reconnectBtn.onclick=()=>reconnectHub(h);
   const delBtn=el('button','削除','outline danger');
   delBtn.onclick=()=>openDeleteDialog(h);
-  actWrap.append(editBtn,toggleBtn,delBtn);
+  actWrap.append(editBtn,toggleBtn,reconnectBtn,delBtn);
   actTd.append(actWrap);
 
-  tr.append(nameTd,urlTd,statusTd,syncTd,connTd,actTd);
+  tr.append(nameTd,urlTd,statusTd,connTd,observedTd,actTd);
   $('manage-hubs-body').append(tr);
  }
 }
@@ -157,7 +149,6 @@ $('hub-form').onsubmit=async e=>{
  try{
   if(dialogMode==='add'){
    await post('/api/manage/hubs',{
-    expectedRevision:manageData.revision,
     id:$('input-hub-id').value.trim(),
     label:$('input-hub-label').value.trim(),
     url:$('input-hub-url').value.trim(),
@@ -165,7 +156,7 @@ $('hub-form').onsubmit=async e=>{
    });
   }else{
    const body={
-    expectedRevision:manageData.revision,
+    expectedVersion:manageData.hubs.find(h=>h.id===editingHub.id)?.version,
     label:$('input-hub-label').value.trim(),
     url:$('input-hub-url').value.trim(),
     status:$('select-hub-status').value
@@ -195,7 +186,7 @@ $('hub-delete-form').onsubmit=async e=>{
  e.preventDefault();
  $('delete-dialog-error').hidden=true;
  try{
-  await post(`/api/manage/hubs/${encodeURIComponent(deletingHub.id)}`,{expectedRevision:manageData.revision},'DELETE');
+  await post(`/api/manage/hubs/${encodeURIComponent(deletingHub.id)}`,{expectedVersion:manageData.hubs.find(h=>h.id===deletingHub.id)?.version},'DELETE');
   $('hub-delete-dialog').close();
   await loadManage();
  }catch(err){
@@ -206,11 +197,15 @@ $('hub-delete-form').onsubmit=async e=>{
 async function toggleHubStatus(h){
  try{
   await post(`/api/manage/hubs/${encodeURIComponent(h.id)}`,{
-   expectedRevision:manageData.revision,
+   expectedVersion:h.version,
    status:h.status==='active'?'disabled':'active'
   },'PUT');
   await loadManage();
  }catch(err){notice(err.message);}
+}
+async function reconnectHub(h){
+ try{await post(`/api/manage/hubs/${encodeURIComponent(h.id)}/reconnect`,{});await loadManage();}
+ catch(err){notice(err.message);}
 }
 
 let updateData=null,pollingRestart=false;
@@ -368,4 +363,3 @@ for(const b of document.querySelectorAll('nav button'))b.onclick=()=>{view=b.dat
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();connect();}});window.addEventListener('pagehide',()=>{stopped=true;feed?.close();feed=null;});
 window.addEventListener('pageshow',()=>{stopped=false;refresh();connect();});
 refresh();connect();
-

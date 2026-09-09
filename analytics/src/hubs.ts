@@ -8,6 +8,14 @@ export interface ManagedHub {
   secretRef: string;
 }
 
+/** A row returned by the SQLite Hub store.  Secret values never cross this boundary. */
+export interface HubRecord extends ManagedHub {
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  lastObservationAt: string | null;
+}
+
 export interface HubsFile {
   schemaVersion: 1;
   revision: number;
@@ -26,6 +34,8 @@ export interface HubViewItem {
   url: string;
   status: HubStatus;
   hasSecret: boolean;
+  version?: number;
+  lastObservationAt?: string | null;
 }
 
 export const MAX_CONFIG_BYTES = 262144;

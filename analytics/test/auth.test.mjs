@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {canIngest,canView,allowedRequest} from '../runtime/auth.mjs';
+import {canView,allowedRequest} from '../runtime/auth.mjs';
 
 const auth={
- ingest:'collector-ingest-token-that-is-long-enough',
- user:'viewer',
- password:'viewer-password-that-is-long-enough'
+  user:'viewer',
+  password:'viewer-password-that-is-long-enough'
 };
 const loopbackConfig={viewerAuth:{mode:'loopback'}};
 const basicConfig={viewerAuth:{mode:'basic'}};
@@ -39,7 +38,7 @@ test('Basic viewer auth rejects wrong, missing, and malformed credentials',()=>{
   ['missing header',undefined,false],
   ['missing password',basic(auth.user,''),false],
   ['missing colon',`Basic ${Buffer.from(auth.user).toString('base64')}`,false],
-  ['wrong scheme',`Bearer ${auth.ingest}`,false],
+  ['wrong scheme','Bearer hub-secret',false],
   ['invalid Basic value','Basic not-base64',false]
  ];
  for(const [label,authorization,expected] of cases){
@@ -48,11 +47,9 @@ test('Basic viewer auth rejects wrong, missing, and malformed credentials',()=>{
  }
 });
 
-test('collector Bearer auth and viewer Basic auth are separate credentials',()=>{
- const bearer=request({authorization:`Bearer ${auth.ingest}`},'198.51.100.10');
+test('Basic viewer auth does not accept a Hub Bearer secret',()=>{
+ const bearer=request({authorization:'Bearer hub-secret'},'198.51.100.10');
  const viewer=request({authorization:basic(auth.user,auth.password)},'198.51.100.10');
- assert.equal(canIngest(bearer,auth),true);
- assert.equal(canIngest(viewer,auth),false);
  assert.equal(canView(bearer,basicConfig,auth),false);
  assert.equal(canView(viewer,basicConfig,auth),true);
 });

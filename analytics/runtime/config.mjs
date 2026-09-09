@@ -3,7 +3,6 @@ import path from 'node:path';
 import {isIP} from 'node:net';
 import {networkInterfaces} from 'node:os';
 import {validateContracts} from '../src/estimate.ts';
-import {readHubsConfig} from './hubs.mjs';
 
 const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const safeId = x => typeof x === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(x);
@@ -16,8 +15,8 @@ export function loadConfig(filename) {
  const absolute = path.resolve(filename);
  if (fs.statSync(absolute).size > 262144) throw new Error('Config too large');
  const raw = JSON.parse(fs.readFileSync(absolute,'utf8').replace(/^\uFEFF/,''));
- keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','ingestTokenEnv','viewerAuth','hubs','hubsPath','contracts','demo','tailnetViewer','management','update'],'configuration');
- if (raw.version !== 1 || typeof raw.demo !== 'boolean') throw new Error('version=1 and explicit demo boolean are required');
+ keys(raw,['version','listen','publicOrigin','databasePath','timeZone','detailRetentionDays','viewerAuth','hubSecretsPath','contracts','demo','tailnetViewer','management','update'],'configuration');
+ if (raw.version !== 2 || typeof raw.demo !== 'boolean') throw new Error('version=2 and explicit demo boolean are required');
  keys(raw.listen,['host','port'],'listen');
  const {host,port} = raw.listen;
  if (!isIP(host) || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('listen requires an IP literal and port 1..65535');
@@ -28,7 +27,6 @@ export function loadConfig(filename) {
  if (!Number.isInteger(raw.detailRetentionDays) || raw.detailRetentionDays < 1 || raw.detailRetentionDays > 3650) throw new Error('detailRetentionDays must be 1..3650');
  if (typeof raw.timeZone !== 'string') throw new Error('timeZone required');
  new Intl.DateTimeFormat('en',{timeZone:raw.timeZone});
- if (!envName(raw.ingestTokenEnv)) throw new Error('Invalid ingestTokenEnv');
  keys(raw.viewerAuth,['mode','userEnv','passwordEnv'],'viewerAuth');
  if (!['loopback','basic','tailscale'].includes(raw.viewerAuth.mode)) throw new Error('viewerAuth mode must be loopback, basic or tailscale');
  if (raw.viewerAuth.mode === 'basic' && (!envName(raw.viewerAuth.userEnv) || !envName(raw.viewerAuth.passwordEnv))) throw new Error('Basic auth environment names required');
@@ -68,7 +66,7 @@ export function loadConfig(filename) {
    throw new Error('update.publicationPath must be a non-empty string');
   }
  }
- const resolvePath = p => (p.startsWith('/') ? p : path.resolve(path.dirname(absolute), p));
+ const resolvePath = p => (path.isAbsolute(p) ? path.resolve(p) : path.resolve(path.dirname(absolute), p));
  const updateConfig = raw.update ? {
   enabled: Boolean(raw.update.enabled),
   repositoryUrl: raw.update.repositoryUrl ?? 'https://github.com/nuitsjp/token-monitor-analytics.git',
@@ -78,35 +76,15 @@ export function loadConfig(filename) {
   repoPath: raw.update.repoPath ? resolvePath(raw.update.repoPath) : '/var/lib/tma-deploy/repo',
   publicationPath: raw.update.publicationPath ? resolvePath(raw.update.publicationPath) : '/opt/token-monitor-analytics/publication.json'
  } : { enabled: false };
- if (raw.hubs !== undefined && raw.hubsPath !== undefined) {
-  throw new Error('Cannot specify both hubs and hubsPath');
- }
- if (raw.hubs === undefined && raw.hubsPath === undefined) {
-  throw new Error('Either hubs or hubsPath is required');
- }
- if (managementEnabled && !raw.hubsPath) {
-  throw new Error('Management mode requires hubsPath');
- }
-
- const ids = new Set();
- let resolvedHubsPath = null;
- if (raw.hubsPath !== undefined) {
-  if (typeof raw.hubsPath !== 'string' || !raw.hubsPath.trim()) throw new Error('hubsPath must be a non-empty string');
-  if (path.isAbsolute(raw.hubsPath)) throw new Error('hubsPath must be a relative path');
-  resolvedHubsPath = path.resolve(path.dirname(absolute), raw.hubsPath);
-  const {hubsFile} = readHubsConfig(resolvedHubsPath);
-  raw.hubs = hubsFile.hubs.map(h => ({id: h.id, label: h.label}));
-  for (const hub of raw.hubs) {
-   ids.add(hub.id);
-  }
- } else {
-  if (!Array.isArray(raw.hubs) || raw.hubs.length < 1 || raw.hubs.length > 16) throw new Error('Configure 1..16 hubs');
-  for (const hub of raw.hubs) {
-   keys(hub,['id','label'],'hub');
-   if (!safeId(hub.id) || ids.has(hub.id) || typeof hub.label !== 'string' || !hub.label || hub.label.length > 128) throw new Error('Invalid/duplicate hub');
-   ids.add(hub.id);
-  }
- }
+ const secretPathInput = raw.hubSecretsPath ?? './hub-secrets.json';
+ if (typeof secretPathInput !== 'string' || !secretPathInput.trim()) throw new Error('hubSecretsPath must be a non-empty string');
+ const resolvedHubSecretsPath = path.isAbsolute(secretPathInput)
+  ? path.resolve(secretPathInput)
+  : path.resolve(path.dirname(absolute), secretPathInput);
+ const resolvedDatabasePath = path.isAbsolute(raw.databasePath)
+  ? path.resolve(raw.databasePath)
+  : path.resolve(path.dirname(absolute), raw.databasePath);
+ if (resolvedHubSecretsPath === resolvedDatabasePath || resolvedHubSecretsPath === absolute) throw new Error('hubSecretsPath must be separate from the database and configuration files');
 
  if (!Array.isArray(raw.contracts)) throw new Error('contracts must be an array');
  const contractFields=['id','label','hubId','provider','accountKey','clientIds','deviceIds','windowKind','windowHours','monthlyFeeUsd','attributionConfirmed','minDeltaPercent','maxSourceSkewSeconds','maxGapSeconds'];
@@ -114,8 +92,10 @@ export function loadConfig(filename) {
   keys(c,contractFields,'contract');
   if (!safeId(c.id) || typeof c.attributionConfirmed !== 'boolean' || !Array.isArray(c.clientIds) || !Array.isArray(c.deviceIds) || ![...c.clientIds,...c.deviceIds].every(x=>typeof x==='string'&&x.length>0&&x.length<=256) || ![c.label,c.hubId,c.provider,c.accountKey,c.windowKind].every(x=>typeof x==='string'&&x.length>0&&x.length<=256)) throw new Error('Invalid contract identity');
  }
- validateContracts(raw.contracts,[...ids]);
- return {...raw,publicOrigin:origin.origin,databasePath:raw.databasePath.startsWith('/')?raw.databasePath:path.resolve(path.dirname(absolute),raw.databasePath),configFile:absolute,hubsPath:resolvedHubsPath,management:{enabled:managementEnabled},update:updateConfig};
+ // Contract references are checked for shape here.  Their Hub rows are
+ // authoritative in SQLite and are checked by the server after opening it.
+ validateContracts(raw.contracts,[...new Set(raw.contracts.map(c=>c.hubId))]);
+ return {...raw,publicOrigin:origin.origin,databasePath:resolvedDatabasePath,configFile:absolute,hubSecretsPath:resolvedHubSecretsPath,management:{enabled:managementEnabled},update:updateConfig};
 }
 export function credentials(config, env=process.env) {
  const secret = (name,min) => {
@@ -123,14 +103,12 @@ export function credentials(config, env=process.env) {
   if (typeof value !== 'string' || value.length < min || value.startsWith('REPLACE_') || /[\r\n\0]/.test(value)) throw new Error(`Missing/short/invalid environment variable: ${name}`);
   return value;
  };
- const ingest = secret(config.ingestTokenEnv,32);
- if (!config.demo && ingest === 'demo-ingest-token-not-for-production') throw new Error('Demo token is prohibited outside demo');
  if (config.viewerAuth.mode === 'basic') {
   const user=secret(config.viewerAuth.userEnv,1),password=secret(config.viewerAuth.passwordEnv,16);
-  if (user.includes(':') || password === ingest) throw new Error('Viewer credentials must be independent of ingest token');
-  return {ingest,user,password};
+  if (user.includes(':')) throw new Error('Viewer username must not contain a colon');
+  return {user,password};
  }
- return {ingest};
+ return {};
 }
 
 export function isTailnetIPv4(ip){

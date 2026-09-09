@@ -206,7 +206,7 @@ test('HTTP Management API protects /api/manage/update endpoints and handles chec
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, config.publicOrigin);
     if (url.pathname.startsWith('/api/manage/update')) {
-      await management.handleUpdate(req, res, url);
+      await management.handleManage(req, res, url);
       return;
     }
     res.writeHead(404);

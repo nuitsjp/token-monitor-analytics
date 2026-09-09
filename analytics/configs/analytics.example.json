@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "listen": {
     "host": "127.0.0.1",
     "port": 8787
@@ -8,20 +8,10 @@
   "databasePath": "../data/local/analytics.db",
   "timeZone": "Asia/Tokyo",
   "detailRetentionDays": 7,
-  "ingestTokenEnv": "TMA_INGEST_TOKEN",
+  "hubSecretsPath": "../data/local/hub-secrets.json",
   "viewerAuth": {
     "mode": "loopback"
   },
-  "hubs": [
-    {
-      "id": "hub-a",
-      "label": "Hub A"
-    },
-    {
-      "id": "hub-b",
-      "label": "Hub B"
-    }
-  ],
   "contracts": [],
   "demo": false
 }

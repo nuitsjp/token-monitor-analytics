@@ -4,12 +4,13 @@ import {pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
 import {loadConfig,credentials,validateTailnetBinding} from './config.mjs';
 import {openDatabase} from './sqlite.mjs';
-import {canIngest,canView,allowedRequest} from './auth.mjs';
+import {canView,allowedRequest} from './auth.mjs';
 import {LiveFeed} from './live.mjs';
-import {parseBatch,compactHubEvent} from '../src/protocol.ts';
-import {ingest,recordObservation,dashboard,history,prune} from '../src/db.ts';
-import {CollectorStatusTracker, createManagementHandler} from './management.mjs';
-import {readHubsConfig} from './hubs.mjs';
+import {compactHubEvent} from '../src/protocol.ts';
+import {recordObservation,dashboard,history,prune} from '../src/db.ts';
+import {createManagementHandler} from './management.mjs';
+import {listHubRecords, readHubSecretStore, recordContractSnapshots} from './hubs.mjs';
+import {validateContracts} from '../src/estimate.ts';
 import {UpdateManager} from './update-manager.mjs';
 import {createCollectionManager} from './collection/manager.mjs';
 
@@ -19,16 +20,6 @@ const commonHeaders={
  'Permissions-Policy':'camera=(), microphone=(), geolocation=()'
 };
 function json(response,data,status=200){response.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});response.end(JSON.stringify(data));}
-async function body(request){
- const limit=270000,declared=request.headers['content-length'];
- if(declared && (!/^\d+$/.test(declared)||Number(declared)>limit))throw Object.assign(new Error('body_too_large'),{status:413});
- let total=0;const chunks=[];
- // A stalled sender must not keep a body reader alive indefinitely.
- request.setTimeout(15000,()=>request.destroy());
- for await(const chunk of request){total+=chunk.length;if(total>limit)throw Object.assign(new Error('body_too_large'),{status:413});chunks.push(chunk);}
- request.setTimeout(0);
- return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
 export async function startServer(config,{env=process.env,logger=console,maintenanceMs=300000,heartbeatMs=25000,collectionHubs,fetchImpl,collectionIdleMs,collectionHeaderTimeoutMs}={}){
  validateTailnetBinding(config);
  const auth=credentials(config,env);
@@ -44,12 +35,17 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   idleMs:collectionIdleMs,
   headerTimeoutMs:collectionHeaderTimeoutMs,
   fetchImpl,
-  onObservation:async({hubId,name,data,streamId})=>{
+  onObservation:async({hubId,name,data,streamId}, lifecycle={})=>{
    let observation;
    try{observation=compactHubEvent({name,data},hubId,streamId);}
    catch(error){throw error;}
    try{
-    const changed=await exclusive(()=>db.transaction(()=>recordObservation(db,observation,config.contracts,config.timeZone)));
+    const changed=await exclusive(()=>{
+      // A management COMMIT synchronously invalidates the runner before
+      // allowing old callbacks to enter this transaction.
+      if (lifecycle.isCurrent && !lifecycle.isCurrent()) return [];
+      return db.transaction(()=>recordObservation(db,observation,config.contracts,config.timeZone));
+    });
     if(changed.length)live.updated(changed);
    }catch{
     throw Object.assign(new Error('observation storage failed'),{code:'storage_error',fatal:true});
@@ -71,21 +67,39 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   const timeout=new Promise(resolve=>{timer=setTimeout(resolve,5000);timer.unref?.();});
   return Promise.race([collection.stop(),timeout]).finally(()=>clearTimeout(timer));
  };
- const tracker=new CollectorStatusTracker();
- let ingestHubIds = [];
- if (config.hubsPath) {
-   try {
-     const {hubsFile} = readHubsConfig(config.hubsPath);
-     ingestHubIds = hubsFile.hubs.map(h => h.id);
-   } catch {}
- } else if (Array.isArray(config.hubs)) {
-   ingestHubIds = config.hubs.map(h => h.id);
+ const hubRows=listHubRecords(db);
+ try {
+  // Contract IDs are current calculation settings and must refer to a real
+  // non-archived SQLite Hub.  Historical snapshots are separate data.
+ validateContracts(config.contracts, hubRows.filter(h=>h.status!=='archived').map(h=>h.id));
+  db.transaction(()=>recordContractSnapshots(db, config.contracts));
+ } catch (error) {
+  await stopCollection();
+  live.close();
+  db.close();
+  throw error;
  }
- const getIngestHubIds=()=>ingestHubIds;
- const setIngestHubIds=ids=>{ingestHubIds=ids;};
+ const getCollectionStatuses=()=>Object.fromEntries(collection.getStatus().map(status=>[status.hubId,status]));
+ const loadCollectionHubs=()=>{
+  let secrets={};
+  try { secrets=readHubSecretStore(config.hubSecretsPath).secrets; } catch { secrets={}; }
+  return listHubRecords(db,{includeArchived:false}).filter(h=>h.status==='active').flatMap(h=>{
+   const secret=secrets[h.secretRef];
+   return typeof secret==='string'&&secret ? [{id:h.id,url:h.url,secret,status:h.status}] : [];
+  });
+ };
+ const onHubCommitted=result=>{
+  // This is called synchronously by management immediately after COMMIT.
+  if (result?.reconnect) collection.invalidateHub(result.row.id);
+  void collection.applyHubs(loadCollectionHubs()).catch(()=>logger.error('Hub collection reconciliation failed; inspect Hub status'));
+ };
+ const reconnectHub=id=>{
+  collection.invalidateHub(id);
+  void collection.applyHubs(loadCollectionHubs()).catch(()=>logger.error('Hub reconnect failed; inspect Hub status'));
+ };
  const updateManager=new UpdateManager(config,live);
  updateManager.start();
- const management=createManagementHandler({config,auth,db,live,tracker,getIngestHubIds,setIngestHubIds,exclusive,updateManager});
+ const management=createManagementHandler({config,auth,db,live,exclusive,getCollectionStatuses,onHubCommitted,onReconnect:reconnectHub,updateManager});
  const assets=new Map(['/','/index.html','/app.js','/styles.css'].map(route=>{
   const file=route==='/'?'index.html':route.slice(1);
   return [route,{bytes:fs.readFileSync(new URL(`../public/${file}`,import.meta.url)),type:file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'}];
@@ -98,30 +112,15 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    if(!allowedRequest(request,config)){json(response,{error:'origin_rejected'},403);return;}
    const url=new URL(request.url,config.publicOrigin);
    if(url.pathname==='/api/health'&&request.method==='GET'){json(response,{ok:true,service:'token-monitor-analytics',version:'0.3.0',storage:'sqlite',demo:config.demo});return;}
-   if(url.pathname==='/api/collector/status'){
-    if(viewerOnly){json(response,{error:'not_found'},404);return;}
-    await management.handleCollectorStatus(request,response);return;
+   // The integrated process owns collection state.  The old Collector bridge
+   // and status endpoint are deliberately absent from the public API.
+   if(url.pathname==='/api/ingest'||url.pathname==='/api/collector/status'){
+    json(response,{error:'not_found'},404);return;
    }
-   if(url.pathname.startsWith('/api/manage/hubs')){
+   if(url.pathname==='/api/manage/hubs'||url.pathname.startsWith('/api/manage/hubs/')){
     await management.handleManage(request,response,url);return;
    }
-   if(url.pathname.startsWith('/api/manage/update')){
-    await management.handleUpdate(request,response,url);return;
-   }
-   if(url.pathname==='/api/ingest'){
-    if(viewerOnly){json(response,{error:'not_found'},404);return;}
-    if(request.method!=='POST'){json(response,{error:'method_not_allowed'},405);return;}
-    if(!canIngest(request,auth)){json(response,{error:'unauthorized'},401);return;}
-    if((request.headers['content-type']??'').split(';')[0].trim().toLowerCase()!=='application/json'){json(response,{error:'json_required'},415);return;}
-    let batch;
-    try{batch=parseBatch(await body(request),ingestHubIds);}
-    catch(error){if(!response.destroyed)json(response,{error:'invalid_batch'},error.status===413?413:400);return;}
-    // Transitional HTTP bridge: transport parsing stays here; storage is the synchronous internal API.
-    const changed=await exclusive(()=>db.transaction(()=>ingest(db,batch,config.contracts,config.timeZone)));
-    // Notify and acknowledge only after the SQLite COMMIT succeeded.
-    if(changed.length)live.updated(changed);
-    json(response,{ok:true,acked:batch.events.map(e=>e.eventId)});return;
-   }
+   if(url.pathname==='/api/manage/update'||url.pathname.startsWith('/api/manage/update/')){await management.handleManage(request,response,url);return;}
    if(!canView(request,config,auth)){
     if(config.viewerAuth.mode==='basic')response.setHeader('WWW-Authenticate','Basic realm="Token Monitor Analytics", charset="UTF-8"');
     json(response,{error:'viewer_auth_required'},401);return;
@@ -133,13 +132,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    }
    if(url.pathname==='/api/state'){
     const state=await exclusive(()=>dashboard(db,config.contracts));
-    let currentHubs=config.hubs;
-    if(config.hubsPath&&fs.existsSync(config.hubsPath)){
-     try{
-      const {hubsFile}=readHubsConfig(config.hubsPath);
-      currentHubs=hubsFile.hubs.filter(h=>h.status!=='archived').map(h=>({id:h.id,label:h.label}));
-     }catch{}
-    }
+    const currentHubs=listHubRecords(db,{includeArchived:false}).map(h=>({id:h.id,label:h.label,status:h.status,version:h.version,lastObservationAt:h.lastObservationAt,connection:getCollectionStatuses()[h.id]??null}));
     json(response,{...state,serverTime:new Date().toISOString(),demo:config.demo,configuredHubs:currentHubs,contracts:config.contracts,timeZone:config.timeZone,storage:'sqlite',runtime:'native-node',management:{enabled:Boolean(config.management?.enabled)}});return;
    }
    if(url.pathname==='/api/history'){
@@ -168,7 +161,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   await exclusive(()=>prune(db,config.detailRetentionDays));
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.listen.port,config.listen.host,resolve);});
   if(viewerServer)await new Promise((resolve,reject)=>{viewerServer.once('error',reject);viewerServer.listen(config.tailnetViewer.port,config.tailnetViewer.host,resolve);});
-  if(collectionHubs!==undefined)await collection.start(collectionHubs);
+  await collection.start(collectionHubs!==undefined?collectionHubs:loadCollectionHubs());
  }catch(error){await stopCollection();live.close();for(const socket of sockets)socket.destroy();await Promise.all(servers.map(s=>new Promise(r=>s.close(r))));db.close();throw error;}
  const maintenance=setInterval(()=>exclusive(()=>prune(db,config.detailRetentionDays)).catch(()=>logger.error('Retention maintenance failed; inspect disk/database')),maintenanceMs);
  maintenance.unref();
@@ -190,8 +183,6 @@ export async function startServer(config,{env=process.env,logger=console,mainten
 async function main(){
  const {values}=parseArgs({options:{config:{type:'string',default:'config.local.json'}},strict:true});
  const config=loadConfig(values.config);
- // Demo is an isolated, loopback-only dataset. Do not inherit production tokens.
- if(config.demo)process.env[config.ingestTokenEnv]='demo-ingest-token-not-for-production';
  const app=await startServer(config);
  let stopping=false;
  for(const name of ['SIGINT','SIGTERM'])process.on(name,async()=>{
