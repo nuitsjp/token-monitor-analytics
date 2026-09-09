@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {MOCK_HUB_SECRET, parseMockHubArgs, startMockHub} from '../mockhub.mjs';
+import {DEFAULT_INTERVAL_MS, MOCK_HUB_SECRET, parseMockHubArgs, startMockHub} from '../mockhub.mjs';
 
 async function fixture(t, options = {}) {
   const hub = await startMockHub({listen: '127.0.0.1:0', intervalMs: 10, ...options});
@@ -65,6 +65,44 @@ test('authenticated SSE emits snapshot then stats and supports disconnect-after'
   assert.equal(payload.type, 'stats');
   assert.ok(Array.isArray(payload.stats.devices));
   assert.equal(payload.stats.deviceHistoryRevision, hub.revisions.deviceHistoryRevision);
+});
+
+test('live device totals advance independently from retained history and keep Claude attribution', async t => {
+  let now = Date.parse('2026-09-09T12:00:00.000Z');
+  const hub = await fixture(t, {clock: () => now});
+  const getFrame = async () => {
+    const response = await fetch(`${hub.origin}/api/stats/stream`, {
+      headers: {Authorization: `Bearer ${MOCK_HUB_SECRET}`},
+    });
+    return (await firstFrame(response)).payload;
+  };
+
+  const before = await getFrame();
+  now += DEFAULT_INTERVAL_MS * 2;
+  const after = await getFrame();
+  assert.ok(after.stats.periods.allTime.totalTokens > before.stats.periods.allTime.totalTokens);
+  assert.ok(after.stats.devices[0].periods.allTime.totalTokens > before.stats.devices[0].periods.allTime.totalTokens);
+  assert.equal(after.stats.periods.allTime.clientCosts.claude, after.stats.periods.allTime.costUsd);
+  assert.equal(after.stats.devices[0].periods.allTime.clientCosts.claude, after.stats.devices[0].periods.allTime.costUsd);
+
+  const devices = await fetch(`${hub.origin}/api/devices`, {
+    headers: {Authorization: `Bearer ${MOCK_HUB_SECRET}`},
+  });
+  const retained = await devices.json();
+  assert.equal(retained.devices[0].history.summary.totalTokens, 3600);
+  assert.equal(retained.devices[0].allTime.totalTokens, 3600);
+});
+
+test('first-day history monthly total excludes the prior-month daily row', async t => {
+  const hub = await fixture(t, {clock: () => Date.parse('2026-09-01T12:00:00.000Z')});
+  const response = await fetch(`${hub.origin}/api/devices`, {
+    headers: {Authorization: `Bearer ${MOCK_HUB_SECRET}`},
+  });
+  const device = (await response.json()).devices[0];
+  assert.deepEqual(device.history.daily.map(row => row.date), ['2026-08-31', '2026-09-01']);
+  assert.equal(device.history.monthly[0].month, '2026-09');
+  assert.equal(device.history.monthly[0].tokens, 2400);
+  assert.equal(device.month.totalTokens, 2400);
 });
 
 test('revision controls change device history invalidation without changing the CLI contract', async t => {

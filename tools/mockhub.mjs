@@ -74,6 +74,9 @@ function historyRow(date, tokens, cost, messages) {
 function defaultHistory(ms) {
   const today = dayKey(ms);
   const previous = dayKey(ms - 24 * 60 * 60 * 1000);
+  const monthlyTokens = monthKey(ms) === monthKey(ms - 24 * 60 * 60 * 1000) ? 3600 : 2400;
+  const monthlyCost = monthlyTokens / 1000;
+  const monthlyMessages = monthlyTokens / 100;
   return {
     daily: [
       historyRow(previous, 1200, 1.2, 12),
@@ -81,11 +84,11 @@ function defaultHistory(ms) {
     ],
     monthly: [{
       month: monthKey(ms),
-      tokens: 3600,
-      cost: 3.6,
-      messages: 36,
+      tokens: monthlyTokens,
+      cost: monthlyCost,
+      messages: monthlyMessages,
       tokenComponentsAvailable: true,
-      perClient: {claude: {tokens: 3600, cost: 3.6, messages: 36}},
+      perClient: {claude: {tokens: monthlyTokens, cost: monthlyCost, messages: monthlyMessages}},
     }],
     summary: {totalTokens: 3600, totalCost: 3.6, activeDays: 2},
   };
@@ -93,6 +96,8 @@ function defaultHistory(ms) {
 
 function defaultDevice(ms, history = defaultHistory(ms)) {
   const at = iso(ms);
+  const monthly = history.monthly?.find(row => row.month === monthKey(ms));
+  const summary = history.summary ?? {};
   return {
     deviceId: 'demo-pc',
     hostname: 'demo-pc',
@@ -101,8 +106,8 @@ function defaultDevice(ms, history = defaultHistory(ms)) {
     updatedAt: at,
     stale: false,
     today: {totalTokens: 2400, costUsd: 2.4},
-    month: {totalTokens: 3600, costUsd: 3.6},
-    allTime: {totalTokens: 3600, costUsd: 3.6},
+    month: {totalTokens: monthly?.tokens ?? 3600, costUsd: monthly?.cost ?? 3.6},
+    allTime: {totalTokens: summary.totalTokens ?? 3600, costUsd: summary.totalCost ?? 3.6},
     periodWindows: periodWindows(ms),
     historyAvailable: true,
     history,
@@ -179,7 +184,7 @@ function deriveRevisions(devices) {
 }
 
 function statsDevice(device, at, fallbackPeriod) {
-  const allTime = device.allTime ?? device.periods?.allTime ?? fallbackPeriod;
+  const allTime = device.statsAllTime ?? fallbackPeriod;
   return {
     deviceId: String(device.deviceId),
     updatedAt: at,
