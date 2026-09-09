@@ -226,6 +226,7 @@ test('History scheduler coalesces revisions and retains dirty state through fail
   });
   await scheduler.startHub(hub, 1);
   await waitFor(() => calls === 1);
+  assert.equal(scheduler.notifyRevision('hub-a', 'stale-revision', 2), false);
   assert.equal(scheduler.notifyRevision('hub-a', 'rev-1'), true);
   assert.equal(scheduler.notifyRevision('hub-a', 'rev-1'), true);
   assert.equal(scheduler.notifyRevision('hub-a', 'rev-2'), true);

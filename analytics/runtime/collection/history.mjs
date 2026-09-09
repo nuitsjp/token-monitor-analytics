@@ -377,8 +377,9 @@ export function createHistoryScheduler({
     ].map(safeWait)).then(()=>{});
   }
 
-  function notifyRevision(id,value){
+  function notifyRevision(id,value,generation){
     const runner=runners.get(id);if(!runner)return false;
+    if(generation!==undefined&&generation!==runner.generation)return false;
     const revision=currentRevision(value);if(revision===null)return false;
     if(runner.revision===revision)return true;
     runner.revision=revision;runner.pending=true;runner.pendingReason='revision';
