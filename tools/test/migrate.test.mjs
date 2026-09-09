@@ -15,7 +15,7 @@ const TARGET_SHA = 'b'.repeat(40);
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-migration-'));
-  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  t.after(() => fs.promises.rm(dir, {recursive: true, force: true, maxRetries: 20, retryDelay: 50}));
   return dir;
 }
 
