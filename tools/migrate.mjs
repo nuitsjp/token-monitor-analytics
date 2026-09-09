@@ -1250,6 +1250,12 @@ function entryMetadata(filename, stat = fs.lstatSync(filename)) {
 
 function applyEntryMetadata(filename, metadata) {
   if (!metadata) return;
+  // chmod/setfacl follow symlinks. A protected copy may point at the live
+  // release, so touching its target would mutate the source during backup.
+  if (fs.lstatSync(filename).isSymbolicLink()) {
+    if (process.platform !== 'win32' && typeof metadata.uid === 'number' && typeof metadata.gid === 'number' && process.getuid?.() === 0) fs.lchownSync(filename, metadata.uid, metadata.gid);
+    return;
+  }
   try { fs.chmodSync(filename, metadata.mode); } catch {}
   if (process.platform !== 'win32' && typeof metadata.uid === 'number' && typeof metadata.gid === 'number' && process.getuid?.() === 0) {
     try { if (fs.lstatSync(filename).isSymbolicLink()) fs.lchownSync(filename, metadata.uid, metadata.gid); else fs.chownSync(filename, metadata.uid, metadata.gid); } catch {}

@@ -7,7 +7,7 @@ import net from 'node:net';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {createReleaseArtifact} from '../release.mjs';
-import {LEGACY_COMMIT_SHA, preflightMigration, publishWindowsMigrationArtifact, runMigration, restoreMigration} from '../migrate.mjs';
+import {LEGACY_COMMIT_SHA, backupProtectedLayout, preflightMigration, publishWindowsMigrationArtifact, runMigration, restoreMigration} from '../migrate.mjs';
 import {verifyReleaseArtifact} from '../release.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -18,6 +18,18 @@ function fixture(t) {
   t.after(() => fs.promises.rm(dir, {recursive: true, force: true, maxRetries: 20, retryDelay: 50}));
   return dir;
 }
+
+test('protected symlink backup leaves the live release permissions unchanged', {skip: process.platform === 'win32'}, t => {
+  const dir = fixture(t);
+  const release = path.join(dir, 'release');
+  const current = path.join(dir, 'current');
+  fs.mkdirSync(release, {mode: 0o700});
+  fs.symlinkSync(release, current);
+  const backupDir = path.join(dir, 'backup');
+  backupProtectedLayout({backupDir, sources: [{key: 'legacy-code', path: current, exists: true}], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
+  assert.equal(fs.statSync(release).mode & 0o777, 0o700);
+  assert.equal(fs.readlinkSync(path.join(backupDir, 'protected', 'legacy-code')), release);
+});
 
 async function oldRuntime() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-old-runtime-'));
