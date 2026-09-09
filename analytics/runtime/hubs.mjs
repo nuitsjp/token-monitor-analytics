@@ -1,7 +1,100 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {spawnSync} from 'node:child_process';
 import {MAX_CONFIG_BYTES, validateHubsFile, validateHubSecretsFile} from '../src/hubs.ts';
+
+function windowsPrivateAcl(filename) {
+  if (process.platform !== 'win32') return;
+  // Get-Acl/Set-Acl are inbox Windows PowerShell commands.  Editing the ACL
+  // through them lets us remove arbitrary explicit ACEs as well as inherited
+  // broad ACEs.  `icacls /inheritance:r /grant:r` leaves explicit Everyone or
+  // Users entries behind, so it cannot establish the private-file invariant.
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    '$path = $env:TMA_PRIVATE_PATH',
+    '$acl = Get-Acl -LiteralPath $path',
+    '$acl.SetAccessRuleProtection($true, $false)',
+    '$identities = @($acl.Access | ForEach-Object { $_.IdentityReference })',
+    'foreach ($identity in $identities) { $acl.PurgeAccessRules($identity) }',
+    '$none = [System.Security.AccessControl.InheritanceFlags]::None',
+    '$propagation = [System.Security.AccessControl.PropagationFlags]::None',
+    '$allow = [System.Security.AccessControl.AccessControlType]::Allow',
+    '$full = [System.Security.AccessControl.FileSystemRights]::FullControl',
+    '$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User',
+    '$system = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-18")',
+    '$administrators = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-32-544")',
+    'foreach ($sid in @($current, $system, $administrators)) { $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, $full, $none, $propagation, $allow)) }',
+    'Set-Acl -LiteralPath $path -AclObject $acl'
+  ].join('; ');
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script
+  ], {stdio: 'ignore', env: {...process.env, TMA_PRIVATE_PATH: filename}});
+  if (result.error || result.status !== 0) throw new Error('Cannot protect private storage with a Windows ACL');
+}
+
+function writeAtomicPrivateFile(targetPath, content) {
+  const dir = path.dirname(targetPath);
+  const rand = crypto.randomBytes(4).toString('hex');
+  const tempPath = path.join(dir, `.tmp-${path.basename(targetPath)}-${Date.now()}-${rand}`);
+  let fd;
+  try {
+    // Do not put secret bytes in a file whose inherited ACL has not yet been
+    // reduced. The empty file is protected first, then populated and fsynced.
+    fd = fs.openSync(tempPath, 'w', 0o600);
+    if (process.platform === 'win32') {
+      fs.closeSync(fd);
+      fd = undefined;
+      windowsPrivateAcl(tempPath);
+      fd = fs.openSync(tempPath, 'r+');
+    }
+    fs.writeFileSync(fd, content, 'utf8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+  } catch (error) {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch {}
+    try { fs.unlinkSync(tempPath); } catch {}
+    throw error;
+  }
+
+  let replaced = false;
+  let lastError = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.renameSync(tempPath, targetPath);
+      replaced = true;
+      break;
+    } catch (err) {
+      lastError = err;
+      if (process.platform === 'win32' && (err?.code === 'EEXIST' || err?.code === 'EPERM' || err?.code === 'EBUSY')) {
+        const backupPath = path.join(dir, `.old-${path.basename(targetPath)}-${Date.now()}-${rand}`);
+        try {
+          if (fs.existsSync(targetPath)) fs.renameSync(targetPath, backupPath);
+          fs.renameSync(tempPath, targetPath);
+          try { fs.unlinkSync(backupPath); } catch {}
+          replaced = true;
+          break;
+        } catch (replaceError) {
+          lastError = replaceError;
+          try {
+            if (!fs.existsSync(targetPath) && fs.existsSync(backupPath)) fs.renameSync(backupPath, targetPath);
+          } catch {}
+        }
+      }
+      const start = Date.now();
+      while (Date.now() - start < 15) {}
+    }
+  }
+  if (!replaced) {
+    try { fs.unlinkSync(tempPath); } catch {}
+    throw lastError;
+  }
+  try {
+    const dirFd = fs.openSync(dir, 'r');
+    try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+  } catch {}
+}
 
 export function writeAtomicFile(targetPath, content) {
   const dir = path.dirname(targetPath);
@@ -223,7 +316,8 @@ export function writeHubSecret(filename, secret) {
   const content = JSON.stringify({schemaVersion: HUB_SECRET_FILE_VERSION, secrets: next}, null, 2) + '\n';
   if (Buffer.byteLength(content, 'utf8') > MAX_CONFIG_BYTES) throw Object.assign(new Error('Hub secret store is full'), {status: 413});
   fs.mkdirSync(path.dirname(absolute), {recursive: true, mode: 0o700});
-  writeAtomicFile(absolute, content);
+  if (process.platform === 'win32') writeAtomicPrivateFile(absolute, content);
+  else writeAtomicFile(absolute, content);
   return ref;
 }
 

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import {validateHubsFile, validateHubSecretsFile, validateHubUrl} from '../src/hubs.ts';
 import {
   readHubsConfig, writeAtomicFile, saveHubsTransaction, readHubSecretStore,
@@ -24,6 +25,43 @@ function writeConfig(dir, raw) {
   const file = path.join(dir, 'analytics.json');
   fs.writeFileSync(file, JSON.stringify(raw));
   return file;
+}
+
+function assertPrivateSecretAcl(filename) {
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(filename).mode & 0o777, 0o600);
+    return;
+  }
+  const result = spawnSync('icacls', [filename], {encoding: 'utf8'});
+  assert.equal(result.status, 0, result.stderr || 'icacls failed');
+  const acl = `${result.stdout}\n${result.stderr}`;
+  assert.doesNotMatch(acl, /(?:Everyone|Authenticated Users|(?:BUILTIN\\)?Users)\s*:/i, `secret ACL is broader than the owner/system administrators: ${acl}`);
+
+  // icacls is useful for the human-readable proof above. SDDL makes the
+  // assertion independent of the localized account names: exactly the
+  // creating account, LocalSystem, and local Administrators may have full
+  // control, with no inherited ACEs.
+  const sddlResult = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command', '$acl=Get-Acl -LiteralPath $env:TMA_ACL_PATH; $acl.Sddl'
+  ], {encoding: 'utf8', env: {...process.env, TMA_ACL_PATH: filename}});
+  assert.equal(sddlResult.status, 0, sddlResult.stderr || 'PowerShell Get-Acl failed');
+  const sddl = sddlResult.stdout.trim();
+  const groupIndex = sddl.indexOf('G:', 2);
+  const daclIndex = sddl.indexOf('D:', groupIndex + 2);
+  assert.ok(groupIndex > 2 && daclIndex > groupIndex, `invalid security descriptor: ${sddl}`);
+  const ownerSid = sddl.slice(2, groupIndex);
+  const daclEnd = sddl.indexOf('S:', daclIndex + 2);
+  const dacl = sddl.slice(daclIndex + 2, daclEnd < 0 ? sddl.length : daclEnd);
+  const aces = [...dacl.matchAll(/\(([^()]*)\)/g)].map(match => match[1].split(';'));
+  assert.equal(aces.length, 3, `unexpected secret ACL entries: ${sddl}`);
+  assert.ok(aces.every(([type, flags, rights, objectGuid, inheritGuid]) => type === 'A' && !flags && rights === 'FA' && !objectGuid && !inheritGuid), `secret ACL has unexpected rights or inheritance: ${sddl}`);
+  assert.deepEqual(new Set(aces.map(ace => ace[5])), new Set([ownerSid, 'S-1-5-18', 'S-1-5-32-544']), `secret ACL principals are not owner/SYSTEM/Administrators: ${sddl}`);
+}
+
+function grantBroadParentAcl(directory) {
+  if (process.platform !== 'win32') return;
+  const result = spawnSync('icacls', [directory, '/grant', '*S-1-1-0:(OI)(CI)(F)'], {encoding: 'utf8'});
+  assert.equal(result.status, 0, `${result.stderr || ''}${result.stdout || ''}`);
 }
 
 test('validateHubUrl enforces HTTPS or loopback HTTP without paths or queries', () => {
@@ -86,10 +124,16 @@ test('migration-only file helpers retain atomic updates and conflict detection',
 test('secrets use an opaque reference and an atomically replaced protected file', t => {
   const dir = createTempDir(t);
   const filename = path.join(dir, 'nested', 'hub-secrets.json');
+  if (process.platform === 'win32') {
+    fs.mkdirSync(path.dirname(filename), {recursive: true});
+    // Force an inherited broad ACE on the parent. The private writer must
+    // remove it from its empty temp file before writing any secret bytes.
+    grantBroadParentAcl(path.dirname(filename));
+  }
   const firstRef = writeHubSecret(filename, 'first-secret');
   assert.match(firstRef, /^sec-[0-9a-f]{32}$/);
   assert.equal(readHubSecret(filename, firstRef), 'first-secret');
-  assert.equal(fs.statSync(filename).mode & 0o777, 0o600);
+  assertPrivateSecretAcl(filename);
   const secondRef = writeHubSecret(filename, 'second-secret');
   assert.notEqual(firstRef, secondRef);
   assert.equal(readHubSecret(filename, firstRef), 'first-secret');

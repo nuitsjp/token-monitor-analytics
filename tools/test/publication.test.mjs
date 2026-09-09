@@ -96,6 +96,17 @@ test('owner termination releases the shared flock without replacing its inode', 
   assert.equal(fs.existsSync(lock), true);
 });
 
+test('Windows publication lock rejects a concurrent holder and releases after completion', async t => {
+  if (process.platform !== 'win32') { t.skip('Requires the Windows lock fallback'); return; }
+  const dir = fixture(t), lock = path.join(dir, 'deploy.lock');
+  const script = `import {withPublicationLock} from ${JSON.stringify(pathToFileURL(path.resolve('tools/release.mjs')).href)}; await withPublicationLock(${JSON.stringify(lock)}, async () => { process.stdout.write('held\\n'); await new Promise(resolve => setTimeout(resolve, 200)); });`;
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {stdio: ['ignore', 'pipe', 'pipe']});
+  await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('error', reject); });
+  await assert.rejects(() => withPublicationLock(lock, async () => {}), error => error.code === 'lock_conflict');
+  await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject); });
+  await withPublicationLock(lock, async () => {});
+});
+
 test('old layout guard runs before publication and rejects Collector files', t => {
   const dir = fixture(t);
   assert.doesNotThrow(() => assertOldLayout({destination: dir}));
@@ -130,7 +141,7 @@ test('writeChanged preserves mtime for identical managed files', t => {
 });
 
 test('fixed Node preflight validates the executable version', t => {
-  const dir = fixture(t), fixedNode = path.join(dir, 'node');
+  const dir = fixture(t), fixedNode = path.join(dir, process.platform === 'win32' ? 'node.exe' : 'node');
   fs.copyFileSync(process.execPath, fixedNode);
   fs.chmodSync(fixedNode, 0o755);
   assert.match(validateFixedNode(fixedNode, {minimum: {major: 0, minor: 0, patch: 0}}), /^v\d+\.\d+\.\d+$/);
@@ -196,6 +207,7 @@ test('health verification retries startup responses within one deadline', async 
 });
 
 test('publish verification reaches the extracted real HTTP/SSE/SQLite entrypoint', async t => {
+  if (process.platform === 'win32') { t.skip('Ubuntu publication swaps a current symlink and runs a Linux service; Windows uses the native app/integration checks.'); return; }
   const dir = fixture(t);
   configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}});
   const configFile = path.join(dir, 'analytics.json');
