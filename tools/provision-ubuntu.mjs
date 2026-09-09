@@ -3,7 +3,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
-import {readJSON,writeChanged} from './publish-config.mjs';
+import {readJSON,writeChanged,assertOldLayout} from './publish-config.mjs';
 import {withPublicationLock} from './release.mjs';
 import {
  prefix,releasesDir,destination,appUnits,managedUnits,legacySystemUnits,
@@ -17,14 +17,19 @@ const systemctl=(...args)=>run('/usr/bin/systemctl',args);
 
 // These are the only host packages the single-app publication/update path
 // needs. Node itself is copied from the fixed runtime used to run provision;
-// the old Go build and Tailscale installer are deliberately not part of this
-// privileged bootstrap.
-export const requiredPackages=Object.freeze(['ca-certificates','git','tar']);
+// the old Go build dependencies are not needed. curl is retained solely for
+// the idempotent Tailscale package bootstrap below.
+export const requiredPackages=Object.freeze(['ca-certificates','curl','git','tar']);
 
 function noLink(filename){
  try{
   if(fs.lstatSync(filename).isSymbolicLink())throw new Error('Managed paths must not be symlinks.');
  }catch(error){if(error?.code!=='ENOENT')throw error;}
+}
+
+function pathExists(filename){
+ try{fs.lstatSync(filename);return true;}
+ catch(error){if(error?.code==='ENOENT')return false;throw error;}
 }
 
 export function ensureDirectory(filename,uid,gid,mode){
@@ -44,10 +49,52 @@ function userController(username,uid){
  return (...args)=>run('/usr/sbin/runuser',['-u',username,'--','/usr/bin/env',`XDG_RUNTIME_DIR=/run/user/${uid}`,`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus`,'/usr/bin/systemctl','--user',...args]);
 }
 
+export function bootstrapTailscale({exists=filename=>fs.existsSync(filename),runCommand=run,systemctlCommand=systemctl}={}){
+ if(!exists('/usr/bin/tailscale')){
+  const installer=runCommand('/usr/bin/curl',['--fail','--silent','--show-error','https://tailscale.com/install.sh']);
+  runCommand('/bin/sh',[],{input:installer});
+ }else console.log('SKIP: Tailscale is installed; existing login and Serve settings are retained.');
+ systemctlCommand('enable','--now','tailscaled.service');
+ try{
+  const state=JSON.parse(runCommand('/usr/bin/tailscale',['status','--json']));
+  if(state.BackendState!=='Running')console.log('Tailscale login is still required: run sudo tailscale up in your terminal before configure:ubuntu.');
+ }catch{
+  console.log('Tailscale login is still required: run sudo tailscale up in your terminal before configure:ubuntu.');
+ }
+}
+
 function systemUnitLoadState(unit){
  const result=spawnSync('/usr/bin/systemctl',['show','--property=LoadState','--value',unit],{encoding:'utf8',stdio:['ignore','pipe','pipe']});
  if(result.error||result.status!==0)throw new Error('Cannot inspect the system service manager; provisioning stopped before changing files.');
  return result.stdout.trim()||'not-found';
+}
+
+function userUnitLoadState(username,uid,unit){
+ const result=spawnSync('/usr/sbin/runuser',['-u',username,'--','/usr/bin/env',`XDG_RUNTIME_DIR=/run/user/${uid}`,`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus`,'/usr/bin/systemctl','--user','show','--property=LoadState','--value',unit],{encoding:'utf8',stdio:['ignore','pipe','pipe']});
+ // A user manager may not exist yet on a fresh host. The filesystem check in
+ // assertLegacyUserUnitsAbsent still catches a legacy unit file in that case.
+ if(result.error||result.status!==0)return 'not-found';
+ return result.stdout.trim()||'not-found';
+}
+
+function currentInfrastructure(uid){
+ try{
+  const record=readJSON(infrastructureFile);
+  return record?.uid===uid&&record.version===infrastructureVersion&&record.configVersion===configVersion&&record.serviceContractVersion===serviceContractVersion&&record.runnerVersion===runnerVersion&&JSON.stringify(record.appUnits)===JSON.stringify(appUnits)&&JSON.stringify(record.managedUnits)===JSON.stringify(managedUnits)&&record.unitDigest===unitDigest();
+ }catch{return false;}
+}
+
+/** Reject legacy user-systemd units/files without creating or changing paths. */
+export function assertLegacyUserUnitsAbsent({home,loadState=()=> 'not-found',hasCurrentInfrastructure=()=>false}={}){
+ if(typeof home!=='string'||!home)throw new Error('A user home directory is required for the legacy unit preflight.');
+ const unitDirectory=path.join(home,'.config','systemd','user');
+ const collectorFile=path.join(unitDirectory,'tma-collector.service');
+ const analyticsFile=path.join(unitDirectory,'tma-analytics.service');
+ const collectorLoaded=loadState('tma-collector.service');
+ if(pathExists(collectorFile)||collectorLoaded!=='not-found')throw Object.assign(new Error('Legacy user Collector services require the explicit migration procedure; they were not stopped.'),{code:'legacy_user_unit',unit:'tma-collector.service'});
+ const analyticsLoaded=loadState('tma-analytics.service');
+ if((pathExists(analyticsFile)||analyticsLoaded!=='not-found')&&!hasCurrentInfrastructure())throw Object.assign(new Error('A legacy user Analytics service requires the explicit migration procedure; it was not stopped.'),{code:'legacy_user_unit',unit:'tma-analytics.service'});
+ return true;
 }
 
 /** Reject every known legacy system unit before the first provisioning mutation. */
@@ -71,9 +118,11 @@ function installRequiredPackages(){
 function deploymentLockDirectory(){
  const directory=path.dirname(deploymentLock);
  noLink(directory);
- fs.mkdirSync(directory,{recursive:true,mode:0o755});
- const stat=fs.statSync(directory);
+ if(!fs.existsSync(directory))fs.mkdirSync(directory,{recursive:true,mode:0o755});
+ const stat=fs.lstatSync(directory);
  if(!stat.isDirectory())throw new Error('Deployment lock parent is not a directory.');
+ if(stat.uid!==0&&fs.readdirSync(directory).length>0)throw new Error('Existing non-empty deployment lock directory belongs to another owner; use the explicit migration procedure.');
+ if(stat.uid!==0)fs.chownSync(directory,0,0);
  if((stat.mode&0o777)!==0o755)fs.chmodSync(directory,0o755);
 }
 
@@ -81,6 +130,7 @@ async function provisionLocked({username,uid,gid,home}){
  const existing=fs.existsSync(infrastructureFile)?readJSON(infrastructureFile):null;
  if(existing&&existing.uid!==uid)throw new Error('Changing publication user requires explicit migration.');
  installRequiredPackages();
+ bootstrapTailscale();
  const directories=[
   [prefix,0o755],[releasesDir,0o755],['/var/lib/tma-deploy',0o700],[destination,0o700],
   ['/var/lib/tma-analytics',0o700],['/var/lib/tma-analytics/backups',0o700],[updaterDir,0o700],[repoDir,0o700]
@@ -143,6 +193,8 @@ export async function main(argv=process.argv.slice(2)){
   // This read-only preflight must happen before lock creation, package
   // installation, ownership changes, unit writes, or user-manager startup.
   assertLegacySystemUnitsAbsent();
+  assertLegacyUserUnitsAbsent({home,loadState:unit=>userUnitLoadState(username,uid,unit),hasCurrentInfrastructure:()=>currentInfrastructure(uid)});
+  assertOldLayout({root:prefix,destination,currentDir:path.join(prefix,'current')});
   deploymentLockDirectory();
   noLink(deploymentLock);
   await withPublicationLock(deploymentLock,async()=>{

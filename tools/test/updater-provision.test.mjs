@@ -6,7 +6,7 @@ import path from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {updaterRunnerFiles,legacySystemUnits,userUnit} from '../ubuntu-layout.mjs';
-import {assertLegacySystemUnitsAbsent,ensureDirectory,requiredPackages} from '../provision-ubuntu.mjs';
+import {assertLegacySystemUnitsAbsent,assertLegacyUserUnitsAbsent,bootstrapTailscale,ensureDirectory,requiredPackages} from '../provision-ubuntu.mjs';
 import {RUNNER_CONTRACT,validateRunnerContract} from '../runner-contract.mjs';
 
 test('updater runner dependency closure is isolated from app config and source checkout', t => {
@@ -51,9 +51,67 @@ test('provisioning rejects loaded legacy system units before mutation', () => {
   assert.throws(() => assertLegacySystemUnitsAbsent(unit => unit === loaded ? 'loaded' : 'not-found'), error => error.code === 'legacy_system_unit' && error.units.some(value => value.startsWith(`${loaded}=`)));
 });
 
+test('Tailscale bootstrap installs only when absent and never changes login or Serve state', () => {
+  const runCalls = [], serviceCalls = [];
+  const runCommand = (command, args, options) => {
+    runCalls.push({command, args, options});
+    if (command === '/usr/bin/curl') return '#!/bin/sh\necho installer\n';
+    if (command === '/bin/sh') return '';
+    if (command === '/usr/bin/tailscale') return JSON.stringify({BackendState: 'NeedsLogin'});
+    throw new Error(`unexpected command: ${command}`);
+  };
+  bootstrapTailscale({exists: () => false, runCommand, systemctlCommand: (...args) => serviceCalls.push(args)});
+  assert.deepEqual(runCalls.map(({command, args}) => [command, args]), [
+    ['/usr/bin/curl', ['--fail', '--silent', '--show-error', 'https://tailscale.com/install.sh']],
+    ['/bin/sh', []],
+    ['/usr/bin/tailscale', ['status', '--json']]
+  ]);
+  assert.equal(runCalls[1].options.input, '#!/bin/sh\necho installer\n');
+  assert.deepEqual(serviceCalls, [['enable', '--now', 'tailscaled.service']]);
+  assert.equal(runCalls.some(({args}) => args.includes('up') || args.includes('serve')), false);
+
+  runCalls.length = 0; serviceCalls.length = 0;
+  bootstrapTailscale({exists: () => true, runCommand, systemctlCommand: (...args) => serviceCalls.push(args)});
+  assert.deepEqual(runCalls.map(({command, args}) => [command, args]), [['/usr/bin/tailscale', ['status', '--json']]]);
+  assert.deepEqual(serviceCalls, [['enable', '--now', 'tailscaled.service']]);
+});
+
+test('legacy user unit preflight inspects state and files without mutating them', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-legacy-user-'));
+  const unitDirectory = path.join(home, '.config', 'systemd', 'user');
+  fs.mkdirSync(unitDirectory, {recursive: true});
+  const collector = path.join(unitDirectory, 'tma-collector.service');
+  fs.writeFileSync(collector, '[Unit]\nDescription=legacy\n');
+  const before = fs.readFileSync(collector);
+  const seen = [];
+  try {
+    assert.throws(() => assertLegacyUserUnitsAbsent({home, loadState: unit => { seen.push(unit); return 'not-found'; }}), error => error.code === 'legacy_user_unit' && error.unit === 'tma-collector.service');
+    assert.deepEqual(seen, ['tma-collector.service']);
+    assert.deepEqual(fs.readFileSync(collector), before);
+  } finally { fs.rmSync(home, {recursive: true, force: true}); }
+
+  const stateHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-legacy-state-'));
+  const loaded = [];
+  try {
+    assert.throws(() => assertLegacyUserUnitsAbsent({home: stateHome, loadState: unit => { loaded.push(unit); return unit === 'tma-collector.service' ? 'loaded' : 'not-found'; }}), error => error.code === 'legacy_user_unit' && error.unit === 'tma-collector.service');
+    assert.deepEqual(loaded, ['tma-collector.service']);
+  } finally { fs.rmSync(stateHome, {recursive: true, force: true}); }
+});
+
+test('current Analytics user unit may be retained only with matching infrastructure', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-current-user-'));
+  const unitDirectory = path.join(home, '.config', 'systemd', 'user');
+  fs.mkdirSync(unitDirectory, {recursive: true});
+  fs.writeFileSync(path.join(unitDirectory, 'tma-analytics.service'), '[Service]\n');
+  try {
+    assert.doesNotThrow(() => assertLegacyUserUnitsAbsent({home, loadState: unit => unit === 'tma-analytics.service' ? 'loaded' : 'not-found', hasCurrentInfrastructure: () => true}));
+    assert.throws(() => assertLegacyUserUnitsAbsent({home, loadState: unit => unit === 'tma-analytics.service' ? 'loaded' : 'not-found', hasCurrentInfrastructure: () => false}), error => error.code === 'legacy_user_unit' && error.unit === 'tma-analytics.service');
+  } finally { fs.rmSync(home, {recursive: true, force: true}); }
+});
+
 test('provisioning keeps the nonempty wrong-owner guard and Node-only dependencies', t => {
-  assert.deepEqual(requiredPackages, ['ca-certificates', 'git', 'tar']);
-  assert.doesNotMatch(fs.readFileSync(new URL('../provision-ubuntu.mjs', import.meta.url), 'utf8'), /--locked|tailscale|build-essential/);
+  assert.deepEqual(requiredPackages, ['ca-certificates', 'curl', 'git', 'tar']);
+  assert.doesNotMatch(fs.readFileSync(new URL('../provision-ubuntu.mjs', import.meta.url), 'utf8'), /--locked|build-essential/);
   const unit = userUnit('tma-analytics.service');
   assert.match(unit, /ProtectSystem=strict/);
   assert.match(unit, /ProtectHome=true/);
