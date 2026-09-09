@@ -83,13 +83,22 @@ function copySourceFixture() {
   const source = path.join(temp, 'source-work');
   const archive = path.join(temp, 'source-work.tar');
   fs.mkdirSync(source, {recursive: true, mode: 0o700});
-  // Archive only tracked source. Copying a worktree recursively can copy its
-  // .git pointer, which would make fixture git commands mutate the shared
-  // repository/worktree metadata. Submodules and generated/private trees are
-  // removed explicitly after extraction even when represented by a gitlink.
-  git('archive', ['--format=tar', 'HEAD', '-o', archive], root);
-  execFileSync('tar', ['-xf', archive, '-C', source], {stdio: 'ignore'});
-  fs.rmSync(archive, {force: true});
+  // The release gate also runs from a manifest-verified source archive, which
+  // intentionally has no .git directory. Keep the checkout path for normal
+  // development runs, and copy the already verified tree for that archive
+  // path. The destination gets private Git metadata below, so fixture commits
+  // never touch the caller's repository or worktree.
+  if (fs.existsSync(path.join(root, '.git'))) {
+    // Archive only tracked source. Copying a worktree recursively can copy its
+    // .git pointer, which would make fixture git commands mutate the shared
+    // repository/worktree metadata. Submodules and generated/private trees are
+    // removed explicitly after extraction even when represented by a gitlink.
+    git('archive', ['--format=tar', 'HEAD', '-o', archive], root);
+    execFileSync('tar', ['-xf', archive, '-C', source], {stdio: 'ignore'});
+    fs.rmSync(archive, {force: true});
+  } else {
+    fs.cpSync(root, source, {recursive: true, force: true});
+  }
   for (const relative of ['external', 'node_modules', 'dist']) {
     fs.rmSync(path.join(source, relative), {recursive: true, force: true});
   }
