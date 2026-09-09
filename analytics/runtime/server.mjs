@@ -6,11 +6,12 @@ import {loadConfig,credentials,validateTailnetBinding} from './config.mjs';
 import {openDatabase} from './sqlite.mjs';
 import {canIngest,canView,allowedRequest} from './auth.mjs';
 import {LiveFeed} from './live.mjs';
-import {parseBatch} from '../src/protocol.ts';
-import {ingest,dashboard,history,prune} from '../src/db.ts';
+import {parseBatch,compactHubEvent} from '../src/protocol.ts';
+import {ingest,recordObservation,dashboard,history,prune} from '../src/db.ts';
 import {CollectorStatusTracker, createManagementHandler} from './management.mjs';
 import {readHubsConfig} from './hubs.mjs';
 import {UpdateManager} from './update-manager.mjs';
+import {createCollectionManager} from './collection/manager.mjs';
 
 const commonHeaders={
  'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer',
@@ -28,13 +29,43 @@ async function body(request){
  request.setTimeout(0);
  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
-export async function startServer(config,{env=process.env,logger=console,maintenanceMs=300000,heartbeatMs=25000}={}){
+export async function startServer(config,{env=process.env,logger=console,maintenanceMs=300000,heartbeatMs=25000,collectionHubs,fetchImpl,collectionIdleMs,collectionHeaderTimeoutMs}={}){
  validateTailnetBinding(config);
  const auth=credentials(config,env);
  const db=openDatabase(config.databasePath,{demo:config.demo});
  let tail=Promise.resolve();
  const exclusive=callback=>{const next=tail.then(callback);tail=next.catch(()=>{});return next;};
  const live=new LiveFeed({heartbeatMs});
+ let collectionFatal=false;
+ let collection;
+ collection=createCollectionManager({
+  idleMs:collectionIdleMs,
+  headerTimeoutMs:collectionHeaderTimeoutMs,
+  fetchImpl,
+  onObservation:async({hubId,name,data,streamId})=>{
+   let observation;
+   try{observation=compactHubEvent({name,data},hubId,streamId);}
+   catch(error){throw error;}
+   try{
+    const changed=await exclusive(()=>db.transaction(()=>recordObservation(db,observation,config.contracts,config.timeZone)));
+    if(changed.length)live.updated(changed);
+   }catch{
+    throw Object.assign(new Error('observation storage failed'),{code:'storage_error',fatal:true});
+   }
+  },
+  onStatus:()=>live.broadcast('manage_updated',{type:'manage_updated'}),
+  onFatal:()=>{
+   if(collectionFatal)return;
+   collectionFatal=true;
+   logger.error('Observation persistence failed; collection stopped; inspect disk/database');
+   void collection.stop();
+  },
+ });
+ const stopCollection=()=>{
+  let timer;
+  const timeout=new Promise(resolve=>{timer=setTimeout(resolve,5000);timer.unref?.();});
+  return Promise.race([collection.stop(),timeout]).finally(()=>clearTimeout(timer));
+ };
  const tracker=new CollectorStatusTracker();
  let ingestHubIds = [];
  if (config.hubsPath) {
@@ -132,14 +163,16 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   await exclusive(()=>prune(db,config.detailRetentionDays));
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.listen.port,config.listen.host,resolve);});
   if(viewerServer)await new Promise((resolve,reject)=>{viewerServer.once('error',reject);viewerServer.listen(config.tailnetViewer.port,config.tailnetViewer.host,resolve);});
- }catch(error){live.close();for(const socket of sockets)socket.destroy();await Promise.all(servers.map(s=>new Promise(r=>s.close(r))));db.close();throw error;}
+  if(collectionHubs!==undefined)await collection.start(collectionHubs);
+ }catch(error){await stopCollection();live.close();for(const socket of sockets)socket.destroy();await Promise.all(servers.map(s=>new Promise(r=>s.close(r))));db.close();throw error;}
  const maintenance=setInterval(()=>exclusive(()=>prune(db,config.detailRetentionDays)).catch(()=>logger.error('Retention maintenance failed; inspect disk/database')),maintenanceMs);
  maintenance.unref();
  logger.info(`Analytics ready at ${config.publicOrigin} (${config.demo?'DEMO':'REAL'}; SQLite; browser SSE)`);
  return {
-  server,viewerServer,db,live,updateManager,
+  server,viewerServer,db,live,updateManager,collection,
+  startCollection: hubs => collection.start(hubs),
   async close(){
-   if(closing)return;closing=true;clearInterval(maintenance);live.close();updateManager.close();
+   if(closing)return;closing=true;clearInterval(maintenance);await stopCollection();live.close();updateManager.close();
    const force=setTimeout(()=>{for(const socket of sockets)socket.destroy();},5000);force.unref();
    await Promise.all(servers.map(s=>new Promise(resolve=>s.close(resolve))));clearTimeout(force);
    await tail;db.close();

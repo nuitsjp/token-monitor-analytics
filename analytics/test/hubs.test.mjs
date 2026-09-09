@@ -376,9 +376,9 @@ test('management responses hide malformed secret contents and filesystem paths',
   config.listen.port = 0;
   const {startServer} = await import('../runtime/server.mjs');
   const app = await startServer(config, {env: {TMA_INGEST_TOKEN: 'demo-ingest-token-not-for-production'}, logger: {info(){}, error(){}}});
-  t.after(() => app.close());
   config.publicOrigin = `http://127.0.0.1:${app.server.address().port}`;
-  for (const malformed of [true, false]) {
+  try {
+   for (const malformed of [true, false]) {
     if (malformed) fs.writeFileSync(secretsPath, '{"schemaVersion":1,"secrets":{"s1":SENSITIVE_TOKEN}}');
     else fs.unlinkSync(secretsPath);
     for (const [method, suffix, body] of [
@@ -396,5 +396,8 @@ test('management responses hide malformed secret contents and filesystem paths',
       assert.ok(!text.includes(dir));
       assert.equal(JSON.parse(text).message, undefined);
     }
+   }
+  } finally {
+   await app.close();
   }
 });
