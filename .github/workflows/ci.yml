@@ -4,6 +4,7 @@ permissions:
   contents: read
 jobs:
   native:
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -23,7 +24,10 @@ jobs:
       - name: Install development dependencies and check runtimes
         run: mise run setup
       - name: Native Analytics, publication and TypeScript checks
-        run: mise run check
+        # Keep independent checks running so a failure in one matrix branch
+        # does not hide the diagnostics from the other checks. mise preserves
+        # the aggregate failure status for the job.
+        run: mise run --continue-on-error --timeout 30m check
       - name: Native HTTP/SSE/SQLite integration
         if: ${{ !cancelled() }}
         run: mise run integration

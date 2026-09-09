@@ -1,0 +1,51 @@
+name: ubuntu-user-service-reboot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guest:
+    # This job reboots only its disposable QEMU guest. It never runs the
+    # repository's provisioning or systemd commands on the Actions host.
+    timeout-minutes: 50
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v4
+        with:
+          version: '2026.9.1'
+
+      - name: Install the fixed Node runtime and repository dependencies
+        run: mise run setup
+
+      - name: Install QEMU and cloud-init seed tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cloud-image-utils qemu-system-x86
+
+      - name: Provision, publish, and reboot the isolated Ubuntu guest
+        run: |
+          mkdir -p "$RUNNER_TEMP/tma-ubuntu-reboot"
+          bash tools/test/ubuntu-reboot-vm.sh \
+            --source-dir "$GITHUB_WORKSPACE" \
+            --node-bin "$(command -v node)" \
+            --artifact-dir "$RUNNER_TEMP/tma-ubuntu-reboot" \
+            --image-url "$TMA_UBUNTU_IMAGE_URL" \
+            --image-sha256 "$TMA_UBUNTU_IMAGE_SHA256"
+        env:
+          # Pinned Canonical Ubuntu 24.04 image. Update both the release path
+          # and digest together when selecting a newer guest image.
+          TMA_UBUNTU_IMAGE_URL: https://cloud-images.ubuntu.com/releases/releases/noble/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img
+          TMA_UBUNTU_IMAGE_SHA256: d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30
+
+      - name: Upload guest and service evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-user-service-reboot-${{ github.run_id }}
+          path: ${{ runner.temp }}/tma-ubuntu-reboot
+          if-no-files-found: warn

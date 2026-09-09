@@ -6,12 +6,15 @@ it does not certify the release while #27 is still in progress.
 
 ## Evidence rules
 
-`PASS` means that the current source has a focused automated check. `PARTIAL`
-means that the check exists but an OS, package, or process boundary is still
-missing. `GAP` means that the requirement needs a new test or an actual
-environment run. A skipped test is evidence that the prerequisite was absent,
-not a pass. The existing host is Ubuntu 24.04; its old production services
-and database are active and must not be stopped, reconfigured, or rebooted.
+`PASS` means that the check executed successfully on the recorded final SHA
+and has a retained log or artifact. `COVERED` means that a focused test exists
+in the source but this matrix has no final-SHA execution artifact yet.
+`PARTIAL` means that the check executed but an OS, package, or process boundary
+is still missing. `GAP` means that the requirement needs a new test or an
+actual environment run. A skipped test is evidence that the prerequisite was
+absent, not a pass. The existing host is Ubuntu 24.04; its old production
+services and database are active and must not be stopped, reconfigured, or
+rebooted.
 
 The current baseline artifacts are:
 
@@ -32,10 +35,10 @@ relative to the repository root.
 | ---: | --- | :---: | --- |
 | 1 | `analytics/test/native.test.mjs` covers new empty DB/secret configuration, `analytics/test/hubs.test.mjs` covers SQLite Hub registration, `analytics/test/viewer-history.test.mjs` covers one listener and state/history routes | PARTIAL | After #27, run a clean empty-directory process test that creates one listener and one SQLite file, registers one Hub, receives its first observation, and shows it in the browser-facing API. Record process/listener/DB counts. |
 | 2 | `tools/test/publication.test.mjs` creates v2 config without Collector inputs; `tools/release.mjs` has a release allowlist | PARTIAL | Final source/package scan must prove the normal startup path has no old Collector/env/Batch/ACK/outbox import or route. Legacy helpers may remain only behind a clearly migration-only entry point. |
-| 3 | `analytics/test/core.test.mjs` covers synchronous transactions, COMMIT-visible state, stale/late observations, null/zero, rollback, and SQL-call bound; `analytics/test/collection.test.mjs` covers storage failure | PASS (unit) | Add/retain a process-level assertion that ACK/notification cannot precede COMMIT after #27 removes the old bridge. |
-| 4 | `analytics/test/collection.test.mjs` covers UTF-8/BOM/SSE framing, heartbeats, auth/redirect/header timeout, reconnect backoff, and per-Hub manager races; `analytics/test/auth.test.mjs` covers viewer authentication | PASS (unit) | A bounded browser/client process artifact should show normal close and reconnect with one failed Hub isolated from another. |
-| 5 | `analytics/test/hubs.test.mjs` covers SQLite CRUD/CAS/archive, secret replacement, missing secret, DB failure after secret write; collection tests cover manager removal/replacement | PASS (unit) | Final management process run must show add/stop/restart/delete and stale callback fencing with no legacy Collector route. |
-| 6 | `analytics/test/history.test.mjs` covers revisions, dirty coalescing, fetch bounds, replacement, min interval, and races | PASS (unit) | Keep the post-#27 schema/source revision proof and show a manual-fetch trigger cannot invent a matching revision. |
+| 3 | `analytics/test/core.test.mjs` covers synchronous transactions, COMMIT-visible state, stale/late observations, null/zero, rollback, and SQL-call bound; `analytics/test/collection.test.mjs` covers storage failure | COVERED | Add/retain a process-level assertion that ACK/notification cannot precede COMMIT after #27 removes the old bridge, then attach the final-SHA log. |
+| 4 | `analytics/test/collection.test.mjs` covers UTF-8/BOM/SSE framing, heartbeats, auth/redirect/header timeout, reconnect backoff, and per-Hub manager races; `analytics/test/auth.test.mjs` covers viewer authentication; `rootd3ded24` has the integration-manage CRUD/SSE/history-restore result | PARTIAL | Attach the `d3ded24` execution log to the final acceptance bundle and add a bounded browser/client process artifact showing normal close and reconnect with one failed Hub isolated from another. |
+| 5 | `analytics/test/hubs.test.mjs` covers SQLite CRUD/CAS/archive, secret replacement, missing secret, DB failure after secret write; collection tests cover manager removal/replacement | COVERED | Final management process run must show add/stop/restart/delete and stale callback fencing with no legacy Collector route. |
+| 6 | `analytics/test/history.test.mjs` covers revisions, dirty coalescing, fetch bounds, replacement, min interval, and races | COVERED | Keep the post-#27 schema/source revision proof and show a manual-fetch trigger cannot invent a matching revision, then attach its final-SHA log. |
 | 7 | `analytics/test/history.test.mjs` covers deletion/disabled/null/missing capability, malformed/permanent errors, size limit, and retained rows; `analytics/src/history.ts` bounds devices/rows/maps | PARTIAL | Add explicit correction/timezone/zero/unknown/unsupported/huge fixtures at the final API boundary and check complete totals have no duplicate rows. |
 | 8 | History replacement and daily/monthly aggregation tests exist in `analytics/test/history.test.mjs` and `tools/test/mockhub.test.mjs` | PARTIAL | Process-level stopped-crossing-day fixture must prove no duplicate daily/monthly rows and that history queries do not affect live limits/evaluation. |
 | 9 | `analytics/test/history.test.mjs` checks the 16 MiB body limit; the performance preflight records the preliminary SQLite cost; `analytics/runtime/server.mjs` has bounded close logic | GAP | Measure accepted near-16 MiB and rejected over-16 MiB HTTP bodies, save latency while `/api/health` and `/api/state` are requested, and `app.close()` with in-flight requests. Publish practical thresholds and raw JSON timings. |
@@ -45,7 +48,7 @@ relative to the repository root.
 | 13 | `analytics/test/native.test.mjs` checks no old ingest/status endpoint; package allowlist excludes Collector; auth and secret tests check separation; release tests check old layout and config IDs | PARTIAL | Final grep/package/static/log scan must prove secrets never enter DB/API/log/static/package, no double listener or old route exists, and configuration polling is not restored. |
 | 14 | `tools/test/update-runner.test.mjs` covers candidate SHA, restart, job identity and terminal stages; `analytics/test/update*.test.mjs` covers management state and same-content no-op; `tools/integration-update.mjs` supplies the mock remote | PARTIAL / #26 | Run with the final #27 runner/app closure: candidate→SHA verification, same job ID across restart, app-stopped runner, SSE/history resume, and actual user-service invocation. The current Windows integration null-`targetCommitSha` failure belongs to #26. |
 | 15 | `tools/test/update-runner.test.mjs` covers preflight-before-stop, branch move, post-start proof failure, killed runner, lock, and state reconciliation; `analytics/test/update-restart.test.mjs` covers terminal health failure and no-op | PARTIAL | Add process evidence for startup failure, runner kill, terminal state persistence, health race, fixed SHA, and CLI/Web lock while the real app is stopped. |
-| 16 | `tools/test/updater-provision.test.mjs` checks runner dependency closure, no app config/source checkout, old lock rejection, and packaged user units; `tools/test/update-runner.test.mjs` uses an isolated copied runner | PASS (fixture) | Final package extraction must repeat the closure/source scan after #27 and include the archive checksum. |
+| 16 | `tools/test/updater-provision.test.mjs` checks runner dependency closure, no app config/source checkout, old lock rejection, and packaged user units; `tools/test/update-runner.test.mjs` uses an isolated copied runner | COVERED | Final package extraction must repeat the closure/source scan after #27 and include the archive checksum. |
 | 17 | Provision tests reject legacy system/user units without mutation; `tools/test/reset-hubs.test.mjs` covers drain mechanics | GAP / #27 | Need the actual old-runner rejection, compatible Web update after migration, recovery from service/runner/infra failure, and maintenance lockouts. Do not touch the active old host services. |
 | 18 | `tools/test/publication.test.mjs` covers same-content publication, config identity, and source/payload verification; management tests cover Hub edits and observations | PARTIAL | Final publish fixture must prove Hub rows/secret survive publication, observation and Hub edit do not restart the app, update controls stay outside DB, and terminal completion is not overwritten. |
 
@@ -55,7 +58,7 @@ relative to the repository root.
 | --- | --- | --- |
 | Windows native behavior | GitHub Actions Windows job with checkout path `workspace with spaces`; path/BOM, Ctrl+C, file lock/replacement, and exact ACL results | Path/BOM and most native tests reached the job. The ACL and fixed-Node fixes are in this branch; Windows execution is still required. Ctrl+C and a held-reader replacement test are still gaps. |
 | Ubuntu service/autostart | Isolated Ubuntu 24.04 guest: `systemctl --user is-enabled/active`, health, user service restart, guest reboot, post-boot health and enabled state | Not run. The host has active old production services and no sudo permission. |
-| Tailscale boundary | Approved isolated environment with a real CGN Tailscale interface: one listener on the selected address, viewer works through it, external ingest is rejected, loopback Bearer remains required | Unit/contract tests pass or skip when no interface exists. No fresh real-interface acceptance evidence. |
+| Tailscale boundary | Approved isolated environment with a real CGN Tailscale interface: one listener on the selected address, viewer works through it, and the removed legacy ingest surface is absent | PASS on parent SHA `63f0d07`: `/tmp/tma-orchestration/tailnet-real-63f0d07.log` records 3 passes and 0 skips with an independent temporary DB/port; no existing service changed |
 | Real one-shot self-update | The final user service starts `tma-update.service` only on demand; candidate SHA and archive are verified; app restarts to the same job; DB/Hub secret/config and SSE/history survive | Fixture/unit coverage exists; actual user-systemd one-shot is not run. The current Windows integration failure is #26-owned. |
 | History limit and shutdown | Exact near/over-16 MiB HTTP fixtures, response latency during the synchronous transaction, and bounded close with in-flight requests | Size-limit unit exists; the performance preflight is below the limit and has no HTTP/shutdown data. |
 
@@ -84,14 +87,17 @@ Windows lock owner can leave the fallback lock file, so the final acceptance
 must either document and clean that recovery path or add an explicit stale-lock
 protocol before calling the lock gate complete.
 
-## Bounded Ubuntu guest plan
+## Bounded Ubuntu guest implementation
 
-The feasible CI shape is a pinned Ubuntu 24.04 cloud image and an isolated
-QEMU guest, not a host reboot. A GitHub Actions Ubuntu job can install
-`qemu-system-x86_64` and `cloud-localds`, use `-accel kvm:tcg` (KVM is an
-optional acceleration path), and connect through user-mode SSH. The image
-digest and timeout must be pinned; the job should upload serial console,
-`systemctl --user` status, health, runner state, and post-reboot logs.
+`tools/test/ubuntu-reboot-vm.sh` and the manual
+`.github/workflows/ubuntu-reboot.yml` now implement the bounded CI shape: a
+pinned Ubuntu 24.04 cloud image (`release-20260826`, SHA-256
+`d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30`) and an
+isolated QEMU guest, never a host reboot. The job installs
+`qemu-system-x86_64` and `cloud-localds`, uses `-accel kvm:tcg` (KVM is an
+optional acceleration path), connects through user-mode SSH, and has a
+50-minute job timeout. It uploads serial console, service status, health, and
+post-reboot logs.
 
 The guest sequence is:
 
@@ -108,9 +114,15 @@ The guest sequence is:
    enabled/active Analytics, healthy listener, preserved DB/secret, and no
    automatically-running update unit.
 
-Real Tailscale login/auth should be a separate approved isolated-runner job;
-generic CI has no safe reusable tailnet credential. Until that job exists,
-the contract tests and the no-interface skip remain partial evidence.
+The workflow is manual because it downloads a pinned 24.04 image and runs the
+full release verification gate. Its artifact is required for closing the
+Ubuntu reboot/autostart row; a workflow that has not been dispatched remains a
+GAP.
+
+The parent SHA already has a real-interface artifact at
+`/tmp/tma-orchestration/tailnet-real-63f0d07.log`. Generic CI still has no safe
+reusable tailnet credential, so that isolated run remains the evidence for the
+Tailscale boundary while the QEMU job below covers service/reboot behavior.
 
 ## History performance plan
 
