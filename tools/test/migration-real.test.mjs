@@ -337,6 +337,7 @@ function sourceOptions(fixture, artifact, legacy, {partial = false} = {}) {
       infrastructurePath: fixture.protectedLayout.infrastructurePath,
       publicationPath: fixture.protectedLayout.publicationPath,
       updateStatePath: path.join(fixture.dir, 'update-state.json'),
+      serviceUnitPaths: [],
       windowsInstallDir: fixture.installDir,
       verifyTargetRelease: ({targetArtifact, targetCommitSha}) => {
         assert.equal(targetArtifact.manifest.targetCommitSha, targetCommitSha);

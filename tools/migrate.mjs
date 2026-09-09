@@ -359,7 +359,7 @@ function knownPathSources({legacy, options, home = null} = {}) {
     {key: 'legacy-root-infrastructure', path: options.infrastructurePath ?? '/etc/token-monitor-analytics/infrastructure.json'},
     {key: 'legacy-publication', path: options.publicationPath ?? '/opt/token-monitor-analytics/publication.json'},
     {key: 'legacy-update-state', path: options.updateStatePath ?? '/var/lib/tma-deploy/update-state.json'},
-    ...serviceUnitCandidates(home).map((file, index) => ({key: `legacy-service-${index}`, path: file})),
+    ...(options.serviceUnitPaths ?? serviceUnitCandidates(home)).map((file, index) => ({key: `legacy-service-${index}`, path: file})),
   ];
   for (const directory of options.legacyDropInDirs ?? []) sources.push({key: `legacy-dropin-${sources.length}`, path: directory});
   return sources.filter(item => typeof item.path === 'string' && item.path.trim()).map(item => ({...item, path: absolute(item.path)}));

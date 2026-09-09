@@ -191,6 +191,13 @@ async function setup(t) {
     environment: {TMA_INGEST_TOKEN: 'i'.repeat(64), OLD_HUB_SECRET: 'h'.repeat(40)},
     repositoryRoot: root,
     legacySourceRoot: old.source.root,
+    legacyCodeRoot: path.join(dir, 'legacy-current'),
+    legacyRunnerDir: path.join(dir, 'legacy-updater'),
+    legacyNodePath: path.join(dir, 'legacy-updater', 'node'),
+    infrastructurePath: path.join(dir, 'infrastructure.json'),
+    publicationPath: path.join(dir, 'publication.json'),
+    updateStatePath: path.join(dir, 'update-state.json'),
+    serviceUnitPaths: [],
     statePath: path.join(dir, 'migration-state.json'),
     backupDir: path.join(dir, 'migration-backup'),
     lockPath: path.join(dir, 'deploy.lock'),
@@ -208,6 +215,7 @@ test('migration drains pinned legacy outbox, archives IDs without active URL/Sec
   f.options.platform = migrationPlatform({databasePath: f.databasePath}, calls);
   const result = await runMigration(f.options);
   assert.equal(result.state.phase, 'complete');
+  assert.ok(result.state.inventory.files.every(file => file.path.startsWith(f.dir + path.sep)), 'fixture inventory must never read production paths');
   assert.deepEqual(calls.slice(0, 5), ['stopCollector', 'stopAnalytics', 'inhibitAutostart', 'verifyStopped', 'verifyNoDatabaseWriter']);
   assert.equal(fs.readdirSync(f.outboxPath).length, 0);
   const state = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
