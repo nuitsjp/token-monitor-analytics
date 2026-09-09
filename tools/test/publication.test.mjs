@@ -9,13 +9,17 @@ import {spawn,spawnSync} from 'node:child_process';
 import {configureApplication} from '../configure-application.mjs';
 import {readEnvironment,readJSON,selectConfiguration,validateConfiguration,writeChanged,treeDigest,readPublication,configurationId,withPublicationLock,assertOldLayout} from '../publish-config.mjs';
 import {createReleaseArtifact} from '../release.mjs';
-import {preparePublication,applyPublication} from '../publish-ubuntu.mjs';
+import {preparePublication,applyPublication,defaultHealthCheck} from '../publish-ubuntu.mjs';
 import {validateInfrastructure,unitDigest,appUnits,managedUnits,infrastructureVersion,configVersion,serviceContractVersion,runnerVersion} from '../ubuntu-layout.mjs';
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tma publication '));
   t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
   return directory;
+}
+
+function fixtureReleaseVerification(contentHash) {
+  return {assertSource() {}, contentHash: () => contentHash, run: () => [['fixture']]};
 }
 
 test('new configuration creates an empty DB/Secret and no legacy Collector inputs', t => {
@@ -133,18 +137,53 @@ test('verified publication is idempotent and rechecks config before stop', async
   const current = path.join(dir, 'current'), publication = path.join(dir, 'publication.json');
   let stopped = 0, started = 0;
   const services = {stop: async () => { stopped++; }, start: async () => { started++; }, daemonReload() {}, installUnit() {}};
-  const options = {services, backup: async () => {}, healthCheck: async () => {}};
-  const prepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const stages = [];
+  const options = {services, backup: async () => {}, healthCheck: async () => {}, jobId: 'job-publication', targetCommitSha: sha, onStage: stage => stages.push(stage)};
+  const releaseVerification = fixtureReleaseVerification(artifact.contentHash);
+  const prepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services, releaseVerification});
   const first = await applyPublication(prepared, options);
   assert.equal(first.changed, true); assert.equal(stopped, 1); assert.equal(started, 1);
+  assert.deepEqual(stages, ['restarting']);
+  assert.deepEqual(first.proof, {jobId: 'job-publication', commitSha: sha, releaseId: first.publication.releaseId, contentHash: first.publication.contentHash, archiveSha256: first.publication.archiveSha256, configurationId: first.publication.configurationId, health: true, state: true, viewer: true, sse: true});
   services.isActive = () => true; services.isEnabled = () => true;
-  const secondPrepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const secondPrepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services, releaseVerification});
   const second = await applyPublication(secondPrepared, options);
   assert.equal(second.changed, false); assert.equal(stopped, 1); assert.equal(started, 1);
-  const stalePrepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: path.join(dir, 'other-publication.json'), uid: undefined, services});
-  const config = readJSON(path.join(dir, 'analytics.json')); config.timeZone = 'UTC'; fs.writeFileSync(path.join(dir, 'analytics.json'), JSON.stringify(config, null, 2) + '\n');
-  await assert.rejects(() => applyPublication(stalePrepared, options), /changed during publication/);
-  assert.equal(stopped, 1);
+  const noOpPrepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services, releaseVerification});
+  const unchangedConfig = readJSON(path.join(dir, 'analytics.json')); unchangedConfig.timeZone = 'UTC'; fs.writeFileSync(path.join(dir, 'analytics.json'), JSON.stringify(unchangedConfig, null, 2) + '\n');
+  await assert.rejects(() => applyPublication(noOpPrepared, options), /changed during publication/);
+  assert.equal(stopped, 1); assert.equal(started, 1);
+});
+
+test('custom publication destinations cannot bypass pinned source verification', async t => {
+  const dir = fixture(t);
+  configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}, port: 8788});
+  const sha = 'f'.repeat(40);
+  const artifact = createReleaseArtifact({root: path.resolve(new URL('../../', import.meta.url).pathname), architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
+  let stopped = false;
+  const services = {stop: async () => { stopped = true; }, start: async () => {}, daemonReload() {}, installUnit() {}};
+  await assert.rejects(() => preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current: path.join(dir, 'current'), publicationPath: path.join(dir, 'publication.json'), uid: undefined, services}), /pinned commit SHA/);
+  assert.equal(stopped, false);
+});
+
+test('health verification retries startup responses within one deadline', async () => {
+  const expected = {releaseId: 'rel-test', targetCommitSha: 'a'.repeat(40), contentHash: 'b'.repeat(64)};
+  const config = {analytics: {publicOrigin: 'http://127.0.0.1:8788', viewerAuth: {mode: 'loopback'}}, auth: {}};
+  const attempts = new Map();
+  const fetchImpl = async url => {
+    const route = new URL(url).pathname;
+    const attempt = (attempts.get(route) ?? 0) + 1;
+    attempts.set(route, attempt);
+    if (route === '/api/health' && attempt === 1) return new Response('starting', {status: 503});
+    if (route === '/api/health') return Response.json({ok: true, release: expected});
+    if (route === '/api/state') return Response.json({storage: 'sqlite', release: expected});
+    if (route === '/api/ingest' || route === '/api/collector/status') return new Response('', {status: 404});
+    if (route === '/api/live') return new Response('event: ready\ndata: {}\n\n', {status: 200, headers: {'content-type': 'text/event-stream'}});
+    throw new Error(`unexpected route ${route}`);
+  };
+  const result = await defaultHealthCheck(config, {expectedRelease: expected, fetchImpl, timeoutMs: 1000});
+  assert.deepEqual(result, {health: true, state: true, viewer: true, sse: true});
+  assert.equal(attempts.get('/api/health'), 2);
 });
 
 test('publish verification reaches the extracted real HTTP/SSE/SQLite entrypoint', async t => {
@@ -171,7 +210,7 @@ test('publish verification reaches the extracted real HTTP/SSE/SQLite entrypoint
     },
     daemonReload() {}, installUnit() {}
   };
-  const prepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const prepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services, releaseVerification: fixtureReleaseVerification(artifact.contentHash)});
   const result = await applyPublication(prepared, {services, backup: async () => {}});
   assert.equal(result.changed, true);
   const state = await (await fetch(config.publicOrigin + '/api/state')).json();
@@ -189,9 +228,10 @@ test('same payload with a new target SHA keeps the running release identity', as
   let active = false, stopped = 0, started = 0, expected;
   const services = {isActive: () => active, isEnabled: () => active, stop: async () => { stopped++; active = false; }, start: async () => { started++; active = true; }, daemonReload() {}, installUnit() {}};
   const options = {services, backup: async () => {}, healthCheck: async (_config, details) => { expected = details.expectedRelease; }};
-  const firstPrepared = await preparePublication({artifactPath: first.archivePath, checksumPath: first.checksumPath, targetCommitSha: '1'.repeat(40), configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const releaseVerification = fixtureReleaseVerification(first.contentHash);
+  const firstPrepared = await preparePublication({artifactPath: first.archivePath, checksumPath: first.checksumPath, targetCommitSha: '1'.repeat(40), configDir: dir, current, publicationPath: publication, uid: undefined, services, releaseVerification});
   await applyPublication(firstPrepared, options);
-  const secondPrepared = await preparePublication({artifactPath: second.archivePath, checksumPath: second.checksumPath, targetCommitSha: '2'.repeat(40), configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const secondPrepared = await preparePublication({artifactPath: second.archivePath, checksumPath: second.checksumPath, targetCommitSha: '2'.repeat(40), configDir: dir, current, publicationPath: publication, uid: undefined, services, releaseVerification});
   const result = await applyPublication(secondPrepared, options);
   assert.equal(result.changed, false);
   assert.equal(stopped, 1);

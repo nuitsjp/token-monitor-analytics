@@ -103,14 +103,19 @@ export async function preparePublication({
   expectedPublicOrigin,
   serviceUnits = managedUnits,
   runtime = runtimeContract(),
-  services = serviceController()
+  services = serviceController(),
+  // Dependency injection is kept for isolated unit fixtures. CLI/Web/runner
+  // callers use these defaults and therefore cannot skip the release gate.
+  releaseVerification = {assertSource: assertReleaseSource, contentHash: releaseContentHash, run: runReleaseVerification}
 } = {}) {
   const configRoot = path.resolve(configDir);
   // This check intentionally precedes any service operation and backup.
   assertOldLayout({root: path.dirname(path.resolve(current)), destination: configRoot, currentDir: current});
   const selectedInfrastructurePath = configRoot === path.resolve(destination) ? infrastructurePath : null;
-  const infrastructure = selectedInfrastructurePath && fs.existsSync(selectedInfrastructurePath) ? readJSON(selectedInfrastructurePath) : null;
-  if (infrastructure && uid !== undefined && selectedInfrastructurePath === infrastructureFile) {
+  let infrastructure = null;
+  if (configRoot === path.resolve(destination)) {
+    if (!selectedInfrastructurePath || !fs.existsSync(selectedInfrastructurePath)) throw Object.assign(new Error('Infrastructure record is missing; run provision:ubuntu before publication'), {code: 'provision_required'});
+    infrastructure = readJSON(selectedInfrastructurePath);
     assertInfrastructureFile(selectedInfrastructurePath);
     validateInfrastructure(infrastructure, uid);
   }
@@ -138,22 +143,19 @@ export async function preparePublication({
   let artifact;
   let ownedArtifact = false;
   if (artifactPath) {
-    // A release-level manifest is only an assertion. On a real installation,
-    // bind the archive to the clean pinned source tree and rerun the same
-    // release gate before trusting it; package-only archives cannot enter this
-    // path. Temporary fixture destinations intentionally use the lower-level
-    // API without making a production certification claim.
-    if (configRoot === path.resolve(destination)) {
-      assertReleaseSource(sourceRoot, pinnedSha, sourceProof);
-      const sourceHash = releaseContentHash(sourceRoot);
-      artifact = verifyReleaseArtifact({archivePath: artifactPath, checksumPath, expectedTargetCommitSha: pinnedSha, expectedContentHash: sourceHash, expectedArchitecture: architecture});
-      runReleaseVerification(sourceRoot);
-    } else artifact = verifyReleaseArtifact({archivePath: artifactPath, checksumPath, expectedTargetCommitSha: pinnedSha, expectedArchitecture: architecture});
+    // A release-level manifest is only an assertion. Bind the archive to the
+    // clean pinned source tree and rerun the same release gate before trusting
+    // it; package-only archives cannot enter this path. Tests may inject the
+    // verifier explicitly, while all normal callers use the production gate.
+    releaseVerification.assertSource(sourceRoot, pinnedSha, sourceProof);
+    const sourceHash = releaseVerification.contentHash(sourceRoot);
+    artifact = verifyReleaseArtifact({archivePath: artifactPath, checksumPath, expectedTargetCommitSha: pinnedSha, expectedContentHash: sourceHash, expectedArchitecture: architecture});
+    releaseVerification.run(sourceRoot);
   }
   else {
-    assertReleaseSource(sourceRoot, pinnedSha, sourceProof);
+    releaseVerification.assertSource(sourceRoot, pinnedSha, sourceProof);
     if (!pinnedSha) throw new Error('A full pinned commit SHA is required for publication');
-    const checks = runReleaseVerification(sourceRoot);
+    const checks = releaseVerification.run(sourceRoot);
     const built = createReleaseArtifact({root: sourceRoot, architecture, outputDir: path.join(sourceRoot, 'dist'), targetCommitSha: pinnedSha, certified: true, verification: {level: 'release', checks}});
     artifact = verifyReleaseArtifact({archivePath: built.archivePath, checksumPath: built.checksumPath, expectedTargetCommitSha: pinnedSha, expectedArchitecture: architecture});
     ownedArtifact = true;
@@ -190,7 +192,7 @@ export async function preparePublication({
   };
 }
 
-async function defaultHealthCheck(config, {expectedRelease, fetchImpl = fetch, timeoutMs = 10000} = {}) {
+export async function defaultHealthCheck(config, {expectedRelease, fetchImpl = fetch, timeoutMs = 10000} = {}) {
   const authenticated = config.auth?.user ? {Authorization: `Basic ${Buffer.from(`${config.auth.user}:${config.auth.password}`).toString('base64')}`} : {};
   const deadline = Date.now() + timeoutMs;
   const retry = async (operation, label) => {
@@ -284,7 +286,7 @@ async function backupDeployment(prepared, backupDirectory) {
 export async function applyPublication(prepared, {
   services = prepared.services ?? serviceController(),
   backup = backupDeployment,
-  backupDirectory = path.join(path.dirname(prepared.currentDir), 'backups', `${prepared.manifest.releaseId}-${Date.now()}`),
+  backupDirectory = path.join(path.dirname(prepared.config.analytics.databasePath), 'backups', `${prepared.manifest.releaseId}-${Date.now()}`),
   healthCheck = defaultHealthCheck,
   now = () => new Date().toISOString(),
   writePublication = true,
