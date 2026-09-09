@@ -173,11 +173,13 @@ async function makeFixture(t, legacy) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-real-migration-'));
   const fixture = {dir, old: null};
   t.after(async () => {
+    const errors = [];
     if (fixture.old) {
-      await fixture.old.app.close();
+      try { await fixture.old.app.close(); } catch (error) { errors.push(error); }
       fixture.old = null;
     }
-    await removeTreeEventually(dir);
+    try { await removeTreeEventually(dir); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, 'real migration fixture cleanup failed');
   });
   const token = 'i'.repeat(64);
   const oldHubSecret = 'h'.repeat(40);
@@ -428,8 +430,10 @@ test('real pinned legacy server drains into the native schema and restores the c
   const fixture = await makeFixture(t, legacy);
   const setup = sourceOptions(fixture, verified, legacy);
   t.after(async () => {
-    await setup.stopPublished();
-    await setup.closeOld();
+    const errors = [];
+    try { await setup.stopPublished(); } catch (error) { errors.push(error); }
+    try { await setup.closeOld(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, 'published real migration fixture cleanup failed');
   });
   const result = await runMigration(setup.options);
   assert.equal(result.state.phase, 'complete');
@@ -487,8 +491,10 @@ test('real pinned legacy drain keeps ACKed observations and pending outbox files
   const fixture = await makeFixture(t, legacy);
   const setup = sourceOptions(fixture, verified, legacy, {partial: true});
   t.after(async () => {
-    await setup.stopPublished();
-    await setup.closeOld();
+    const errors = [];
+    try { await setup.stopPublished(); } catch (error) { errors.push(error); }
+    try { await setup.closeOld(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, 'partial real migration fixture cleanup failed');
   });
   let sendCount = 0;
   setup.options.send = async (url, init) => {

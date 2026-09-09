@@ -162,19 +162,23 @@ test('Windows direct CLI migration and rollback restore the old process and data
   let legacyAnalytics = null;
   let collector = null;
   t.after(async () => {
-    await stopProcess(collector?.pid);
-    await stopProcess(legacyAnalytics?.pid);
+    const errors = [];
+    try { await stopProcess(collector?.pid); } catch (error) { errors.push(error); }
+    try { await stopProcess(legacyAnalytics?.pid); } catch (error) { errors.push(error); }
     if (fs.existsSync(pidFile)) {
-      const restoredPid = Number(fs.readFileSync(pidFile, 'utf8'));
-      await stopProcess(restoredPid);
+      try {
+        const restoredPid = Number(fs.readFileSync(pidFile, 'utf8'));
+        await stopProcess(restoredPid);
+      } catch (error) { errors.push(error); }
     }
     if (fs.existsSync(path.join(dir, 'migration-state.json'))) {
       try {
         const state = readJson(path.join(dir, 'migration-state.json'));
         await stopProcess(state.windowsProcess?.pid ?? state.published?.processId);
-      } catch {}
+      } catch (error) { errors.push(error); }
     }
-    await removeTreeEventually(dir);
+    try { await removeTreeEventually(dir); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, 'Windows migration fixture cleanup failed');
   });
   for (const filename of [outboxPath, configDir, targetDir]) fs.mkdirSync(filename, {recursive: true, mode: 0o700});
   const hubsPath = path.join(configDir, 'hubs.json');
