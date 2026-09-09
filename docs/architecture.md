@@ -18,7 +18,7 @@ AnalyticsはNode.jsのHTTPサーバー。既存のTypeScriptコード（protocol
 
 SQLiteが観測・最新値・推定状態・日次履歴の正本。1 Analyticsプロセスだけが扱う。`BEGIN IMMEDIATE`からCOMMITまで、基準値SELECT→観測保存→最新値更新→推定→日次値保存の全体を1トランザクションとする。API呼出しと保守処理をキューで直列化し、未コミットの中間状態を別HTTP要求へ返さない。
 
-収集モジュールから保存層へ渡す内部APIは、`recordObservation(db, observation, contracts, timeZone)`（複数件は`recordObservations`）である。`observation`は`hubId`、`streamId`、`kind`、`observedAt`、`receivedAt`、正規化済み`stats`だけを持ち、Batch/schemaVersion/ACKや上流の再送IDを要求しない。保存用の`event_id`は保存処理が16バイトのランダム値から生成する。保存payloadには既存の状態再送互換のため`schemaVersion: 1`とこのローカルIDを付加する。APIは同期関数で、呼出し側が`db.transaction(() => ...)`で囲む。旧`/api/ingest`は移行期間だけこのAPIへ変換する薄い橋であり、通常の内部収集経路では使わない。
+収集モジュールから保存層へ渡す内部APIは、`recordObservation(db, observation, contracts, timeZone)`（複数件は`recordObservations`）である。`observation`は`hubId`、`streamId`、`kind`、`observedAt`、`receivedAt`、正規化済み`stats`だけを持ち、Batch/schemaVersion/ACKや上流の再送IDを要求しない。入力に余分な`eventId`があっても内部APIは無視し、保存用の`event_id`は保存処理が16バイトのランダム値から生成する。保存payloadには既存の状態再送互換のため`schemaVersion: 1`とこのローカルIDを付加する。APIは同期関数で、呼出し側が`db.transaction(() => ...)`で囲む。トランザクションcallbackが`PromiseLike`を返す場合は型・実行時の両方で拒否し、COMMITしない。旧`/api/ingest`だけが移行期間の薄い橋として上流の再送IDを保持し、通常の内部収集経路では使わない。
 
 WAL＋synchronous=FULLを使用する。スキーマは起動時に番号順に適用し、適用済みマイグレーションの書換えをchecksumで検出する。デモ/本番の識別をDBへ保存し、混在させる設定では起動しない。CPUとSQLite I/Oは同じNodeイベントループで実行するため、小規模・個人利用のスターターが対象。大量データを処理する汎用分析基盤ではない。
 

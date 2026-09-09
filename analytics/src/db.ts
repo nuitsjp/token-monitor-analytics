@@ -7,7 +7,6 @@ function newEventId(): string {
  globalThis.crypto.getRandomValues(bytes);
  return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
 }
-function isEventId(value:unknown): value is string {return typeof value==='string'&&/^[a-f0-9]{32}$/.test(value);}
 function internalObservation(input:Observation|TransportObservation):Observation {
  const {schemaVersion: _schemaVersion,eventId: _eventId,...observation}=input as TransportObservation;
  return observation;
@@ -22,8 +21,7 @@ function recordMany(db:Database,inputs:readonly Observation[],contracts:Contract
  const states=new Map(stateRows.map(r=>[r.contract_id,JSON.parse(r.state_json) as State]));
  const changed=new Set<string>();
  for(const [index,input] of inputs.entries()){
-  const inputId=(input as Observation & {eventId?:unknown}).eventId;
-  const eventId=legacyIds?.[index]??(isEventId(inputId)?inputId:newEventId());
+  const eventId=legacyIds?.[index]??newEventId();
   const observation:Observation & {schemaVersion:1;eventId:string}={
    schemaVersion:1,hubId:input.hubId,streamId:input.streamId,kind:input.kind,
    observedAt:input.observedAt,receivedAt:input.receivedAt,stats:input.stats,eventId

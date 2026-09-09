@@ -36,13 +36,21 @@ export function openDatabase(filename, {demo=false}={}) {
   get(){return sql.prepare(text).get(...args)??null;},
   run(){const r=sql.prepare(text).run(...args);return {changes:Number(r.changes)};}
  });
+ const isThenable=value=>value!==null&&(typeof value==='object'||typeof value==='function')&&typeof value.then==='function';
  const database={
   sql,prepare:wrap,
   exec(text){sql.exec(text);},
   transaction(callback){
    if(inTransaction)throw new Error('Nested/concurrent transaction; serialize callers');
    sql.exec('BEGIN IMMEDIATE');inTransaction=true;
-   try{const result=callback();sql.exec('COMMIT');return result;}
+   try{
+    const result=callback();
+    if(isThenable(result)){
+     Promise.resolve(result).catch(()=>{});
+     throw new TypeError('transaction callback must be synchronous');
+    }
+    sql.exec('COMMIT');return result;
+   }
    catch(error){sql.exec('ROLLBACK');throw error;}
    finally{inTransaction=false;}
   },

@@ -30,6 +30,13 @@ test('recordObservation generates a local ID and drops unknown fields',()=>{
  const row=db.sql.prepare('SELECT event_id,payload FROM observations').get();const saved=JSON.parse(row.payload);
  assert.deepEqual(changed,['hub-a']);assert.match(row.event_id,/^[a-f0-9]{32}$/);assert.equal(saved.eventId,row.event_id);assert.equal(saved.schemaVersion,1);assert.equal(saved.privateField,undefined);db.sql.close();
 });
+test('internal observation API always generates a new ID',()=>{
+ const db=database(),id='b'.repeat(32),first={...internal(o()),eventId:id},second={...internal(o(1)),eventId:id};
+ db.transaction(()=>recordObservation(db,first,[c],'Asia/Tokyo'));
+ db.transaction(()=>recordObservation(db,second,[c],'Asia/Tokyo'));
+ const rows=db.sql.prepare('SELECT event_id FROM observations ORDER BY observed_at').all();
+ assert.equal(rows.length,2);assert.notEqual(rows[0].event_id,id);assert.notEqual(rows[1].event_id,id);assert.notEqual(rows[0].event_id,rows[1].event_id);db.sql.close();
+});
 test('zero remains a valid counter while null is unavailable',()=>{
  const zero=o();zero.stats.limits.providers[0].windows[0].usedPercent=0;zero.stats.devices[0].periods.allTime.clientCosts.claude=0;
  const next=o(1);next.stats.limits.providers[0].windows[0].usedPercent=5;next.stats.devices[0].periods.allTime.clientCosts.claude=8;

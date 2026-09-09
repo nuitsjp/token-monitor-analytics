@@ -7,9 +7,10 @@ export interface Statement {
  get<T = Record<string, unknown>>(): T | null;
  run(): RunResult;
 }
+type Synchronous<T> = T extends PromiseLike<unknown> ? never : T;
 export interface Database {
  prepare(sql: string): Statement;
  exec(sql: string): void;
- transaction<T>(callback: () => T): T;
+ transaction<T>(callback: () => T & Synchronous<T>): T;
  close(): void;
 }
