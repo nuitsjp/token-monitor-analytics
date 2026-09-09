@@ -1624,7 +1624,11 @@ function applyWindowsAcl(filename, acl) {
 function applyWindowsAclTree(root, metadataTree, temporaryDirectory = null) {
   const records = Object.entries(metadataTree ?? {})
     .filter(([, metadata]) => typeof metadata?.acl === 'string')
-    .sort(([left], [right]) => left.length - right.length || left.localeCompare(right))
+    // Apply children while the original destination inheritance still grants
+    // access. Applying a directory ACL first can propagate its inherited ACEs
+    // over the copied children and can remove the restore user's access before
+    // their source ACLs are applied.
+    .sort(([left], [right]) => right.length - left.length || right.localeCompare(left))
     .map(([relative, metadata]) => ({path: relative, acl: metadata.acl}));
   if (!records.length) return;
   const directory = temporaryDirectory ? absolute(temporaryDirectory) : os.tmpdir();
