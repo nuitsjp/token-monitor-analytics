@@ -100,7 +100,7 @@ async function main(){
   config.publicOrigin=`http://127.0.0.1:${config.listen.port}`;
   const origin=()=>config.publicOrigin;
   const request=(route,init={})=>fetch(origin()+route,init);
-  const database=()=>app.db.sql;
+  const database=()=>app.db;
 
   const moduleResponse=await request('/usage-history.mjs');
   assert.equal(moduleResponse.status,200);

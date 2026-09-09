@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import {openDatabase} from '../runtime/sqlite.mjs';
+import {openDatabase,transaction} from '../runtime/sqlite.mjs';
 import {
   beginHistoryFetch,
   historyFetchStatus,
@@ -83,8 +83,8 @@ test('History storage replaces rows, retains omitted rows, and records current s
   try {
     const first = normalizeHistoryResponse({devices: [device()]});
     const firstAt = '2026-09-08T12:01:00.000Z';
-    const firstId = db.transaction(() => beginHistoryFetch(db, 'hub-a', firstAt));
-    db.transaction(() => storeHistorySnapshot(db, 'hub-a', first, firstId, firstAt));
+    const firstId = transaction(db,() => beginHistoryFetch(db, 'hub-a', firstAt));
+    transaction(db,() => storeHistorySnapshot(db, 'hub-a', first, firstId, firstAt));
     let result = readUsageHistory(db, {hubId: 'hub-a', deviceId: 'device-a', granularity: 'daily', from: '2026-09-01', to: '2026-09-30'});
     assert.equal(result.rows.length, 2);
     assert.equal(result.rows[1].tokens, 100);
@@ -93,8 +93,8 @@ test('History storage replaces rows, retains omitted rows, and records current s
     const correctedDevice = device('device-a', {history: {...device().history, daily: [device().history.daily[1]]}});
     const second = normalizeHistoryResponse({devices: [correctedDevice]});
     const secondAt = '2026-09-08T12:02:00.000Z';
-    const secondId = db.transaction(() => beginHistoryFetch(db, 'hub-a', secondAt));
-    db.transaction(() => storeHistorySnapshot(db, 'hub-a', second, secondId, secondAt));
+    const secondId = transaction(db,() => beginHistoryFetch(db, 'hub-a', secondAt));
+    transaction(db,() => storeHistorySnapshot(db, 'hub-a', second, secondId, secondAt));
     result = readUsageHistory(db, {hubId: 'hub-a', deviceId: 'device-a', granularity: 'daily', from: '2026-09-01', to: '2026-09-30'});
     assert.equal(result.rows.length, 2, 'omitted older rows remain available');
     assert.equal(result.rows[0].current, false, 'omitted rows are visibly older than the current fetch');
@@ -108,11 +108,11 @@ test('History storage replaces rows, retains omitted rows, and records current s
     assert.equal(result.rows[1].sourceTimeZone, null, 'current period window does not establish old row date basis');
 
     const staleAt = '2026-09-08T12:03:00.000Z';
-    const staleId = db.transaction(() => beginHistoryFetch(db, 'hub-a', staleAt));
-    const currentId = db.transaction(() => beginHistoryFetch(db, 'hub-a', '2026-09-08T12:04:00.000Z'));
+    const staleId = transaction(db,() => beginHistoryFetch(db, 'hub-a', staleAt));
+    const currentId = transaction(db,() => beginHistoryFetch(db, 'hub-a', '2026-09-08T12:04:00.000Z'));
     assert.notEqual(staleId, currentId);
-    assert.throws(() => db.transaction(() => storeHistorySnapshot(db, 'hub-a', first, staleId, staleAt)), /stale history fetch/);
-    db.transaction(() => storeHistorySnapshot(db, 'hub-a', first, currentId, '2026-09-08T12:04:00.000Z'));
+    assert.throws(() => transaction(db,() => storeHistorySnapshot(db, 'hub-a', first, staleId, staleAt)), /stale history fetch/);
+    transaction(db,() => storeHistorySnapshot(db, 'hub-a', first, currentId, '2026-09-08T12:04:00.000Z'));
   } finally { db.close(); }
 });
 
@@ -121,14 +121,14 @@ test('History storage distinguishes deletion, disabled, null, and missing capabi
   try {
     const initial = normalizeHistoryResponse({devices: [device(), device('device-b')]});
     const at = '2026-09-08T12:01:00.000Z';
-    const id = db.transaction(() => beginHistoryFetch(db, 'hub-a', at));
-    db.transaction(() => storeHistorySnapshot(db, 'hub-a', initial, id, at));
+    const id = transaction(db,() => beginHistoryFetch(db, 'hub-a', at));
+    transaction(db,() => storeHistorySnapshot(db, 'hub-a', initial, id, at));
     const next = normalizeHistoryResponse({devices: [
       device('device-a', {historyAvailable: false, history: device().history}),
     ]});
     const nextAt = '2026-09-08T12:02:00.000Z';
-    const nextId = db.transaction(() => beginHistoryFetch(db, 'hub-a', nextAt));
-    db.transaction(() => storeHistorySnapshot(db, 'hub-a', next, nextId, nextAt));
+    const nextId = transaction(db,() => beginHistoryFetch(db, 'hub-a', nextAt));
+    transaction(db,() => storeHistorySnapshot(db, 'hub-a', next, nextId, nextAt));
     const disabled = readUsageHistory(db, {hubId: 'hub-a', deviceId: 'device-a', granularity: 'daily', from: '2026-09-01', to: '2026-09-30'});
     const deleted = readUsageHistory(db, {hubId: 'hub-a', deviceId: 'device-b', granularity: 'daily', from: '2026-09-01', to: '2026-09-30'});
     assert.equal(disabled.source.historyState, 'disabled');
@@ -147,8 +147,8 @@ test('History storage distinguishes deletion, disabled, null, and missing capabi
     delete missingRaw.history;
     const missing = normalizeHistoryResponse({devices: [missingRaw]});
     const missingAt = '2026-09-08T12:03:00.000Z';
-    const missingId = db.transaction(() => beginHistoryFetch(db, 'hub-a', missingAt));
-    db.transaction(() => storeHistorySnapshot(db, 'hub-a', missing, missingId, missingAt));
+    const missingId = transaction(db,() => beginHistoryFetch(db, 'hub-a', missingAt));
+    transaction(db,() => storeHistorySnapshot(db, 'hub-a', missing, missingId, missingAt));
     assert.equal(readUsageHistory(db, {hubId: 'hub-a', deviceId: 'device-a', granularity: 'daily', from: '2026-09-01', to: '2026-09-30'}).source.historyState, 'missing_capability');
   } finally { db.close(); }
 });
@@ -519,12 +519,12 @@ test('History fetch failures update only bookkeeping and never overwrite retaine
   try {
     const valid = normalizeHistoryResponse({devices: [device()]});
     const at = '2026-09-08T12:01:00.000Z';
-    const id = db.transaction(() => beginHistoryFetch(db, 'hub-a', at));
-    db.transaction(() => storeHistorySnapshot(db, 'hub-a', valid, id, at));
+    const id = transaction(db,() => beginHistoryFetch(db, 'hub-a', at));
+    transaction(db,() => storeHistorySnapshot(db, 'hub-a', valid, id, at));
     const failedAt = '2026-09-08T12:02:00.000Z';
-    const failedId = db.transaction(() => beginHistoryFetch(db, 'hub-a', failedAt));
-    assert.throws(() => db.transaction(() => recordHistoryFetchFailure(db, 'hub-a', failedId, 'Bearer secret should never be stored')), /invalid history fetch error code/);
-    db.transaction(() => recordHistoryFetchFailure(db, 'hub-a', failedId, 'network_error', failedAt));
+    const failedId = transaction(db,() => beginHistoryFetch(db, 'hub-a', failedAt));
+    assert.throws(() => transaction(db,() => recordHistoryFetchFailure(db, 'hub-a', failedId, 'Bearer secret should never be stored')), /invalid history fetch error code/);
+    transaction(db,() => recordHistoryFetchFailure(db, 'hub-a', failedId, 'network_error', failedAt));
     const rows = readUsageHistory(db, {hubId: 'hub-a', deviceId: 'device-a', granularity: 'daily', from: '2026-09-01', to: '2026-09-30'}).rows;
     assert.equal(rows.length, 2);
     assert.equal(historyFetchStatus(db, 'hub-a').lastStatus, 'error');
@@ -548,10 +548,10 @@ test('History fetch and SQLite store work across a real HTTP boundary', async ()
   try {
     const response = await fetchHistory({hub: {...hub, url: hubUrl}});
     const at = new Date().toISOString();
-    const fetchId = db.transaction(() => beginHistoryFetch(db, 'hub-a', at));
-    db.transaction(() => storeHistorySnapshot(db, 'hub-a', response, fetchId, at));
-    assert.equal(db.prepare('SELECT count(*) AS n FROM usage_periods WHERE hub_id=? AND device_id=? AND granularity=?').bind('hub-a', 'device-a', 'daily').get().n, 2);
-    assert.equal(db.prepare('SELECT last_status FROM usage_fetches WHERE hub_id=?').bind('hub-a').get().last_status, 'success');
+    const fetchId = transaction(db,() => beginHistoryFetch(db, 'hub-a', at));
+    transaction(db,() => storeHistorySnapshot(db, 'hub-a', response, fetchId, at));
+    assert.equal(db.prepare('SELECT count(*) AS n FROM usage_periods WHERE hub_id=? AND device_id=? AND granularity=?').get('hub-a', 'device-a', 'daily').n, 2);
+    assert.equal(db.prepare('SELECT last_status FROM usage_fetches WHERE hub_id=?').get('hub-a').last_status, 'success');
   } finally {
     db.close();
     await new Promise(resolve => hubServer.close(resolve));

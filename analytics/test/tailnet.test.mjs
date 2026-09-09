@@ -8,7 +8,6 @@ import http from 'node:http';
 import {Readable} from 'node:stream';
 import {startServer} from '../runtime/server.mjs';
 import {loadConfig,isTailnetIPv4,validateTailnetBinding} from '../runtime/config.mjs';
-const env={TMA_INGEST_TOKEN:'test-ingest-token-12345678901234567890',TMA_VIEWER_USER:'viewer',TMA_VIEWER_PASSWORD:'test-independent-password-123456789'};
 function fixture(t){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tma-tailnet-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const raw=JSON.parse(fs.readFileSync(new URL('../configs/demo.json',import.meta.url),'utf8'));
@@ -33,13 +32,13 @@ test('tailnet viewer exposes the selected app surface and has no ingest endpoint
   const reserve=net.createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r));
   f.raw.listen.port=port;f.raw.publicOrigin=`http://host.example.ts.net:${port}`;f.write();
   f.raw.viewerAuth={mode:'tailscale'};f.write();
-  const app=await startServer(loadConfig(f.file),{env,heartbeatMs:50,logger:{info(){},error(){}}});
+  const app=await startServer(loadConfig(f.file),{heartbeatMs:50,logger:{info(){},error(){}}});
   const host=`host.example.ts.net:${port}`,url=`http://${address}:${port}`;
   const send=(route,options={})=>new Promise((resolve,reject)=>{
    const request=http.request(url+route,{...options,headers:{Host:host,...options.headers}},response=>resolve(new Response(Readable.toWeb(response),{status:response.statusCode,headers:response.headers})));
    request.on('error',reject);request.end();
   });
-  for(const headers of [{},{Authorization:'Bearer '+env.TMA_INGEST_TOKEN}])assert.equal((await send('/api/ingest',{method:'POST',headers})).status,404);
+  assert.equal((await send('/api/ingest',{method:'POST'})).status,404);
   assert.equal((await send('/api/state')).status,200);
   assert.equal((await send('/')).status,200);
   const stream=await send('/api/live');assert.equal(stream.status,200);await stream.body.cancel();

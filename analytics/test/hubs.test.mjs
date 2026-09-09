@@ -11,7 +11,7 @@ import {
   archiveHubRecord, recordContractSnapshots,
 } from '../runtime/hubs.mjs';
 import {loadConfig} from '../runtime/config.mjs';
-import {openDatabase} from '../runtime/sqlite.mjs';
+import {openDatabase,transaction} from '../runtime/sqlite.mjs';
 import {startServer} from '../runtime/server.mjs';
 import {contract as fixtureContract} from './adapter.mjs';
 
@@ -149,19 +149,19 @@ test('secrets use an opaque reference and an atomically replaced protected file'
 test('SQLite Hub rows use CAS versions, preserve archives, and snapshot descriptions', t => {
   const db = openDatabase(':memory:');
   t.after(() => db.close());
-  const row = db.transaction(() => insertHub(db, {id: 'hub-1', label: 'Hub', url: 'https://hub.example.com', status: 'active', secretRef: 'sec-1'}));
+  const row = transaction(db,() => insertHub(db, {id: 'hub-1', label: 'Hub', url: 'https://hub.example.com', status: 'active', secretRef: 'sec-1'}));
   assert.equal(row.version, 1);
   assert.equal(row.lastObservationAt, null);
-  const changed = db.transaction(() => updateHubRecord(db, 'hub-1', 1, {label: 'Renamed'}));
+  const changed = transaction(db,() => updateHubRecord(db, 'hub-1', 1, {label: 'Renamed'}));
   assert.equal(changed.version, 2);
   assert.equal(changed.label, 'Renamed');
-  assert.throws(() => db.transaction(() => updateHubRecord(db, 'hub-1', 1, {label: 'stale'})), error => error.code === 'version_conflict' && error.currentVersion === 2);
-  const archived = db.transaction(() => archiveHubRecord(db, 'hub-1', 2));
+  assert.throws(() => transaction(db,() => updateHubRecord(db, 'hub-1', 1, {label: 'stale'})), error => error.code === 'version_conflict' && error.currentVersion === 2);
+  const archived = transaction(db,() => archiveHubRecord(db, 'hub-1', 2));
   assert.equal(archived.status, 'archived');
   assert.equal(listHubRecords(db, {includeArchived: false}).length, 0);
-  db.transaction(() => recordContractSnapshots(db, [{...fixtureContract, id: 'contract-1', hubId: 'hub-1'}]));
-  assert.equal(db.sql.prepare('SELECT count(*) n FROM hub_snapshots').get().n, 3);
-  assert.equal(db.sql.prepare('SELECT count(*) n FROM contract_snapshots').get().n, 1);
+  transaction(db,() => recordContractSnapshots(db, [{...fixtureContract, id: 'contract-1', hubId: 'hub-1'}]));
+  assert.equal(db.prepare('SELECT count(*) n FROM hub_snapshots').get().n, 3);
+  assert.equal(db.prepare('SELECT count(*) n FROM contract_snapshots').get().n, 1);
 });
 
 test('v2 config has one Hub source of truth and rejects the old layout', t => {
@@ -187,7 +187,7 @@ test('management API performs SQLite CRUD, CAS conflicts, and archive constraint
   const databasePath = path.join(dir, 'analytics.db');
   writeAtomicFile(secretsPath, JSON.stringify({schemaVersion: 1, secrets: {initial: 'hub-one-secret'}}));
   const db = openDatabase(databasePath);
-  db.transaction(() => insertHub(db, {id: 'hub-1', label: 'Hub One', url: 'http://127.0.0.1:1', status: 'active', secretRef: 'initial'}));
+  transaction(db,() => insertHub(db, {id: 'hub-1', label: 'Hub One', url: 'http://127.0.0.1:1', status: 'active', secretRef: 'initial'}));
   db.close();
   const c1 = {...fixtureContract, id: 'contract-1', hubId: 'hub-1'};
   const raw = JSON.parse(fs.readFileSync(new URL('../configs/demo.json', import.meta.url), 'utf8'));
@@ -248,7 +248,7 @@ test('missing Hub secrets stop collection and remain replaceable without leaking
   const databasePath = path.join(dir, 'analytics.db');
   const secretsPath = path.join(dir, 'hub-secrets.json');
   const db = openDatabase(databasePath);
-  db.transaction(() => insertHub(db, {id: 'hub-missing', label: 'Missing', url: 'http://127.0.0.1:1', status: 'active', secretRef: 'missing'}));
+  transaction(db,() => insertHub(db, {id: 'hub-missing', label: 'Missing', url: 'http://127.0.0.1:1', status: 'active', secretRef: 'missing'}));
   db.close();
   const raw = JSON.parse(fs.readFileSync(new URL('../configs/demo.json', import.meta.url), 'utf8'));
   Object.assign(raw, {demo: false, databasePath, hubSecretsPath: secretsPath, management: {enabled: true}, contracts: [], listen: {host: '127.0.0.1', port: 8787}});
@@ -281,14 +281,14 @@ test('a Hub DB failure after secret-file write exposes only an allowlisted error
   const app = await startServer(config, {logger: {info() {}, error() {}}});
   config.listen.port = app.server.address().port;
   config.publicOrigin = `http://127.0.0.1:${config.listen.port}`;
-  app.db.sql.exec("CREATE TRIGGER fail_hub BEFORE INSERT ON hubs BEGIN SELECT RAISE(ABORT, 'SENSITIVE SQLITE DETAIL'); END;");
+  app.db.exec("CREATE TRIGGER fail_hub BEFORE INSERT ON hubs BEGIN SELECT RAISE(ABORT, 'SENSITIVE SQLITE DETAIL'); END;");
   try {
     const response = await fetch(config.publicOrigin + '/api/manage/hubs', {method: 'POST', headers: {Origin: config.publicOrigin, 'Content-Type': 'application/json'}, body: JSON.stringify({id: 'h1', label: 'Hub', url: 'https://hub.example.com', secret: 'new-secret'})});
     assert.equal(response.status, 500);
     const text = await response.text();
     assert.deepEqual(JSON.parse(text), {error: 'save_failed'});
     assert.doesNotMatch(text, /SENSITIVE|SQLITE|hub-secrets|secret/);
-    assert.equal(app.db.sql.prepare('SELECT count(*) n FROM hubs').get().n, 0);
+    assert.equal(app.db.prepare('SELECT count(*) n FROM hubs').get().n, 0);
     assert.equal(readHubSecretStore(secretsPath).secrets && Object.keys(readHubSecretStore(secretsPath).secrets).length, 1);
   } finally {
     await app.close();

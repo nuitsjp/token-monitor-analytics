@@ -7,7 +7,7 @@ import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {loadConfig, credentials} from '../runtime/config.mjs';
 import {canView, allowedRequest} from '../runtime/auth.mjs';
-import {openDatabase, backupDatabase} from '../runtime/sqlite.mjs';
+import {openDatabase, transaction, backupDatabase} from '../runtime/sqlite.mjs';
 import {startServer} from '../runtime/server.mjs';
 import {recordObservation} from '../src/db.ts';
 import {contract, observation} from './adapter.mjs';
@@ -96,12 +96,24 @@ test('Basic viewer credentials are independent from Hub secrets', t => {
 test('native SQLite migration is idempotent across reopen', t => {
   const c = configFile(t).config();
   let db = openDatabase(c.databasePath);
-  assert.equal(db.sql.prepare('SELECT count(*) n FROM schema_migrations').get().n, 3);
-  assert.equal(db.sql.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name IN ('hubs','hub_snapshots','contract_snapshots')").get().n, 3);
+  assert.equal(db.prepare('SELECT count(*) n FROM schema_migrations').get().n, 3);
+  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name IN ('hubs','hub_snapshots','contract_snapshots')").get().n, 3);
   db.close();
   db = openDatabase(c.databasePath);
-  assert.equal(db.sql.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
+  assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
   db.close();
+});
+
+test('native StatementSync uses direct calls and preserves an empty get result', t => {
+  const c = configFile(t).config();
+  const db = openDatabase(c.databasePath);
+  cleanup(t, () => db.close());
+  const statement = db.prepare('SELECT value FROM app_metadata WHERE key=?');
+  assert.equal(typeof statement.bind, 'undefined');
+  assert.equal(statement.get('missing-key'), undefined);
+  const rows = statement.all('dataset_mode');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].value, 'real');
 });
 
 test('demo database cannot be reused for real observations', t => {
@@ -115,10 +127,10 @@ test('entire observation transaction rolls back on a storage failure', t => {
   const c = configFile(t).config();
   const db = openDatabase(c.databasePath);
   cleanup(t, () => db.close());
-  db.sql.exec("CREATE TRIGGER fail_daily BEFORE INSERT ON daily_estimates BEGIN SELECT RAISE(ABORT, 'test failure'); END;");
-  assert.throws(() => db.transaction(() => recordObservation(db, observation(), [contract], 'Asia/Tokyo')));
-  assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n, 0);
-  assert.equal(db.sql.prepare('SELECT count(*) n FROM hub_latest').get().n, 0);
+  db.exec("CREATE TRIGGER fail_daily BEFORE INSERT ON daily_estimates BEGIN SELECT RAISE(ABORT, 'test failure'); END;");
+  assert.throws(() => transaction(db,() => recordObservation(db, observation(), [contract], 'Asia/Tokyo')));
+  assert.equal(db.prepare('SELECT count(*) n FROM observations').get().n, 0);
+  assert.equal(db.prepare('SELECT count(*) n FROM hub_latest').get().n, 0);
 });
 
 test('async transaction callbacks are rejected before execution', async t => {
@@ -126,21 +138,21 @@ test('async transaction callbacks are rejected before execution', async t => {
   const db = openDatabase(c.databasePath);
   cleanup(t, () => db.close());
   let executed = false;
-  assert.throws(() => db.transaction(async () => {
+  assert.throws(() => transaction(db,async () => {
     executed = true;
     await Promise.resolve();
     recordObservation(db, observation(), [contract], 'Asia/Tokyo');
   }), /synchronous/);
   await Promise.resolve();
   assert.equal(executed, false);
-  assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n, 0);
+  assert.equal(db.prepare('SELECT count(*) n FROM observations').get().n, 0);
 });
 
 test('backup includes committed WAL data while the source remains open', async t => {
   const f = configFile(t);
   const db = openDatabase(f.config().databasePath);
   cleanup(t, () => db.close());
-  db.transaction(() => {
+  transaction(db,() => {
     recordObservation(db, observation(), [contract], 'Asia/Tokyo');
     recordObservation(db, observation(1), [contract], 'Asia/Tokyo');
   });

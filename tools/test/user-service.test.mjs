@@ -25,7 +25,7 @@ test('ordinary user starts and restarts a native Analytics service without privi
   config.management={enabled:true};
   config.update={enabled:true,repositoryUrl:'https://example.invalid/token-monitor-analytics.git',branch:'main',checkIntervalSeconds:10,statePath};
   fs.writeFileSync(path.join(configDir,'analytics.json'),JSON.stringify(config),{mode:0o600});
-  fs.writeFileSync(path.join(configDir,'analytics.env'),'TMA_INGEST_TOKEN=demo-ingest-token-not-for-production\n',{mode:0o600});
+  fs.writeFileSync(path.join(configDir,'analytics.env'),'\n',{mode:0o600});
   fs.writeFileSync(config.hubSecretsPath,'{"schemaVersion":1,"secrets":{}}\n',{mode:0o600});
   fs.writeFileSync(statePath,JSON.stringify({jobId:'stale-job',targetCommitSha:'a'.repeat(40),status:'running',stage:'accepted',startedAt:'2020-01-01T00:00:00.000Z',finishedAt:null}),{mode:0o600});
   const unit=userUnit('tma-analytics.service').replaceAll(prefix,dir).replaceAll(destination,configDir).replaceAll('/var/lib/tma-analytics',dir).replaceAll('/var/lib/tma-deploy',dir);

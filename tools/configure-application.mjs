@@ -65,8 +65,8 @@ function validateBeforeWriting(directory, config, environment) {
 }
 
 /**
- * Write the new-install configuration. The function has no Hub/Collector
- * input by design; Hub rows live in SQLite and are added through the UI.
+ * Write the new-install configuration. Hub rows live in SQLite and are added
+ * through the UI; configuration generation has no Hub input.
  */
 export function configureApplication({dir, identity = {}, port, listenHost, viewerMode, publicOrigin, databasePath, hubSecretsPath, update, management} = {}) {
   if (!dir) throw new Error('Configuration directory is required.');

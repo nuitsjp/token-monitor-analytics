@@ -1,11 +1,10 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {advance,dayKey,validateContracts} from '../src/estimate.ts';
-import {parseBatch,readLimited} from '../src/protocol.ts';
-import {database,contract as c,observation as o} from './adapter.mjs';
-import {recordObservation,recordObservations,ingest,dashboard,history,prune} from '../src/db.ts';
+import {database,transaction,contract as c,observation as o} from './adapter.mjs';
+import {recordObservation,recordObservations,dashboard,history,prune} from '../src/db.ts';
 const run=(a,b,cc=c)=>advance(cc,b,advance(cc,a,null));
 const internal=x=>{const {schemaVersion,eventId,...observation}=x;return observation;};
-test('native storage boundary is synchronous',()=>{const db=database();assert.equal(db.prepare('SELECT 1 n').get().n,1);assert.equal(db.prepare('SELECT 1 n').all()[0].n,1);assert.equal(typeof db.prepare('CREATE TABLE sync_probe (n INTEGER)').run().changes,'number');assert.equal(typeof db.batch,'undefined');db.sql.close()});
+test('native storage boundary is synchronous',()=>{const db=database();assert.equal(db.prepare('SELECT 1 n').get().n,1);assert.equal(db.prepare('SELECT 1 n').all()[0].n,1);assert.equal(typeof db.prepare('CREATE TABLE sync_probe (n INTEGER)').run().changes,'number');assert.equal(typeof db.batch,'undefined');db.close()});
 test('same-window deltas use 0..100 percentage correctly',()=>{const s=run(o(),o(1));assert.equal(s.result.windowCapacityUsd,160);assert.ok(Math.abs(s.result.monthlyCapacityUsd-695.7)<0.01)});
 test('small percentage changes accumulate from baseline',()=>{let s=advance(c,o(),null);const a=o(1);a.stats.limits.providers[0].windows[0].usedPercent=11;s=advance(c,a,s);assert.equal(s.result.status,'observing');s=advance(c,o(2),s);assert.equal(s.result.windowCapacityUsd,160)});
 for(const [name,change,reason] of [
@@ -21,21 +20,18 @@ for(const [name,change,reason] of [
 test('configuration change resets baseline',()=>{const a=advance(c,o(),null),cc={...c,label:'Changed'};assert.equal(advance(cc,o(1),a).result.reason,'baseline_started')});
 test('JST day boundary is explicit',()=>assert.equal(dayKey('2026-09-04T16:00:00Z','Asia/Tokyo'),'2026-09-05'));
 test('definition limit remains explicit',()=>assert.throws(()=>validateContracts(Array(9).fill(c),['hub-a'])));
-test('protocol accepts legitimate batch and canonicalizes dates',()=>{const b=parseBatch({schemaVersion:1,events:[o()]},['hub-a']);assert.equal(b.events[0].observedAt,'2026-09-05T00:00:00.000Z')});
-test('protocol rejects unknown hub / invalid percent / future clock',()=>{assert.throws(()=>parseBatch({schemaVersion:1,events:[o()]},[]));const x=o();x.stats.limits.providers[0].windows[0].usedPercent=101;assert.throws(()=>parseBatch({schemaVersion:1,events:[x]},['hub-a']));assert.throws(()=>parseBatch({schemaVersion:1,events:[o()]},['hub-a'],0))});
-test('oversized body rejected',async()=>{await assert.rejects(readLimited(new Request('https://test',{method:'POST',body:'123456'}),5))});
 test('recordObservation generates a local ID and drops unknown fields',()=>{
  const db=database(),input={...internal(o()),privateField:'must-not-persist'};
- const changed=db.transaction(()=>recordObservation(db,input,[c],'Asia/Tokyo'));
- const row=db.sql.prepare('SELECT event_id,payload FROM observations').get();const saved=JSON.parse(row.payload);
- assert.deepEqual(changed,['hub-a']);assert.match(row.event_id,/^[a-f0-9]{32}$/);assert.equal(saved.eventId,row.event_id);assert.equal(saved.schemaVersion,1);assert.equal(saved.privateField,undefined);db.sql.close();
+ const changed=transaction(db,()=>recordObservation(db,input,[c],'Asia/Tokyo'));
+ const row=db.prepare('SELECT event_id,payload FROM observations').get();const saved=JSON.parse(row.payload);
+ assert.deepEqual(changed,['hub-a']);assert.match(row.event_id,/^[a-f0-9]{32}$/);assert.equal(saved.eventId,row.event_id);assert.equal(saved.schemaVersion,1);assert.equal(saved.privateField,undefined);db.close();
 });
 test('internal observation API always generates a new ID',()=>{
  const db=database(),id='b'.repeat(32),first={...internal(o()),eventId:id},second={...internal(o(1)),eventId:id};
- db.transaction(()=>recordObservation(db,first,[c],'Asia/Tokyo'));
- db.transaction(()=>recordObservation(db,second,[c],'Asia/Tokyo'));
- const rows=db.sql.prepare('SELECT event_id FROM observations ORDER BY observed_at').all();
- assert.equal(rows.length,2);assert.notEqual(rows[0].event_id,id);assert.notEqual(rows[1].event_id,id);assert.notEqual(rows[0].event_id,rows[1].event_id);db.sql.close();
+ transaction(db,()=>recordObservation(db,first,[c],'Asia/Tokyo'));
+ transaction(db,()=>recordObservation(db,second,[c],'Asia/Tokyo'));
+ const rows=db.prepare('SELECT event_id FROM observations ORDER BY observed_at').all();
+ assert.equal(rows.length,2);assert.notEqual(rows[0].event_id,id);assert.notEqual(rows[1].event_id,id);assert.notEqual(rows[0].event_id,rows[1].event_id);db.close();
 });
 test('zero remains a valid counter while null is unavailable',()=>{
  const zero=o();zero.stats.limits.providers[0].windows[0].usedPercent=0;zero.stats.devices[0].periods.allTime.clientCosts.claude=0;
@@ -44,15 +40,14 @@ test('zero remains a valid counter while null is unavailable',()=>{
  const missing=o();missing.stats.limits.providers[0].windows[0].usedPercent=null;assert.equal(advance(c,missing,null).result.status,'unavailable');
 });
 test('synchronous observation transaction, daily last-valid retention',()=>{
- const db=database();db.transaction(()=>recordObservations(db,[internal(o()),internal(o(1))],[c],'Asia/Tokyo'));assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,2);
+ const db=database();transaction(db,()=>recordObservations(db,[internal(o()),internal(o(1))],[c],'Asia/Tokyo'));assert.equal(db.prepare('SELECT count(*) n FROM observations').get().n,2);
  let rows=history(db,c.id);assert.equal(rows[0].window_capacity_usd,160);
- const x=o(2);x.stats.limits.providers[0].stale=true;db.transaction(()=>recordObservation(db,internal(x),[c],'Asia/Tokyo'));rows=history(db,c.id);assert.equal(rows[0].status,'unavailable');assert.equal(rows[0].window_capacity_usd,160);assert.equal(rows[0].last_valid_at,o(1).observedAt);
- assert.equal(dashboard(db,[c]).hubs[0].observedAt,x.observedAt);db.sql.close();
+ const x=o(2);x.stats.limits.providers[0].stale=true;transaction(db,()=>recordObservation(db,internal(x),[c],'Asia/Tokyo'));rows=history(db,c.id);assert.equal(rows[0].status,'unavailable');assert.equal(rows[0].window_capacity_usd,160);assert.equal(rows[0].last_valid_at,o(1).observedAt);
+ assert.equal(dashboard(db,[c]).hubs[0].observedAt,x.observedAt);db.close();
 });
-test('legacy ingest bridge preserves upstream dedupe',()=>{const db=database(),batch={events:[o()]};db.transaction(()=>ingest(db,batch,[c],'Asia/Tokyo'));db.transaction(()=>ingest(db,batch,[c],'Asia/Tokyo'));assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,1);db.sql.close()});
-test('late and same-time observations never overwrite latest / baseline',()=>{const db=database();db.transaction(()=>recordObservation(db,internal(o(2)),[c],'Asia/Tokyo'));const before=db.prepare('SELECT event_id FROM hub_latest WHERE hub_id=?').bind('hub-a').get().event_id;db.transaction(()=>recordObservation(db,internal(o(2)),[c],'Asia/Tokyo'));assert.equal(db.prepare('SELECT event_id FROM hub_latest WHERE hub_id=?').bind('hub-a').get().event_id,before);db.transaction(()=>recordObservation(db,internal(o()),[c],'Asia/Tokyo'));assert.equal(dashboard(db,[c]).hubs[0].observedAt,o(2).observedAt);db.sql.close()});
-test('prune preserves latest snapshot',()=>{const db=database();db.transaction(()=>recordObservations(db,[internal(o()),internal(o(1))],[c],'Asia/Tokyo'));prune(db,7,Date.parse('2027-01-01T00:00:00Z'));assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,1);assert.equal(dashboard(db,[c]).hubs.length,1);db.sql.close()});
-test('SQLite observation transaction rolls back all statements on failure',()=>{const db=database();assert.throws(()=>db.transaction(()=>{recordObservation(db,internal(o()),[c],'Asia/Tokyo');db.prepare('INSERT INTO missing_table VALUES(1)').run();}));assert.equal(db.sql.prepare('SELECT count(*) n FROM observations').get().n,0);assert.equal(db.sql.prepare('SELECT count(*) n FROM hub_latest').get().n,0);db.sql.close()});
+test('internal observation API generates independent local IDs',()=>{const db=database();transaction(db,()=>recordObservation(db,internal(o()),[c],'Asia/Tokyo'));transaction(db,()=>recordObservation(db,internal(o()),[c],'Asia/Tokyo'));assert.equal(db.prepare('SELECT count(*) n FROM observations').get().n,2);db.close()});
+test('late and same-time observations never overwrite latest / baseline',()=>{const db=database();transaction(db,()=>recordObservation(db,internal(o(2)),[c],'Asia/Tokyo'));const before=db.prepare('SELECT event_id FROM hub_latest WHERE hub_id=?').get('hub-a').event_id;transaction(db,()=>recordObservation(db,internal(o(2)),[c],'Asia/Tokyo'));assert.equal(db.prepare('SELECT event_id FROM hub_latest WHERE hub_id=?').get('hub-a').event_id,before);transaction(db,()=>recordObservation(db,internal(o()),[c],'Asia/Tokyo'));assert.equal(dashboard(db,[c]).hubs[0].observedAt,o(2).observedAt);db.close()});
+test('prune preserves latest snapshot',()=>{const db=database();transaction(db,()=>recordObservations(db,[internal(o()),internal(o(1))],[c],'Asia/Tokyo'));prune(db,7,Date.parse('2027-01-01T00:00:00Z'));assert.equal(db.prepare('SELECT count(*) n FROM observations').get().n,1);assert.equal(dashboard(db,[c]).hubs.length,1);db.close()});
+test('SQLite observation transaction rolls back all statements on failure',()=>{const db=database();assert.throws(()=>transaction(db,()=>{recordObservation(db,internal(o()),[c],'Asia/Tokyo');db.prepare('INSERT INTO missing_table VALUES(1)').run();}));assert.equal(db.prepare('SELECT count(*) n FROM observations').get().n,0);assert.equal(db.prepare('SELECT count(*) n FROM hub_latest').get().n,0);db.close()});
 
-test('unknown/private fields are not persisted from a future client',()=>{const x=o();x.secret='bad';x.stats.limits.providers[0].accountEmail='private@example.com';const b=parseBatch({schemaVersion:1,events:[x]},['hub-a']);assert.equal(JSON.stringify(b).includes('private@example'),false);assert.equal('secret' in b.events[0],false)});
-test('eight definitions and two events stay within forty SQL calls',()=>{const db=database();let calls=0;const original=db.prepare;db.prepare=(...a)=>{calls++;return original(...a)};const cs=Array.from({length:8},(_,i)=>({...c,id:`c${i}`}));db.transaction(()=>recordObservations(db,[internal(o()),internal(o(1))],cs,'Asia/Tokyo'));assert.ok(calls<=40,`queries: ${calls}`);db.sql.close()});
+test('eight definitions and two events stay within forty SQL calls',()=>{const db=database();let calls=0;const original=db.prepare.bind(db);db.prepare=(...a)=>{calls++;return original(...a)};const cs=Array.from({length:8},(_,i)=>({...c,id:`c${i}`}));transaction(db,()=>recordObservations(db,[internal(o()),internal(o(1))],cs,'Asia/Tokyo'));assert.ok(calls<=40,`queries: ${calls}`);db.close()});

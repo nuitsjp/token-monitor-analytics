@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {performance} from 'node:perf_hooks';
 import {loadConfig} from '../../analytics/runtime/config.mjs';
-import {openDatabase} from '../../analytics/runtime/sqlite.mjs';
+import {openDatabase, transaction} from '../../analytics/runtime/sqlite.mjs';
 import {startServer} from '../../analytics/runtime/server.mjs';
 import {beginHistoryFetch,storeHistorySnapshot} from '../../analytics/src/db.ts';
 import {MAX_HISTORY_BODY_BYTES,fetchHistory} from '../../analytics/runtime/collection/history.mjs';
@@ -102,14 +102,14 @@ function responseHeader(socket,started){
 
 async function blockedReadTransaction(app,normalized){
  const port=app.server.address().port;
- const fetchId=app.db.transaction(()=>beginHistoryFetch(app.db,'performance-hub'));
+ const fetchId=transaction(app.db,()=>beginHistoryFetch(app.db,'performance-hub'));
  const routes=['/api/health','/api/state'];
  const connections=await Promise.all(routes.map(route=>connectedSocket(port,route)));
  const started=performance.now();
  for(const {socket,route} of connections)socket.write(`GET ${route} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`);
  const transactionStarted=performance.now();
  try{
-  app.db.transaction(()=>storeHistorySnapshot(app.db,'performance-hub',normalized,fetchId,new Date().toISOString()));
+  transaction(app.db,()=>storeHistorySnapshot(app.db,'performance-hub',normalized,fetchId,new Date().toISOString()));
  }catch(error){for(const {socket} of connections)socket.destroy();throw error;}
  const transactionMs=performance.now()-transactionStarted;
  const responses=await Promise.all(connections.map(({socket})=>responseHeader(socket,started)));
@@ -195,9 +195,9 @@ test('bounded near-limit history and synchronous shutdown performance artifact',
  const db=openDatabase(databasePath);
  let transactionMs;
  try{
-  const fetchId=db.transaction(()=>beginHistoryFetch(db,'performance-hub'));
+  const fetchId=transaction(db,()=>beginHistoryFetch(db,'performance-hub'));
   const started=performance.now();
-  db.transaction(()=>storeHistorySnapshot(db,'performance-hub',near.value,fetchId,new Date().toISOString()));
+  transaction(db,()=>storeHistorySnapshot(db,'performance-hub',near.value,fetchId,new Date().toISOString()));
   transactionMs=performance.now()-started;
  }finally{db.close();}
 

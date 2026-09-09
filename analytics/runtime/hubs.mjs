@@ -360,7 +360,7 @@ export function listHubRecords(db, {includeArchived = true} = {}) {
 export function getHubRecord(db, id) {
   return cleanHubRow(db.prepare(`SELECT h.id,h.label,h.url,h.status,h.secret_ref,h.version,h.created_at,h.updated_at,
       latest.observed_at AS last_observed_at
-    FROM hubs h LEFT JOIN hub_latest latest ON latest.hub_id=h.id WHERE h.id=?`).bind(id).get());
+    FROM hubs h LEFT JOIN hub_latest latest ON latest.hub_id=h.id WHERE h.id=?`).get(id));
 }
 
 export function countNonArchivedHubs(db) {
@@ -379,11 +379,11 @@ export function nowIso() { return new Date().toISOString(); }
 
 export function insertHub(db, input, now = nowIso()) {
   db.prepare(`INSERT INTO hubs(id,label,url,status,secret_ref,version,created_at,updated_at)
-    VALUES(?,?,?,?,?,1,?,?)`).bind(
+    VALUES(?,?,?,?,?,1,?,?)`).run(
     input.id, input.label, input.url, input.status, input.secretRef, now, now
-  ).run();
+  );
   db.prepare(`INSERT INTO hub_snapshots(hub_id,hub_version,label,url,status,captured_at) VALUES(?,?,?,?,?,?)`)
-    .bind(input.id, 1, input.label, input.url, input.status, now).run();
+    .run(input.id, 1, input.label, input.url, input.status, now);
   return getHubRecord(db, input.id);
 }
 
@@ -400,9 +400,9 @@ export function updateHubRecord(db, id, expectedVersion, patch, now = nowIso()) 
     updatedAt: now,
   };
   db.prepare(`UPDATE hubs SET label=?,url=?,status=?,secret_ref=?,version=?,updated_at=? WHERE id=? AND version=?`)
-    .bind(next.label, next.url, next.status, next.secretRef, next.version, next.updatedAt, id, expectedVersion).run();
+    .run(next.label, next.url, next.status, next.secretRef, next.version, next.updatedAt, id, expectedVersion);
   db.prepare(`INSERT INTO hub_snapshots(hub_id,hub_version,label,url,status,captured_at) VALUES(?,?,?,?,?,?)`)
-    .bind(id, next.version, next.label, next.url, next.status, now).run();
+    .run(id, next.version, next.label, next.url, next.status, now);
   return getHubRecord(db, id);
 }
 
@@ -416,7 +416,7 @@ export function recordContractSnapshots(db, contracts, now = nowIso()) {
     const definition = JSON.stringify(contract);
     const hash = crypto.createHash('sha256').update(definition).digest('hex');
     db.prepare(`INSERT OR IGNORE INTO contract_snapshots(contract_id,definition_hash,hub_id,label,definition_json,captured_at)
-      VALUES(?,?,?,?,?,?)`).bind(contract.id, hash, contract.hubId, contract.label, definition, now).run();
+      VALUES(?,?,?,?,?,?)`).run(contract.id, hash, contract.hubId, contract.label, definition, now);
   }
 }
 

@@ -58,7 +58,7 @@ test('readSSE applies the 8 MiB limit in UTF-8 bytes', async () => {
   await assert.rejects(() => readSSE(stream(`data: ${'😀'.repeat(Math.ceil(MAX_EVENT_BYTES / 4))}\n\n`), async () => {}), /SSE event exceeds/);
 });
 
-test('compactHubEvent mirrors Go normalization and strips private fields', () => {
+test('compactHubEvent normalizes Hub data and strips private fields', () => {
   const observation = compactHubEvent({name: 'snapshot', data: payload()}, 'hub-a', 'a'.repeat(32), Date.parse(at));
   assert.deepEqual(observation.stats.periods, {today: {costUsd: 1}, month: {costUsd: 2}, allTime: {costUsd: 3}});
   assert.deepEqual(Object.keys(observation.stats.devices[0].periods), ['allTime']);
@@ -250,7 +250,6 @@ test('startServer stores Node-collected observations only after the SQLite commi
   fs.writeFileSync(configFile, JSON.stringify(configRaw));
   const config = loadConfig(configFile); config.listen.port = 0;
   const app = await startServer(config, {
-    env: {TMA_INGEST_TOKEN: 'server-ingest-token-000000000000000000000000000000'},
     logger: {info() {}, error() {}}, collectionIdleMs: 1000,
     collectionHubs: [{id: 'hub-a', url: hubUrl, secret: 'hub-secret', status: 'active'}],
   });
@@ -259,7 +258,7 @@ test('startServer stores Node-collected observations only after the SQLite commi
       const deadline = Date.now() + 1000;
       const check = () => {
         try {
-          if (app.db.sql.prepare('SELECT count(*) n FROM observations').get().n > 0) { resolve(); return; }
+          if (app.db.prepare('SELECT count(*) n FROM observations').get().n > 0) { resolve(); return; }
           if (Date.now() >= deadline) { reject(new Error('Node collection did not persist an observation')); return; }
           setTimeout(check, 10).unref();
         } catch (error) { reject(error); }
@@ -286,7 +285,6 @@ test('startServer closes and marks the process failed after a storage error', as
   fs.writeFileSync(configFile, JSON.stringify(configRaw));
   const config = loadConfig(configFile); config.listen.port = 0;
   const app = await startServer(config, {
-    env: {TMA_INGEST_TOKEN: 'server-ingest-token-000000000000000000000000000000'},
     logger: {info() {}, error() {}}, collectionIdleMs: 1000,
     collectionHubs: [{id: 'hub-a', url: hubUrl, secret: 'hub-secret', status: 'active'}],
   });
@@ -294,7 +292,11 @@ test('startServer closes and marks the process failed after a storage error', as
     const deadline = Date.now() + 1000;
     while (!sendEvent && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(typeof sendEvent, 'function');
-    app.db.transaction = () => { throw new Error('injected storage failure'); };
+    const nativeExec = app.db.exec.bind(app.db);
+    app.db.exec = sql => {
+      if (sql === 'BEGIN IMMEDIATE') throw new Error('injected storage failure');
+      return nativeExec(sql);
+    };
     sendEvent();
     while ((app.server.listening || process.exitCode !== 1) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(app.server.listening, false);

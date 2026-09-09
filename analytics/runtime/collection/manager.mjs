@@ -9,7 +9,7 @@ export function createCollectionManager({
   onObservation,
   onStatus,
   onFatal,
-  // Optional lifecycle hooks are used by the history collector.  They share
+  // Optional lifecycle hooks are used by the history scheduler. They share
   // this manager's generation fence and shutdown wait.
   onConnected,
   onRevision,

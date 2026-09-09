@@ -7,6 +7,7 @@ import path from 'node:path';
 import {loadConfig} from '../runtime/config.mjs';
 import {startServer} from '../runtime/server.mjs';
 import {recordContractSnapshots} from '../runtime/hubs.mjs';
+import {transaction} from '../runtime/sqlite.mjs';
 
 const waitFor=async(predicate,timeout=3000)=>{
  const deadline=Date.now()+timeout;
@@ -74,10 +75,10 @@ test('one listener serves management, SSE collection, history, archive, stop/res
   assert.match(usageModule.headers.get('content-type')??'',/text\/javascript/);
   assert.match(await usageModule.text(),/createUsageHistoryController/);
   await createHub(fixture);
-  await waitFor(()=>fixture.app.db.sql.prepare("SELECT count(*) AS n FROM observations WHERE hub_id='hub-a'").get().n>0);
-  await waitFor(()=>fixture.app.db.sql.prepare("SELECT last_status FROM usage_fetches WHERE hub_id='hub-a'").get()?.last_status==='success');
+  await waitFor(()=>fixture.app.db.prepare("SELECT count(*) AS n FROM observations WHERE hub_id='hub-a'").get().n>0);
+  await waitFor(()=>fixture.app.db.prepare("SELECT last_status FROM usage_fetches WHERE hub_id='hub-a'").get()?.last_status==='success');
   const inactiveContract={id:'old-contract',label:'Old contract',hubId:'hub-a',provider:'provider',accountKey:'account',clientIds:['client'],deviceIds:['device-a'],windowKind:'weekly',windowHours:168,monthlyFeeUsd:10,attributionConfirmed:true,minDeltaPercent:1,maxSourceSkewSeconds:60,maxGapSeconds:600};
-  fixture.app.db.transaction(()=>{recordContractSnapshots(fixture.app.db,[inactiveContract]);fixture.app.db.prepare('INSERT INTO daily_estimates(contract_id,day,last_observed_at,status,reason,last_valid_at,window_capacity_usd,monthly_capacity_usd,estimate_json) VALUES(?,?,?,?,?,?,?,?,?)').bind('old-contract','2026-09-01','2026-09-01T00:00:00.000Z','estimated','observed_delta','2026-09-01T00:00:00.000Z',10,10,JSON.stringify({monthlyCapacityUsd:10})).run();});
+  transaction(fixture.app.db,()=>{recordContractSnapshots(fixture.app.db,[inactiveContract]);fixture.app.db.prepare('INSERT INTO daily_estimates(contract_id,day,last_observed_at,status,reason,last_valid_at,window_capacity_usd,monthly_capacity_usd,estimate_json) VALUES(?,?,?,?,?,?,?,?,?)').run('old-contract','2026-09-01','2026-09-01T00:00:00.000Z','estimated','observed_delta','2026-09-01T00:00:00.000Z',10,10,JSON.stringify({monthlyCapacityUsd:10}));});
   const stateWithInactive=await (await fixture.request('/api/state')).json();assert.equal(stateWithInactive.contractHistory[0].id,'old-contract');assert.equal(stateWithInactive.contractHistory[0].active,false);
   const inactiveHistory=await fixture.request('/api/history?contract=old-contract');assert.equal(inactiveHistory.status,200);assert.equal((await inactiveHistory.json()).rows.length,1);
 
@@ -91,10 +92,10 @@ test('one listener serves management, SSE collection, history, archive, stop/res
   const monthly=await fixture.request('/api/usage-history?hubId=hub-a&deviceId=device-a&granularity=monthly&from=2026-08&to=2026-09');
   assert.equal(monthly.status,200);assert.equal((await monthly.json()).rows.length,1);
 
-  const before=fixture.app.db.sql.prepare("SELECT last_attempt_fetch_id FROM usage_fetches WHERE hub_id='hub-a'").get().last_attempt_fetch_id;
+  const before=fixture.app.db.prepare("SELECT last_attempt_fetch_id FROM usage_fetches WHERE hub_id='hub-a'").get().last_attempt_fetch_id;
   const manual=await fixture.request('/api/manage/hubs/hub-a/history',{method:'POST',headers:{Origin:fixture.config.publicOrigin,'Content-Type':'application/json'},body:'{}'});
   assert.equal(manual.status,202);
-  await waitFor(()=>fixture.app.db.sql.prepare("SELECT last_attempt_fetch_id FROM usage_fetches WHERE hub_id='hub-a'").get().last_attempt_fetch_id>before);
+  await waitFor(()=>fixture.app.db.prepare("SELECT last_attempt_fetch_id FROM usage_fetches WHERE hub_id='hub-a'").get().last_attempt_fetch_id>before);
 
   let manage=await (await fixture.request('/api/manage/hubs')).json();
   const disabled=await fixture.request('/api/manage/hubs/hub-a',{method:'PUT',headers:{Origin:fixture.config.publicOrigin,'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:manage.hubs[0].version,status:'disabled'})});
@@ -103,8 +104,8 @@ test('one listener serves management, SSE collection, history, archive, stop/res
   manage=await (await fixture.request('/api/manage/hubs')).json();
   const enabled=await fixture.request('/api/manage/hubs/hub-a',{method:'PUT',headers:{Origin:fixture.config.publicOrigin,'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:manage.hubs[0].version,status:'active'})});
   assert.equal(enabled.status,200);
-  await waitFor(()=>fixture.app.db.sql.prepare("SELECT count(*) AS n FROM usage_fetches WHERE hub_id='hub-a'").get().n===1);
-  await waitFor(()=>fixture.app.db.sql.prepare("SELECT last_status FROM usage_fetches WHERE hub_id='hub-a'").get()?.last_status==='success');
+  await waitFor(()=>fixture.app.db.prepare("SELECT count(*) AS n FROM usage_fetches WHERE hub_id='hub-a'").get().n===1);
+  await waitFor(()=>fixture.app.db.prepare("SELECT last_status FROM usage_fetches WHERE hub_id='hub-a'").get()?.last_status==='success');
   manage=await (await fixture.request('/api/manage/hubs')).json();
   const archived=await fixture.request('/api/manage/hubs/hub-a',{method:'DELETE',headers:{Origin:fixture.config.publicOrigin,'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:manage.hubs[0].version})});
   assert.equal(archived.status,200);

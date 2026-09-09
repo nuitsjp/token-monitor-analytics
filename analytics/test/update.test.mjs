@@ -208,7 +208,7 @@ test('HTTP Management API protects /api/manage/update endpoints and handles chec
     }
   };
 
-  const auth = {ingest: 'token-test'};
+  const auth = {};
   const live = new LiveFeed({heartbeatMs: 60000});
 
   let serviceStarted = false;

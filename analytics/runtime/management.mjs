@@ -5,6 +5,7 @@ import {
   writeHubSecret,
 } from './hubs.mjs';
 import {canView, allowedRequest} from './auth.mjs';
+import {transaction} from './sqlite.mjs';
 
 const MAX_HUB_LABEL = 128;
 const MAX_HUBS = 8;
@@ -171,7 +172,7 @@ export function createManagementHandler({
 
   const commitNotification = result => {
     // This function is called from inside the exclusive callback directly
-    // after db.transaction returns (and therefore after COMMIT).  It must not
+    // after transaction returns (and therefore after COMMIT).  It must not
     // become async: collection invalidation is the generation fence.
     onHubCommitted?.(result);
     live?.broadcast('manage_updated', {type: 'manage_updated'});
@@ -202,11 +203,11 @@ export function createManagementHandler({
         const result = await exclusive(() => {
           if (getHubRecord(db, id)) throw errorWithStatus('Hub ID is already registered', 409, 'hub_id_exists');
           if (countNonArchivedHubs(db) >= MAX_HUBS) throw errorWithStatus('Maximum active/disabled Hub count reached', 400, 'hub_limit');
-          if (db.prepare("SELECT 1 FROM hubs WHERE status <> 'archived' AND url=?").bind(canonicalUrl).get()) throw errorWithStatus('Hub URL is already registered', 400, 'hub_url_exists');
+          if (db.prepare("SELECT 1 FROM hubs WHERE status <> 'archived' AND url=?").get(canonicalUrl)) throw errorWithStatus('Hub URL is already registered', 400, 'hub_url_exists');
           // Secret file first; a later DB failure leaves only an unreferenced
           // entry that explicit stopped-state maintenance may remove.
           const secretRef = writeHubSecret(config.hubSecretsPath, secret);
-          const row = db.transaction(() => insertHub(db, {id, label: label.trim(), url: canonicalUrl, status: 'active', secretRef}));
+          const row = transaction(db, () => insertHub(db, {id, label: label.trim(), url: canonicalUrl, status: 'active', secretRef}));
           const result = {row, reconnect: true, reason: 'created'};
           commitNotification(result);
           return result;
@@ -280,7 +281,7 @@ export function createManagementHandler({
           if (!current || current.status === 'archived') throw errorWithStatus('Hub not found', 404, 'hub_not_found');
           if (current.version !== version) throw Object.assign(errorWithStatus('Hub was modified by another request', 409, 'version_conflict'), {currentVersion: current.version});
           const nextUrl = canonicalUrl ?? current.url;
-          if (db.prepare("SELECT 1 FROM hubs WHERE status <> 'archived' AND url=? AND id<>?").bind(nextUrl, targetId).get()) throw errorWithStatus('Hub URL is already registered', 400, 'hub_url_exists');
+          if (db.prepare("SELECT 1 FROM hubs WHERE status <> 'archived' AND url=? AND id<>?").get(nextUrl, targetId)) throw errorWithStatus('Hub URL is already registered', 400, 'hub_url_exists');
           const nextStatus = status ?? current.status;
           const currentSecret = typeof secret === 'string' && secret
             ? readHubSecret(config.hubSecretsPath, current.secretRef)
@@ -290,7 +291,7 @@ export function createManagementHandler({
           const nextRef = secret === undefined || secret === '' || secret === currentSecret
             ? current.secretRef
             : writeHubSecret(config.hubSecretsPath, secret);
-          const row = db.transaction(() => updateHubRecord(db, targetId, version, {
+          const row = transaction(db, () => updateHubRecord(db, targetId, version, {
             label: label === undefined ? current.label : label.trim(), url: nextUrl, status: nextStatus, secretRef: nextRef,
           }));
           const result = {
@@ -320,7 +321,7 @@ export function createManagementHandler({
           const current = getHubRecord(db, targetId);
           if (!current || current.status === 'archived') throw errorWithStatus('Hub not found', 404, 'hub_not_found');
           if (current.version !== version) throw Object.assign(errorWithStatus('Hub was modified by another request', 409, 'version_conflict'), {currentVersion: current.version});
-          const row = db.transaction(() => archiveHubRecord(db, targetId, version));
+          const row = transaction(db, () => archiveHubRecord(db, targetId, version));
           const result = {row, reconnect: true, reason: 'archived'};
           commitNotification(result);
           return result;

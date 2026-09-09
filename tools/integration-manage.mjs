@@ -201,7 +201,7 @@ try {
     return state.hubs.length === 1 && state.configuredHubs[0]?.lastObservationAt;
   }, 'first Hub observation');
   assert.equal(firstRequestCount, 1);
-  console.log('PASS: created Hub connects and stores observations without a Collector process');
+  console.log('PASS: created Hub connects and stores observations in the single Analytics process');
 
   await until(async () => {
     const result = (await jsonResponse(`${origin}/api/usage-history/hubs`)).body;

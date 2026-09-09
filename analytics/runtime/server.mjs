@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
 import {loadConfig,credentials,validateTailnetBinding} from './config.mjs';
-import {openDatabase} from './sqlite.mjs';
+import {openDatabase,transaction} from './sqlite.mjs';
 import {canView,allowedRequest} from './auth.mjs';
 import {LiveFeed} from './live.mjs';
 import {compactHubEvent} from '../src/protocol.ts';
@@ -24,6 +24,7 @@ const commonHeaders={
  'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
  'Permissions-Policy':'camera=(), microphone=(), geolocation=()'
 };
+const knownApiPaths=new Set(['/api/health','/api/live','/api/state','/api/usage-history/hubs','/api/usage-history/sources','/api/usage-history','/api/history']);
 function json(response,data,status=200){response.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});response.end(JSON.stringify(data));}
 
 function releaseIdentity(){
@@ -117,7 +118,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    if(!collectionGenerationIsCurrent(hub.id,generation))return false;
    const row=getHubRecord(db,hub.id);
    if(!row||row.status!=='active')return false;
-   return db.transaction(()=>beginHistoryFetch(db,hub.id,startedAt));
+   return transaction(db,()=>beginHistoryFetch(db,hub.id,startedAt));
   }),
   onSuccess:async({hub,generation,fetchId,completedAt,response})=>{
    const stored=await exclusive(()=>{
@@ -128,7 +129,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
     if(!collectionGenerationIsCurrent(hub.id,generation))return false;
     const row=getHubRecord(db,hub.id);
     if(!row||row.status!=='active')return false;
-    db.transaction(()=>storeHistorySnapshot(db,hub.id,response,fetchId,completedAt));
+    transaction(db,()=>storeHistorySnapshot(db,hub.id,response,fetchId,completedAt));
     return true;
    });
    if(stored)live.broadcast('manage_updated',{type:'manage_updated'});
@@ -138,7 +139,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    if(!collectionGenerationIsCurrent(hub.id,generation))return false;
    const row=getHubRecord(db,hub.id);
    if(!row||row.status!=='active')return false;
-   db.transaction(()=>recordHistoryFetchFailure(db,hub.id,fetchId,errorCode));
+   transaction(db,()=>recordHistoryFetchFailure(db,hub.id,fetchId,errorCode));
    live.broadcast('manage_updated',{type:'manage_updated'});
    return true;
   }),
@@ -167,7 +168,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
       // A management COMMIT synchronously invalidates the runner before
       // allowing old callbacks to enter this transaction.
       if (lifecycle.isCurrent && !lifecycle.isCurrent()) return [];
-      return db.transaction(()=>recordObservation(db,observation,config.contracts,config.timeZone));
+      return transaction(db,()=>recordObservation(db,observation,config.contracts,config.timeZone));
     });
     if(changed.length)live.updated(changed);
    }catch{
@@ -209,7 +210,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   // Contract IDs are current calculation settings and must refer to a real
   // non-archived SQLite Hub.  Historical snapshots are separate data.
  validateContracts(config.contracts, hubRows.filter(h=>h.status!=='archived').map(h=>h.id));
-  db.transaction(()=>recordContractSnapshots(db, config.contracts));
+  transaction(db,()=>recordContractSnapshots(db, config.contracts));
  } catch (error) {
   await stopCollection();
   await stopHistory();
@@ -253,15 +254,14 @@ export async function startServer(config,{env=process.env,logger=console,mainten
    if(!allowedRequest(request,config)){json(response,{error:'origin_rejected'},403);return;}
    const url=new URL(request.url,config.publicOrigin);
    if(url.pathname==='/api/health'&&request.method==='GET'){json(response,{ok:true,service:'token-monitor-analytics',version:'0.3.0',storage:'sqlite',demo:config.demo,release});return;}
-   // The integrated process owns collection state.  The old Collector bridge
-   // and status endpoint are deliberately absent from the public API.
-   if(url.pathname==='/api/ingest'||url.pathname==='/api/collector/status'){
-    json(response,{error:'not_found'},404);return;
-   }
    if(url.pathname==='/api/manage/hubs'||url.pathname.startsWith('/api/manage/hubs/')){
     await management.handleManage(request,response,url);return;
    }
    if(url.pathname==='/api/manage/update'||url.pathname.startsWith('/api/manage/update/')){await management.handleManage(request,response,url);return;}
+   // Unknown API paths are absent from the public surface regardless of the
+   // request method. Keeping this generic also prevents removed transport
+   // endpoints from reaching the method gate below.
+   if(url.pathname.startsWith('/api/')&&!knownApiPaths.has(url.pathname)){json(response,{error:'not_found'},404);return;}
    if(!canView(request,config,auth)){
     if(config.viewerAuth.mode==='basic')response.setHeader('WWW-Authenticate','Basic realm="Token Monitor Analytics", charset="UTF-8"');
     json(response,{error:'viewer_auth_required'},401);return;
