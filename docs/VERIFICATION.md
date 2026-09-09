@@ -1,8 +1,8 @@
 # 検証記録 — 親 Issue #19
 
-この文書は、親 Issue #19 の受入条件と、2026-09-09 時点で実行した証跡を対応付ける。対象 checkout は `259d5db9d85b709348c2dca87aa986370e2e0901`、Node.js は 24.20.0 である。証跡ファイルは一時的なオーケストレーション領域（`/tmp/tma-orchestration`）に保存している。
+この文書は、親 Issue #19 の受入条件と、2026-09-09 時点で実行した証跡を対応付ける。最新の CI 対象 checkout は `8158ffa3d6b4e63441c45a56bdad8190d2e38c21`、Node.js は 24.20.0 である。証跡ファイルは一時的なオーケストレーション領域（`/tmp/tma-orchestration`）に保存している。
 
-**親 Issue の判定は保留。** 単一アプリの機能、SQLite/SSE、管理、履歴、更新、移行の Linux ポータブル検証は完了している。Windows の実旧環境 CLI 移行・復旧、Ubuntu の分離 guest での移行・rollback、Tailnet の最終実環境確認は、成功した証跡が揃うまで未達として扱う。
+**親 Issue の判定は保留。** 単一アプリの機能、SQLite/SSE、管理、履歴、更新、移行の Linux ポータブル検証は完了している。Windows の実旧環境 CLI 移行・復旧と Ubuntu の分離 guest での移行・rollback は、成功した証跡が揃うまで未達として扱う。
 
 判定欄の `✅` は記載した試験が成功、`◐` は一部の証跡が成功しているが受入条件全体は未完、`⏳` は再実行または実環境の証跡待ちを表す。
 
@@ -20,8 +20,8 @@
 | 停止中の日跨ぎ実績を補完し、limit 時系列・推定を生成せず、日次/月次を二重計上しない | `history-final-suite.log` の明示的な JST 日境界と scheduler、`native-db-integration.log` の UTC day advance は成功。停止中の日跨ぎ専用の実環境証跡は未完 | ◐ |
 | SQLite 保存失敗と上流不正を分け、最大履歴の応答・終了を測定する | `final-history-performance.log` / `final-history-performance.json` は 1 test pass。16,746,765 bytes（上限 16,777,216）、超過 16,841,741 bytes は拒否、94,720 行、transaction 980.5 ms、同時 HTTP 985.96 ms、shutdown 19.3 ms | ✅ |
 | drain の ACK 不明・破損・中断・再実行、drain 後 backup からの復旧、ACK 済み観測保持、旧履歴読取りを検証する | `migration-windows-cleanup-retry.log`（11 / 11 pass）、`migration-isolated-paths.log`（12 / 12 pass）、`migration-real-first.log`（旧 server 2 / 2 pass）。manifest は `/tmp/tma-orchestration/pinned-legacy-cae-manifest.json` | ◐ |
-| analytics test・typecheck・tools test・3 本の integration と、移行前の Go 検証を実行する | 基準 CI [run 34376000212](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34376000212)（commit `d4cc3e6`、Ubuntu/Windows とも success）。ローカルは `native-db-analytics.log`（103 / 103）、`native-db-types.log`、`native-db-integration.log`、`go-test.log`。`259d5db` の再実行は Windows job が失敗しており再実行待ち | ◐ |
-| Windows の path/Ctrl+C/file lock/ACL、Ubuntu service・reboot・Tailscale・同一内容再発行を確認する | `final-tailnet.log` と `tailnet-real-63f0d07.log` は 3 / 3 pass。Windows direct CLI と Ubuntu isolated guest の最終 migration/rollback は未完。現行 [CI run 34376506267](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34376506267) は Ubuntu success / Windows failure、[guest run 34376506240](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34376506240) は failure | ⏳ |
+| analytics test・typecheck・tools test・3 本の integration と、移行前の Go 検証を実行する | 基準 CI [run 34376000212](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34376000212)（commit `d4cc3e6`、Ubuntu/Windows とも success）。ローカルは `native-db-analytics.log`（103 / 103）、`native-db-types.log`、`native-db-integration.log`、`go-test.log`。[CI run 34379698164](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34379698164)（`8158ffa`）は Ubuntu/Windows とも success。追加の移行修正後に最終確認する | ◐ |
+| Windows の path/Ctrl+C/file lock/ACL、Ubuntu service・reboot・Tailscale・同一内容再発行を確認する | `final-tailnet.log` と `tailnet-real-63f0d07.log` は 3 / 3 pass。Windows direct CLI と Ubuntu isolated guest の最終 migration/rollback は未完。[CI run 34379698164](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34379698164) は両 OS success、[guest run 34379698182](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34379698182) は新規導入・実 oneshot Web 更新・OS 再起動後の自動起動まで success | ⏳ |
 | Secret を DB/API/log/static 配信/package に出さず、旧 ingest・Collector status・二重待受・定期設定同期・Go 起動依存を残さない | `native-db-integration.log` の旧 bridge なし、`hubs-review-suite2.log` の secret/API 境界、`migration-package-amd64.log` / `migration-package-arm64.log` の package 内容検査 | ✅ |
 | Web 候補確認→SHA 検証・配置→停止/再起動→同じ jobId の完了、runner 継続、SSE・履歴復帰を確認する | `native-db-integration.log`（`UPDATE INTEGRATION OK`）、`integrated-tools.log`、`web-update-1b36e56.log`。実 runner、backup、停止/再起動、release identity、browser SSE、Hub/history resume を確認 | ✅ |
 | 事前失敗時の旧アプリ維持、配置後起動失敗、runner 強制終了、終端状態競合、health 200 の誤判定、SHA 固定、CLI/Web 競合を試験する | `runner-47dbc86.log`（10 tests / 10 pass）、`integrated-tools.log`、`shutdown-notification-review.log` | ✅ |
@@ -39,8 +39,8 @@
 
 ## 残課題と実行範囲
 
-- [run 34376506441](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34376506441) は Ubuntu pinned-source job が成功したが、同じ run の Windows job が失敗したため、run 全体を成功とは扱わない。失敗内容は `migration-real-259-failed.log`（Windows fixture cleanup の `EPERM` と gitless archive verification）に記録している。
-- 現行 `259d5db` の Windows native、Windows direct CLI、Ubuntu user-systemd/reboot guest の成功再実行を記録するまで、親 Issue は閉じない。
+- `8158ffa` の [pinned-source run 34379698257](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34379698257) は Ubuntu と Windows の portable fixture が成功したが、Windows direct CLI の復元時 ACL 処理が失敗した。run 全体は failure として扱う。
+- [Ubuntu migration run 34379698237](https://github.com/nuitsjp/token-monitor-analytics/actions/runs/34379698237) も failure。両 OS の移行・復旧と停止中の日跨ぎ補完の残項目が通るまで、親 Issue は閉じない。
 - 実ホストの production DB/config/service の移行・再起動は実施していない。実行したのは一時 fixture、portable integration、分離 guest、CI のみである。
 
 運用手順は [PUBLICATION](PUBLICATION.md)、通常運用は [OPERATIONS](OPERATIONS.md)、初回切替と復旧は [MIGRATION](MIGRATION.md) を参照する。
