@@ -142,7 +142,7 @@ test('Analytics releases listener and SQLite after POSIX SIGINT or Windows force
 });
 
 const WINDOWS_CONSOLE_CTRL_C = String.raw`
-Add-Type -ReferencedAssemblies 'System.Net.Http.dll' -TypeDefinition @'
+Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -191,12 +191,12 @@ public static class TmaConsoleControl {
       throw new InvalidOperationException("CreateProcess failed: " + Marshal.GetLastWin32Error());
     }
     try {
-      using (var client = new System.Net.Http.HttpClient()) {
+      using (var client = new System.Net.WebClient()) {
         var ready = false;
         for (var attempt = 0; attempt < 100; attempt++) {
           try {
-            var response = client.GetAsync("http://127.0.0.1:" + port + "/api/health").GetAwaiter().GetResult();
-            if ((int)response.StatusCode == 200) { ready = true; break; }
+            var body = client.DownloadString("http://127.0.0.1:" + port + "/api/health");
+            if (body.Contains("\"ok\":true")) { ready = true; break; }
           } catch { }
           Thread.Sleep(100);
         }
