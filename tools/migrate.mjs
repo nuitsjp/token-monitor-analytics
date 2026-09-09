@@ -1271,7 +1271,9 @@ function windowsPowerShellPath() {
 }
 
 function runWindowsPowerShell(script, environment = {}, timeoutMs = 30000) {
-  return execFileSync(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], {
+  const program = "$ErrorActionPreference='Stop';Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -Force;" + script;
+  const encoded = Buffer.from(program, 'utf16le').toString('base64');
+  return execFileSync(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
