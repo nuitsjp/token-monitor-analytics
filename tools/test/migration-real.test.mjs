@@ -171,9 +171,12 @@ function protectFixtureLayout(dir) {
 
 async function makeFixture(t, legacy) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-real-migration-'));
-  const fixture = {dir, old: null};
+  const fixture = {dir, old: null, cleanup: null};
   t.after(async () => {
     const errors = [];
+    if (fixture.cleanup) {
+      try { await fixture.cleanup(); } catch (error) { errors.push(error); }
+    }
     if (fixture.old) {
       try { await fixture.old.app.close(); } catch (error) { errors.push(error); }
       fixture.old = null;
@@ -283,6 +286,12 @@ function sourceOptions(fixture, artifact, legacy, {partial = false} = {}) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     throw new Error(`published fixture process ${pid} did not stop`);
+  };
+  fixture.cleanup = async () => {
+    const errors = [];
+    try { await stopPublished(); } catch (error) { errors.push(error); }
+    try { await closeOld(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, 'published real migration fixture cleanup failed');
   };
   const platform = {
     inspectServices: async () => services,
@@ -429,12 +438,6 @@ test('real pinned legacy server drains into the native schema and restores the c
   const verified = verifyReleaseArtifact({archivePath: artifact.archivePath, checksumPath: artifact.checksumPath, expectedTargetCommitSha: targetSha, expectedArchitecture: 'amd64', extractDir: path.join(fixtureDir, 'verified')});
   const fixture = await makeFixture(t, legacy);
   const setup = sourceOptions(fixture, verified, legacy);
-  t.after(async () => {
-    const errors = [];
-    try { await setup.stopPublished(); } catch (error) { errors.push(error); }
-    try { await setup.closeOld(); } catch (error) { errors.push(error); }
-    if (errors.length) throw new AggregateError(errors, 'published real migration fixture cleanup failed');
-  });
   const result = await runMigration(setup.options);
   assert.equal(result.state.phase, 'complete');
   assert.equal(fs.readdirSync(fixture.outboxPath).length, 0);
@@ -490,12 +493,6 @@ test('real pinned legacy drain keeps ACKed observations and pending outbox files
   const verified = verifyReleaseArtifact({archivePath: artifact.archivePath, checksumPath: artifact.checksumPath, expectedTargetCommitSha: targetSha, expectedArchitecture: 'amd64', extractDir: path.join(fixtureDir, 'verified')});
   const fixture = await makeFixture(t, legacy);
   const setup = sourceOptions(fixture, verified, legacy, {partial: true});
-  t.after(async () => {
-    const errors = [];
-    try { await setup.stopPublished(); } catch (error) { errors.push(error); }
-    try { await setup.closeOld(); } catch (error) { errors.push(error); }
-    if (errors.length) throw new AggregateError(errors, 'partial real migration fixture cleanup failed');
-  });
   let sendCount = 0;
   setup.options.send = async (url, init) => {
     sendCount += 1;
