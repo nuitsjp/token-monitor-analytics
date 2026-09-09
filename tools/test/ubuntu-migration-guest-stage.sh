@@ -46,6 +46,9 @@ old_port=18887
 target_port=18787
 ingest_token='legacy-ingest-token-ubuntu-acceptance-000000000000000000000000000000'
 hub_secret='legacy-hub-secret-ubuntu-acceptance-0000000000000000000000000000'
+guest_marker='/run/tma-ubuntu-migration-guest'
+guest_marker_value='tma-ubuntu-migration-qemu'
+guest_hostname='tma-acceptance-28'
 
 export PATH="$(dirname "$node_bin"):/home/tma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 repo_root=$(cd "$repo_root" && pwd)
@@ -58,6 +61,16 @@ exec > >(tee "$evidence_dir/stage.log") 2>&1
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 require_file() { [[ -f "$1" && ! -L "$1" ]] || fail "regular file required: $1"; }
+evidence_file() {
+  local filename=$1
+  require_file "$filename"
+  sudo chown tma:tma "$filename"
+  sudo chmod 0640 "$filename"
+}
+copy_state_evidence() {
+  local source=$1 destination=$2
+  sudo install -o tma -g tma -m 0640 "$source" "$destination"
+}
 userctl() {
   XDG_RUNTIME_DIR=/run/user/$(id -u tma) \
     DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u tma)/bus \
@@ -82,6 +95,15 @@ git -C "$repo_root" diff --cached --exit-code
 )
 printf '%s\n' "$target_sha" > "$evidence_dir/target-sha.txt"
 printf '%s\n' "$legacy_sha" > "$evidence_dir/legacy-sha.txt"
+
+# This stage has destructive guest-local setup below. Require the marker made
+# by the QEMU wrapper and the cloud-init hostname before touching any path;
+# this makes a direct invocation on a developer/production host fail closed.
+[[ "$(hostname -s)" == "$guest_hostname" ]] || fail "migration stage requires disposable guest hostname $guest_hostname"
+[[ "$(cat /etc/hostname)" == "$guest_hostname" ]] || fail 'migration stage requires the disposable guest /etc/hostname marker'
+[[ "$(sudo stat -c '%u:%g:%a' /etc)" == '0:0:755' ]] || fail 'migration stage requires a root-owned /etc'
+[[ "$(sudo stat -c '%u:%g:%a' "$guest_marker" 2>/dev/null)" == '0:0:600' ]] || fail 'migration stage marker is missing or not root-owned'
+[[ "$(sudo cat "$guest_marker" 2>/dev/null)" == "$guest_marker_value" ]] || fail 'migration stage marker is invalid'
 
 echo 'Preparing the pinned legacy source archive from the clean checkout'
 rm -rf "$legacy_source" "$legacy_archive" "$legacy_manifest"
@@ -145,7 +167,7 @@ write(analyticsFile,analytics);write(collectorFile,collector);write(hubsFile,hub
 fs.writeFileSync(analyticsEnv,`TMA_LEGACY_INGEST_TOKEN=${token}\nLEGACY_ANALYTICS_MARKER=preserve-analytics-env-v1\n`,{mode:0o640});
 fs.writeFileSync(collectorEnv,`TMA_LEGACY_INGEST_TOKEN=${token}\nOLD_HUB_SECRET=${hubSecret}\nLEGACY_COLLECTOR_MARKER=preserve-collector-env-v1\n`,{mode:0o640});
 fs.mkdirSync(path.dirname(databasePath),{recursive:true,mode:0o700});
-fs.closeSync(fs.openSync(databasePath,'w',{mode:0o600}));fs.chmodSync(databasePath,0o600);
+fs.closeSync(fs.openSync(databasePath,'w',0o600));fs.chmodSync(databasePath,0o600);
 fs.mkdirSync(outboxPath,{recursive:true,mode:0o700});
 NODE
 sudo chown root:tma "$old_analytics_config" "$old_collector_config" "$old_analytics_env" "$old_collector_env" "$old_hubs" "$old_hub_secrets"
@@ -251,7 +273,8 @@ const entries=[];
 const digest=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const visit=(filename)=>{
  const stat=fs.lstatSync(filename);
- const entry={path:filename,type:stat.isDirectory()?'directory':stat.isFile()?'file':stat.isSymbolicLink()?'symlink':'other',uid:stat.uid,gid:stat.gid,mode:stat.mode&0o7777,size:stat.size};
+ const entry={path:filename,type:stat.isDirectory()?'directory':stat.isFile()?'file':stat.isSymbolicLink()?'symlink':'other',uid:stat.uid,gid:stat.gid,mode:stat.mode&0o7777};
+ if(stat.isFile())entry.size=stat.size;
  if(stat.isSymbolicLink())entry.link=fs.readlinkSync(filename);
  if(stat.isFile()&&!sensitive.has(path.basename(filename)))entry.sha256=digest(filename);
  entries.push(entry);
@@ -261,9 +284,12 @@ for(const root of roots)if(fs.existsSync(root))visit(root);else throw new Error(
 entries.sort((a,b)=>a.path.localeCompare(b.path));
 fs.writeFileSync(output,JSON.stringify({schemaVersion:1,entries},null,2)+'\n',{mode:0o600});
 NODE
+  evidence_file "$output"
 }
 
 record_layout "$evidence_dir/legacy-layout-before.json"
+stat -c '%u:%g:%a' "$old_database" > "$evidence_dir/database-owner-before.txt"
+stat -c '%u:%g:%a' "$old_outbox" > "$evidence_dir/outbox-owner-before.txt"
 root_node --input-type=module - "$evidence_dir/database-before.json" "$old_database" <<'NODE'
 import fs from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
@@ -276,6 +302,7 @@ try {
  fs.writeFileSync(output,JSON.stringify({schemaVersion:1,integrity,migrations,observations},null,2)+'\n',{mode:0o600});
 } finally { db.close(); }
 NODE
+evidence_file "$evidence_dir/database-before.json"
 printf '%s\n' "$old_port" > "$evidence_dir/legacy-port.txt"
 curl --fail --silent "http://127.0.0.1:$old_port/api/health" > "$evidence_dir/legacy-health-before.json"
 userctl status --no-pager tma-analytics.service > "$evidence_dir/legacy-analytics-before.txt"
@@ -323,7 +350,7 @@ sudo env -u TMA_MIGRATION_REAL -u TMA_MIGRATION_LEGACY_SOURCE_MANIFEST \
 test -f "$evidence_dir/legacy-analytics-stop-seen"
 test -f "$evidence_dir/legacy-collector-stop-seen"
 test -s "$state_path"
-cp -f "$state_path" "$evidence_dir/migration-state-complete.json"
+copy_state_evidence "$state_path" "$evidence_dir/migration-state-complete.json"
 userctl status --no-pager tma-analytics.service > "$evidence_dir/new-analytics-after-migration.txt"
 userctl status --no-pager tma-collector.service > "$evidence_dir/old-collector-after-migration.txt" || true
 userctl show -p ActiveState,SubState,UnitFileState,MainPID tma-analytics.service > "$evidence_dir/new-analytics-state.txt"
@@ -364,6 +391,7 @@ try {
  fs.writeFileSync(output,JSON.stringify({integrity,migrations,observations,hub,contractId:contract.contract_id,eventIds},null,2)+'\n',{mode:0o600});
 } finally { db.close(); }
 NODE
+evidence_file "$evidence_dir/migration-database.json"
 test "$(find "$old_outbox" -maxdepth 1 -type f -name '*.json' | wc -l)" -eq 0
 root_node --input-type=module - "$evidence_dir/new-http-after-migration.json" "$target_port" <<'NODE'
 import fs from 'node:fs';
@@ -377,6 +405,7 @@ finally {try{await reader?.cancel();}catch{}clearTimeout(timer);controller.abort
 if(health.ok!==true||state.storage!=='sqlite'||history===undefined||!text.includes('event: ready'))throw new Error('target HTTP/SSE evidence failed');
 fs.writeFileSync(output,JSON.stringify({health:true,stateStorage:state.storage,historyStatus:'ok',sseReady:true},null,2)+'\n',{mode:0o600});
 NODE
+evidence_file "$evidence_dir/new-http-after-migration.json"
 
 echo 'Rolling back through the production restore CLI'
 sudo env -u TMA_MIGRATION_REAL -u TMA_MIGRATION_LEGACY_SOURCE_MANIFEST \
@@ -394,7 +423,7 @@ sudo env -u TMA_MIGRATION_REAL -u TMA_MIGRATION_LEGACY_SOURCE_MANIFEST \
   --update-state-path "$old_update_state" \
   --lock "$lock_path" | tee "$evidence_dir/restore-result.json"
 
-cp -f "$state_path" "$evidence_dir/migration-state-restored.json"
+copy_state_evidence "$state_path" "$evidence_dir/migration-state-restored.json"
 userctl daemon-reload
 userctl status --no-pager tma-analytics.service > "$evidence_dir/legacy-analytics-after-restore.txt"
 userctl status --no-pager tma-collector.service > "$evidence_dir/legacy-collector-after-restore.txt"
@@ -445,6 +474,7 @@ const after={schemaVersion:1,entries};
 if(JSON.stringify(after)!==JSON.stringify(before))throw new Error('legacy code/config/runner/unit ownership or bytes were not restored exactly');
 fs.writeFileSync(output,JSON.stringify(after,null,2)+'\n',{mode:0o600});
 NODE
+evidence_file "$evidence_dir/legacy-layout-after.json"
 
 # Secret/environment files are intentionally excluded from the evidence
 # manifest. Compare them only against the protected backup kept by the CLI.
@@ -454,7 +484,7 @@ for pair in \
   "$old_hub_secrets:legacy-hub-secrets"; do
   path_name=${pair%%:*}
   backup_name=${pair##*:}
-  cmp -s "$path_name" "$backup_dir/protected/$backup_name" || fail "sensitive legacy file was not restored: $path_name"
+  sudo cmp -s "$path_name" "$backup_dir/protected/$backup_name" || fail "sensitive legacy file was not restored: $path_name"
 done
 
 test ! -e "$target_config"
@@ -462,6 +492,10 @@ test ! -e "$target_secrets"
 test ! -e "$target_env"
 test "$(find "$old_outbox" -maxdepth 1 -type f -name '*.json' | wc -l)" -eq 0
 test "$(readlink "$old_current")" = "$old_release"
+stat -c '%u:%g:%a' "$old_database" > "$evidence_dir/database-owner-after.txt"
+stat -c '%u:%g:%a' "$old_outbox" > "$evidence_dir/outbox-owner-after.txt"
+test "$(cat "$evidence_dir/database-owner-before.txt")" = "$(cat "$evidence_dir/database-owner-after.txt")"
+test "$(cat "$evidence_dir/outbox-owner-before.txt")" = "$(cat "$evidence_dir/outbox-owner-after.txt")"
 test "$(cat "$old_runner/legacy-runner.marker")" = 'legacy-runner-marker-v1'
 test "$(cat "$old_infrastructure")" = '{"layout":"legacy-infrastructure-v1","owner":"root"}'
 test "$(cat "$old_publication")" = '{"release":"legacy-publication-v1"}'
@@ -483,6 +517,7 @@ try {
  fs.writeFileSync(output,JSON.stringify({integrity,migrations,observations,eventIds,contractId:config.contracts[0].id},null,2)+'\n',{mode:0o600});
 } finally { db.close(); }
 NODE
+evidence_file "$evidence_dir/legacy-database-after-restore.json"
 
 root_node --input-type=module - "$evidence_dir/post-cutover-backup.json" "$state_path" <<'NODE'
 import fs from 'node:fs';
@@ -501,6 +536,7 @@ try {
  fs.writeFileSync(output,JSON.stringify({integrity,migrations,archivedHub:true},null,2)+'\n',{mode:0o600});
 } finally { db.close(); }
 NODE
+evidence_file "$evidence_dir/post-cutover-backup.json"
 
 cp -f "$evidence_dir/legacy-layout-before.json" "$evidence_dir/legacy-layout-restored.json"
 echo 'PASS: real Ubuntu migration, archive, native publish, rollback, and old-service ownership restore'

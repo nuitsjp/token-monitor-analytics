@@ -200,6 +200,10 @@ if [[ -n "$guest_stage_script" ]]; then
   guest_copy "$target_artifact.sha256" "tma@127.0.0.1:/tmp/$target_artifact_name.sha256"
   guest <<'EOF'
 set -Eeuo pipefail
+[[ "$(hostname -s)" == tma-acceptance-28 ]] || { echo 'unexpected disposable guest hostname' >&2; exit 1; }
+printf '%s\n' tma-ubuntu-migration-qemu | sudo tee /run/tma-ubuntu-migration-guest >/dev/null
+sudo chown root:root /run/tma-ubuntu-migration-guest
+sudo chmod 0600 /run/tma-ubuntu-migration-guest
 chmod 0755 /tmp/tma-guest-stage.sh
 EOF
   guest_update "/tmp/tma-guest-stage.sh /home/tma/repo /home/tma/node-runtime/bin/node /tmp/$target_artifact_name /tmp/$target_artifact_name.sha256 /home/tma/migration-evidence" | tee "$artifact_dir/migration-stage.log"

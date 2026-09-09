@@ -36,6 +36,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The guest builds a Git bundle containing the pinned legacy commit;
+          # a shallow checkout cannot prove or transfer that source history.
+          fetch-depth: 0
 
       - uses: jdx/mise-action@v4
         with:
