@@ -433,9 +433,8 @@ $('update-confirm-form').onsubmit=async e=>{
  $('update-confirm-dialog').close();
  if(!updateData?.candidate)return;
  try{
-  const applied=await post('/api/manage/update/apply',{targetCommitSha:updateData.candidate.targetCommitSha});
+  await post('/api/manage/update/apply',{targetCommitSha:updateData.candidate.targetCommitSha});
   await loadUpdate();
-  waitForRestart(applied.jobId,applied.targetCommitSha);
  }catch(err){notice(err.message);}
 };
 
