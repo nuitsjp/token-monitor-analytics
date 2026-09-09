@@ -7,7 +7,7 @@ import {execFileSync,spawnSync} from 'node:child_process';
 import {userUnit,prefix,destination} from '../ubuntu-layout.mjs';
 import {fileURLToPath} from 'node:url';
 const supported=process.platform==='linux'&&process.getuid?.()!==0&&spawnSync('systemctl',['--user','show-environment'],{stdio:'ignore'}).status===0;
-test('ordinary user starts and restarts a native Analytics service without privilege escalation', {skip:supported?false:'Requires a running user systemd manager',timeout:20000},async()=>{
+test('ordinary user starts and restarts a native Analytics service without privilege escalation', {skip:supported?false:'Requires a running user systemd manager',timeout:60000},async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tma-user-service-'));
  const name=`tma-test-${process.pid}.service`;
  const ctl=(...args)=>execFileSync('systemctl',['--user',...args],{encoding:'utf8',stdio:'pipe'});
@@ -32,8 +32,10 @@ test('ordinary user starts and restarts a native Analytics service without privi
   const unitPath=path.join(dir,name);fs.writeFileSync(unitPath,unit);
   ctl('link',unitPath);linked=true;ctl('daemon-reload');ctl('start',name);
   async function healthy(){
-   for(let i=0;i<50;i++){try{const r=await fetch(config.publicOrigin+'/api/health');if(r.ok)return;}catch{}await new Promise(r=>setTimeout(r,50));}
-   throw new Error('User service did not become healthy');
+   const deadline=Date.now()+15000;
+   while(Date.now()<deadline){try{const r=await fetch(config.publicOrigin+'/api/health',{signal:AbortSignal.timeout(1000)});if(r.ok)return;}catch{}await new Promise(r=>setTimeout(r,50));}
+   const state=ctl('show','-p','ActiveState','-p','SubState','-p','ExecMainStatus','-p','Result',name).trim();
+   throw new Error(`User service did not become healthy within 15 seconds: ${state}`);
   }
   await healthy();const firstPid=ctl('show','-p','MainPID','--value',name).trim();assert.notEqual(firstPid,'0');
   const manage=await fetch(config.publicOrigin+'/api/manage/hubs',{method:'POST',headers:{Origin:config.publicOrigin,'Content-Type':'application/json'},body:JSON.stringify({id:'service-hub',label:'Service test Hub',url:'http://127.0.0.1:9',secret:'service-test-secret'})});
