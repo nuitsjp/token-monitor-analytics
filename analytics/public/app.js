@@ -458,7 +458,8 @@ function connect(){
  current.addEventListener('update_job_changed',()=>loadUpdate());
  current.onerror=()=>{
   connection('ライブ再接続待ち');
-  if(updateData?.job?.status==='running')waitForRestart(updateData.job.jobId,updateData.job.targetCommitSha);
+  const stage=updateData?.job?.stage;
+  if(updateData?.job?.status==='running'&&(stage==='deploying'||stage==='restarting'))waitForRestart(updateData.job.jobId,updateData.job.targetCommitSha);
  };
 }
 $('refresh').onclick=refresh;$('hub-select').onchange=draw;$('contract-select').onchange=()=>loadHistory().catch(e=>notice(e.message));

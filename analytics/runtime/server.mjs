@@ -90,7 +90,7 @@ function publicContractHistory(db,activeContracts){
   return true;
  }).map(snapshot=>({id:snapshot.id,label:snapshot.label,hubId:snapshot.hubId,capturedAt:snapshot.capturedAt,active:active.has(snapshot.id)}));
 }
-export async function startServer(config,{env=process.env,logger=console,maintenanceMs=300000,heartbeatMs=25000,collectionHubs,fetchImpl,collectionIdleMs,collectionHeaderTimeoutMs,historyHeaderTimeoutMs,historyBodyTimeoutMs,historyMinIntervalMs,historyRetryDelayMs}={}){
+export async function startServer(config,{env=process.env,logger=console,maintenanceMs=300000,heartbeatMs=25000,collectionHubs,fetchImpl,collectionIdleMs,collectionHeaderTimeoutMs,historyHeaderTimeoutMs,historyBodyTimeoutMs,historyMinIntervalMs,historyRetryDelayMs,updateManagerOptions={}}={}){
  validateTailnetBinding(config);
  const auth=credentials(config,env);
  const db=openDatabase(config.databasePath,{demo:config.demo});
@@ -235,7 +235,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   collection.invalidateHub(id);
   void collection.applyHubs(loadCollectionHubs()).catch(()=>logger.error('Hub reconnect failed; inspect Hub status'));
  };
- const updateManager=new UpdateManager(config,live);
+ const updateManager=new UpdateManager(config,live,updateManagerOptions);
  updateManager.start();
  const management=createManagementHandler({
   config,auth,db,live,exclusive,getCollectionStatuses,onHubCommitted,onReconnect:reconnectHub,

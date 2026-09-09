@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import {spawn, execFileSync} from 'node:child_process';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {saveRunnerState, readRunnerState} from '../update-runner-state.mjs';
 import {acquirePublicationLock} from '../update-runner.mjs';
 
@@ -93,7 +94,7 @@ if(result?.errorCode) process.exitCode=2;
 `;
 }
 
-function pathToFileURL(filename) { return new URL(`file://${filename.split(path.sep).map(encodeURIComponent).join('/')}`).href; }
+const runnerFile = fileURLToPath(new URL('../update-runner.mjs', import.meta.url));
 
 test('isolated runner stops and restarts the app, proves the target release, and preserves job identity', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-update-runner-'));
@@ -112,8 +113,8 @@ test('isolated runner stops and restarts the app, proves the target release, and
   saveRunnerState(statePath, {jobId:'job-fixture-1',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',initialConfigurationId:'cfg-before',status:'running',stage:'accepted',startedAt:new Date().toISOString(),finishedAt:null});
   await waitForFile(pidFile);
   try {
-    const script = runnerScript({runnerPath:path.resolve(new URL('../update-runner.mjs', import.meta.url).pathname),statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot,publicationPath:publication,fixturePidFile:pidFile,fixtureCurrent:current,fixtureApp:files.app,fixturePort:port},mode:'success'});
-    execFileSync(process.execPath, ['--input-type=module', '-e', script], {stdio:'pipe'});
+    const script = runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot,publicationPath:publication,fixturePidFile:pidFile,fixtureCurrent:current,fixtureApp:files.app,fixturePort:port},mode:'success'});
+    execFileSync(process.execPath, ['--input-type=module', '-e', script], {stdio:'pipe', timeout:30000, killSignal:'SIGTERM'});
     const finished = readRunnerState(statePath, {checkServiceActive:()=>true});
     assert.equal(finished.status, 'completed');
     assert.equal(finished.stage, 'success');
@@ -138,8 +139,8 @@ test('verification preflight fails before the app is stopped', async () => {
   const statePath=path.join(root,'state.json'); const source=path.join(root,'source');fs.mkdirSync(source);
   saveRunnerState(statePath,{jobId:'job-preflight',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',status:'running',stage:'accepted',startedAt:new Date().toISOString(),finishedAt:null});
   try {
-    const script=runnerScript({runnerPath:path.resolve(new URL('../update-runner.mjs',import.meta.url).pathname),statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port},mode:'preflight'});
-    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe'}));
+    const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port},mode:'preflight'});
+    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
     const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.errorCode,'provision_required'); assert.ok(fs.existsSync(pidFile));
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
@@ -152,8 +153,8 @@ test('a branch move after candidate acceptance fails before the app is stopped',
   const statePath=path.join(root,'state.json'); const source=path.join(root,'source');fs.mkdirSync(source);
   saveRunnerState(statePath,{jobId:'job-main-moved',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',status:'running',stage:'accepted',startedAt:new Date().toISOString(),finishedAt:null});
   try {
-    const script=runnerScript({runnerPath:path.resolve(new URL('../update-runner.mjs',import.meta.url).pathname),statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port},mode:'moved'});
-    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe'}));
+    const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port},mode:'moved'});
+    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
     const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.errorCode,'main_moved'); assert.ok(fs.existsSync(pidFile));
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
@@ -166,8 +167,8 @@ test('post-restart proof failure is terminal and retains the failed stage', asyn
   const statePath=path.join(root,'state.json'); const source=path.join(root,'source');fs.mkdirSync(source);
   saveRunnerState(statePath,{jobId:'job-proof-fail',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',status:'running',stage:'accepted',startedAt:new Date().toISOString(),finishedAt:null});
   try {
-    const script=runnerScript({runnerPath:path.resolve(new URL('../update-runner.mjs',import.meta.url).pathname),statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port,fixtureBadProof:true},mode:'success'});
-    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe'}));
+    const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port,fixtureBadProof:true},mode:'success'});
+    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
     const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.status,'failed'); assert.equal(failed.errorCode,'health_check_failed');
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
@@ -180,8 +181,8 @@ test('a runner killed after stopping the app leaves a recoverable running state'
   const statePath=path.join(root,'state.json'); const source=path.join(root,'source');fs.mkdirSync(source);
   saveRunnerState(statePath,{jobId:'job-killed',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',status:'running',stage:'accepted',startedAt:'2020-01-01T00:00:00.000Z',finishedAt:null});
   try {
-    const script=runnerScript({runnerPath:path.resolve(new URL('../update-runner.mjs',import.meta.url).pathname),statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port,fixtureKillAfterStop:true},mode:'success'});
-    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe'}));
+    const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port,fixtureKillAfterStop:true},mode:'success'});
+    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
     const aborted=readRunnerState(statePath,{checkServiceActive:()=>false,now:()=>new Date('2026-09-09T00:00:00Z').toISOString()}); assert.equal(aborted.status,'aborted'); assert.equal(aborted.errorCode,'job_aborted'); assert.equal(aborted.stage,'aborted');
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
@@ -191,15 +192,43 @@ test('the shared lock is owned by the runner process and a competing runner leav
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-update-lock-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   const lock = path.join(root, 'deploy.lock');
-  const runnerPath = path.resolve(new URL('../update-runner.mjs', import.meta.url).pathname);
+  const runnerPath = runnerFile;
   const holderScript = `import {acquirePublicationLock} from ${JSON.stringify(pathToFileURL(runnerPath))}; const release=acquirePublicationLock(${JSON.stringify(lock)}); process.stdout.write('held\\n'); setInterval(() => {}, 1000); await new Promise(() => {}); release();`;
-  const holder = spawn(process.execPath, ['--input-type=module', '-e', holderScript], {stdio: ['ignore', 'pipe', 'pipe']});
-  await new Promise((resolve, reject) => { holder.stdout.once('data', resolve); holder.once('error', reject); });
-  const competingScript = `import {acquirePublicationLock} from ${JSON.stringify(pathToFileURL(runnerPath))}; try { acquirePublicationLock(${JSON.stringify(lock)}); process.exitCode=2; } catch (error) { if (error.code !== 'lock_conflict') throw error; }`;
-  const competing = execFileSync(process.execPath, ['--input-type=module', '-e', competingScript], {stdio: 'pipe'});
-  assert.equal(competing.toString(), '');
-  holder.kill('SIGKILL');
-  await new Promise(resolve => holder.once('exit', resolve));
+  let holder;
+  const waitForHolder = () => new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => finish(new Error('Timed out waiting for lock holder readiness')), 5000);
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      holder.stdout.off('data', onData);
+      holder.off('error', onError);
+      holder.off('exit', onExit);
+      if (error) reject(error); else resolve();
+    };
+    const onData = chunk => { if (chunk.toString().includes('held')) finish(); };
+    const onError = error => finish(error);
+    const onExit = (code, signal) => finish(new Error(`Lock holder exited before readiness (${code ?? signal})`));
+    holder.stdout.on('data', onData);
+    holder.once('error', onError);
+    holder.once('exit', onExit);
+  });
+  try {
+    holder = spawn(process.execPath, ['--input-type=module', '-e', holderScript], {stdio: ['ignore', 'pipe', 'pipe']});
+    await waitForHolder();
+    const competingScript = `import {acquirePublicationLock} from ${JSON.stringify(pathToFileURL(runnerPath))}; try { acquirePublicationLock(${JSON.stringify(lock)}); process.exitCode=2; } catch (error) { if (error.code !== 'lock_conflict') throw error; }`;
+    const competing = execFileSync(process.execPath, ['--input-type=module', '-e', competingScript], {stdio: 'pipe', timeout:5000, killSignal:'SIGTERM'});
+    assert.equal(competing.toString(), '');
+  } finally {
+    if (holder && holder.exitCode === null && holder.signalCode === null) holder.kill('SIGKILL');
+    if (holder && holder.exitCode === null && holder.signalCode === null) {
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 2000);
+        holder.once('exit', () => { clearTimeout(timer); resolve(); });
+      });
+    }
+  }
   assert.doesNotThrow(() => { const release = acquirePublicationLock(lock); release(); });
 });
 
