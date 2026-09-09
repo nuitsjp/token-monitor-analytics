@@ -31,6 +31,35 @@ test('protected symlink backup leaves the live release permissions unchanged', {
   assert.equal(fs.readlinkSync(path.join(backupDir, 'protected', 'legacy-code')), release);
 });
 
+test('protected backup snapshots a service enablement link removed during inhibition', {skip: process.platform !== 'linux'}, t => {
+  const dir = fixture(t);
+  const wants = path.join(dir, 'default.target.wants');
+  fs.mkdirSync(wants, {recursive: true});
+  const linkPath = path.join(wants, 'tma-analytics.service');
+  fs.symlinkSync('../tma-analytics.service', linkPath);
+  const stat = fs.lstatSync(linkPath);
+  const source = {
+    key: 'legacy-service-2',
+    path: linkPath,
+    exists: true,
+    type: 'symlink',
+    link: fs.readlinkSync(linkPath),
+    uid: stat.uid,
+    gid: stat.gid,
+    mode: stat.mode & 0o777,
+  };
+  // Linux systemctl disable removes this target.wants link after the
+  // inventory snapshot and before protected-layout backup.
+  fs.unlinkSync(linkPath);
+
+  const backupDir = path.join(dir, 'backup');
+  const manifest = backupProtectedLayout({backupDir, sources: [source], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
+  const entry = manifest.entries[0];
+  assert.equal(entry.snapshotAfterInhibit, true);
+  assert.equal(fs.readlinkSync(path.join(backupDir, 'protected', source.key)), source.link);
+  assert.deepEqual(entry.sourceMetadata, {uid: source.uid, gid: source.gid, mode: source.mode, acl: null});
+});
+
 test('protected backup records metadata for every nested POSIX entry', {skip: process.platform === 'win32'}, t => {
   const dir = fixture(t);
   const source = path.join(dir, 'legacy-tree');
