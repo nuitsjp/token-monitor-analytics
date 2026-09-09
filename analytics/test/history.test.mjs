@@ -272,6 +272,112 @@ test('History scheduler waits for an in-flight generation before replacement', a
   await scheduler.stop();
 });
 
+test('History scheduler cancels a queued replacement when stopHub races retirement', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let successStarted = false;
+  let calls = 0;
+  const scheduler = createHistoryScheduler({
+    minIntervalMs: 0,
+    maxRetries: 0,
+    fetchImpl: async () => { calls += 1; return responseFor([]); },
+    onSuccess: async () => { successStarted = true; await gate; },
+  });
+  await scheduler.startHub(hub, 1);
+  await waitFor(() => successStarted);
+
+  const replacement = scheduler.startHub(hub, 2);
+  // The replacement has removed generation 1 while waiting for its save.
+  await waitFor(() => scheduler.getStatus().length === 0);
+  let stopped = false;
+  const stopping = scheduler.stopHub(hub.id).then(() => { stopped = true; });
+  let replacementResult;
+  const replacementDone = replacement.then(result => { replacementResult = result; });
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(stopped, false);
+  assert.equal(replacementResult, undefined);
+
+  release();
+  await Promise.all([stopping, replacementDone]);
+  assert.equal(replacementResult, null);
+  assert.deepEqual(scheduler.getStatus(), []);
+  assert.equal(calls, 1);
+});
+
+test('History scheduler stop waits for a replacement that is retiring a save', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let successStarted = false;
+  let calls = 0;
+  const scheduler = createHistoryScheduler({
+    minIntervalMs: 0,
+    maxRetries: 0,
+    fetchImpl: async () => { calls += 1; return responseFor([]); },
+    onSuccess: async () => { successStarted = true; await gate; },
+  });
+  await scheduler.startHub(hub, 1);
+  await waitFor(() => successStarted);
+  const replacement = scheduler.startHub(hub, 2);
+  await waitFor(() => scheduler.getStatus().length === 0);
+
+  let stopped = false;
+  const stopping = scheduler.stop().then(() => { stopped = true; });
+  let replacementResult;
+  const replacementDone = replacement.then(result => { replacementResult = result; });
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(stopped, false);
+  assert.equal(replacementResult, undefined);
+
+  release();
+  await Promise.all([stopping, replacementDone]);
+  assert.equal(replacementResult, null);
+  assert.deepEqual(scheduler.getStatus(), []);
+  assert.equal(calls, 1);
+});
+
+test('History scheduler keeps the next run in flight after a synchronous follow-up starts', async () => {
+  let releaseFirst;
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  let releaseSecond;
+  const secondGate = new Promise(resolve => { releaseSecond = resolve; });
+  let firstSuccessStarted = false;
+  let secondFetchStarted = false;
+  let successCount = 0;
+  let fetchStartCount = 0;
+  const scheduler = createHistoryScheduler({
+    minIntervalMs: 0,
+    maxRetries: 0,
+    fetchImpl: async () => responseFor([]),
+    onFetchStart: async () => {
+      fetchStartCount += 1;
+      if (fetchStartCount === 2) {
+        secondFetchStarted = true;
+        await secondGate;
+      }
+    },
+    onSuccess: async () => {
+      successCount += 1;
+      if (successCount === 1) {
+        firstSuccessStarted = true;
+        await firstGate;
+      }
+    },
+  });
+  await scheduler.startHub(hub, 1);
+  await waitFor(() => firstSuccessStarted);
+  scheduler.notifyRevision(hub.id, 'revision-2');
+  releaseFirst();
+  await waitFor(() => secondFetchStarted);
+
+  scheduler.request(hub.id, 'manual');
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(fetchStartCount, 2);
+
+  releaseSecond();
+  await waitFor(() => fetchStartCount === 3);
+  await scheduler.stop();
+});
+
 test('History persistence callback failures are fatal and concurrent starts are serialized', async () => {
   const startFatal = [];
   const startScheduler = createHistoryScheduler({
@@ -320,10 +426,10 @@ test('History persistence callback failures are fatal and concurrent starts are 
   const first = serialized.startHub(hub, 1);
   const second = serialized.startHub(hub, 2);
   const [firstRunner, secondRunner] = await Promise.all([first, second]);
-  assert.equal(firstRunner.generation, 1);
+  assert.equal(firstRunner, null, 'an older queued desired generation is canceled');
   assert.equal(secondRunner.generation, 2);
   assert.equal(serialized.getStatus()[0].generation, 2);
-  await waitFor(() => calls === 2);
+  await waitFor(() => calls === 1);
   await serialized.stop();
 });
 
@@ -336,6 +442,7 @@ test('History fetch failures update only bookkeeping and never overwrite retaine
     db.transaction(() => storeHistorySnapshot(db, 'hub-a', valid, id, at));
     const failedAt = '2026-09-08T12:02:00.000Z';
     const failedId = db.transaction(() => beginHistoryFetch(db, 'hub-a', failedAt));
+    assert.throws(() => db.transaction(() => recordHistoryFetchFailure(db, 'hub-a', failedId, 'Bearer secret should never be stored')), /invalid history fetch error code/);
     db.transaction(() => recordHistoryFetchFailure(db, 'hub-a', failedId, 'network_error', failedAt));
     const rows = readUsageHistory(db, {hubId: 'hub-a', deviceId: 'device-a', granularity: 'daily', from: '2026-09-01', to: '2026-09-30'}).rows;
     assert.equal(rows.length, 2);

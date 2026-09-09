@@ -161,9 +161,35 @@ export function createHistoryScheduler({
   sleep=wait,
 }={}){
   const runners=new Map();
-  const starts=new Map();
+  // A start is a desired state transition. Keep each accepted transition
+  // until it settles so stopHub/stop can wait for an operation that is still
+  // retiring its predecessor, even after that predecessor left `runners`.
+  const hubStates=new Map();
+  let nextStartToken=1;
   let stopped=false;
   let stopPromise=null;
+
+  const hubState=id=>{
+    let state=hubStates.get(id);
+    if(!state){
+      state={desiredToken:0,tail:Promise.resolve(),pending:new Set(),retiring:new Set()};
+      hubStates.set(id,state);
+    }
+    return state;
+  };
+
+  const safeWait=value=>Promise.resolve(value).catch(()=>{});
+
+  const trackRetiring=(id,value)=>{
+    const state=hubState(id);
+    const completion=safeWait(value);
+    state.retiring.add(completion);
+    // The returned promise is already rejection-safe. Catch the promise
+    // produced by finally as well, since cleanup must never create an
+    // unhandled rejection while a caller is shutting down.
+    completion.finally(()=>{state.retiring.delete(completion);}).catch(()=>{});
+    return completion;
+  };
 
   const publish=(runner,state,errorCode='',extra={})=>{
     runner.state=state;runner.errorCode=errorCode;runner.updatedAt=new Date(now()).toISOString();
@@ -214,7 +240,8 @@ export function createHistoryScheduler({
 
   async function run(runner){
     if(!isCurrent(runner)||runner.inFlight||!runner.pending)return;
-    runner.pending=false;runner.inFlight=true;runner.lastStartAt=now();runner.attempts=0;
+    const runId=runner.nextRunId++;
+    runner.pending=false;runner.inFlight=true;runner.inFlightRunId=runId;runner.lastStartAt=now();runner.attempts=0;
     const reason=runner.pendingReason||'manual';runner.pendingReason='';
     const requestedRevision=runner.revision;
     const startedAt=new Date(runner.lastStartAt).toISOString();
@@ -257,45 +284,97 @@ export function createHistoryScheduler({
         throw asStorageError(error);
       }
       if(!isCurrent(runner))return;
-      runner.lastFetchAt=completedAt;runner.lastErrorCode='';runner.inFlight=false;
+      runner.lastFetchAt=completedAt;runner.lastErrorCode='';
       publish(runner,'success','',{attempts});
       if(runner.revision!==requestedRevision)runner.pending=true;
-      if(runner.pending)schedule(runner,runner.revision!==requestedRevision?'revision':'dirty');
     }catch(error){
       if(isCurrent(runner)){
         await completeFailure(runner,error,runner.attempts||1);
+      }else if(error?.fatal===true||error?.code==='storage_error'){
+        // A persistence callback can settle after a replacement or shutdown
+        // removed this runner. Its storage failure is still fatal; the
+        // generation fence only suppresses stale network bookkeeping.
+        try{onFatal?.(error,runner.hub.id);}catch{}
       }
     }finally{
-      if(isCurrent(runner)){
+      // `schedule` may start the next run synchronously. Clear this run's
+      // ownership before doing so, and never write runner state after that
+      // call; otherwise run N's finally can clear run N+1's inFlight flag.
+      if(isCurrent(runner)&&runner.inFlightRunId===runId){
+        const shouldSchedule=runner.pending&&!runner.scheduled;
+        const nextReason=runner.pendingReason||(runner.dirty?'revision':'dirty');
         runner.inFlight=false;
-        if(runner.pending&&!runner.scheduled)schedule(runner,runner.dirty?'revision':'dirty');
+        runner.inFlightRunId=null;
         runner.dirty=false;
+        if(shouldSchedule)schedule(runner,nextReason);
       }
     }
   }
 
   async function startHub(hub,generation=0){
     const id=hub?.id;
-    const previous=starts.get(id)||Promise.resolve();
-    const operation=previous.catch(()=>{}).then(async()=>{
-      if(stopped)return null;
-      await stopHub(id);
-      if(stopped)return null;
-      const runner={hub:{id:hub.id,url:hub.url,secret:hub.secret},generation,controller:new AbortController(),timer:null,scheduled:false,inFlight:false,pending:true,pendingReason:'startup',revision:null,lastStartAt:-Infinity,lastAttemptAt:-Infinity,lastFetchAt:null,nextRequestId:1,attempts:0,state:'idle',errorCode:'',updatedAt:new Date(now()).toISOString()};
+    if(stopped)return null;
+    const state=hubState(id);
+    const token=nextStartToken++;
+    state.desiredToken=token;
+    const record={id,token,cancelled:false,promise:null};
+    state.pending.add(record);
+    const previous=state.tail;
+    let operation;
+    const raw=previous.catch(()=>{}).then(async()=>{
+      if(stopped||record.cancelled||state.desiredToken!==token)return null;
+      // This is the retirement requested by this start operation. It must
+      // not call stopHub, which would invalidate this operation's own token.
+      await retireCurrent(id);
+      if(stopped||record.cancelled||state.desiredToken!==token)return null;
+      const runner={hub:{id:hub.id,url:hub.url,secret:hub.secret},generation,controller:new AbortController(),timer:null,scheduled:false,inFlight:false,inFlightRunId:null,nextRunId:1,pending:true,pendingReason:'startup',dirty:false,revision:null,lastStartAt:-Infinity,lastAttemptAt:-Infinity,lastFetchAt:null,nextRequestId:1,attempts:0,state:'idle',errorCode:'',updatedAt:new Date(now()).toISOString()};
       runners.set(hub.id,runner);publish(runner,'pending','',{reason:'startup'});schedule(runner,'startup');
+      if(stopped||record.cancelled||state.desiredToken!==token||!isCurrent(runner))return null;
       return runner;
     });
-    starts.set(id,operation);
-    try{return await operation;}
-    finally{if(starts.get(id)===operation)starts.delete(id);}
+    operation=raw.finally(()=>{
+      state.pending.delete(record);
+      if(state.tail===operation)state.tail=Promise.resolve();
+    });
+    record.promise=operation;
+    state.tail=operation;
+    return await operation;
+  }
+
+  function retireCurrent(id){
+    const runner=runners.get(id);
+    if(!runner)return Promise.resolve();
+    if(runner.retirePromise)return runner.retirePromise;
+    runners.delete(id);
+    runner.retired=true;
+    if(runner.timer)clearTimeout(runner.timer);
+    runner.controller.abort();
+    runner.retirePromise=trackRetiring(id,runner.done||Promise.resolve());
+    return runner.retirePromise;
+  }
+
+  function cancelPendingStarts(id){
+    const state=hubStates.get(id);
+    if(!state)return [];
+    state.desiredToken=nextStartToken++;
+    const pending=[...state.pending];
+    for(const record of pending)record.cancelled=true;
+    return pending;
   }
 
   function stopHub(id){
-    const runner=runners.get(id);if(!runner)return Promise.resolve();
-    runners.delete(id);
-    if(runner.timer)clearTimeout(runner.timer);
-    runner.controller.abort();
-    return runner.done||Promise.resolve();
+    // Invalidate queued starts before the first await. A replacement may
+    // already have removed its predecessor from `runners` while waiting for
+    // that predecessor's persistence callback.
+    const cancelled=cancelPendingStarts(id);
+    const retirement=retireCurrent(id);
+    const state=hubStates.get(id);
+    const retiring=[...(state?.retiring||[])];
+    return Promise.all([
+      retirement,
+      ...retiring,
+      ...cancelled.map(record=>record.promise),
+    ].map(safeWait)).then(()=>{});
   }
 
   function notifyRevision(id,value){
@@ -318,25 +397,31 @@ export function createHistoryScheduler({
   function stop(){
     if(stopPromise)return stopPromise;
     stopped=true;
-    stopPromise=Promise.all([...runners.keys()].map(stopHub));
+    const waits=[];
+    for(const [id,state] of hubStates){
+      state.desiredToken=nextStartToken++;
+      const pending=[...state.pending];
+      for(const record of pending)record.cancelled=true;
+      waits.push(...pending.map(record=>record.promise));
+      waits.push(...state.retiring);
+      // A runner is removed and tracked synchronously, so the resulting
+      // retirement promise is included in the same shutdown barrier.
+      waits.push(retireCurrent(id));
+    }
+    for(const id of [...runners.keys()])waits.push(retireCurrent(id));
+    stopPromise=Promise.all(waits.map(safeWait)).then(()=>{});
     return stopPromise;
   }
   function getStatus(){return [...runners.values()].map(r=>({hubId:r.hub.id,generation:r.generation,state:r.state,errorCode:r.errorCode,updatedAt:r.updatedAt,lastFetchAt:r.lastFetchAt,attempts:r.attempts}));}
 
   return {
     startHub,
-    start:startHub,
     stopHub,
     stop,
     notifyRevision,
-    onRevision:notifyRevision,
-    revision:notifyRevision,
     request,
-    manual:id=>request(id,'manual'),
-    fetch:id=>request(id,'manual'),
     getStatus,
   };
 }
 
-export const createHistoryCollector=createHistoryScheduler;
 export {historyRevisionFromSseData,normalizeHistoryResponse};

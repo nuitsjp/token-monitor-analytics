@@ -136,6 +136,10 @@ interface StoredHistoryFetch {
  last_attempt_fetch_id:number|null;last_attempt_at:string|null;last_status:string;last_error:string|null;
 }
 
+const HISTORY_FAILURE_CODES=new Set([
+ 'config_error','auth_error','unsupported','input_error','response_too_large','network_error','storage_error'
+]);
+
 function requireHistoryIdentity(value:string,label:string):void {
  if(typeof value!=='string'||value.length===0||value.length>256)throw new Error(`invalid ${label}`);
 }
@@ -169,10 +173,10 @@ function ensureFetchRow(db:Database,hubId:string,fetchId:number,at:string):void 
 export function recordHistoryFetchFailure(db:Database,hubId:string,fetchId:number,error:string,at=new Date().toISOString()):void {
  requireHistoryIdentity(hubId,'Hub ID');
  if(!Number.isSafeInteger(fetchId)||fetchId<1)throw new Error('invalid history fetch ID');
- const safeError=typeof error==='string'?error.slice(0,512):'history fetch failed';
+ if(typeof error!=='string'||!HISTORY_FAILURE_CODES.has(error))throw new Error('invalid history fetch error code');
  ensureFetchRow(db,hubId,fetchId,at);
  db.prepare(`UPDATE usage_fetches SET last_status='error',last_error=?
-   WHERE hub_id=? AND last_attempt_fetch_id=?`).bind(safeError,hubId,fetchId).run();
+   WHERE hub_id=? AND last_attempt_fetch_id=?`).bind(error,hubId,fetchId).run();
 }
 
 function mapJson(value:unknown):string { return JSON.stringify(value??{}); }
