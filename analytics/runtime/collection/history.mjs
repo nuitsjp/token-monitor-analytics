@@ -112,7 +112,7 @@ export async function fetchHistory({hub,signal,fetchImpl=globalThis.fetch,header
     if(response.status===404||response.status===405||response.status===501){try{await response.body?.cancel();}catch{};throw new HistoryUnsupportedError();}
     if(response.status!==200){try{await response.body?.cancel();}catch{};throw new HistoryHTTPError(response.status);}
     const type=response.headers?.get?.('content-type');
-    if(type&&mediaType(type)!=='application/json'){try{await response.body?.cancel();}catch{};throw new HistoryInputError('expected application/json from Hub History');}
+    if(mediaType(type)!=='application/json'){try{await response.body?.cancel();}catch{};throw new HistoryInputError('expected application/json from Hub History');}
     const declared=response.headers?.get?.('content-length');
     if(declared&&/^\d+$/.test(declared)&&Number(declared)>maxBodyBytes){try{await response.body?.cancel();}catch{};throw Object.assign(new Error('History response exceeds body limit'),{code:'body_too_large',status:413});}
     const text=await readBodyLimited(response,{signal:linked.signal,maxBytes:maxBodyBytes,timeoutMs:bodyTimeoutMs});
