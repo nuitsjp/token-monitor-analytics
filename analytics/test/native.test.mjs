@@ -96,7 +96,7 @@ test('Basic viewer credentials are independent from Hub secrets', t => {
 test('native SQLite migration is idempotent across reopen', t => {
   const c = configFile(t).config();
   let db = openDatabase(c.databasePath);
-  assert.equal(db.sql.prepare('SELECT count(*) n FROM schema_migrations').get().n, 2);
+  assert.equal(db.sql.prepare('SELECT count(*) n FROM schema_migrations').get().n, 3);
   assert.equal(db.sql.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name IN ('hubs','hub_snapshots','contract_snapshots')").get().n, 3);
   db.close();
   db = openDatabase(c.databasePath);
