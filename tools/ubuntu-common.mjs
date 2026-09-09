@@ -44,4 +44,3 @@ export function privateText(file) {
   if (!stat.isFile() || (stat.mode & 0o077)) throw new Error('Private input must be a regular file with mode 0600.');
   return fs.readFileSync(file, 'utf8');
 }
-
