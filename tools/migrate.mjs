@@ -993,7 +993,8 @@ function sourceManifest(sources) {
 }
 
 function removedServiceEnablementLink(source) {
-  return source?.key?.startsWith('legacy-service-')
+  return process.platform === 'linux'
+    && source?.key?.startsWith('legacy-service-')
     && source.type === 'symlink'
     && typeof source.link === 'string'
     && Number.isInteger(source.uid)
