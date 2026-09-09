@@ -326,6 +326,10 @@ export function createHistoryScheduler({
       // This is the retirement requested by this start operation. It must
       // not call stopHub, which would invalidate this operation's own token.
       await retireCurrent(id);
+      // An external stopHub may have removed the runner and left its save in
+      // `retiring` already. Replacement must wait for that completion too;
+      // otherwise it can fetch while the old generation is still committing.
+      await Promise.all([...state.retiring].map(safeWait));
       if(stopped||record.cancelled||state.desiredToken!==token)return null;
       const runner={hub:{id:hub.id,url:hub.url,secret:hub.secret},generation,controller:new AbortController(),timer:null,scheduled:false,inFlight:false,inFlightRunId:null,nextRunId:1,pending:true,pendingReason:'startup',dirty:false,revision:null,lastStartAt:-Infinity,lastAttemptAt:-Infinity,lastFetchAt:null,nextRequestId:1,attempts:0,state:'idle',errorCode:'',updatedAt:new Date(now()).toISOString()};
       runners.set(hub.id,runner);publish(runner,'pending','',{reason:'startup'});schedule(runner,'startup');

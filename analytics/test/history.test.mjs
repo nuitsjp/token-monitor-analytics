@@ -305,6 +305,34 @@ test('History scheduler cancels a queued replacement when stopHub races retireme
   assert.equal(calls, 1);
 });
 
+test('History scheduler waits for an external retirement before starting replacement', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let successStarted = false;
+  let calls = 0;
+  const scheduler = createHistoryScheduler({
+    minIntervalMs: 0,
+    maxRetries: 0,
+    fetchImpl: async () => { calls += 1; return responseFor([]); },
+    onSuccess: async () => { successStarted = true; await gate; },
+  });
+  await scheduler.startHub(hub, 1);
+  await waitFor(() => successStarted);
+
+  const stopping = scheduler.stopHub(hub.id);
+  const replacement = scheduler.startHub(hub, 2);
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(calls, 1, 'replacement waits for the old persistence callback');
+  assert.deepEqual(scheduler.getStatus(), []);
+
+  release();
+  await stopping;
+  const replacementRunner = await replacement;
+  assert.equal(replacementRunner.generation, 2);
+  await waitFor(() => calls === 2);
+  await scheduler.stop();
+});
+
 test('History scheduler stop waits for a replacement that is retiring a save', async () => {
   let release;
   const gate = new Promise(resolve => { release = resolve; });
