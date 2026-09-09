@@ -67,6 +67,7 @@ function defaultIsServiceActive(unitName = 'tma-update.service') {
 
 export class UpdateManager {
   #config;
+  #closed = false;
   #live;
   #timer = null;
   #watchTimer = null;
@@ -147,6 +148,7 @@ export class UpdateManager {
   }
 
   close() {
+    this.#closed = true;
     if (this.#timer) {
       clearInterval(this.#timer);
       this.#timer = null;
@@ -163,7 +165,7 @@ export class UpdateManager {
 
   pollJobState(force = false, {reconcile = true} = {}) {
     const statePath = this.#config.update?.statePath ?? '/var/lib/tma-deploy/update-state.json';
-    const job = this.#readState(statePath, {checkServiceActive: reconcile ? this.#isServiceActive : () => true});
+    const job = this.#readState(statePath, {checkServiceActive: reconcile && !this.#closed ? this.#isServiceActive : () => true});
     const publicJob = publicUpdateJob(job);
     const key = publicJob ? `${publicJob.jobId}:${publicJob.status}:${publicJob.stage}:${publicJob.failedStage}:${publicJob.errorCode}` : null;
     if (force || key !== this.#lastJobKey) {

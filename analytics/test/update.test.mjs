@@ -36,6 +36,7 @@ test('service shutdown sends the final update stage before browser SSE ends', {s
   saveUpdateState(config.update.statePath,job);
   serviceActive=false; // Query failure while systemd terminates this app.
   const closing = app.close();
+  app.updateManager.pollJobState(); // A watcher callback already queued at close.
   while (true) {
     const {done, value} = await reader.read();
     if (done) break;
