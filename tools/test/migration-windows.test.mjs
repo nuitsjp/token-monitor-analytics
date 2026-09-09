@@ -70,9 +70,41 @@ function event(eventId) {
   };
 }
 
-function stopProcess(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return;
+function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function stopProcess(pid) {
+  if (!Number.isInteger(pid) || pid <= 0 || !processAlive(pid)) return;
   try { process.kill(pid, 'SIGTERM'); } catch {}
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    if (!processAlive(pid)) return;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  // Windows maps SIGTERM to a normal process termination request. If a child
+  // ignores it, use the strongest portable signal and keep waiting before
+  // allowing the fixture directory to be removed.
+  try { process.kill(pid, 'SIGKILL'); } catch {}
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (!processAlive(pid)) return;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`fixture process ${pid} did not exit`);
+}
+
+async function removeTreeEventually(filename) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await fs.promises.rm(filename, {recursive: true, force: true, maxRetries: 2, retryDelay: 100});
+      if (!fs.existsSync(filename)) return;
+    } catch (error) {
+      if (attempt === 7) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+  }
+  if (fs.existsSync(filename)) throw new Error(`fixture cleanup did not remove ${filename}`);
 }
 
 async function waitHealth(origin) {
@@ -80,7 +112,7 @@ async function waitHealth(origin) {
   let error;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${origin}/api/health`);
+      const response = await fetch(`${origin}/api/health`, {signal: AbortSignal.timeout(1000)});
       const body = await response.json();
       if (response.status === 200 && body.ok === true) return body;
       throw new Error(`health returned ${response.status}`);
@@ -103,7 +135,7 @@ async function databaseSummary(filename) {
   } finally { db.close(); }
 }
 
-function spawnServer({legacy, configPath, environment, logFile}) {
+function spawnServer({legacy, configPath, environment}) {
   const serverPath = path.join(legacy.sourceRoot, 'analytics/runtime/server.mjs');
   const child = spawn(process.execPath, ['--experimental-strip-types', serverPath, '--config', configPath], {
     cwd: legacy.sourceRoot,
@@ -126,8 +158,24 @@ test('Windows direct CLI migration and rollback restore the old process and data
   const configDir = path.join(dir, 'legacy-config');
   const targetDir = path.join(dir, 'target-config');
   const installDir = path.join(dir, 'published-app');
-  const logFile = path.join(dir, 'legacy.log');
   const pidFile = path.join(dir, 'restored.pid');
+  let legacyAnalytics = null;
+  let collector = null;
+  t.after(async () => {
+    await stopProcess(collector?.pid);
+    await stopProcess(legacyAnalytics?.pid);
+    if (fs.existsSync(pidFile)) {
+      const restoredPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      await stopProcess(restoredPid);
+    }
+    if (fs.existsSync(path.join(dir, 'migration-state.json'))) {
+      try {
+        const state = readJson(path.join(dir, 'migration-state.json'));
+        await stopProcess(state.windowsProcess?.pid ?? state.published?.processId);
+      } catch {}
+    }
+    await removeTreeEventually(dir);
+  });
   for (const filename of [outboxPath, configDir, targetDir]) fs.mkdirSync(filename, {recursive: true, mode: 0o700});
   const hubsPath = path.join(configDir, 'hubs.json');
   const secretsPath = path.join(configDir, 'hub-secrets.json');
@@ -144,14 +192,9 @@ test('Windows direct CLI migration and rollback restore the old process and data
   const id = 'e'.repeat(32);
   fs.writeFileSync(path.join(outboxPath, `0001-${id}.json`), `${JSON.stringify(event(id))}\n`, {mode: 0o600});
   const environment = {TMA_INGEST_TOKEN: token, OLD_HUB_SECRET: hubSecret};
-  let legacyAnalytics = spawnServer({legacy, configPath: analyticsConfigPath, environment, logFile});
-  t.after(() => {
-    stopProcess(legacyAnalytics?.pid);
-    if (fs.existsSync(pidFile)) stopProcess(Number(fs.readFileSync(pidFile, 'utf8')));
-    fs.rmSync(dir, {recursive: true, force: true});
-  });
+  legacyAnalytics = spawnServer({legacy, configPath: analyticsConfigPath, environment});
   await waitHealth(`http://127.0.0.1:${port}`);
-  const collector = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio: 'ignore', windowsHide: true});
+  collector = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio: 'ignore', windowsHide: true});
   assert.ok(collector.pid);
 
   const targetSha = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: root, encoding: 'utf8'}).trim();
@@ -164,58 +207,60 @@ test('Windows direct CLI migration and rollback restore the old process and data
   const targetConfigPath = path.join(targetDir, 'analytics.json');
   const targetSecretsPath = path.join(targetDir, 'hub-secrets.json');
   const targetEnvPath = path.join(targetDir, 'analytics.env');
-  const runCli = (args, extraEnv = {}) => new Promise((resolve, reject) => {
+  const runCli = (args, extraEnv = {}, timeoutMs = 90000) => new Promise((resolve, reject) => {
+    const environmentForChild = {...process.env, ...environment, ...extraEnv};
+    // The explicit manifest is consumed by this acceptance test to locate
+    // the real old server. The CLI itself uses the pinned object in --repository;
+    // never let this test's opt-in variable recursively enter release checks.
+    delete environmentForChild.TMA_MIGRATION_REAL;
+    delete environmentForChild.TMA_MIGRATION_LEGACY_SOURCE_MANIFEST;
+    delete environmentForChild.TMA_MIGRATION_WINDOWS_SERVICES;
     const child = spawn(process.execPath, ['--experimental-strip-types', path.join(root, 'tools/migrate.mjs'), ...args], {
       cwd: root,
-      env: {...process.env, ...environment, ...extraEnv},
+      env: environmentForChild,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
     let stdout = '', stderr = '';
+    const timer = setTimeout(async () => {
+      await stopProcess(child.pid).catch(() => {});
+      reject(new Error(`migration CLI timed out after ${timeoutMs}ms\nstdout=${stdout}\nstderr=${stderr}`));
+    }, timeoutMs);
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('exit', (code, signal) => resolve({code, signal, stdout, stderr}));
+    child.once('error', error => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code, signal) => { clearTimeout(timer); resolve({code, signal, stdout, stderr}); });
   });
-  const services = JSON.stringify([
-    {unit: 'tma-collector.service', active: true, enabled: true, pid: collector.pid},
-    {unit: 'tma-analytics.service', active: true, enabled: true, pid: legacyAnalytics.pid},
-  ]);
   const migrationArgs = [
     '--old-sha', LEGACY_COMMIT_SHA, '--target-sha', targetSha, '--target-artifact', artifact.archivePath,
     '--analytics-config', analyticsConfigPath, '--collector-config', collectorConfigPath,
     '--analytics-env', analyticsEnvPath, '--collector-env', collectorEnvPath,
     '--state', statePath, '--backup-dir', backupDir, '--lock', lockPath,
     '--target-config', targetConfigPath, '--target-secrets', targetSecretsPath, '--target-analytics-env', targetEnvPath,
-    '--legacy-source-root', legacy.sourceRoot, '--windows-install-dir', installDir,
+    '--repository', root, '--windows-install-dir', installDir,
     '--collector-pid', String(collector.pid), '--analytics-pid', String(legacyAnalytics.pid),
   ];
-  // The default Windows platform performs the direct PID cutover; these
-  // hooks only supply the platform's explicit autostart/inventory evidence.
-  const acceptanceEnv = {
-    TMA_MIGRATION_REAL: undefined,
-    TMA_MIGRATION_LEGACY_SOURCE_MANIFEST: undefined,
-    TMA_MIGRATION_WINDOWS_SERVICES: services,
-  };
-  const result = await runCli([...migrationArgs, '--dry-run'], acceptanceEnv);
+  // The default Windows platform performs the direct PID cutover. Explicit
+  // process IDs are the acceptance evidence; no synthetic service inventory
+  // is injected into the migration CLI.
+  const result = await runCli([...migrationArgs, '--dry-run']);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, new RegExp(LEGACY_COMMIT_SHA));
   // The actual cutover command uses the same explicit PIDs after dry-run.
-  const applied = await runCli(migrationArgs, acceptanceEnv);
+  const applied = await runCli(migrationArgs);
   assert.equal(applied.code, 0, applied.stderr);
   const state = readJson(statePath);
   assert.equal(state.phase, 'complete');
   assert.equal(readJson(targetConfigPath).version, 2);
   assert.equal(readJson(targetSecretsPath).secrets && Object.keys(readJson(targetSecretsPath).secrets).length, 0);
   assert.equal(fs.existsSync(installDir), true);
-  stopProcess(collector.pid);
-  legacyAnalytics = null;
+  await stopProcess(collector.pid);
 
   // Rollback is a second direct CLI process, without explicit Analytics PID:
   // restore must identify and stop the published process persisted in state.
   const launcher = path.join(dir, 'restore-legacy.mjs');
   fs.writeFileSync(launcher, `import {spawn} from 'node:child_process';\nimport fs from 'node:fs';\nconst child=spawn(process.execPath,['--experimental-strip-types',${JSON.stringify(path.join(legacy.sourceRoot, 'analytics/runtime/server.mjs'))},'--config',${JSON.stringify(analyticsConfigPath)}],{cwd:${JSON.stringify(legacy.sourceRoot)},env:process.env,stdio:'ignore',windowsHide:true});\nfs.writeFileSync(${JSON.stringify(pidFile)},String(child.pid));\nchild.on('exit',(code)=>process.exit(code??0));\n`, {mode: 0o600});
-  const restored = await runCli(['--restore', '--state', statePath, '--lock', lockPath, '--legacy-command', process.execPath, '--legacy-args', JSON.stringify(['--experimental-strip-types', launcher]), '--legacy-working-dir', dir], acceptanceEnv);
+  const restored = await runCli(['--restore', '--state', statePath, '--lock', lockPath, '--legacy-command', process.execPath, '--legacy-args', JSON.stringify(['--experimental-strip-types', launcher]), '--legacy-working-dir', dir]);
   assert.equal(restored.code, 0, restored.stderr);
   assert.equal(fs.existsSync(targetConfigPath), false);
   assert.equal(fs.existsSync(analyticsConfigPath), true);
@@ -224,5 +269,5 @@ test('Windows direct CLI migration and rollback restore the old process and data
   const restoredDb = await databaseSummary(databasePath);
   assert.equal(restoredDb.migrations, 1);
   assert.equal(restoredDb.observations, 1);
-  stopProcess(Number(fs.readFileSync(pidFile, 'utf8')));
+  await stopProcess(Number(fs.readFileSync(pidFile, 'utf8')));
 });

@@ -109,7 +109,7 @@ async function waitHealth(origin) {
   let lastError;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${origin}/api/health`);
+      const response = await fetch(`${origin}/api/health`, {signal: AbortSignal.timeout(1000)});
       const body = await response.json();
       if (response.status === 200 && body.ok === true) return body;
       throw new Error(`legacy health returned ${response.status}`);
@@ -141,6 +141,19 @@ function removeEntry(filename) {
   fs.rmSync(filename, {recursive: true, force: true});
 }
 
+async function removeTreeEventually(filename) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await fs.promises.rm(filename, {recursive: true, force: true, maxRetries: 2, retryDelay: 100});
+      if (!fs.existsSync(filename)) return;
+    } catch (error) {
+      if (attempt === 7) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+  }
+  if (fs.existsSync(filename)) throw new Error(`fixture cleanup did not remove ${filename}`);
+}
+
 function protectFixtureLayout(dir) {
   const legacyCodeRoot = path.join(dir, 'legacy-code');
   const legacyRunnerDir = path.join(dir, 'legacy-runner');
@@ -158,7 +171,14 @@ function protectFixtureLayout(dir) {
 
 async function makeFixture(t, legacy) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-real-migration-'));
-  t.after(async () => fs.rmSync(dir, {recursive: true, force: true}));
+  const fixture = {dir, old: null};
+  t.after(async () => {
+    if (fixture.old) {
+      await fixture.old.app.close();
+      fixture.old = null;
+    }
+    await removeTreeEventually(dir);
+  });
   const token = 'i'.repeat(64);
   const oldHubSecret = 'h'.repeat(40);
   const port = await freePort();
@@ -218,6 +238,7 @@ async function makeFixture(t, legacy) {
   const protectedLayout = protectFixtureLayout(dir);
   const environment = {TMA_INGEST_TOKEN: token, OLD_HUB_SECRET: oldHubSecret};
   const old = await startLegacy({sourceRoot: legacy.sourceRoot, analyticsConfigPath, environment});
+  fixture.old = old;
   await waitHealth(`http://127.0.0.1:${port}`);
   return {
     dir, legacy, token, oldHubSecret, environment, databasePath, outboxPath, configDir, targetDir, installDir,
@@ -238,9 +259,28 @@ function sourceOptions(fixture, artifact, legacy, {partial = false} = {}) {
   ];
   const closeOld = async () => {
     if (oldApp) {
-      await oldApp.app.close();
+      const current = oldApp;
       oldApp = null;
+      fixture.old = null;
+      await current.app.close();
     }
+  };
+  const stopPublished = async () => {
+    if (!publishedPid) return;
+    const pid = publishedPid;
+    publishedPid = null;
+    try { process.kill(pid, 'SIGTERM'); } catch {}
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      try { process.kill(pid, 0); } catch { return; }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    try { process.kill(pid, 'SIGKILL'); } catch {}
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try { process.kill(pid, 0); } catch { return; }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error(`published fixture process ${pid} did not stop`);
   };
   const platform = {
     inspectServices: async () => services,
@@ -277,11 +317,7 @@ function sourceOptions(fixture, artifact, legacy, {partial = false} = {}) {
     },
     stopNew: async () => {
       calls.push('stopNew');
-      if (publishedPid) {
-        try { process.kill(publishedPid, 'SIGTERM'); } catch {}
-        publishedPid = null;
-        await new Promise(resolve => setTimeout(resolve, 250));
-      }
+      await stopPublished();
       removeEntry(fixture.installDir);
     },
     restoreDatabase: async ({source, destination}) => {
@@ -306,6 +342,7 @@ function sourceOptions(fixture, artifact, legacy, {partial = false} = {}) {
     startLegacy: async () => {
       calls.push('startLegacy');
       oldApp = await startLegacy({sourceRoot: legacy.sourceRoot, analyticsConfigPath: fixture.analyticsConfigPath, environment: fixture.environment});
+      fixture.old = oldApp;
       await waitHealth(oldApp.config.publicOrigin);
       return {fixture: true};
     },
@@ -313,6 +350,7 @@ function sourceOptions(fixture, artifact, legacy, {partial = false} = {}) {
   return {
     calls,
     closeOld,
+    stopPublished,
     platform,
     options: {
       oldCommitSha: LEGACY_COMMIT_SHA,
@@ -337,6 +375,9 @@ function sourceOptions(fixture, artifact, legacy, {partial = false} = {}) {
       infrastructurePath: fixture.protectedLayout.infrastructurePath,
       publicationPath: fixture.protectedLayout.publicationPath,
       updateStatePath: path.join(fixture.dir, 'update-state.json'),
+      // The real source/DB/server fixture is hermetic. Do not inventory a
+      // developer host's unrelated /etc system unit paths while exercising
+      // the injected platform handoff.
       serviceUnitPaths: [],
       windowsInstallDir: fixture.installDir,
       verifyTargetRelease: ({targetArtifact, targetCommitSha}) => {
@@ -386,6 +427,10 @@ test('real pinned legacy server drains into the native schema and restores the c
   const verified = verifyReleaseArtifact({archivePath: artifact.archivePath, checksumPath: artifact.checksumPath, expectedTargetCommitSha: targetSha, expectedArchitecture: 'amd64', extractDir: path.join(fixtureDir, 'verified')});
   const fixture = await makeFixture(t, legacy);
   const setup = sourceOptions(fixture, verified, legacy);
+  t.after(async () => {
+    await setup.stopPublished();
+    await setup.closeOld();
+  });
   const result = await runMigration(setup.options);
   assert.equal(result.state.phase, 'complete');
   assert.equal(fs.readdirSync(fixture.outboxPath).length, 0);
@@ -441,6 +486,10 @@ test('real pinned legacy drain keeps ACKed observations and pending outbox files
   const verified = verifyReleaseArtifact({archivePath: artifact.archivePath, checksumPath: artifact.checksumPath, expectedTargetCommitSha: targetSha, expectedArchitecture: 'amd64', extractDir: path.join(fixtureDir, 'verified')});
   const fixture = await makeFixture(t, legacy);
   const setup = sourceOptions(fixture, verified, legacy, {partial: true});
+  t.after(async () => {
+    await setup.stopPublished();
+    await setup.closeOld();
+  });
   let sendCount = 0;
   setup.options.send = async (url, init) => {
     sendCount += 1;
