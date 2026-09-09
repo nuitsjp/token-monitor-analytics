@@ -32,12 +32,12 @@ function pathExists(filename){
  catch(error){if(error?.code==='ENOENT')return false;throw error;}
 }
 
-export function ensureDirectory(filename,uid,gid,mode){
+export function ensureDirectory(filename,uid,gid,mode,{allowNonOwnerNonEmpty=false}={}){
  noLink(filename);
  if(fs.existsSync(filename)){
   const stat=fs.lstatSync(filename);
   if(!stat.isDirectory())throw new Error(`Managed path is not a directory: ${filename}`);
-  if(stat.uid!==uid&&fs.readdirSync(filename).length>0)throw new Error('Existing non-empty directory belongs to another owner; use the explicit migration procedure.');
+  if(stat.uid!==uid&&fs.readdirSync(filename).length>0&&!allowNonOwnerNonEmpty)throw new Error('Existing non-empty directory belongs to another owner; use the explicit migration procedure.');
  }
  fs.mkdirSync(filename,{recursive:true,mode});
  const stat=fs.statSync(filename);
@@ -207,7 +207,7 @@ function installFixedNodeRuntime(uid,gid){
  noLink(updaterNode);fs.rmSync(updaterNode,{force:true});fs.linkSync(runtimeNode,updaterNode);fs.chmodSync(updaterNode,0o755);fs.chownSync(updaterNode,uid,gid);
 }
 
-async function provisionLocked({username,uid,gid,home}){
+async function provisionLocked({username,uid,gid,home,allowMigrationFiles=false}){
  const existing=fs.existsSync(infrastructureFile)?readJSON(infrastructureFile):null;
  if(existing&&existing.uid!==uid)throw new Error('Changing publication user requires explicit migration.');
  installRequiredPackages();
@@ -216,7 +216,10 @@ async function provisionLocked({username,uid,gid,home}){
   [prefix,0o755],[releasesDir,0o755],['/var/lib/tma-deploy',0o700],[destination,0o700],
   ['/var/lib/tma-analytics',0o700],['/var/lib/tma-analytics/backups',0o700],[updaterDir,0o700],[repoDir,0o700]
  ];
- for(const [directory,mode] of directories)ensureDirectory(directory,uid,gid,mode);
+ for(const [directory,mode] of directories)ensureDirectory(directory,uid,gid,mode,{allowNonOwnerNonEmpty: allowMigrationFiles&&(directory===destination||directory==='/var/lib/tma-deploy')});
+ const updaterNode=path.join(updaterDir,'node');
+ noLink(updaterNode);
+ fs.copyFileSync(process.execPath,updaterNode);fs.chmodSync(updaterNode,0o755);fs.chownSync(updaterNode,uid,gid);
  installFixedNodeRuntime(uid,gid);
  for(const relative of updaterRunnerFiles){
   const source=path.join(sourceRoot,relative),target=path.join(updaterDir,relative);
@@ -243,6 +246,11 @@ async function provisionLocked({username,uid,gid,home}){
  systemctl('start',`user@${uid}.service`);
  const userctl=userController(username,uid);
  if(changed)userctl('daemon-reload');
+ // The migration deliberately runtime-masks the legacy unit before the
+ // cutover.  The newly written publication unit has the same name, so remove
+ // only that publication user's transient mask before enabling it.  The
+ // legacy Collector and any system-scoped unit remain inhibited/disabled.
+ if(allowMigrationFiles)userctl('unmask','tma-analytics.service');
  for(const unit of appUnits)userctl('enable',unit);
  noLink(path.dirname(infrastructureFile));
  fs.mkdirSync(path.dirname(infrastructureFile),{recursive:true,mode:0o755});
@@ -253,6 +261,27 @@ async function provisionLocked({username,uid,gid,home}){
  };
  writeChanged(infrastructureFile,`${JSON.stringify(record,null,2)}\n`,0o644);
  console.log('Environment provisioned. Run configure:ubuntu and publish:ubuntu as the publication user.');
+}
+
+/**
+ * Migration-only privileged handoff.  The caller owns the shared deployment
+ * flock already and invokes this function in-process, so provisioning never
+ * drops the lock between the migration's stop/archive and publish phases.
+ * The normal provision CLI continues to perform its own legacy-layout
+ * preflight and lock acquisition.
+ */
+export async function provisionForMigration({username, lock} = {}) {
+ if(process.platform!=='linux'||process.getuid?.()!==0)throw Object.assign(new Error('Migration provisioning requires root.'),{code:'privilege_required'});
+ if(!lock?.held||lock.ownerPid!==process.pid)throw Object.assign(new Error('Migration provisioning requires the held deployment lock.'),{code:'lock_handoff_invalid'});
+ if(!/^[a-z_][a-z0-9_-]*$/.test(username??'')||username==='root')throw Object.assign(new Error('Set TMA_DEPLOY_USER to an existing ordinary publication user.'),{code:'privilege_required'});
+ const passwd=run('/usr/bin/getent',['passwd',username]).trim().split(':');
+ const uid=Number(passwd[2]),gid=Number(passwd[3]),home=passwd[5];
+ if(!Number.isInteger(uid)||uid<1000||!home?.startsWith('/'))throw Object.assign(new Error('An existing ordinary publication user is required.'),{code:'privilege_required'});
+ // The migration has already stopped and inhibited the legacy services.  The
+ // generic provision entrypoint deliberately rejects those units, while this
+ // explicit handoff is the one documented exception for the cutover.
+ await provisionLocked({username,uid,gid,home,allowMigrationFiles:true});
+ return {username,uid,lockHeld:true};
 }
 
 export async function main(argv=process.argv.slice(2)){

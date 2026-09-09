@@ -126,13 +126,14 @@ export async function preparePublication({
   serviceUnits = managedUnits,
   runtime = runtimeContract(),
   services = serviceController(),
+  allowLegacyLayout = false,
   // Dependency injection is kept for isolated unit fixtures. CLI/Web/runner
   // callers use these defaults and therefore cannot skip the release gate.
   releaseVerification = {assertSource: assertReleaseSource, contentHash: releaseContentHash, run: runReleaseVerification}
 } = {}) {
   const configRoot = path.resolve(configDir);
   // This check intentionally precedes any service operation and backup.
-  assertOldLayout({root: path.dirname(path.resolve(current)), destination: configRoot, currentDir: current});
+  if (!allowLegacyLayout) assertOldLayout({root: path.dirname(path.resolve(current)), destination: configRoot, currentDir: current});
   const selectedInfrastructurePath = configRoot === path.resolve(destination) ? infrastructurePath : null;
   let infrastructure = null;
   if (configRoot === path.resolve(destination)) {
@@ -315,6 +316,7 @@ export async function applyPublication(prepared, {
   writePublication = true,
   jobId = null,
   targetCommitSha = prepared.manifest.targetCommitSha,
+  allowLegacyLayout = false,
   onStage = () => {}
 } = {}) {
   if (targetCommitSha && targetCommitSha.toLowerCase() !== String(prepared.manifest.targetCommitSha).toLowerCase()) throw new Error('Publication target SHA does not match the prepared artifact');
@@ -353,7 +355,7 @@ export async function applyPublication(prepared, {
   }
   // The old-layout guard is repeated immediately before stop in case a legacy
   // file was restored while the archive was being verified.
-  assertOldLayout({root: path.dirname(prepared.currentDir), destination: prepared.configDir, currentDir: prepared.currentDir});
+  if (!allowLegacyLayout) assertOldLayout({root: path.dirname(prepared.currentDir), destination: prepared.configDir, currentDir: prepared.currentDir});
   try {
     if (!fs.lstatSync(prepared.currentDir).isSymbolicLink()) throw new Error('Current release path is not a symlink; refusing to replace it');
   } catch (error) {

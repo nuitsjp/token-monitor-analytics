@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
+import {createHash} from 'node:crypto';
 import {loadConfig, credentials} from '../runtime/config.mjs';
 import {canView, allowedRequest} from '../runtime/auth.mjs';
 import {openDatabase, transaction, backupDatabase} from '../runtime/sqlite.mjs';
@@ -96,7 +97,7 @@ test('Basic viewer credentials are independent from Hub secrets', t => {
 test('native SQLite migration is idempotent across reopen', t => {
   const c = configFile(t).config();
   let db = openDatabase(c.databasePath);
-  assert.equal(db.prepare('SELECT count(*) n FROM schema_migrations').get().n, 3);
+  assert.equal(db.prepare('SELECT count(*) n FROM schema_migrations').get().n, 4);
   assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name IN ('hubs','hub_snapshots','contract_snapshots')").get().n, 3);
   db.close();
   db = openDatabase(c.databasePath);
@@ -114,6 +115,28 @@ test('native StatementSync uses direct calls and preserves an empty get result',
   const rows = statement.all('dataset_mode');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].value, 'real');
+});
+
+test('archive migration upgrades existing archived rows without losing observations', t => {
+  const f = configFile(t);
+  const sql = new DatabaseSync(f.config().databasePath);
+  sql.exec('CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL); CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
+  for (const name of ['0001_initial.sql', '0002_hubs.sql', '0003_usage_history.sql']) {
+    const text = fs.readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8');
+    sql.exec(text);
+    sql.prepare('INSERT INTO schema_migrations(name, checksum) VALUES(?, ?)').run(name, createHash('sha256').update(text).digest('hex'));
+  }
+  sql.prepare('INSERT INTO app_metadata(key, value) VALUES(?, ?)').run('dataset_mode', 'real');
+  sql.prepare('INSERT INTO hubs(id,label,url,status,secret_ref,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run('archived-hub', 'Archived', 'https://old.example.invalid', 'archived', 'old-secret', 1, '2026-01-01', '2026-01-01');
+  sql.prepare('INSERT INTO hubs(id,label,url,status,secret_ref,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run('active-hub', 'Active', 'https://active.example.invalid', 'active', 'active-secret', 1, '2026-01-01', '2026-01-01');
+  sql.prepare('INSERT INTO observations(hub_id,event_id,observed_at,received_at,stream_id,payload) VALUES(?,?,?,?,?,?)').run('archived-hub', 'event-1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z', 'stream-1', '{}');
+  sql.close();
+  const db = openDatabase(f.config().databasePath);
+  try {
+    assert.deepEqual({...db.prepare('SELECT url,secret_ref,status FROM hubs WHERE id=?').get('archived-hub')}, {url: null, secret_ref: null, status: 'archived'});
+    assert.deepEqual({...db.prepare('SELECT url,secret_ref,status FROM hubs WHERE id=?').get('active-hub')}, {url: 'https://active.example.invalid', secret_ref: 'active-secret', status: 'active'});
+    assert.equal(db.prepare('SELECT count(*) n FROM observations').get().n, 1);
+  } finally { db.close(); }
 });
 
 test('demo database cannot be reused for real observations', t => {

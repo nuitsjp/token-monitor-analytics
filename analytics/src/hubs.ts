@@ -9,7 +9,11 @@ export interface ManagedHub {
 }
 
 /** A row returned by the SQLite Hub store.  Secret values never cross this boundary. */
-export interface HubRecord extends ManagedHub {
+// Archived SQLite rows remain queryable for history, but their reconnect
+// material is deliberately cleared by migration 0004 and archiveHubRecord.
+export interface HubRecord extends Omit<ManagedHub, 'url' | 'secretRef'> {
+  url: string | null;
+  secretRef: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -31,7 +35,7 @@ export interface HubSecretsFile {
 export interface HubViewItem {
   id: string;
   label: string;
-  url: string;
+  url: string | null;
   status: HubStatus;
   hasSecret: boolean;
   version?: number;

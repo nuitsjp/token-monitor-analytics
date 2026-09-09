@@ -285,15 +285,30 @@ export function updateHubRecord(db, id, expectedVersion, patch, now = nowIso()) 
     version: current.version + 1,
     updatedAt: now,
   };
+  // An archived Hub remains readable as history but is never a reconnectable
+  // registration.  Clear the URL/Secret reference in the same transaction;
+  // migration 0004 makes this invariant explicit in SQLite.
+  if (next.status === 'archived') {
+    next.url = null;
+    next.secretRef = null;
+  } else if (typeof next.url !== 'string' || !next.url || typeof next.secretRef !== 'string' || !next.secretRef) {
+    throw Object.assign(new Error('Active Hub requires a URL and Secret reference'), {code: 'invalid_hub_state'});
+  }
+  const snapshotUrl = next.status === 'archived' ? current.url : next.url;
   db.prepare(`UPDATE hubs SET label=?,url=?,status=?,secret_ref=?,version=?,updated_at=? WHERE id=? AND version=?`)
     .run(next.label, next.url, next.status, next.secretRef, next.version, next.updatedAt, id, expectedVersion);
-  db.prepare(`INSERT INTO hub_snapshots(hub_id,hub_version,label,url,status,captured_at) VALUES(?,?,?,?,?,?)`)
-    .run(id, next.version, next.label, next.url, next.status, now);
+  // hub_snapshots is an immutable description of what was registered at the
+  // time of the edit, so an archive can retain its old URL without placing it
+  // back in the reconnectable hubs table.
+  if (typeof snapshotUrl === 'string' && snapshotUrl) {
+    db.prepare(`INSERT INTO hub_snapshots(hub_id,hub_version,label,url,status,captured_at) VALUES(?,?,?,?,?,?)`)
+      .run(id, next.version, next.label, snapshotUrl, next.status, now);
+  }
   return getHubRecord(db, id);
 }
 
 export function archiveHubRecord(db, id, expectedVersion, now = nowIso()) {
-  return updateHubRecord(db, id, expectedVersion, {status: 'archived'}, now);
+  return updateHubRecord(db, id, expectedVersion, {status: 'archived', url: null, secretRef: null}, now);
 }
 
 /** Store current contract definitions for history descriptions. */
