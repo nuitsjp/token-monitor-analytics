@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {userUnit,prefix,destination} from '../ubuntu-layout.mjs';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 const supported=process.platform==='linux'&&process.getuid?.()!==0&&spawnSync('systemctl',['--user','show-environment'],{stdio:'ignore'}).status===0;
 test('ordinary user starts and restarts a native Analytics service without privilege escalation', {skip:supported?false:'Requires a running user systemd manager',timeout:60000},async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tma-user-service-'));
@@ -28,7 +28,18 @@ test('ordinary user starts and restarts a native Analytics service without privi
   fs.writeFileSync(path.join(configDir,'analytics.env'),'\n',{mode:0o600});
   fs.writeFileSync(config.hubSecretsPath,'{"schemaVersion":1,"secrets":{}}\n',{mode:0o600});
   fs.writeFileSync(statePath,JSON.stringify({jobId:'stale-job',targetCommitSha:'a'.repeat(40),status:'running',stage:'accepted',startedAt:'2020-01-01T00:00:00.000Z',finishedAt:null}),{mode:0o600});
-  const unit=userUnit('tma-analytics.service').replaceAll(prefix,dir).replaceAll(destination,configDir).replaceAll('/var/lib/tma-analytics',dir).replaceAll('/var/lib/tma-deploy',dir);
+  // This fixture has its own update-state file. An unrelated real runner
+  // (including the runner executing this release gate) must not keep its
+  // synthetic stale job alive or receive any fixture start request.
+  const fixtureEntry=path.join(current,'start-fixture.mjs');
+  fs.writeFileSync(fixtureEntry,`
+import {startServer} from ${JSON.stringify(pathToFileURL(path.join(current,'analytics/runtime/server.mjs')).href)};
+import {loadConfig} from ${JSON.stringify(pathToFileURL(path.join(current,'analytics/runtime/config.mjs')).href)};
+const app=await startServer(loadConfig(process.argv[3]),{updateManagerOptions:{isServiceActive:()=>false,startService:()=>{throw new Error('Fixture cannot start the production updater');}}});
+let stopping=false;
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{if(stopping)return;stopping=true;try{await app.close();}catch{process.exitCode=1;}});
+`);
+  const unit=userUnit('tma-analytics.service').replaceAll(prefix,dir).replaceAll(destination,configDir).replaceAll('/var/lib/tma-analytics',dir).replaceAll('/var/lib/tma-deploy',dir).replace('/analytics/runtime/server.mjs','/start-fixture.mjs');
   const unitPath=path.join(dir,name);fs.writeFileSync(unitPath,unit);
   ctl('link',unitPath);linked=true;ctl('daemon-reload');ctl('start',name);
   async function healthy(){
