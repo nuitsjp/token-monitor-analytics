@@ -68,6 +68,19 @@ test('Windows protected backup records recursive ACL metadata', {skip: process.p
   assert.equal(typeof metadata['nested/hub-secret.env'].acl, 'string');
 });
 
+test('protected manifest accepts a bounded large metadata record', {skip: process.platform === 'win32'}, t => {
+  const dir = fixture(t);
+  const backupDir = path.join(dir, 'backup');
+  const protectedDir = path.join(backupDir, 'protected');
+  fs.mkdirSync(protectedDir, {recursive: true});
+  const padding = 'metadata-'.repeat(150000);
+  const manifest = {schemaVersion: 1, entries: [{key: 'legacy-tree', backedUp: true, sourceMetadataTree: {'': {mode: 0o600, acl: null}}, padding}]};
+  fs.writeFileSync(path.join(protectedDir, 'manifest.json'), `${JSON.stringify(manifest)}\n`, {mode: 0o600});
+  assert.ok(fs.statSync(path.join(protectedDir, 'manifest.json')).size > 1024 * 1024);
+  const loaded = backupProtectedLayout({backupDir, sources: [], state: {oldCommitSha: LEGACY_COMMIT_SHA}});
+  assert.equal(loaded.entries[0].padding, padding);
+});
+
 async function oldRuntime() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-old-runtime-'));
   const oldMigrationChecksum = createHash('sha256').update(fs.readFileSync(path.join(root, 'analytics/migrations/0001_initial.sql'))).digest('hex');
@@ -257,6 +270,11 @@ test('migration drains pinned legacy outbox, archives IDs without active URL/Sec
   assert.equal(fs.readdirSync(f.outboxPath).length, 0);
   const state = JSON.parse(fs.readFileSync(f.options.statePath, 'utf8'));
   assert.equal(state.rollbackDatabase, path.join(f.options.backupDir, 'post-drain-analytics.db'));
+  assert.equal(state.protectedManifest.path, path.join(f.options.backupDir, 'protected', 'manifest.json'));
+  assert.equal(Object.hasOwn(state.protectedManifest, 'entries'), false);
+  const protectedManifest = JSON.parse(fs.readFileSync(state.protectedManifest.path, 'utf8'));
+  assert.ok(protectedManifest.entries[0].sourceMetadataTree);
+  assert.equal(Object.hasOwn(protectedManifest.entries[0].copied, 'metadataTree'), false);
   const {DatabaseSync} = await import('node:sqlite');
   const db = new DatabaseSync(f.databasePath, {readOnly: true});
   try {
