@@ -86,8 +86,9 @@ test('publication lock uses the shared flock inode and releases after callback',
 test('owner termination releases the shared flock without replacing its inode', async t => {
   if (process.platform !== 'linux') { t.skip('Requires Ubuntu flock'); return; }
   const dir = fixture(t), lock = path.join(dir, 'deploy.lock');
-  const script = `import {withPublicationLock} from ${JSON.stringify(path.resolve('tools/release.mjs'))}; await withPublicationLock(${JSON.stringify(lock)}, async () => { console.log('held'); await new Promise(() => {}); });`;
+  const script = `import {withPublicationLock} from ${JSON.stringify(path.resolve('tools/release.mjs'))}; await withPublicationLock(${JSON.stringify(lock)}, async () => { const keepAlive = setInterval(() => {}, 1000); console.log('held'); await new Promise(() => {}); clearInterval(keepAlive); });`;
   const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {stdio: ['ignore', 'pipe', 'pipe']});
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('error', reject); });
   assert.equal(spawnSync('/usr/bin/flock', ['-n', lock, '-c', 'true']).status, 1);
   child.kill('SIGKILL');
@@ -99,10 +100,12 @@ test('owner termination releases the shared flock without replacing its inode', 
 test('Windows publication lock rejects a concurrent holder and releases after completion', async t => {
   if (process.platform !== 'win32') { t.skip('Requires the Windows lock fallback'); return; }
   const dir = fixture(t), lock = path.join(dir, 'deploy.lock');
-  const script = `import {withPublicationLock} from ${JSON.stringify(pathToFileURL(path.resolve('tools/release.mjs')).href)}; await withPublicationLock(${JSON.stringify(lock)}, async () => { process.stdout.write('held\\n'); await new Promise(resolve => setTimeout(resolve, 200)); });`;
-  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {stdio: ['ignore', 'pipe', 'pipe']});
+  const script = `import {withPublicationLock} from ${JSON.stringify(pathToFileURL(path.resolve('tools/release.mjs')).href)}; await withPublicationLock(${JSON.stringify(lock)}, async () => { const released = new Promise(resolve => process.stdin.once('data', resolve)); process.stdout.write('held\\n'); await released; process.stdin.pause(); });`;
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {stdio: ['pipe', 'pipe', 'pipe']});
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('error', reject); });
   await assert.rejects(() => withPublicationLock(lock, async () => {}), error => error.code === 'lock_conflict');
+  child.stdin.end('release');
   await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject); });
   await withPublicationLock(lock, async () => {});
 });
