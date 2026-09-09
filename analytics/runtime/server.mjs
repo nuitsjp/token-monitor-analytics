@@ -241,9 +241,9 @@ export async function startServer(config,{env=process.env,logger=console,mainten
   config,auth,db,live,exclusive,getCollectionStatuses,onHubCommitted,onReconnect:reconnectHub,
   onHistoryRequest:id=>history.request(id,'manual'),updateManager,
  });
- const assets=new Map(['/','/index.html','/app.js','/styles.css'].map(route=>{
+ const assets=new Map(['/','/index.html','/app.js','/usage-history.mjs','/styles.css'].map(route=>{
   const file=route==='/'?'index.html':route.slice(1);
-  return [route,{bytes:fs.readFileSync(new URL(`../public/${file}`,import.meta.url)),type:file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'}];
+  return [route,{bytes:fs.readFileSync(new URL(`../public/${file}`,import.meta.url)),type:file.endsWith('.js')||file.endsWith('.mjs')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'}];
  }));
  let closing=false;
  const handler=async(request,response)=>{

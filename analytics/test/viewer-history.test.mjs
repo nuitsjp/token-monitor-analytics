@@ -69,6 +69,10 @@ async function createHub(fixture){
 test('one listener serves management, SSE collection, history, archive, stop/restart, and manual fetch',async t=>{
  const fixture=await appFixture(t);
  try{
+  const usageModule=await fixture.request('/usage-history.mjs');
+  assert.equal(usageModule.status,200);
+  assert.match(usageModule.headers.get('content-type')??'',/text\/javascript/);
+  assert.match(await usageModule.text(),/createUsageHistoryController/);
   await createHub(fixture);
   await waitFor(()=>fixture.app.db.sql.prepare("SELECT count(*) AS n FROM observations WHERE hub_id='hub-a'").get().n>0);
   await waitFor(()=>fixture.app.db.sql.prepare("SELECT last_status FROM usage_fetches WHERE hub_id='hub-a'").get()?.last_status==='success');

@@ -1,3 +1,5 @@
+import {boundedUsageRange,createUsageHistoryController,historyFetchErrorText} from './usage-history.mjs';
+
 const $=id=>document.getElementById(id);
 const money=n=>typeof n==='number'&&Number.isFinite(n)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(n):'—';
 let displayZone='Asia/Tokyo';
@@ -8,7 +10,15 @@ function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefine
 function notice(s){$('notice').textContent=s;$('notice').hidden=!s;}
 async function get(path){const r=await fetch(path,{cache:'no-store'});if(r.status===401)throw new Error('閲覧認証が必要です。画面を再読み込みし、設定したユーザー名・パスワードでログインしてください。');if(!r.ok)throw new Error(`APIの読み込みに失敗しました (${r.status})。保存済みの表示は更新されていません。`);return r.json();}
 let data=null,view='dashboard',feed=null,stopped=false,loading=false,dirty=false;
-let usageHistoryHubs=[],usageHistoryRows=null;
+let usageHistoryHubs=[],usageHistoryRows=null,usageHistoryDisplayedQuery=null;
+const usageHistoryController=createUsageHistoryController({
+ getQuery:()=>usageHistoryQuery(),
+ fetchQuery:query=>get(`/api/usage-history?hubId=${encodeURIComponent(query.hubId)}&deviceId=${encodeURIComponent(query.deviceId)}&granularity=${query.granularity}&from=${encodeURIComponent(query.from)}&to=${encodeURIComponent(query.to)}`),
+ onApplied:(result,query)=>{
+  usageHistoryRows=result;usageHistoryDisplayedQuery=query;
+  drawUsageHistoryRows(result);drawUsageHistoryControls();
+ }
+});
 function options(select,entries){const old=select.value;select.replaceChildren(...entries.map(([value,text])=>{const e=el('option',text);e.value=value;return e;}));if(entries.some(x=>x[0]===old))select.value=old;}
 function contractOptions(){
  const entries=[];const seen=new Set();
@@ -47,6 +57,14 @@ function chart(rows){const valid=rows.filter(r=>r.monthly_capacity_usd!==null).r
 
 function usageHub(){return usageHistoryHubs.find(h=>h.id===$('usage-hub-select').value)??null;}
 function usageSource(){return usageHub()?.devices?.find(d=>d.deviceId===$('usage-device-select').value)??null;}
+function usageHistoryQuery(){
+ const hub=usageHub(),source=usageSource();
+ if(!hub||!source)return null;
+ return {
+  hubId:hub.id,deviceId:source.deviceId,granularity:$('usage-granularity').value,
+  from:$('usage-from').value,to:$('usage-to').value,
+ };
+}
 function usageDate(value,granularity){
  const daily=granularity==='daily';
  const pattern=daily?/^\d{4}-\d{2}-\d{2}$/:/^\d{4}-\d{2}$/;
@@ -54,11 +72,10 @@ function usageDate(value,granularity){
 }
 function setUsageRange(source,force=false){
  const granularity=$('usage-granularity').value;
- const from=granularity==='daily'?source?.dailyFrom:source?.monthlyFrom;
- const to=granularity==='daily'?source?.dailyTo:source?.monthlyTo;
+ const defaults=boundedUsageRange(source,granularity);
  const currentFrom=$('usage-from').value,currentTo=$('usage-to').value;
- if(force||!usageDate(currentFrom,granularity))$('usage-from').value=from??'';
- if(force||!usageDate(currentTo,granularity))$('usage-to').value=to??'';
+ if(force||!usageDate(currentFrom,granularity))$('usage-from').value=defaults.from;
+ if(force||!usageDate(currentTo,granularity))$('usage-to').value=defaults.to;
  $('usage-from').placeholder=granularity==='daily'?'YYYY-MM-DD':'YYYY-MM';$('usage-to').placeholder=granularity==='daily'?'YYYY-MM-DD':'YYYY-MM';
 }
 function drawUsageHistoryControls(resetRange=false){
@@ -70,15 +87,29 @@ function drawUsageHistoryControls(resetRange=false){
  setUsageRange(source,resetRange);
  const active=hub?.status==='active';
  $('usage-history-fetch').disabled=!active||!data?.management?.enabled;
+ const fetchError=historyFetchErrorText(hub?.fetch);
+ const fetchSuccess=hub?.fetch?.latestSuccessAt;
+ const fetchState=hub?.fetch?.lastStatus;
+ const fetchNote=fetchError?`直近取得エラー: ${fetchError}`:fetchState==='running'?'現在Hubから取得中です。':'';
+ const confirmation=source?.lastConfirmedAt??fetchSuccess;
  if(!hub){$('usage-history-state').textContent='未選択';$('usage-history-state').className='badge';$('usage-history-meta').textContent='履歴を保存したHubがありません。';return;}
- if(!source){$('usage-history-state').textContent='端末未選択';$('usage-history-state').className='badge';$('usage-history-meta').textContent='このHubには保存済みの端末履歴がありません。';return;}
+ if(!source){
+  $('usage-history-state').textContent=fetchError?'取得エラー':'端末未選択';
+  $('usage-history-state').className=`badge ${fetchError?'warn':''}`;
+  $('usage-history-meta').textContent=`${hub.label} · 最終成功確認 ${when(confirmation)} · ${fetchNote||'このHubには保存済みの端末履歴がありません。'}`;
+  return;
+ }
  const labels={available:'利用可能',disabled:'無効',unavailable:'上流で利用不可',missing:'応答に履歴なし',missing_capability:'可用性不明',deleted:'Hubから削除済み'};
- $('usage-history-state').textContent=labels[source.historyState]??source.historyState;$('usage-history-state').className=`badge ${source.historyState==='available'?'active':'warn'}`;
- $('usage-history-meta').textContent=`${hub.label} / ${source.deviceId} · 最終確認 ${when(source.lastConfirmedAt)} · ${source.historyState==='available'?'保存された日付範囲を表示できます。':'この状態では新しい実績を表示できません。'}${source.timeZone?` · 上流の基準 ${source.timeZone}`:''}`;
+ const stateText=fetchError?'取得エラー':fetchState==='running'?'取得中':labels[source.historyState]??source.historyState;
+ $('usage-history-state').textContent=stateText;$('usage-history-state').className=`badge ${fetchError||source.historyState!=='available'?'warn':'active'}`;
+ $('usage-history-meta').textContent=`${hub.label} / ${source.deviceId} · 最終成功確認 ${when(confirmation)} · ${source.historyState==='available'?'保存された日付範囲を表示できます。':'この状態では新しい実績を表示できません。'}${fetchNote?` · ${fetchNote}`:''}${source.timeZone?` · 現在のウィンドウ基準時刻 ${source.timeZone}（過去行の日付基準: 不明）`:''}`;
 }
-async function loadUsageHistoryHubs(){
+async function loadUsageHistoryHubs({refreshRows=true}={}){
+ usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);
  const result=await get('/api/usage-history/hubs');usageHistoryHubs=result.hubs??[];drawUsageHistoryControls();
- if(usageHistoryRows)drawUsageHistoryRows(usageHistoryRows);
+ if(refreshRows&&view==='history'){
+  try{await loadUsageHistory({silent:true});}catch(error){notice(error.message);}
+ }
 }
 function drawUsageHistoryRows(result){
  const body=$('usage-history-rows');body.replaceChildren();
@@ -86,16 +117,20 @@ function drawUsageHistoryRows(result){
  if(!result.rows?.length){const row=el('tr'),cell=el('td','指定期間に保存済みの実績がありません。','muted');cell.colSpan=6;row.append(cell);body.append(row);return;}
  for(const value of result.rows){const row=el('tr');row.append(el('td',value.periodKey),el('td',value.tokens===null?'—':String(value.tokens)),el('td',money(value.costUsd)),el('td',value.messages===null?'—':String(value.messages)),el('td',when(value.confirmedAt)),el('td',value.current?'現在の保存値':'過去の保存値'));body.append(row);}
 }
-async function loadUsageHistory(){
- const hub=usageHub(),source=usageSource(),granularity=$('usage-granularity').value,from=$('usage-from').value,to=$('usage-to').value;
- if(!hub||!source){usageHistoryRows=null;drawUsageHistoryRows(null);drawUsageHistoryControls();return;}
- if(!usageDate(from,granularity)||!usageDate(to,granularity)){notice(`期間は${granularity==='daily'?'YYYY-MM-DD':'YYYY-MM'}形式で指定してください。`);return;}
- const result=await get(`/api/usage-history?hubId=${encodeURIComponent(hub.id)}&deviceId=${encodeURIComponent(source.deviceId)}&granularity=${granularity}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
- usageHistoryRows=result;drawUsageHistoryRows(result);drawUsageHistoryControls();
+async function loadUsageHistory({silent=false}={}){
+ const query=usageHistoryQuery();
+ if(!query){usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);drawUsageHistoryControls();return null;}
+ if(!usageDate(query.from,query.granularity)||!usageDate(query.to,query.granularity)){
+  if(!silent)notice(`期間は${query.granularity==='daily'?'YYYY-MM-DD':'YYYY-MM'}形式で指定してください。`);
+  return null;
+ }
+ usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);
+ try{return await usageHistoryController.load();}
+ catch(error){if(!silent)throw error;notice(error.message);return null;}
 }
 async function requestUsageHistory(){
  const hub=usageHub();if(!hub||hub.status!=='active')return;
- try{await post(`/api/manage/hubs/${encodeURIComponent(hub.id)}/history`,{});notice('Hubへ履歴の再取得を依頼しました。完了後に表示を更新します。');}
+ try{await post(`/api/manage/hubs/${encodeURIComponent(hub.id)}/history`,{});await loadUsageHistoryHubs();notice('Hubへ履歴の再取得を依頼しました。完了後に表示を更新します。');}
  catch(error){notice(error.message);}
 }
 
@@ -421,9 +456,11 @@ function connect(){
  };
 }
 $('refresh').onclick=refresh;$('hub-select').onchange=draw;$('contract-select').onchange=()=>loadHistory().catch(e=>notice(e.message));
-$('usage-hub-select').onchange=()=>{usageHistoryRows=null;drawUsageHistoryRows(null);drawUsageHistoryControls(true);};
-$('usage-device-select').onchange=()=>{usageHistoryRows=null;drawUsageHistoryRows(null);drawUsageHistoryControls(true);};
-$('usage-granularity').onchange=()=>{setUsageRange(usageSource(),true);usageHistoryRows=null;drawUsageHistoryRows(null);drawUsageHistoryControls();};
+$('usage-hub-select').onchange=()=>{usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);drawUsageHistoryControls(true);};
+$('usage-device-select').onchange=()=>{usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);drawUsageHistoryControls(true);};
+$('usage-granularity').onchange=()=>{usageHistoryController.invalidate();setUsageRange(usageSource(),true);usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);drawUsageHistoryControls();};
+ const invalidateUsageHistoryInput=()=>{usageHistoryController.invalidate();usageHistoryRows=null;usageHistoryDisplayedQuery=null;drawUsageHistoryRows(null);};
+ for(const id of ['usage-from','usage-to']){$(id).oninput=invalidateUsageHistoryInput;$(id).onchange=invalidateUsageHistoryInput;}
 $('usage-history-load').onclick=()=>loadUsageHistory().catch(e=>notice(e.message));
 $('usage-history-fetch').onclick=requestUsageHistory;
 for(const b of document.querySelectorAll('nav button'))b.onclick=()=>{view=b.dataset.view;for(const t of document.querySelectorAll('nav button'))t.removeAttribute('aria-current');b.setAttribute('aria-current','page');for(const s of document.querySelectorAll('.view'))s.hidden=s.id!==view;$('title').textContent=b.textContent;if(view==='history'){loadHistory().catch(e=>notice(e.message));loadUsageHistoryHubs().catch(e=>notice(e.message));}if(view==='manage')loadManage().catch(e=>notice(e.message));if(view==='update')loadUpdate().catch(e=>notice(e.message));};
