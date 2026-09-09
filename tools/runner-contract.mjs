@@ -11,10 +11,26 @@ export const RUNNER_CONTRACT = Object.freeze({
   managedUnits: Object.freeze(['tma-analytics.service', 'tma-update.service'])
 });
 
-function versionNumber(value) {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
-  return null;
+function versionNumber(value, label) {
+  const number = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN;
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw Object.assign(new Error(`The runner contract has an invalid ${label}`), {code: 'migration_required'});
+  }
+  return number;
+}
+
+function versionParts(value, label) {
+  if (typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value)) {
+    throw Object.assign(new Error(`The runner contract has an invalid ${label}`), {code: 'provision_required'});
+  }
+  return value.split('.').map((part, index) => versionNumber(part, `${label}.${['major', 'minor', 'patch'][index]}`));
+}
+
+function minimumParts(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw Object.assign(new Error('The runner contract has an invalid minNode'), {code: 'migration_required'});
+  }
+  return [versionNumber(value.major, 'minNode.major'), versionNumber(value.minor, 'minNode.minor'), versionNumber(value.patch, 'minNode.patch')];
 }
 
 /**
@@ -33,9 +49,10 @@ export function validateRunnerContract(record = {}, {nodeVersion = process.versi
     throw Object.assign(new Error('The release requires an incompatible Analytics/update service contract'), {code: 'migration_required'});
   }
   const minimum = contract.minNode ?? RUNNER_CONTRACT.minNode;
-  const [major, minor, patch] = String(nodeVersion).split('.').map(value => Number(value));
-  if (![major, minor, patch].every(Number.isInteger) || major < minimum.major || (major === minimum.major && minor < minimum.minor)) {
-    throw Object.assign(new Error(`Node.js ${minimum.major}.${minimum.minor} or newer is required`), {code: 'provision_required'});
+  const [major, minor, patch] = versionParts(nodeVersion, 'Node.js version');
+  const [minimumMajor, minimumMinor, minimumPatch] = minimumParts(minimum);
+  if (major < minimumMajor || (major === minimumMajor && (minor < minimumMinor || (minor === minimumMinor && patch < minimumPatch)))) {
+    throw Object.assign(new Error(`Node.js ${minimumMajor}.${minimumMinor}.${minimumPatch} or newer is required`), {code: 'provision_required'});
   }
   return true;
 }

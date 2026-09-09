@@ -9,6 +9,15 @@ export const destination = '/var/lib/tma-deploy/config';
 export const appUnits = Object.freeze(['tma-analytics.service']);
 export const updateUnit = 'tma-update.service';
 export const managedUnits = Object.freeze([...appUnits, updateUnit]);
+// These names are checked in the system manager before provisioning creates
+// or changes any managed path. The new installation owns user units with the
+// same application name; a loaded system unit is an old installation and must
+// go through the explicit migration procedure.
+export const legacySystemUnits = Object.freeze([
+  'tma-analytics.service',
+  'tma-collector.service',
+  'tma-update.service'
+]);
 export const updaterDir = '/var/lib/tma-deploy/updater';
 export const repoDir = '/var/lib/tma-deploy/repo';
 export const updateStateFile = '/var/lib/tma-deploy/update-state.json';
@@ -25,10 +34,8 @@ export const runnerVersion = RUNNER_CONTRACT.runnerVersion;
 // tree have been removed.
 export const updaterRunnerFiles = Object.freeze([
   'tools/update-runner.mjs',
-  'tools/release.mjs',
-  'tools/runner-contract.mjs',
-  'tools/ubuntu-layout.mjs',
-  'analytics/runtime/update-state.mjs'
+  'tools/update-runner-state.mjs',
+  'tools/runner-contract.mjs'
 ]);
 
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -43,7 +50,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=${updaterDir}
-ExecStart=${updaterDir}/node --experimental-strip-types ${updaterDir}/tools/update-runner.mjs --apply
+ExecStart=${updaterDir}/node --experimental-strip-types ${updaterDir}/tools/update-runner.mjs
 UMask=0077
 NoNewPrivileges=true
 `;
@@ -71,6 +78,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+ReadWritePaths=/var/lib/tma-analytics /var/lib/tma-deploy
 RestrictSUIDSGID=true
 
 [Install]
@@ -104,4 +112,3 @@ export function assertInfrastructureFile(filename = infrastructureFile) {
   if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022)) throw new Error('Infrastructure record must be a root-owned file, not writable by group/others.');
   return true;
 }
-
