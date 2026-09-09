@@ -158,6 +158,16 @@ test('Windows direct CLI migration and rollback restore the old process and data
   const configDir = path.join(dir, 'legacy-config');
   const targetDir = path.join(dir, 'target-config');
   const installDir = path.join(dir, 'published-app');
+  // Every protected legacy installation path is fixture-local. Passing these
+  // explicitly is part of the acceptance proof: the direct CLI must never
+  // inventory or mutate a developer's real runner/configuration locations.
+  const legacyCodeRoot = path.join(dir, 'legacy-code');
+  const legacyCodeMarker = path.join(legacyCodeRoot, 'legacy-marker.txt');
+  const legacyRunnerDir = path.join(dir, 'legacy-runner');
+  const legacyNodePath = path.join(legacyRunnerDir, 'node');
+  const infrastructurePath = path.join(dir, 'legacy-infrastructure.json');
+  const publicationPath = path.join(dir, 'legacy-publication.json');
+  const updateStatePath = path.join(dir, 'legacy-update-state.json');
   const pidFile = path.join(dir, 'restored.pid');
   let legacyAnalytics = null;
   let collector = null;
@@ -180,7 +190,12 @@ test('Windows direct CLI migration and rollback restore the old process and data
     try { await removeTreeEventually(dir); } catch (error) { errors.push(error); }
     if (errors.length) throw new AggregateError(errors, 'Windows migration fixture cleanup failed');
   });
-  for (const filename of [outboxPath, configDir, targetDir]) fs.mkdirSync(filename, {recursive: true, mode: 0o700});
+  for (const filename of [outboxPath, configDir, targetDir, legacyCodeRoot, legacyRunnerDir]) fs.mkdirSync(filename, {recursive: true, mode: 0o700});
+  fs.writeFileSync(legacyCodeMarker, 'legacy-code-marker\n', {mode: 0o640});
+  fs.writeFileSync(legacyNodePath, 'legacy-fixed-node-placeholder\n', {mode: 0o750});
+  fs.writeFileSync(infrastructurePath, '{"layout":"legacy-infrastructure"}\n', {mode: 0o640});
+  fs.writeFileSync(publicationPath, '{"release":"legacy-publication"}\n', {mode: 0o640});
+  fs.writeFileSync(updateStatePath, '{"status":"idle","legacyMarker":"legacy-update-state"}\n', {mode: 0o600});
   const hubsPath = path.join(configDir, 'hubs.json');
   const secretsPath = path.join(configDir, 'hub-secrets.json');
   const analyticsConfigPath = path.join(configDir, 'analytics.json');
@@ -242,6 +257,9 @@ test('Windows direct CLI migration and rollback restore the old process and data
     '--state', statePath, '--backup-dir', backupDir, '--lock', lockPath,
     '--target-config', targetConfigPath, '--target-secrets', targetSecretsPath, '--target-analytics-env', targetEnvPath,
     '--repository', root, '--windows-install-dir', installDir,
+    '--legacy-code-root', legacyCodeRoot, '--legacy-runner-dir', legacyRunnerDir,
+    '--legacy-node-path', legacyNodePath, '--infrastructure-path', infrastructurePath,
+    '--publication-path', publicationPath, '--update-state-path', updateStatePath,
     '--collector-pid', String(collector.pid), '--analytics-pid', String(legacyAnalytics.pid),
   ];
   // The default Windows platform performs the direct PID cutover. Explicit
@@ -260,11 +278,24 @@ test('Windows direct CLI migration and rollback restore the old process and data
   assert.equal(fs.existsSync(installDir), true);
   await stopProcess(collector.pid);
 
+  // Force restore to copy the fixture-local protected files from the backup.
+  fs.writeFileSync(legacyCodeMarker, 'new-code\n');
+  fs.writeFileSync(legacyNodePath, 'new-runner\n');
+  fs.writeFileSync(infrastructurePath, '{"layout":"new-infrastructure"}\n');
+  fs.writeFileSync(publicationPath, '{"release":"new-publication"}\n');
+  fs.writeFileSync(updateStatePath, '{"status":"new"}\n');
+
   // Rollback is a second direct CLI process, without explicit Analytics PID:
   // restore must identify and stop the published process persisted in state.
   const launcher = path.join(dir, 'restore-legacy.mjs');
   fs.writeFileSync(launcher, `import {spawn} from 'node:child_process';\nimport fs from 'node:fs';\nconst child=spawn(process.execPath,['--experimental-strip-types',${JSON.stringify(path.join(legacy.sourceRoot, 'analytics/runtime/server.mjs'))},'--config',${JSON.stringify(analyticsConfigPath)}],{cwd:${JSON.stringify(legacy.sourceRoot)},env:process.env,stdio:'ignore',windowsHide:true});\nfs.writeFileSync(${JSON.stringify(pidFile)},String(child.pid));\nchild.on('exit',(code)=>process.exit(code??0));\n`, {mode: 0o600});
-  const restored = await runCli(['--restore', '--state', statePath, '--lock', lockPath, '--legacy-command', process.execPath, '--legacy-args', JSON.stringify(['--experimental-strip-types', launcher]), '--legacy-working-dir', dir]);
+  const restored = await runCli([
+    '--restore', '--state', statePath, '--lock', lockPath,
+    '--legacy-command', process.execPath, '--legacy-args', JSON.stringify(['--experimental-strip-types', launcher]), '--legacy-working-dir', dir,
+    '--legacy-code-root', legacyCodeRoot, '--legacy-runner-dir', legacyRunnerDir,
+    '--legacy-node-path', legacyNodePath, '--infrastructure-path', infrastructurePath,
+    '--publication-path', publicationPath, '--update-state-path', updateStatePath,
+  ]);
   assert.equal(restored.code, 0, restored.stderr);
   assert.equal(fs.existsSync(targetConfigPath), false);
   assert.equal(fs.existsSync(analyticsConfigPath), true);
@@ -273,5 +304,10 @@ test('Windows direct CLI migration and rollback restore the old process and data
   const restoredDb = await databaseSummary(databasePath);
   assert.equal(restoredDb.migrations, 1);
   assert.equal(restoredDb.observations, 1);
+  assert.equal(fs.readFileSync(legacyCodeMarker, 'utf8'), 'legacy-code-marker\n');
+  assert.equal(fs.readFileSync(legacyNodePath, 'utf8'), 'legacy-fixed-node-placeholder\n');
+  assert.equal(fs.readFileSync(infrastructurePath, 'utf8'), '{"layout":"legacy-infrastructure"}\n');
+  assert.equal(fs.readFileSync(publicationPath, 'utf8'), '{"release":"legacy-publication"}\n');
+  assert.equal(fs.readFileSync(updateStatePath, 'utf8'), '{"status":"idle","legacyMarker":"legacy-update-state"}\n');
   await stopProcess(Number(fs.readFileSync(pidFile, 'utf8')));
 });
