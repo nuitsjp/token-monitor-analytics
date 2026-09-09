@@ -333,7 +333,7 @@ userctl is-active tma-analytics.service
 collector_unit_state=$(userctl show -p UnitFileState --value tma-collector.service)
 case "$collector_unit_state" in masked|disabled) ;; *) fail "legacy Collector was not inhibited: $collector_unit_state" ;; esac
 if userctl is-active --quiet tma-collector.service; then fail 'legacy Collector remained active after migration'; fi
-if userctl is-enabled --quiet tma-update.service; then fail 'update oneshot became enabled during migration'; fi
+if [[ "$(userctl is-enabled tma-update.service)" != static ]]; then fail 'update oneshot was not left static after migration'; fi
 
 echo 'Checking the migrated native database, empty Hub registrations, and target service'
 for attempt in $(seq 1 90); do
