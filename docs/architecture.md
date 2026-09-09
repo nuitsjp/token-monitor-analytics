@@ -18,6 +18,8 @@ AnalyticsはNode.jsのHTTPサーバー。既存のTypeScriptコード（protocol
 
 SQLiteが観測・最新値・推定状態・日次履歴の正本。1 Analyticsプロセスだけが扱う。`BEGIN IMMEDIATE`からCOMMITまで、基準値SELECT→観測保存→最新値更新→推定→日次値保存の全体を1トランザクションとする。API呼出しと保守処理をキューで直列化し、未コミットの中間状態を別HTTP要求へ返さない。
 
+収集モジュールから保存層へ渡す内部APIは、`recordObservation(db, observation, contracts, timeZone)`（複数件は`recordObservations`）である。`observation`は`hubId`、`streamId`、`kind`、`observedAt`、`receivedAt`、正規化済み`stats`だけを持ち、Batch/schemaVersion/ACKや上流の再送IDを要求しない。入力に余分な`eventId`があっても内部APIは無視し、保存用の`event_id`は保存処理が16バイトのランダム値から生成する。保存payloadには既存の状態再送互換のため`schemaVersion: 1`とこのローカルIDを付加する。APIは同期関数で、呼出し側が`db.transaction(() => ...)`で囲む。トランザクションcallbackが`PromiseLike`を返す場合は型・実行時の両方で拒否し、COMMITしない。旧`/api/ingest`だけが移行期間の薄い橋として上流の再送IDを保持し、通常の内部収集経路では使わない。
+
 WAL＋synchronous=FULLを使用する。スキーマは起動時に番号順に適用し、適用済みマイグレーションの書換えをchecksumで検出する。デモ/本番の識別をDBへ保存し、混在させる設定では起動しない。CPUとSQLite I/Oは同じNodeイベントループで実行するため、小規模・個人利用のスターターが対象。大量データを処理する汎用分析基盤ではない。
 
 ## ライブ更新
@@ -34,7 +36,7 @@ outboxはwrite→fsync→rename後に送信対象とするが、rename後のデ�
 
 ## 拡張の境界
 
-小さなDatabase/Statementインターフェースと純粋な推定ロジックを維持する。ただしCloudflare/クラウドStoreの実装、クラウドへの自動切替、DB同期は含めない。実要件が発生する前から複数運用形態を抱え込まない。
+純粋な推定ロジックとNode組込みSQLiteの同期`Database`/`Statement`境界を維持する。Promiseで同期SQLiteを包む互換層、Cloudflare/クラウドStoreの実装、クラウドへの自動切替、DB同期は含めない。実要件が発生する前から複数運用形態を抱え込まない。
 
 ## Hub管理UI（基本機能実装済み）
 

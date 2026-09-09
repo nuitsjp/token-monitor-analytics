@@ -1,10 +1,16 @@
-// Small storage boundary shared by the pure analytics core and native SQLite adapter.
-// Analytics runs as a single process. The caller owns a transaction around ingest.
-export interface DBResult<T = Record<string, unknown>> { results: T[]; success: boolean; meta: { changes?: number } }
+// Synchronous storage boundary for the pure analytics core and native SQLite adapter.
+// The caller owns BEGIN IMMEDIATE around observation recording. No Promise wrappers.
+export interface RunResult { changes: number }
 export interface Statement {
  bind(...values: unknown[]): Statement;
- all<T = Record<string, unknown>>(): Promise<DBResult<T>>;
- first<T = Record<string, unknown>>(): Promise<T | null>;
- run(): Promise<DBResult>;
+ all<T = Record<string, unknown>>(): T[];
+ get<T = Record<string, unknown>>(): T | null;
+ run(): RunResult;
 }
-export interface Database { prepare(sql: string): Statement; batch(statements: Statement[]): Promise<DBResult[]> }
+type Synchronous<T> = T extends PromiseLike<unknown> ? never : T;
+export interface Database {
+ prepare(sql: string): Statement;
+ exec(sql: string): void;
+ transaction<T>(callback: () => T & Synchronous<T>): T;
+ close(): void;
+}

@@ -80,6 +80,7 @@ export async function startServer(config,{env=process.env,logger=console,mainten
     let batch;
     try{batch=parseBatch(await body(request),ingestHubIds);}
     catch(error){if(!response.destroyed)json(response,{error:'invalid_batch'},error.status===413?413:400);return;}
+    // Transitional HTTP bridge: transport parsing stays here; storage is the synchronous internal API.
     const changed=await exclusive(()=>db.transaction(()=>ingest(db,batch,config.contracts,config.timeZone)));
     // Notify and acknowledge only after the SQLite COMMIT succeeded.
     if(changed.length)live.updated(changed);
