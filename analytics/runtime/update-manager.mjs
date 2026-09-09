@@ -161,9 +161,9 @@ export class UpdateManager {
     }
   }
 
-  pollJobState(force = false) {
+  pollJobState(force = false, {reconcile = true} = {}) {
     const statePath = this.#config.update?.statePath ?? '/var/lib/tma-deploy/update-state.json';
-    const job = this.#readState(statePath, {checkServiceActive: this.#isServiceActive});
+    const job = this.#readState(statePath, {checkServiceActive: reconcile ? this.#isServiceActive : () => true});
     const publicJob = publicUpdateJob(job);
     const key = publicJob ? `${publicJob.jobId}:${publicJob.status}:${publicJob.stage}:${publicJob.failedStage}:${publicJob.errorCode}` : null;
     if (force || key !== this.#lastJobKey) {

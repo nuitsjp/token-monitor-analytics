@@ -19,9 +19,11 @@ test('service shutdown sends the final update stage before browser SSE ends', {s
     viewerAuth: {mode: 'loopback'}, management: {enabled: true}, contracts: [],
     update: {enabled: true, statePath: path.join(dir, 'update-state.json'), checkIntervalSeconds: 300},
   };
-  let job = {jobId: 'shutdown-race', status: 'running', stage: 'verifying', targetCommitSha: 'a'.repeat(40)};
+  let job = {jobId: 'shutdown-race', status: 'running', stage: 'verifying', targetCommitSha: 'a'.repeat(40), startedAt:'2020-01-01T00:00:00.000Z'};
+  saveUpdateState(config.update.statePath,job);
+  let serviceActive=true;
   const app = await startServer(config, {logger: {info(){}, error(){}}, updateManagerOptions: {
-    readState: () => job, isServiceActive: () => true, fetchRemoteCommit: async () => null,
+    isServiceActive: () => serviceActive, fetchRemoteCommit: async () => null,
   }});
   t.after(async () => {await app.close(); fs.rmSync(dir, {recursive: true, force: true});});
   config.publicOrigin = `http://127.0.0.1:${app.server.address().port}`;
@@ -31,6 +33,8 @@ test('service shutdown sends the final update stage before browser SSE ends', {s
   let frames = new TextDecoder().decode((await reader.read()).value);
   // No file-system event or polling interval announces this transition.
   job = {...job, stage: 'deploying'};
+  saveUpdateState(config.update.statePath,job);
+  serviceActive=false; // Query failure while systemd terminates this app.
   const closing = app.close();
   while (true) {
     const {done, value} = await reader.read();
@@ -41,6 +45,7 @@ test('service shutdown sends the final update stage before browser SSE ends', {s
   assert.match(frames, /event: update_job_changed/);
   assert.match(frames, /"jobId":"shutdown-race"/);
   assert.match(frames, /"stage":"deploying"/);
+  assert.equal(JSON.parse(fs.readFileSync(config.update.statePath,'utf8')).status,'running');
 });
 
 test('readUpdateState and saveUpdateState atomically manage job state and reconcile with service status', () => {
