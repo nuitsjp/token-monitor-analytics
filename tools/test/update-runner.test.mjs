@@ -37,10 +37,9 @@ const server = http.createServer((req, res) => {
   if (req.url === '/api/live') { res.writeHead(200, {'content-type':'text/event-stream'}); res.write('event: ready\\ndata: {}\\n\\n'); return; }
   res.writeHead(404); res.end();
 });
-fs.writeFileSync(pidFile, String(process.pid), {mode:0o600});
 const stop = () => server.close(() => { fs.rmSync(pidFile, {force:true}); process.exit(0); });
 process.on('SIGTERM', stop); process.on('SIGINT', stop);
-server.listen(Number(process.env.PORT), '127.0.0.1');
+server.listen(Number(process.env.PORT), '127.0.0.1', () => fs.writeFileSync(pidFile, String(process.pid), {mode:0o600}));
 `, {mode: 0o600});
   const releaseModule = path.join(root, 'release.mjs');
   fs.writeFileSync(releaseModule, `
@@ -53,18 +52,50 @@ export async function preparePublication({root:sourceDirectory, targetCommitSha}
   const manifest={releaseId:'rel-fixture-new',targetCommitSha,contentHash:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',runtimeContract:{}};
   return {artifact:{archivePath,archiveSha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',checksumPath:archivePath+'.sha256',manifest},manifest,configurationId:'cfg-after'};
 }
-async function alive(pidFile) { for(let i=0;i<100&&!fs.existsSync(pidFile);i++) await new Promise(r=>setTimeout(r,10)); }
-async function gone(pidFile) { for(let i=0;i<100&&fs.existsSync(pidFile);i++) await new Promise(r=>setTimeout(r,10)); }
+function readPid(pidFile) { try { const value=Number(fs.readFileSync(pidFile,'utf8')); return Number.isInteger(value)&&value>0?value:null; } catch { return null; } }
+function processIsAlive(value) {
+  if(!Number.isInteger(value)||value<=0)return false;
+  // A terminated child can remain as a Unix zombie until the test parent
+  // reaps it. Treat that state as exited so stale PID files do not block the
+  // replacement fixture forever; Windows has no /proc path and uses kill(0).
+  if(process.platform==='linux'){
+    try { const stat=fs.readFileSync('/proc/'+value+'/stat','utf8'); const close=stat.lastIndexOf(')'); if(stat.slice(close+2,close+3)==='Z')return false; }
+    catch(error) { if(error?.code==='ENOENT')return false; }
+  }
+  try { process.kill(value,0); return true; } catch(error) { return error?.code !== 'ESRCH'; }
+}
+async function alive(pidFile, healthUrl, timeout=30000) {
+  const deadline=Date.now()+timeout;
+  while(Date.now()<deadline){
+    const value=readPid(pidFile);
+    if(processIsAlive(value)){
+      try { const response=await fetch(healthUrl); if(response.ok)return; } catch {}
+    }
+    await new Promise(r=>setTimeout(r,25));
+  }
+  throw new Error('fixture app did not become HTTP-ready');
+}
+async function gone(pidFile, oldPid, timeout=30000) {
+  const deadline=Date.now()+timeout;
+  while(Date.now()<deadline){
+    if(!processIsAlive(oldPid)){
+      if(readPid(pidFile)===oldPid)fs.rmSync(pidFile,{force:true});
+      return;
+    }
+    await new Promise(r=>setTimeout(r,25));
+  }
+  throw new Error('fixture app did not exit');
+}
 async function get(url) { const response=await fetch(url); if(!response.ok) throw new Error('fixture request failed'); return response.json(); }
 export async function applyPublication(prepared, {targetCommitSha, jobId, paths, onStage}) {
   const {releaseId,contentHash}=prepared.manifest, archiveSha256=prepared.artifact.archiveSha256;
-  const pidFile=paths.fixturePidFile; const oldPid=Number(fs.readFileSync(pidFile,'utf8')); process.kill(oldPid,'SIGTERM'); await gone(pidFile);
+  const pidFile=paths.fixturePidFile; const oldPid=readPid(pidFile); if(!oldPid)throw new Error('fixture app PID is missing'); try{process.kill(oldPid,'SIGTERM');}catch(error){if(error?.code!=='ESRCH')throw error;} await gone(pidFile,oldPid);
   onStage('restarting');
   if (paths.fixtureKillAfterStop) process.exit(17);
   fs.mkdirSync(paths.fixtureCurrent,{recursive:true});
   fs.writeFileSync(path.join(paths.fixtureCurrent,'release.json'),JSON.stringify({releaseId,contentHash,archiveSha256,commitSha:targetCommitSha}));
   const child=spawn(process.execPath,[paths.fixtureApp],{env:{...process.env,RELEASE_FILE:path.join(paths.fixtureCurrent,'release.json'),PID_FILE:pidFile,PORT:String(paths.fixturePort)},stdio:'ignore',detached:true}); child.unref();
-  await alive(pidFile); await new Promise(r=>setTimeout(r,50));
+  await alive(pidFile,'http://127.0.0.1:'+paths.fixturePort+'/api/health');
   const health=await get('http://127.0.0.1:'+paths.fixturePort+'/api/health');
   const state=await get('http://127.0.0.1:'+paths.fixturePort+'/api/state');
   const sse=await fetch('http://127.0.0.1:'+paths.fixturePort+'/api/live'); const reader=sse.body.getReader(); const text=await reader.read(); await reader.cancel();
@@ -90,8 +121,20 @@ const paths=${JSON.stringify({...paths, statePath})};
 const repositoryOps={prepare:async({workRoot})=>{const snapshotDirectory=path.join(workRoot,'fixture-source');fs.mkdirSync(path.join(snapshotDirectory,'tools'),{recursive:true});fs.copyFileSync(${JSON.stringify(releasePath)},path.join(snapshotDirectory,'tools','publish-ubuntu.mjs'));return {snapshotDirectory,commitDate:'2026-09-09T00:00:00Z',commitMessage:'fixture',branchSha:'${mode === 'moved' ? SHA_OLD : SHA_NEW}'};}};
 const preflight=${mode === 'preflight' ? `async()=>{throw Object.assign(new Error('fixed tool missing'),{code:'provision_required'});}` : 'async()=>{ }'};
 const result=await runUpdate({paths,contractModulePath:${JSON.stringify(contractPath)},repositoryOps,preflight,enforceInfrastructure:false});
-if(result?.errorCode) process.exitCode=2;
+if(result?.errorCode){process.stderr.write('fixture runner errorCode='+result.errorCode+'\\n');process.exitCode=2;}
 `;
+}
+
+function runFixtureRunner(script) {
+  try {
+    return execFileSync(process.execPath, ['--input-type=module', '-e', script], {stdio:'pipe', timeout:30000, killSignal:'SIGTERM'});
+  } catch (error) {
+    const stderr=error.stderr?.toString().trim();
+    const stdout=error.stdout?.toString().trim();
+    const diagnostics=stderr||stdout;
+    if(diagnostics)error.message=`${error.message}\nfixture runner diagnostics: ${diagnostics}`;
+    throw error;
+  }
 }
 
 const runnerFile = fileURLToPath(new URL('../update-runner.mjs', import.meta.url));
@@ -114,7 +157,7 @@ test('isolated runner stops and restarts the app, proves the target release, and
   await waitForFile(pidFile);
   try {
     const script = runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot,publicationPath:publication,fixturePidFile:pidFile,fixtureCurrent:current,fixtureApp:files.app,fixturePort:port},mode:'success'});
-    execFileSync(process.execPath, ['--input-type=module', '-e', script], {stdio:'pipe', timeout:30000, killSignal:'SIGTERM'});
+    runFixtureRunner(script);
     const finished = readRunnerState(statePath, {checkServiceActive:()=>true});
     assert.equal(finished.status, 'completed');
     assert.equal(finished.stage, 'success');
@@ -140,7 +183,7 @@ test('verification preflight fails before the app is stopped', async () => {
   saveRunnerState(statePath,{jobId:'job-preflight',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',status:'running',stage:'accepted',startedAt:new Date().toISOString(),finishedAt:null});
   try {
     const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port},mode:'preflight'});
-    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
+    assert.throws(()=>runFixtureRunner(script));
     const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.errorCode,'provision_required'); assert.equal(failed.failedStage,'verifying'); assert.ok(fs.existsSync(pidFile));
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
@@ -154,7 +197,7 @@ test('a branch move after candidate acceptance fails before the app is stopped',
   saveRunnerState(statePath,{jobId:'job-main-moved',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',status:'running',stage:'accepted',startedAt:new Date().toISOString(),finishedAt:null});
   try {
     const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port},mode:'moved'});
-    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
+    assert.throws(()=>runFixtureRunner(script));
     const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.errorCode,'main_moved'); assert.equal(failed.failedStage,'fetching'); assert.ok(fs.existsSync(pidFile));
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
@@ -168,7 +211,7 @@ test('post-restart proof failure is terminal and retains the failed stage', asyn
   saveRunnerState(statePath,{jobId:'job-proof-fail',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',status:'running',stage:'accepted',startedAt:new Date().toISOString(),finishedAt:null});
   try {
     const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port,fixtureBadProof:true},mode:'success'});
-    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
+    assert.throws(()=>runFixtureRunner(script));
     const failed=readRunnerState(statePath,{checkServiceActive:()=>true}); assert.equal(failed.status,'failed'); assert.equal(failed.errorCode,'health_check_failed'); assert.equal(failed.failedStage,'restarting');
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });
@@ -182,7 +225,7 @@ test('a runner killed after stopping the app leaves a recoverable running state'
   saveRunnerState(statePath,{jobId:'job-killed',targetCommitSha:SHA_NEW,repositoryUrl:'https://fixture.invalid/repo.git',branch:'main',status:'running',stage:'accepted',startedAt:'2020-01-01T00:00:00.000Z',finishedAt:null});
   try {
     const script=runnerScript({runnerPath:runnerFile,statePath,contractPath:files.contract,releasePath:files.releaseModule,sourceDir:source,paths:{verifyRoot:path.join(root,'verify'),fixturePidFile:pidFile,fixtureCurrent:path.join(root,'current'),fixtureApp:files.app,fixturePort:port,fixtureKillAfterStop:true},mode:'success'});
-    assert.throws(()=>execFileSync(process.execPath,['--input-type=module','-e',script],{stdio:'pipe',timeout:30000,killSignal:'SIGTERM'}));
+    assert.throws(()=>runFixtureRunner(script));
     const aborted=readRunnerState(statePath,{checkServiceActive:()=>false,now:()=>new Date('2026-09-09T00:00:00Z').toISOString()}); assert.equal(aborted.status,'aborted'); assert.equal(aborted.errorCode,'job_aborted'); assert.equal(aborted.stage,'aborted'); assert.equal(aborted.failedStage,'restarting');
   } finally { if(fs.existsSync(pidFile)){try{process.kill(Number(fs.readFileSync(pidFile,'utf8')),'SIGTERM')}catch{}} app.kill('SIGTERM'); fs.rmSync(root,{recursive:true,force:true}); }
 });

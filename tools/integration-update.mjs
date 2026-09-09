@@ -316,12 +316,13 @@ async function runManagementAPIFixture() {
     assert.equal(unsupported.body.supported, false);
     assert.equal(unsupported.body.reason, 'unsupported_platform');
     console.log('SKIP: self-update runner is explicitly unsupported on this platform; management status remains readable');
-    return;
+    return false;
   }
   assert.equal(candidate.targetCommitSha, remote.sha);
   const invalidApply = await jsonResponse(`${origin}/api/manage/update/apply`, {method: 'POST', headers: {'Content-Type': 'application/json', Origin: origin}, body: JSON.stringify({targetCommitSha: 'invalid'})});
   assert.equal(invalidApply.response.status, 400);
   console.log('PASS: update API enforces origin, checks the remote SHA, and rejects invalid apply input');
+  return true;
 }
 
 async function runRealPublicationFixture() {
@@ -474,7 +475,11 @@ async function runRealPublicationFixture() {
 }
 
 async function main() {
-  await runManagementAPIFixture();
+  const selfUpdateSupported = await runManagementAPIFixture();
+  if (!selfUpdateSupported) {
+    console.log('SKIP: real Web publication fixture requires the supported Ubuntu update runner');
+    return;
+  }
   await runRealPublicationFixture();
   console.log('UPDATE INTEGRATION OK');
 }
