@@ -3,9 +3,9 @@ import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {isIP} from 'node:net';
 import {readJSON,readEnvironment,writeChanged} from './publish-config.mjs';
+import {loadConfig,credentials,isLoopback} from '../analytics/runtime/config.mjs';
 
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
-const loopback = host => host === '127.0.0.1' || host === '::1';
 const validHost = host => typeof host === 'string' && isIP(host) !== 0;
 const validPort = port => Number.isInteger(port) && port >= 1024 && port <= 65535;
 
@@ -30,19 +30,38 @@ function chooseIdentity({identity = {}, listenHost, viewerMode, publicOrigin, po
   const oldTailnet = identity.tailnetIP;
   const host = listenHost ?? identity.listenHost ?? (oldTailnet && !viewerMode?.includes('loopback') ? oldTailnet : '127.0.0.1');
   if (!validHost(host)) throw new Error('listen host must be an IP literal.');
-  const selectedMode = viewerMode ?? identity.viewerMode ?? (oldTailnet && !loopback(host) ? 'tailscale' : 'loopback');
+  const selectedMode = viewerMode ?? identity.viewerMode ?? (oldTailnet && !isLoopback(host) ? 'tailscale' : 'loopback');
   if (!['loopback', 'basic', 'tailscale'].includes(selectedMode)) throw new Error('viewer mode must be loopback, basic or tailscale.');
   const selectedPort = port ?? identity.port ?? 8788;
   if (!validPort(selectedPort)) throw new Error('Port must be an integer from 1024 through 65535.');
-  if (selectedMode === 'loopback' && !loopback(host)) throw new Error('Loopback viewer mode requires a loopback listen host.');
-  if (selectedMode === 'tailscale' && (loopback(host) || isIP(host) !== 4 || !host.startsWith('100.'))) throw new Error('Tailscale viewer mode requires a Tailscale IPv4 listen host.');
+  // The runtime config validator is the source of truth for listener and
+  // Tailscale constraints. These checks only select a clearly local mode;
+  // they intentionally do not duplicate the runtime's CGNAT range rules.
+  if (selectedMode === 'loopback' && !isLoopback(host)) throw new Error('Loopback viewer mode requires a loopback listen host.');
+  if (selectedMode === 'basic' && !isLoopback(host)) throw new Error('Basic viewer mode requires a loopback listen host.');
   const defaultHost = identity.hostname ?? host;
   const origin = publicOrigin ?? identity.publicOrigin ?? `http://${defaultHost.includes(':') && !defaultHost.startsWith('[') ? `[${defaultHost}]` : defaultHost}:${selectedPort}`;
   let parsed;
   try { parsed = new URL(origin); } catch { throw new Error('publicOrigin must be a valid HTTP(S) origin.'); }
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) throw new Error('publicOrigin must be an HTTP(S) origin without credentials or path.');
-  if (selectedMode === 'loopback' && (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname))) throw new Error('Loopback publicOrigin must use HTTP localhost.');
   return {host, mode: selectedMode, port: selectedPort, origin: parsed.origin};
+}
+
+function resolveConfiguredPath(directory, value) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Configured file paths must be non-empty strings.');
+  return path.isAbsolute(value) ? path.resolve(value) : path.resolve(directory, value);
+}
+
+function validateBeforeWriting(directory, config, environment) {
+  const temporary = path.join(directory, `.analytics.validate-${process.pid}-${Math.random().toString(16).slice(2)}.json`);
+  try {
+    fs.writeFileSync(temporary, json(config), {flag: 'wx', mode: 0o600});
+    const loaded = loadConfig(temporary);
+    credentials(loaded, environment);
+    return loaded;
+  } finally {
+    fs.rmSync(temporary, {force: true});
+  }
 }
 
 /**
@@ -55,22 +74,41 @@ export function configureApplication({dir, identity = {}, port, listenHost, view
   fs.mkdirSync(directory, {recursive: true, mode: 0o700});
   const file = name => path.join(directory, name);
   const oldConfig = fs.existsSync(file('analytics.json')) ? readJSON(file('analytics.json')) : {};
-  const selected = chooseIdentity({identity, port, listenHost, viewerMode, publicOrigin});
+  const oldListen = oldConfig.listen && typeof oldConfig.listen === 'object' ? oldConfig.listen : {};
+  const oldViewer = oldConfig.viewerAuth && typeof oldConfig.viewerAuth === 'object' ? oldConfig.viewerAuth : {};
+  const selected = chooseIdentity({
+    identity: {
+      ...identity,
+      listenHost: listenHost ?? identity.listenHost ?? ((viewerMode === 'loopback' || viewerMode === 'basic') ? undefined : oldListen.host),
+      port: identity.port ?? oldListen.port,
+      viewerMode: identity.viewerMode ?? oldViewer.mode,
+      publicOrigin: identity.publicOrigin ?? oldConfig.publicOrigin
+    },
+    port,
+    listenHost,
+    viewerMode,
+    publicOrigin
+  });
   const productionDirectory = directory === path.resolve('/var/lib/tma-deploy/config');
-  const dbPath = path.resolve(databasePath ?? (productionDirectory ? '/var/lib/tma-analytics/analytics.db' : path.join(directory, 'analytics.db')));
-  const secretPath = path.resolve(hubSecretsPath ?? (productionDirectory ? '/var/lib/tma-analytics/hub-secrets.json' : path.join(directory, 'hub-secrets.json')));
+  const dbPath = resolveConfiguredPath(directory, databasePath ?? oldConfig.databasePath ?? (productionDirectory ? '/var/lib/tma-analytics/analytics.db' : path.join(directory, 'analytics.db')));
+  const secretPath = resolveConfiguredPath(directory, hubSecretsPath ?? oldConfig.hubSecretsPath ?? (productionDirectory ? '/var/lib/tma-analytics/hub-secrets.json' : path.join(directory, 'hub-secrets.json')));
   const oldEnv = existingEnvironment(file('analytics.env'));
   const basicEnv = Object.create(null);
+  const userEnv = typeof oldViewer.userEnv === 'string' ? oldViewer.userEnv : 'TMA_VIEWER_USER';
+  const passwordEnv = typeof oldViewer.passwordEnv === 'string' ? oldViewer.passwordEnv : 'TMA_VIEWER_PASSWORD';
   if (selected.mode === 'basic') {
-    basicEnv.TMA_VIEWER_USER = oldEnv.TMA_VIEWER_USER ?? 'viewer';
-    basicEnv.TMA_VIEWER_PASSWORD = oldEnv.TMA_VIEWER_PASSWORD ?? randomBytes(24).toString('hex');
+    basicEnv[userEnv] = oldEnv[userEnv] ?? 'viewer';
+    basicEnv[passwordEnv] = oldEnv[passwordEnv] ?? randomBytes(24).toString('hex');
   }
   const oldUpdate = oldConfig.update && typeof oldConfig.update === 'object' ? oldConfig.update : {};
   const updateConfig = update ?? {
     enabled: oldUpdate.enabled ?? true,
     repositoryUrl: oldUpdate.repositoryUrl ?? 'https://github.com/nuitsjp/token-monitor-analytics.git',
     branch: oldUpdate.branch ?? 'main',
-    checkIntervalSeconds: oldUpdate.checkIntervalSeconds ?? 300
+    checkIntervalSeconds: oldUpdate.checkIntervalSeconds ?? 300,
+    ...(oldUpdate.statePath === undefined ? {} : {statePath: oldUpdate.statePath}),
+    ...(oldUpdate.repoPath === undefined ? {} : {repoPath: oldUpdate.repoPath}),
+    ...(oldUpdate.publicationPath === undefined ? {} : {publicationPath: oldUpdate.publicationPath})
   };
   const config = {
     version: 2,
@@ -80,12 +118,15 @@ export function configureApplication({dir, identity = {}, port, listenHost, view
     timeZone: typeof oldConfig.timeZone === 'string' ? oldConfig.timeZone : 'Asia/Tokyo',
     detailRetentionDays: Number.isInteger(oldConfig.detailRetentionDays) ? oldConfig.detailRetentionDays : 7,
     hubSecretsPath: secretPath,
-    viewerAuth: selected.mode === 'basic' ? {mode: 'basic', userEnv: 'TMA_VIEWER_USER', passwordEnv: 'TMA_VIEWER_PASSWORD'} : {mode: selected.mode},
+    viewerAuth: selected.mode === 'basic' ? {mode: 'basic', userEnv, passwordEnv} : {mode: selected.mode},
     management: {enabled: management ?? oldConfig.management?.enabled ?? true},
     contracts: Array.isArray(oldConfig.contracts) ? oldConfig.contracts : [],
     update: updateConfig,
     demo: false
   };
+  // Validate the complete candidate with the same runtime parser used by the
+  // server before creating the DB/Secret or replacing any configuration.
+  validateBeforeWriting(directory, config, basicEnv);
   const connection = {
     version: 2,
     listen: config.listen,
@@ -108,4 +149,3 @@ export function configureApplication({dir, identity = {}, port, listenHost, view
   changed = writeChanged(file('connection.json'), json(connection), 0o600) || changed;
   return {ready: true, changed, publicOrigin: config.publicOrigin, listen: config.listen, viewerMode: selected.mode};
 }
-

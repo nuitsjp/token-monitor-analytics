@@ -37,15 +37,13 @@ run = ["mise run setup", "mise run check", "mise run integration"]
 
 [tasks."release:ubuntu:amd64"]
 description = "Validate and create the Ubuntu amd64 release archive and SHA-256"
-depends = ["release:verify"]
 dir = "{{config_root}}"
-run = "mise run package:ubuntu:amd64"
+run = ["mise run setup", "node tools/package-ubuntu.mjs amd64 --release", "node --experimental-strip-types tools/check-package.mjs amd64"]
 
 [tasks."release:ubuntu:arm64"]
 description = "Validate and create the Ubuntu arm64 release archive and SHA-256"
-depends = ["release:verify"]
 dir = "{{config_root}}"
-run = "mise run package:ubuntu:arm64"
+run = ["mise run setup", "node tools/package-ubuntu.mjs arm64 --release", "node --experimental-strip-types tools/check-package.mjs arm64"]
 
 [tasks."package:ubuntu:amd64"]
 description = "Package Ubuntu amd64 only (does not certify release checks)"
@@ -80,4 +78,3 @@ run = "node --experimental-strip-types tools/configure-ubuntu.mjs"
 description = "Read environment, single Analytics service and listener status"
 dir = "{{config_root}}"
 run = "node --experimental-strip-types tools/status-ubuntu.mjs"
-

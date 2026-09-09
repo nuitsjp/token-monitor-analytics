@@ -40,7 +40,18 @@ try {
   for (const route of ['/', '/app.js', '/styles.css', '/api/health', '/api/state']) {
     const response = await fetch(config.publicOrigin + route);
     assert.equal(response.status, 200, route);
-    await response.arrayBuffer();
+    if (route === '/api/health' || route === '/api/state') {
+      const body = await response.json();
+      assert.equal(body.release?.releaseId, checked.manifest.releaseId, `${route} release id`);
+      assert.equal(body.release?.targetCommitSha, checked.manifest.targetCommitSha, `${route} target SHA`);
+      assert.equal(body.release?.contentHash, checked.manifest.contentHash, `${route} content hash`);
+    } else await response.arrayBuffer();
+  }
+  if (fs.existsSync(path.join(temp, 'analytics/public/usage-history.mjs'))) {
+    const response = await fetch(config.publicOrigin + '/usage-history.mjs');
+    assert.equal(response.status, 200, '/usage-history.mjs');
+    assert.match(response.headers.get('content-type') ?? '', /javascript|ecmascript/i, 'history module MIME type');
+    assert.ok((await response.text()).includes('historyFetchErrorText'), 'history module content');
   }
   assert.ok(fs.existsSync(config.databasePath), 'Analytics must open a SQLite database from the extracted package');
   console.log(`PASS: ${architecture} checksum, manifest/content hash, package contents, extracted Analytics HTTP/SQLite`);
@@ -48,4 +59,3 @@ try {
   if (app) await app.close();
   if (checked.temporaryDirectory) fs.rmSync(temp, {recursive: true, force: true});
 }
-

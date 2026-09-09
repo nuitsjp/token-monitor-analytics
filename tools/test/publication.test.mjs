@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
+import net from 'node:net';
+import {pathToFileURL} from 'node:url';
+import {spawn,spawnSync} from 'node:child_process';
 import {configureApplication} from '../configure-application.mjs';
 import {readEnvironment,readJSON,selectConfiguration,validateConfiguration,writeChanged,treeDigest,readPublication,configurationId,withPublicationLock,assertOldLayout} from '../publish-config.mjs';
+import {createReleaseArtifact} from '../release.mjs';
+import {preparePublication,applyPublication} from '../publish-ubuntu.mjs';
 import {validateInfrastructure,unitDigest,appUnits,managedUnits,infrastructureVersion,configVersion,serviceContractVersion,runnerVersion} from '../ubuntu-layout.mjs';
 
 function fixture(t) {
@@ -49,6 +53,10 @@ test('configurationId excludes DB/Hub rows/Secret contents but includes startup 
   assert.notEqual(configurationId({config: {...config, databasePath: path.join(dir, 'other.db')}, serviceUnits: service}), base);
   assert.notEqual(configurationId({config: {...config, hubSecretsPath: path.join(dir, 'other-secret.json')}, serviceUnits: service}), base);
   assert.notEqual(configurationId({config, serviceUnits: [...service, 'new unit']}), base);
+  const basicConfig = {...config, viewerAuth: {mode: 'basic', userEnv: 'VIEWER_USER', passwordEnv: 'VIEWER_PASSWORD'}};
+  const basicEnvironment = {VIEWER_USER: 'viewer', VIEWER_PASSWORD: 'first-password-value'};
+  const basicId = configurationId({config: basicConfig, environment: basicEnvironment, serviceUnits: service});
+  assert.notEqual(configurationId({config: basicConfig, environment: {...basicEnvironment, VIEWER_PASSWORD: 'second-password-value'}, serviceUnits: service}), basicId);
 });
 
 test('environment parser preserves literals and rejects ambiguous syntax', t => {
@@ -69,6 +77,19 @@ test('publication lock uses the shared flock inode and releases after callback',
   });
   assert.equal(fs.existsSync(lock), true);
   assert.equal(spawnSync('/usr/bin/flock', ['-n', lock, '-c', 'true']).status, 0);
+});
+
+test('owner termination releases the shared flock without replacing its inode', async t => {
+  if (process.platform !== 'linux') { t.skip('Requires Ubuntu flock'); return; }
+  const dir = fixture(t), lock = path.join(dir, 'deploy.lock');
+  const script = `import {withPublicationLock} from ${JSON.stringify(path.resolve('tools/release.mjs'))}; await withPublicationLock(${JSON.stringify(lock)}, async () => { console.log('held'); await new Promise(() => {}); });`;
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {stdio: ['ignore', 'pipe', 'pipe']});
+  await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('error', reject); });
+  assert.equal(spawnSync('/usr/bin/flock', ['-n', lock, '-c', 'true']).status, 1);
+  child.kill('SIGKILL');
+  await new Promise(resolve => child.once('exit', resolve));
+  assert.equal(spawnSync('/usr/bin/flock', ['-n', lock, '-c', 'true']).status, 0);
+  assert.equal(fs.existsSync(lock), true);
 });
 
 test('old layout guard runs before publication and rejects Collector files', t => {
@@ -102,4 +123,81 @@ test('writeChanged preserves mtime for identical managed files', t => {
   const stamp = fs.statSync(file).mtimeMs;
   assert.equal(writeChanged(file, 'first'), false);
   assert.equal(fs.statSync(file).mtimeMs, stamp);
+});
+
+test('verified publication is idempotent and rechecks config before stop', async t => {
+  const dir = fixture(t);
+  configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}, port: 8788});
+  const sha = 'd'.repeat(40);
+  const artifact = createReleaseArtifact({root: path.resolve(new URL('../../', import.meta.url).pathname), architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
+  const current = path.join(dir, 'current'), publication = path.join(dir, 'publication.json');
+  let stopped = 0, started = 0;
+  const services = {stop: async () => { stopped++; }, start: async () => { started++; }, daemonReload() {}, installUnit() {}};
+  const options = {services, backup: async () => {}, healthCheck: async () => {}};
+  const prepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const first = await applyPublication(prepared, options);
+  assert.equal(first.changed, true); assert.equal(stopped, 1); assert.equal(started, 1);
+  services.isActive = () => true; services.isEnabled = () => true;
+  const secondPrepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const second = await applyPublication(secondPrepared, options);
+  assert.equal(second.changed, false); assert.equal(stopped, 1); assert.equal(started, 1);
+  const stalePrepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: path.join(dir, 'other-publication.json'), uid: undefined, services});
+  const config = readJSON(path.join(dir, 'analytics.json')); config.timeZone = 'UTC'; fs.writeFileSync(path.join(dir, 'analytics.json'), JSON.stringify(config, null, 2) + '\n');
+  await assert.rejects(() => applyPublication(stalePrepared, options), /changed during publication/);
+  assert.equal(stopped, 1);
+});
+
+test('publish verification reaches the extracted real HTTP/SSE/SQLite entrypoint', async t => {
+  const dir = fixture(t);
+  configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}});
+  const configFile = path.join(dir, 'analytics.json');
+  const reserve = net.createServer(); await new Promise((resolve, reject) => { reserve.once('error', reject); reserve.listen(0, '127.0.0.1', resolve); }); const port = reserve.address().port; await new Promise(resolve => reserve.close(resolve));
+  const config = readJSON(configFile); config.listen.port = port; config.publicOrigin = `http://127.0.0.1:${port}`; fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n', {mode: 0o600});
+  const sha = 'e'.repeat(40);
+  const root = path.resolve(new URL('../../', import.meta.url).pathname);
+  const artifact = createReleaseArtifact({root, architecture: 'amd64', outputDir: dir, targetCommitSha: sha, certified: true, verification: {level: 'release', checks: ['fixture']}});
+  const current = path.join(dir, 'current'), publication = path.join(dir, 'publication.json');
+  let app = null, active = false;
+  t.after(async () => { if (app) await app.close(); });
+  const services = {
+    isActive: () => active,
+    isEnabled: () => active,
+    stop: async () => { if (app) { await app.close(); app = null; } active = false; },
+    start: async () => {
+      const runtime = await import(pathToFileURL(path.join(current, 'analytics/runtime/config.mjs')).href);
+      const server = await import(pathToFileURL(path.join(current, 'analytics/runtime/server.mjs')).href);
+      app = await server.startServer(runtime.loadConfig(configFile), {logger: {info() {}, error: console.error}});
+      active = true;
+    },
+    daemonReload() {}, installUnit() {}
+  };
+  const prepared = await preparePublication({artifactPath: artifact.archivePath, checksumPath: artifact.checksumPath, targetCommitSha: sha, configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const result = await applyPublication(prepared, {services, backup: async () => {}});
+  assert.equal(result.changed, true);
+  const state = await (await fetch(config.publicOrigin + '/api/state')).json();
+  assert.equal(state.release.targetCommitSha, sha);
+  assert.equal(state.storage, 'sqlite');
+});
+
+test('same payload with a new target SHA keeps the running release identity', async t => {
+  const dir = fixture(t);
+  configureApplication({dir, identity: {listenHost: '127.0.0.1', viewerMode: 'loopback'}, port: 8788});
+  const root = path.resolve(new URL('../../', import.meta.url).pathname);
+  const first = createReleaseArtifact({root, architecture: 'amd64', outputDir: path.join(dir, 'first'), targetCommitSha: '1'.repeat(40), certified: true, verification: {level: 'release', checks: ['fixture']}});
+  const second = createReleaseArtifact({root, architecture: 'amd64', outputDir: path.join(dir, 'second'), targetCommitSha: '2'.repeat(40), certified: true, verification: {level: 'release', checks: ['fixture']}});
+  const current = path.join(dir, 'current'), publication = path.join(dir, 'publication.json');
+  let active = false, stopped = 0, started = 0, expected;
+  const services = {isActive: () => active, isEnabled: () => active, stop: async () => { stopped++; active = false; }, start: async () => { started++; active = true; }, daemonReload() {}, installUnit() {}};
+  const options = {services, backup: async () => {}, healthCheck: async (_config, details) => { expected = details.expectedRelease; }};
+  const firstPrepared = await preparePublication({artifactPath: first.archivePath, checksumPath: first.checksumPath, targetCommitSha: '1'.repeat(40), configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  await applyPublication(firstPrepared, options);
+  const secondPrepared = await preparePublication({artifactPath: second.archivePath, checksumPath: second.checksumPath, targetCommitSha: '2'.repeat(40), configDir: dir, current, publicationPath: publication, uid: undefined, services});
+  const result = await applyPublication(secondPrepared, options);
+  assert.equal(result.changed, false);
+  assert.equal(stopped, 1);
+  assert.equal(started, 1);
+  assert.equal(result.publication.targetCommitSha, '1'.repeat(40));
+  assert.equal(result.requestedManifest.targetCommitSha, '2'.repeat(40));
+  assert.equal(expected.targetCommitSha, '1'.repeat(40));
+  assert.equal(result.proof.commitSha, '1'.repeat(40));
 });
