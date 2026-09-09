@@ -482,15 +482,15 @@ async function stopProcessByPid(pid, label) {
 
 function windowsDatabaseProbe(databasePath) {
   if (!databasePath || !fs.existsSync(databasePath)) return true;
-  const probe = `${databasePath}.migration-probe-${process.pid}`;
-  try {
-    fs.renameSync(databasePath, probe);
-    fs.renameSync(probe, databasePath);
-    return true;
-  } catch (error) {
-    try { if (fs.existsSync(probe) && !fs.existsSync(databasePath)) fs.renameSync(probe, databasePath); } catch {}
-    throw errorWithCode('A Windows process still has the legacy database open', 'database_writer_still_running', {cause: error});
-  } finally { fs.rmSync(probe, {force: true}); }
+  // Probe exclusive access without renaming or deleting the live database.
+  // A failed reverse rename must never strand or remove the only DB copy.
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "$deadline=[DateTime]::UtcNow.AddSeconds(10)",
+    "while($true){$handles=@();try{foreach($suffix in @('','-wal','-shm')){$file=$env:TMA_MIGRATION_PATH+$suffix;if([IO.File]::Exists($file)){$handles+= [IO.File]::Open($file,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}};break}catch{if([DateTime]::UtcNow -ge $deadline){throw};Start-Sleep -Milliseconds 100}finally{foreach($handle in $handles){$handle.Dispose()}}}",
+  ].join(';');
+  try { runWindowsPowerShell(script, {TMA_MIGRATION_PATH: databasePath}); return true; }
+  catch (error) { throw errorWithCode('Cannot prove exclusive access to the Windows legacy database', 'database_writer_still_running', {cause: error}); }
 }
 
 function parseEnvironmentFile(filename, label = 'Environment') {

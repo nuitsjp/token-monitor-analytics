@@ -231,6 +231,7 @@ test('Windows direct CLI migration and rollback restore the old process and data
     // The explicit manifest is consumed by this acceptance test to locate
     // the real old server. The CLI itself uses the pinned object in --repository;
     // never let this test's opt-in variable recursively enter release checks.
+    delete environmentForChild.NODE_TEST_CONTEXT;
     delete environmentForChild.TMA_MIGRATION_REAL;
     delete environmentForChild.TMA_MIGRATION_LEGACY_SOURCE_MANIFEST;
     delete environmentForChild.TMA_MIGRATION_WINDOWS_SERVICES;
