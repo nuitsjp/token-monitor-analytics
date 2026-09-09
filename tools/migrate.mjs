@@ -979,8 +979,26 @@ function sourceManifest(sources) {
       if (error?.code === 'ENOENT') return {...source, exists: false};
       throw error;
     }
-    return {...source, exists: true, type: stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : stat.isSymbolicLink() ? 'symlink' : 'other', size: stat.size, mode: stat.mode & 0o777, digest: stat.isFile() ? fileSha256(source.path) : null};
+    const type = stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : stat.isSymbolicLink() ? 'symlink' : 'other';
+    return {
+      ...source,
+      exists: true,
+      type,
+      size: stat.size,
+      mode: stat.mode & 0o777,
+      ...(type === 'symlink' ? {link: fs.readlinkSync(source.path), uid: stat.uid, gid: stat.gid} : {}),
+      digest: stat.isFile() ? fileSha256(source.path) : null,
+    };
   });
+}
+
+function removedServiceEnablementLink(source) {
+  return source?.key?.startsWith('legacy-service-')
+    && source.type === 'symlink'
+    && typeof source.link === 'string'
+    && Number.isInteger(source.uid)
+    && Number.isInteger(source.gid)
+    && /\.target\.wants$/.test(path.basename(path.dirname(source.path)));
 }
 
 export function inventoryLegacyLayout({legacy, options = {}, inspection, home = null} = {}) {
@@ -1535,14 +1553,29 @@ export function backupProtectedLayout({backupDir, sources, state} = {}) {
     for (const source of sources) {
       if (!source.exists) { entries.push({...source, backedUp: false}); continue; }
       const target = path.join(temporary, source.key);
-      const sourceStat = fs.lstatSync(source.path);
-      const sourceAclTree = process.platform === 'win32' && !sourceStat.isSymbolicLink() ? captureWindowsAclTree(source.path) : null;
-      const copied = copyEntry(source.path, target, null, null, '', {
-        privateDestination: process.platform === 'win32',
-        sourceAclTree,
-      });
+      let sourceStat;
+      let copied;
+      try {
+        sourceStat = fs.lstatSync(source.path);
+        const sourceAclTree = process.platform === 'win32' && !sourceStat.isSymbolicLink() ? captureWindowsAclTree(source.path) : null;
+        copied = copyEntry(source.path, target, null, null, '', {
+          privateDestination: process.platform === 'win32',
+          sourceAclTree,
+        });
+      } catch (error) {
+        // `systemctl disable` removes enabled target.wants symlinks. Their
+        // metadata was captured before the stop/inhibit handoff, so preserve
+        // the exact link in the protected backup instead of treating the
+        // expected disappearance as an incomplete legacy layout. All other
+        // paths must still be present; silently omitting one would make
+        // rollback incomplete.
+        if (error?.code !== 'ENOENT' || !removedServiceEnablementLink(source)) throw error;
+        fs.symlinkSync(source.link, target);
+        const sourceMetadata = {uid: source.uid, gid: source.gid, mode: source.mode, acl: null};
+        copied = {type: 'symlink', target: source.link, metadata: sourceMetadata, metadataTree: {'': sourceMetadata}};
+      }
       const {metadataTree, ...copiedSummary} = copied;
-      entries.push({...source, backedUp: true, copied: copiedSummary, sourceMetadata: copied.metadata, sourceMetadataTree: metadataTree, backupKey: source.key});
+      entries.push({...source, backedUp: true, ...(sourceStat ? {} : {snapshotAfterInhibit: true}), copied: copiedSummary, sourceMetadata: copied.metadata, sourceMetadataTree: metadataTree, backupKey: source.key});
     }
     const manifest = {schemaVersion: 1, createdAt: new Date().toISOString(), phase: state?.phase ?? 'stop', oldCommitSha: state?.oldCommitSha ?? null, entries};
     const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
