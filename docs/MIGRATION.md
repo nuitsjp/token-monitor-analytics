@@ -25,6 +25,8 @@ Windowsではさらに`--windows-install-dir`で新Nodeアプリの配置先を�
 検証済みartifactをその場所へ原子的に配置し、実際の`analytics/runtime/server.mjs`を起動して
 health/state/SSEとrelease SHAを確認します。復旧時は`--restore --analytics-pid <PID>
 --legacy-command <旧起動コマンド>`（必要なら`--legacy-args` JSON配列）を指定します。
+旧起動コマンドは復元された設定のloopback listenerで`GET /api/health`を提供する必要があり、
+CLIはその応答と起動PIDが生きていることを確認してから復旧完了を保存します。
 WindowsのPID停止・DB/WAL/SHMの排他アクセス検査・新アプリ起動証明が通らない限りcompleteへ進みません。
 保存済みの新Analytics PIDを自動停止するときは、実行ファイル・配置先・設定ファイルの
 プロセス情報を照合し、PID再利用や別プロセスの場合は停止せず中断します。
