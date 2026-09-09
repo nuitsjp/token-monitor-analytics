@@ -43,8 +43,10 @@ function assertPrivateSecretAcl(filename) {
   // assertion independent of the localized account names: exactly the
   // creating account, LocalSystem, and local Administrators may have full
   // control, with no inherited ACEs.
+  const sddlScript = '$ErrorActionPreference="Stop"; $securityModule=Join-Path $PSHOME "Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1"; Import-Module -Name $securityModule -Force; $acl=Get-Acl -LiteralPath $env:TMA_ACL_PATH; $acl.Sddl';
+  const sddlEncoded = Buffer.from(sddlScript, 'utf16le').toString('base64');
   const sddlResult = spawnSync('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-Command', '$acl=Get-Acl -LiteralPath $env:TMA_ACL_PATH; $acl.Sddl'
+    '-NoProfile', '-NonInteractive', '-EncodedCommand', sddlEncoded
   ], {encoding: 'utf8', env: {...process.env, TMA_ACL_PATH: filename}});
   assert.equal(sddlResult.status, 0, sddlResult.stderr || 'PowerShell Get-Acl failed');
   const sddl = sddlResult.stdout.trim();

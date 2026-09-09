@@ -12,6 +12,8 @@ function windowsPrivateAcl(filename) {
   // Users entries behind, so it cannot establish the private-file invariant.
   const script = [
     '$ErrorActionPreference = "Stop"',
+    '$securityModule = Join-Path $PSHOME "Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1"',
+    'Import-Module -Name $securityModule -Force',
     '$path = $env:TMA_PRIVATE_PATH',
     '$acl = Get-Acl -LiteralPath $path',
     '$acl.SetAccessRuleProtection($true, $false)',
