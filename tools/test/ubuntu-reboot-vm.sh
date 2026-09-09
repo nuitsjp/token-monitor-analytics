@@ -36,12 +36,14 @@ if [[ -z "$source_dir" || -z "$node_bin" || -z "$artifact_dir" || -z "$image_url
 fi
 source_dir=$(cd "$source_dir" && pwd)
 node_bin=$(readlink -f "$node_bin")
+node_root=$(cd "$(dirname "$node_bin")/.." && pwd)
 [[ -d "$source_dir/.git" ]] || { echo "source directory must be a clean Git checkout" >&2; exit 2; }
 [[ -x "$node_bin" ]] || { echo "fixed Node binary is not executable: $node_bin" >&2; exit 2; }
+[[ -x "$node_root/bin/npm" ]] || { echo "fixed Node installation must include npm: $node_root" >&2; exit 2; }
 git -C "$source_dir" diff --exit-code
 git -C "$source_dir" diff --cached --exit-code
 
-for command in curl cloud-localds qemu-img qemu-system-x86_64 ssh scp ssh-keygen git sha256sum python3; do
+for command in curl cloud-localds qemu-img qemu-system-x86_64 ssh scp ssh-keygen git sha256sum python3 tar timeout; do
   command -v "$command" >/dev/null || { echo "missing host command: $command" >&2; exit 2; }
 done
 
@@ -67,6 +69,7 @@ overlay_image="$work_dir/guest.qcow2"
 seed_image="$work_dir/seed.img"
 ssh_key="$work_dir/id_ed25519"
 bundle="$work_dir/source.bundle"
+node_runtime_archive="$work_dir/node-runtime.tar.gz"
 
 echo "Downloading pinned Ubuntu image: $image_url"
 curl --fail --location --retry 3 --output "$base_image" "$image_url"
@@ -102,13 +105,13 @@ print(s.getsockname()[1])
 s.close()
 PY
 )
-ssh_opts=(-i "$ssh_key" -p "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5)
-guest() { ssh "${ssh_opts[@]}" "tma@127.0.0.1" "$@"; }
-guest_copy() { scp "${ssh_opts[@]}" "$@"; }
+ssh_opts=(-i "$ssh_key" -p "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=6)
+scp_opts=(-i "$ssh_key" -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=6)
+guest() { timeout --foreground 900s ssh "${ssh_opts[@]}" "tma@127.0.0.1" "$@"; }
+guest_copy() { timeout --foreground 300s scp "${scp_opts[@]}" "$@"; }
 
 qemu-system-x86_64 \
-  -accel kvm:tcg \
-  -machine q35 \
+  -machine q35,accel=tcg \
   -m 2048 \
   -smp 2 \
   -display none \
@@ -134,25 +137,30 @@ done
 echo 'Installing guest prerequisites and transferring the clean checkout'
 guest 'sudo env DEBIAN_FRONTEND=noninteractive apt-get update && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git tar'
 git -C "$source_dir" bundle create "$bundle" HEAD
+tar -C "$node_root" -czf "$node_runtime_archive" .
 guest_copy "$bundle" "tma@127.0.0.1:/tmp/tma-source.bundle"
-guest_copy "$node_bin" "tma@127.0.0.1:/tmp/tma-node"
+guest_copy "$node_runtime_archive" "tma@127.0.0.1:/tmp/tma-node-runtime.tar.gz"
 guest <<'EOF'
 set -Eeuo pipefail
-sudo install -o tma -g tma -m 0755 /tmp/tma-node /home/tma/node
+rm -rf /home/tma/node-runtime
+mkdir -m 0755 /home/tma/node-runtime
+tar -xzf /tmp/tma-node-runtime.tar.gz -C /home/tma/node-runtime
+chmod 0755 /home/tma/node-runtime/bin/node
 rm -rf /home/tma/repo
 git clone --quiet /tmp/tma-source.bundle /home/tma/repo
 sudo chown -R tma:tma /home/tma/repo
-rm -f /tmp/tma-node /tmp/tma-source.bundle
+rm -f /tmp/tma-node-runtime.tar.gz /tmp/tma-source.bundle
 EOF
 
 echo 'Provisioning the isolated guest and publishing the native user service'
 guest <<'EOF'
 set -Eeuo pipefail
+export PATH=/home/tma/node-runtime/bin:$PATH
 cd /home/tma/repo
-sudo env TMA_DEPLOY_USER=tma /home/tma/node --experimental-strip-types tools/provision-ubuntu.mjs --apply --user tma
-/home/tma/node --experimental-strip-types tools/configure-ubuntu.mjs --port 18787 --listen-host 127.0.0.1 --viewer-mode loopback --public-origin http://127.0.0.1:18787
+sudo env TMA_DEPLOY_USER=tma /home/tma/node-runtime/bin/node --experimental-strip-types tools/provision-ubuntu.mjs --apply --user tma
+/home/tma/node-runtime/bin/node --experimental-strip-types tools/configure-ubuntu.mjs --port 18787 --listen-host 127.0.0.1 --viewer-mode loopback --public-origin http://127.0.0.1:18787
 sha=$(git rev-parse HEAD)
-/home/tma/node --experimental-strip-types tools/publish-ubuntu.mjs --apply --architecture amd64 --target-sha "$sha"
+/home/tma/node-runtime/bin/node --experimental-strip-types tools/publish-ubuntu.mjs --apply --architecture amd64 --target-sha "$sha"
 systemctl --user is-enabled tma-analytics.service
 systemctl --user is-active tma-analytics.service
 if systemctl --user is-enabled --quiet tma-update.service; then
