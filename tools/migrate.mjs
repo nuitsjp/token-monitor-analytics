@@ -857,7 +857,7 @@ function defaultPlatform(options) {
           }
           const result = await stopProcessByPid(Number(pid), 'Analytics');
           const installDir = state?.published?.installDir ?? state?.windowsProcess?.installDir;
-          if (installDir && fs.existsSync(installDir)) fs.rmSync(installDir, {recursive: true, force: true});
+          if (installDir && fs.existsSync(installDir)) await fs.promises.rm(installDir, {recursive: true, force: true, maxRetries: 20, retryDelay: 50});
           return result;
         }
         throw errorWithCode('Windows restore requires the new Analytics PID', 'windows_stop_verification_required');
