@@ -285,6 +285,7 @@ for attempt in $(seq 1 300); do
   if grep -q '"status": "completed"' /var/lib/tma-deploy/update-state.json; then break; fi
   if grep -q '"status": "failed"\|"status": "aborted"' /var/lib/tma-deploy/update-state.json; then
     cat /var/lib/tma-deploy/update-state.json >&2
+    journalctl --user -u tma-update.service --no-pager -n 250 >&2 || true
     exit 1
   fi
   if ((attempt == 300)); then echo 'Timed out waiting for the isolated update oneshot' >&2; cat /var/lib/tma-deploy/update-state.json >&2; exit 1; fi
