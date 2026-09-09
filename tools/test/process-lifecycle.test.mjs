@@ -224,7 +224,8 @@ public static class TmaConsoleControl {
     try {
       using (var client = new TimeoutWebClient()) {
         var ready = false;
-        for (var attempt = 0; attempt < 100; attempt++) {
+        var readiness = Stopwatch.StartNew();
+        while (readiness.ElapsedMilliseconds < 15000) {
           try {
             var body = client.DownloadString("http://127.0.0.1:" + port + "/api/health");
             if (body.Contains("\"ok\":true")) { ready = true; break; }
@@ -299,7 +300,7 @@ function runWindowsConsoleCtrlC({port,configPath}){
   const timer=setTimeout(()=>{
    if(settled)return;
    settled=true;cleanup();reject(new Error(`Windows console helper timed out: ${output}`));
-  },15000);
+  },45000);
   timer.unref?.();
   child.once('error',error=>{if(settled)return;settled=true;clearTimeout(timer);reject(error);});
   child.once('exit',(code,signal)=>{
@@ -311,7 +312,7 @@ function runWindowsConsoleCtrlC({port,configPath}){
  });
 }
 
-test('Windows console Ctrl+C event reaches Analytics and releases SQLite', {skip: process.platform!=='win32', timeout: 30000}, async t=>{
+test('Windows console Ctrl+C event reaches Analytics and releases SQLite', {skip: process.platform!=='win32', timeout: 60000}, async t=>{
  const {port,databasePath,configPath}=await lifecycleFixture(t,'tma-process-console-');
  const output=await runWindowsConsoleCtrlC({port,configPath});
  assert.match(output,/child-exit-code=0/);

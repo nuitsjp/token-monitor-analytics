@@ -2,11 +2,18 @@ name: migration-real-acceptance
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/migration-real.yml'
+      - 'tools/migrate.mjs'
+      - 'tools/migration-source.mjs'
+      - 'tools/test/migrat*.test.mjs'
+      - 'analytics/migrations/**'
 
 permissions:
   contents: read
 
-# This workflow is deliberately dispatch-only. It prepares the pinned legacy
+# This dedicated workflow prepares the pinned legacy
 # source in the job workspace before enabling the opt-in tests; the ordinary
 # release gate never fetches or depends on old Git objects.
 jobs:
@@ -29,7 +36,7 @@ jobs:
       - name: Use the fixed Node runtime
         uses: actions/setup-node@v4
         with:
-          node-version: '22.16.0'
+          node-version: '24.20.0'
       - name: Prepare the pinned legacy source archive
         shell: bash
         run: |
