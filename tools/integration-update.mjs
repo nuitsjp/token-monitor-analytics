@@ -470,17 +470,48 @@ async function runRealPublicationFixture() {
   const stillCurrent = await (await fetch(`${origin}/api/health`)).json(); assert.equal(stillCurrent.release.targetCommitSha, fixture.firstSha);
   console.log('PASS: identical payload on a newer SHA completed as unchanged without a restart or false SHA claim');
 
+  const afterNoOpFetchId = readFixtureDatabase(databasePath, db => Number(db.prepare("SELECT last_attempt_fetch_id FROM usage_fetches WHERE hub_id='hub-update'").get().last_attempt_fetch_id));
+  const stoppedPid = Number(fs.readFileSync(pidFile, 'utf8'));
+  await stopFixturePid(pidFile);
+  assert.equal(fs.existsSync(pidFile), false, 'Analytics pid file must be removed before the simulated day advances');
+  await waitFor(() => {
+    try { process.kill(stoppedPid, 0); return false; } catch { return true; }
+  }, 'Analytics process exit before UTC day advance', 10000);
+  console.log('PASS: stopped the Analytics process before advancing the simulated Hub day');
+
   hubClock = secondClockDate.getTime();
   realHub.setDeviceHistory('fixture-device', secondHistory, {updatedAt: secondClockIso, periodWindows: secondPeriodWindows});
-  const afterNoOpFetchId = readFixtureDatabase(databasePath, db => Number(db.prepare("SELECT last_attempt_fetch_id FROM usage_fetches WHERE hub_id='hub-update'").get().last_attempt_fetch_id));
+  runningChild = await startFixtureApp({currentLink, configPath, pidFile, appScript, runnerScript, repositoryPath: fixture.bare, updatePidFile, runnerModule: path.join(root, 'tools', 'update-runner.mjs'), runnerContext: runnerContextPath});
+  await until(async () => (await (await fetch(`${origin}/api/health`)).json()).ok, 'Analytics health after stopped UTC day advance');
+  await readReadySSE(origin);
   await waitFor(() => readFixtureDatabase(databasePath, db => {
     const row = db.prepare("SELECT latest_success_fetch_id,last_status FROM usage_fetches WHERE hub_id='hub-update'").get();
     return Number(row?.latest_success_fetch_id) > afterNoOpFetchId && row?.last_status === 'success';
   }), 'Hub history fetch after UTC day advance');
-  const nextDayResponse = await fetch(`${origin}/api/usage-history?hubId=hub-update&deviceId=fixture-device&granularity=daily&from=${secondDay}&to=${secondDay}`);
-  assert.equal(nextDayResponse.status, 200);
-  assert.equal((await nextDayResponse.json()).rows[0].tokens, 48);
-  console.log('PASS: Hub revision and UTC day advance refetched retained history with the new day window');
+  const dailyResponse = await fetch(`${origin}/api/usage-history?hubId=hub-update&deviceId=fixture-device&granularity=daily&from=${firstDay}&to=${secondDay}`);
+  assert.equal(dailyResponse.status, 200);
+  const dailyBody = await dailyResponse.json();
+  assert.deepEqual(dailyBody.rows.map(row => [row.periodKey, row.tokens]), [[firstDay, 24], [secondDay, 48]]);
+  assert.equal(new Set(dailyBody.rows.map(row => row.periodKey)).size, 2, 'daily history must not duplicate a period when the app was stopped');
+  assert.equal(dailyBody.rows[0].current, false, 'the retained first day must remain visibly older than the replacement fetch');
+  assert.equal(dailyBody.rows[1].current, true, 'the restarted app must mark the new day as current');
+
+  const monthlyFrom = firstDay.slice(0, 7);
+  const monthlyTo = secondDay.slice(0, 7);
+  const monthlyResponse = await fetch(`${origin}/api/usage-history?hubId=hub-update&deviceId=fixture-device&granularity=monthly&from=${monthlyFrom}&to=${monthlyTo}`);
+  assert.equal(monthlyResponse.status, 200);
+  const monthlyBody = await monthlyResponse.json();
+  const expectedMonthly = monthlyFrom === monthlyTo
+    ? [[monthlyFrom, 48]]
+    : [[monthlyFrom, 24], [monthlyTo, 48]];
+  assert.deepEqual(monthlyBody.rows.map(row => [row.periodKey, row.tokens]), expectedMonthly);
+  assert.equal(new Set(monthlyBody.rows.map(row => row.periodKey)).size, monthlyBody.rows.length, 'monthly history must not duplicate a period when the app was stopped');
+
+  const stateAfterRestart = await (await fetch(`${origin}/api/state`)).json();
+  assert.equal(stateAfterRestart.estimates.length, 0, 'history fetch must not generate contract estimates');
+  assert.ok(stateAfterRestart.hubs.some(hub => hub.stats?.limits?.providers?.length > 0), 'live limit observations must remain sourced from SSE after the history fetch');
+  assert.equal(readFixtureDatabase(databasePath, db => Number(db.prepare('SELECT count(*) AS total FROM daily_estimates').get().total)), 0, 'history rows must not be persisted as estimated observations');
+  console.log('PASS: stopped-day restart retained both daily rows, replaced monthly rows without double counting, and kept live limits/estimates separate');
 }
 
 async function main() {
