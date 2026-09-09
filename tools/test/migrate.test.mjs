@@ -212,6 +212,7 @@ test('migration drains pinned legacy outbox, archives IDs without active URL/Sec
   const before = fs.readFileSync(f.options.statePath);
   const second = await runMigration(f.options);
   assert.equal(second.alreadyComplete, true);
+  await assert.rejects(() => runMigration({...f.options, targetCommitSha: 'f'.repeat(40)}), error => error.code === 'state_revision_mismatch');
   assert.deepEqual(fs.readFileSync(f.options.statePath), before);
 });
 

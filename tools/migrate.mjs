@@ -1459,6 +1459,7 @@ async function prepareContext(options) {
   const statePath = absolute(options.statePath ?? path.join(process.cwd(), 'migration-state.json'));
   const state = loadMigrationState(statePath);
   if (state?.phase === 'complete') {
+    if (state.oldCommitSha !== oldCommitSha || state.targetCommitSha !== targetCommitSha) throw errorWithCode('Migration state belongs to a different pinned revision', 'state_revision_mismatch');
     if (state.status === 'restored') throw errorWithCode('Migration state was restored; start a new migration state explicitly', 'migration_state_restored');
     return {options, oldCommitSha, targetCommitSha, state, completed: true, statePath};
   }
