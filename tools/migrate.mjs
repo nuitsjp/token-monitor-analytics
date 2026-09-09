@@ -80,7 +80,9 @@ function fileSha256(filename) {
 
 function syncFileAndParent(filename) {
   const target = absolute(filename);
-  const fd = fs.openSync(target, 'r');
+  // Windows FlushFileBuffers requires a writable handle, even when the
+  // caller only needs to flush bytes that have already been copied.
+  const fd = fs.openSync(target, process.platform === 'win32' ? 'r+' : 'r');
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   try {
     const parent = fs.openSync(path.dirname(target), 'r');
