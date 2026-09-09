@@ -96,8 +96,8 @@ function defaultHistory(ms) {
 
 function defaultDevice(ms, history = defaultHistory(ms)) {
   const at = iso(ms);
-  const monthly = history.monthly?.find(row => row.month === monthKey(ms));
-  const summary = history.summary ?? {};
+  const monthly = history?.monthly?.find(row => row.month === monthKey(ms));
+  const summary = history?.summary ?? {};
   return {
     deviceId: 'demo-pc',
     hostname: 'demo-pc',
