@@ -110,8 +110,11 @@ scp_opts=(-i "$ssh_key" -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o
 guest() { timeout --foreground 900s ssh "${ssh_opts[@]}" "tma@127.0.0.1" "$@"; }
 guest_copy() { timeout --foreground 300s scp "${scp_opts[@]}" "$@"; }
 
+# QEMU selects KVM when the hosted runner exposes it and falls back to the
+# software accelerator in the same isolated invocation. The comma form is a
+# machine property; `-accel kvm:tcg` is not a valid equivalent.
 qemu-system-x86_64 \
-  -machine q35,accel=tcg \
+  -machine q35,accel=kvm:tcg \
   -m 2048 \
   -smp 2 \
   -display none \

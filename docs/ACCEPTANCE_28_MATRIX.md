@@ -41,10 +41,10 @@ relative to the repository root.
 | 6 | `analytics/test/history.test.mjs` covers revisions, dirty coalescing, fetch bounds, replacement, min interval, and races | COVERED | Keep the post-#27 schema/source revision proof and show a manual-fetch trigger cannot invent a matching revision, then attach its final-SHA log. |
 | 7 | `analytics/test/history.test.mjs` covers deletion/disabled/null/missing capability, malformed/permanent errors, size limit, and retained rows; `analytics/src/history.ts` bounds devices/rows/maps | PARTIAL | Add explicit correction/timezone/zero/unknown/unsupported/huge fixtures at the final API boundary and check complete totals have no duplicate rows. |
 | 8 | History replacement and daily/monthly aggregation tests exist in `analytics/test/history.test.mjs` and `tools/test/mockhub.test.mjs` | PARTIAL | Process-level stopped-crossing-day fixture must prove no duplicate daily/monthly rows and that history queries do not affect live limits/evaluation. |
-| 9 | `analytics/test/history.test.mjs` checks the 16 MiB body limit; the performance preflight records the preliminary SQLite cost; `analytics/runtime/server.mjs` has bounded close logic | GAP | Measure accepted near-16 MiB and rejected over-16 MiB HTTP bodies, save latency while `/api/health` and `/api/state` are requested, and `app.close()` with in-flight requests. Publish practical thresholds and raw JSON timings. |
+| 9 | `analytics/test/history.test.mjs` checks the 16 MiB body limit; `tools/test/history-performance.test.mjs` provides an opt-in near/over-limit HTTP, SQLite, concurrent-health, and in-flight-close measurement; `analytics/runtime/server.mjs` has bounded close logic | COVERED / final run required | Execute `TMA_RUN_HISTORY_PERFORMANCE=1 node --experimental-strip-types --test tools/test/history-performance.test.mjs` on the final SHA, retain its JSON artifact, and compare the measured transaction/latency/close values with the bounded thresholds in the test. |
 | 10 | `tools/test/reset-hubs.test.mjs` covers drain retention until all events are acknowledged; backup logic is covered by `analytics/test/native.test.mjs` | GAP / #27 | Run the final reset/migration fixture only after #27 lands: interrupted/unknown/corrupt ACKs, rerun, backup restore, and a readable reset history DB with zero registered Hubs. Do not run the unsafe pre-eec integration. |
 | 11 | `.mise.toml` defines analytics tests, publication tests, typecheck, three integrations, and amd64/arm64 package checks; prior logs include `update-safe-review.log`, `publication-review.log`, and `tools-baseline.log` | PARTIAL | Regenerate one final command bundle after #27/#28: `npm --prefix analytics test`, `npm --prefix analytics run typecheck`, all `tools/test`, all three integrations, and both package checks. Attach Linux and Windows logs, and run Go checks only while the transitional tree still exists. |
-| 12 | Path/BOM/spaces tests are in `analytics/test/native.test.mjs`; Linux flock and Windows fallback lock tests are in `tools/test/publication.test.mjs`; user-systemd test is in `tools/test/user-service.test.mjs`; Tailscale contract tests are in `analytics/test/tailnet.test.mjs` and `tools/test/updater-provision.test.mjs` | PARTIAL / GAP | Windows: execute path-with-spaces, Ctrl+C, replacement while a reader holds the file, concurrent lock, and exact ACL tests. Ubuntu: use an isolated guest for user service, reboot/autostart, one-shot update, and approved Tailscale bind; no host reboot. |
+| 12 | Path/BOM/spaces tests are in `analytics/test/native.test.mjs`; `tools/test/process-lifecycle.test.mjs` checks the bounded native Ctrl+C shutdown contract; Linux flock and Windows fallback lock tests are in `tools/test/publication.test.mjs`; user-systemd test is in `tools/test/user-service.test.mjs`; Tailscale contract tests are in `analytics/test/tailnet.test.mjs` and `tools/test/updater-provision.test.mjs` | PARTIAL / GAP | Windows: execute path-with-spaces, Ctrl+C, replacement while a reader holds the file, concurrent lock, and exact ACL tests. The Node Windows signal API is forceful, so the lifecycle test proves prompt listener/SQLite release while a real console Ctrl+C run remains OS evidence. Ubuntu: use an isolated guest for user service, reboot/autostart, one-shot update, and approved Tailscale bind; no host reboot. |
 | 13 | `analytics/test/native.test.mjs` checks no old ingest/status endpoint; package allowlist excludes Collector; auth and secret tests check separation; release tests check old layout and config IDs | PARTIAL | Final grep/package/static/log scan must prove secrets never enter DB/API/log/static/package, no double listener or old route exists, and configuration polling is not restored. |
 | 14 | `tools/test/update-runner.test.mjs` covers candidate SHA, restart, job identity and terminal stages; `analytics/test/update*.test.mjs` covers management state and same-content no-op; `tools/integration-update.mjs` supplies the mock remote | PARTIAL / #26 | Run with the final #27 runner/app closure: candidate→SHA verification, same job ID across restart, app-stopped runner, SSE/history resume, and actual user-service invocation. The current Windows integration null-`targetCommitSha` failure belongs to #26. |
 | 15 | `tools/test/update-runner.test.mjs` covers preflight-before-stop, branch move, post-start proof failure, killed runner, lock, and state reconciliation; `analytics/test/update-restart.test.mjs` covers terminal health failure and no-op | PARTIAL | Add process evidence for startup failure, runner kill, terminal state persistence, health race, fixed SHA, and CLI/Web lock while the real app is stopped. |
@@ -56,7 +56,7 @@ relative to the repository root.
 
 | #28 gate | Required evidence | Current result |
 | --- | --- | --- |
-| Windows native behavior | GitHub Actions Windows job with checkout path `workspace with spaces`; path/BOM, Ctrl+C, file lock/replacement, and exact ACL results | Path/BOM and most native tests reached the job. The ACL and fixed-Node fixes are in this branch; Windows execution is still required. Ctrl+C and a held-reader replacement test are still gaps. |
+| Windows native behavior | GitHub Actions Windows job with checkout path `workspace with spaces`; path/BOM, lifecycle, file lock/replacement, and exact ACL results | Path/BOM and most native tests reached the job. The ACL and fixed-Node fixes are in this branch; Windows execution is still required. The lifecycle test covers the bounded signal path, while a real console Ctrl+C and a held-reader replacement result remain OS evidence to retain. |
 | Ubuntu service/autostart | Isolated Ubuntu 24.04 guest: `systemctl --user is-enabled/active`, health, user service restart, guest reboot, post-boot health and enabled state | Not run. The host has active old production services and no sudo permission. |
 | Tailscale boundary | Approved isolated environment with a real CGN Tailscale interface: one listener on the selected address, viewer works through it, and the removed legacy ingest surface is absent | PASS on parent SHA `63f0d07`: `/tmp/tma-orchestration/tailnet-real-63f0d07.log` records 3 passes and 0 skips with an independent temporary DB/port; no existing service changed |
 | Real one-shot self-update | The final user service starts `tma-update.service` only on demand; candidate SHA and archive are verified; app restarts to the same job; DB/Hub secret/config and SSE/history survive | Fixture/unit coverage exists; actual user-systemd one-shot is not run. The current Windows integration failure is #26-owned. |
@@ -89,15 +89,19 @@ protocol before calling the lock gate complete.
 
 ## Bounded Ubuntu guest implementation
 
-`tools/test/ubuntu-reboot-vm.sh` and the manual
+`tools/test/ubuntu-reboot-vm.sh` and
 `.github/workflows/ubuntu-reboot.yml` now implement the bounded CI shape: a
-pinned Ubuntu 24.04 cloud image (`release-20260826`, SHA-256
+pinned Ubuntu 24.04 cloud image at
+`https://cloud-images.ubuntu.com/releases/releases/noble/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img`
+(SHA-256
 `d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30`) and an
-isolated QEMU guest, never a host reboot. The job installs
-`qemu-system-x86_64` and `cloud-localds`, uses `-accel kvm:tcg` (KVM is an
-optional acceleration path), connects through user-mode SSH, and has a
-50-minute job timeout. It uploads serial console, service status, health, and
-post-reboot logs.
+isolated QEMU guest, never a host reboot. The workflow runs on matching pull
+requests or by explicit dispatch, cancels an older run for the same ref, and
+installs `qemu-system-x86_64` and `cloud-localds`. QEMU uses
+`-machine q35,accel=kvm:tcg`, so KVM accelerates the guest when the runner
+allows it and TCG remains the fallback. It connects through user-mode SSH and
+has a 50-minute job timeout. It uploads serial console, service status,
+health, and post-reboot logs.
 
 The guest sequence is:
 
@@ -107,17 +111,18 @@ The guest sequence is:
 2. Configure one loopback listener and a local bare Git fixture. Assert that
    `tma-analytics.service` is enabled/active and `tma-update.service` is not
    enabled. Check health, SQLite, and the private secret file.
-3. Trigger the management update, verify candidate and archive SHA, confirm
-   the one-shot runner stops/starts the app and retains one job ID, then check
-   the same DB/config/secret and a resumed SSE/history connection.
-4. Issue `sudo reboot` inside the guest, wait for SSH, and assert user linger,
+3. Issue `sudo reboot` inside the guest, wait for SSH, and assert user linger,
    enabled/active Analytics, healthy listener, preserved DB/secret, and no
    automatically-running update unit.
 
-The workflow is manual because it downloads a pinned 24.04 image and runs the
-full release verification gate. Its artifact is required for closing the
-Ubuntu reboot/autostart row; a workflow that has not been dispatched remains a
-GAP.
+The guest deliberately leaves candidate self-update as a separate gate: the
+QEMU run proves user-service installation and OS reboot/autostart without
+claiming that the one-shot update flow ran. The existing update fixtures and
+the final user-systemd run must supply that evidence.
+
+The workflow downloads a pinned 24.04 image and runs the bounded guest gate.
+Its artifact is required for closing the Ubuntu reboot/autostart row; a
+workflow that has not completed on the final SHA remains a GAP.
 
 The parent SHA already has a real-interface artifact at
 `/tmp/tma-orchestration/tailnet-real-63f0d07.log`. Generic CI still has no safe
@@ -133,6 +138,13 @@ runs three cases: a body just below 16 MiB, a body just above 16 MiB, and the
 record parse/normalize time, SQLite transaction time, HTTP response latency
 for health/state requests made during the save, and `app.close()` time with a
 request in flight. Store raw measurements under `/tmp/tma-orchestration`.
+
+`tools/test/history-performance.test.mjs` now implements this plan behind
+`TMA_RUN_HISTORY_PERFORMANCE=1` and writes a mode-0600 JSON artifact to
+`/tmp/tma-orchestration` (or `TMA_HISTORY_PERFORMANCE_OUTPUT`). Its bounded
+local prototype produced a 5.25 MiB baseline, 3.50 s SQLite transaction, 3.37
+s concurrent transaction, and 152 ms close on Node 24.15; those values are
+planning evidence only until the test runs on the final pinned Node/commit.
 
 Set practical thresholds before interpreting the run. The 3.49 s transaction
 from the preflight is a measured baseline, not an acceptance threshold; it

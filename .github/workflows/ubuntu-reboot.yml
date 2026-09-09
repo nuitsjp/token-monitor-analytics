@@ -19,6 +19,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ubuntu-user-service-reboot-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   guest:
     # This job reboots only its disposable QEMU guest. It never runs the
