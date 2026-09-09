@@ -37,7 +37,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24.20.0'
-      - name: Prepare the pinned legacy source archive
+      - name: Prepare the pinned legacy source archive (Unix)
+        if: ${{ matrix.os != 'windows-latest' }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -52,6 +53,19 @@ jobs:
             echo 'TMA_MIGRATION_REAL=1'
             echo "TMA_MIGRATION_LEGACY_SOURCE_MANIFEST=$legacy_dir/manifest.json"
           } >> "$GITHUB_ENV"
+      - name: Prepare the pinned legacy source archive (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $legacyDir = Join-Path $env:RUNNER_TEMP 'tma-pinned-legacy'
+          New-Item -ItemType Directory -Force (Join-Path $legacyDir 'source') | Out-Null
+          node --experimental-strip-types tools/migration-source.mjs `
+            --repository "$env:GITHUB_WORKSPACE/workspace with spaces" `
+            --output (Join-Path $legacyDir 'source') `
+            --archive (Join-Path $legacyDir 'legacy.tar') `
+            --manifest (Join-Path $legacyDir 'manifest.json')
+          "TMA_MIGRATION_REAL=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TMA_MIGRATION_LEGACY_SOURCE_MANIFEST=$(Join-Path $legacyDir 'manifest.json')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Run the explicit real-source migration fixtures
-        shell: bash
         run: node --experimental-strip-types --test tools/test/migration-real.test.mjs tools/test/migration-windows.test.mjs
