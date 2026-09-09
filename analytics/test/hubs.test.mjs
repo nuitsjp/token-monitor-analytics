@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {validateHubsFile, validateHubSecretsFile, validateHubUrl} from '../src/hubs.ts';
+import {validateHubUrl} from '../src/hubs.ts';
 import {
-  readHubsConfig, writeAtomicFile, saveHubsTransaction, readHubSecretStore,
+  readHubSecretStore,
   readHubSecret, writeHubSecret, listHubRecords, insertHub, updateHubRecord,
   archiveHubRecord, recordContractSnapshots,
 } from '../runtime/hubs.mjs';
@@ -79,51 +79,6 @@ test('validateHubUrl enforces HTTPS or loopback HTTP without paths or queries', 
   assert.throws(() => validateHubUrl('not-a-url'), /Hub URL is not a valid URL/);
 });
 
-test('validateHubsFile and validateHubSecretsFile validate the migration-only file schemas', () => {
-  const validHubs = {
-    schemaVersion: 1,
-    revision: 0,
-    secretsPath: './hub-secrets.json',
-    hubs: [{id: 'hub-1', label: 'Hub 1', url: 'https://hub1.example.com', status: 'active', secretRef: 'sec-1'}],
-  };
-  assert.doesNotThrow(() => validateHubsFile(validHubs));
-  assert.throws(() => validateHubsFile({...validHubs, schemaVersion: 2}), /schemaVersion must be 1/);
-  assert.throws(() => validateHubsFile({...validHubs, revision: -1}), /revision must be a non-negative integer/);
-  assert.throws(() => validateHubsFile({...validHubs, secretsPath: '/etc/secrets.json'}), /secretsPath must be a relative path/);
-  assert.throws(() => validateHubsFile({...validHubs, unknownField: true}), /Unknown field/);
-  assert.throws(() => validateHubsFile({...validHubs, hubs: [validHubs.hubs[0], {...validHubs.hubs[0], url: 'https://hub2.example.com'}]}), /Duplicate hub ID/);
-  assert.throws(() => validateHubsFile({...validHubs, hubs: [validHubs.hubs[0], {...validHubs.hubs[0], id: 'hub-2', secretRef: 'sec-2'}]}), /Duplicate hub URL/);
-  const nineHubs = Array.from({length: 9}, (_, i) => ({id: `hub-${i}`, label: `Hub ${i}`, url: `https://hub${i}.example.com`, status: 'active', secretRef: `sec-${i}`}));
-  assert.throws(() => validateHubsFile({...validHubs, hubs: nineHubs}), /Cannot configure more than 8 non-archived hubs/);
-  assert.doesNotThrow(() => validateHubsFile({...validHubs, hubs: [...nineHubs.slice(0, 8), {id: 'archived', label: 'Archived', url: 'https://archived.example.com', status: 'archived', secretRef: 'sec-arch'}]}));
-  const validSecrets = {schemaVersion: 1, secrets: {'sec-1': 'super-secret-token-12345'}};
-  assert.doesNotThrow(() => validateHubSecretsFile(validSecrets));
-  assert.throws(() => validateHubSecretsFile({...validSecrets, secrets: {'sec-1': 'invalid\nsecret'}}), /without newlines/);
-  assert.throws(() => validateHubSecretsFile({...validSecrets, secrets: {'sec-1': ''}}), /must be non-empty/);
-});
-
-test('migration-only file helpers retain atomic updates and conflict detection', async t => {
-  const dir = createTempDir(t);
-  const hubsPath = path.join(dir, 'hubs.json');
-  const secretsPath = path.join(dir, 'hub-secrets.json');
-  writeAtomicFile(secretsPath, JSON.stringify({schemaVersion: 1, secrets: {'sec-init': 'initial-secret-12345'}}));
-  writeAtomicFile(hubsPath, JSON.stringify({schemaVersion: 1, revision: 1, secretsPath: './hub-secrets.json', hubs: [
-    {id: 'hub-init', label: 'Initial Hub', url: 'https://init.example.com', status: 'active', secretRef: 'sec-init'},
-  ]}));
-  const initial = readHubsConfig(hubsPath);
-  assert.equal(initial.hubsFile.revision, 1);
-  assert.equal(initial.secretsFile.secrets['sec-init'], 'initial-secret-12345');
-  await assert.rejects(saveHubsTransaction(hubsPath, 0, () => []), error => error.status === 409);
-  const updated = await saveHubsTransaction(hubsPath, 1, ({hubs, createSecretRef}) => [
-    ...hubs,
-    {id: 'hub-2', label: 'Hub Two', url: 'https://two.example.com', status: 'active', secretRef: createSecretRef('new-secret-98765')},
-  ]);
-  assert.equal(updated.hubsFile.revision, 2);
-  const persisted = readHubsConfig(hubsPath);
-  assert.equal(persisted.hubsFile.hubs.length, 2);
-  assert.equal(persisted.secretsFile.secrets[persisted.hubsFile.hubs[1].secretRef], 'new-secret-98765');
-});
-
 test('secrets use an opaque reference and an atomically replaced protected file', t => {
   const dir = createTempDir(t);
   const filename = path.join(dir, 'nested', 'hub-secrets.json');
@@ -185,7 +140,7 @@ test('management API performs SQLite CRUD, CAS conflicts, and archive constraint
   const dir = createTempDir(t);
   const secretsPath = path.join(dir, 'hub-secrets.json');
   const databasePath = path.join(dir, 'analytics.db');
-  writeAtomicFile(secretsPath, JSON.stringify({schemaVersion: 1, secrets: {initial: 'hub-one-secret'}}));
+  fs.writeFileSync(secretsPath, JSON.stringify({schemaVersion: 1, secrets: {initial: 'hub-one-secret'}}), {mode: 0o600});
   const db = openDatabase(databasePath);
   transaction(db,() => insertHub(db, {id: 'hub-1', label: 'Hub One', url: 'http://127.0.0.1:1', status: 'active', secretRef: 'initial'}));
   db.close();

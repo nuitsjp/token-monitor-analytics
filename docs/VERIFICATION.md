@@ -11,7 +11,7 @@
 次の検査はLinux開発環境で実行しました。
 
 ```text
-npm --prefix analytics test                         103 passed, 0 failed
+npm --prefix analytics test                         101 passed, 0 failed
 npm --prefix analytics run typecheck                passed
 node --experimental-strip-types --test tools/test/*.test.mjs
                                                      43 passed, 3 skipped, 0 failed

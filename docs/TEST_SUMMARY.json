@@ -7,7 +7,7 @@
     "typescript": "5.8.3"
   },
   "analytics_tests": {
-    "passed": 103,
+    "passed": 101,
     "failed": 0,
     "sqlite": "native node:sqlite",
     "http": "native node:http"

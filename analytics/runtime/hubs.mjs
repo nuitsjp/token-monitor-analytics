@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-import {MAX_CONFIG_BYTES, validateHubsFile, validateHubSecretsFile} from '../src/hubs.ts';
+import {MAX_CONFIG_BYTES, validateHubSecretsFile} from '../src/hubs.ts';
 
 function windowsPrivateAcl(filename) {
   if (process.platform !== 'win32') return;
@@ -110,7 +110,7 @@ function writeAtomicPrivateFile(targetPath, content) {
   } catch {}
 }
 
-export function writeAtomicFile(targetPath, content) {
+function writeAtomicSecretFile(targetPath, content) {
   const dir = path.dirname(targetPath);
   const rand = crypto.randomBytes(4).toString('hex');
   const tempPath = path.join(dir, `.tmp-${path.basename(targetPath)}-${Date.now()}-${rand}`);
@@ -168,120 +168,6 @@ export function writeAtomicFile(targetPath, content) {
   } catch {}
 }
 
-export function readHubsConfig(hubsFilePath) {
-  const absHubsPath = path.resolve(hubsFilePath);
-  if (!fs.existsSync(absHubsPath)) {
-    throw Object.assign(new Error(`Hubs config file not found: ${absHubsPath}`), {status: 404});
-  }
-  const hubsStat = fs.statSync(absHubsPath);
-  if (hubsStat.size > MAX_CONFIG_BYTES) {
-    throw Object.assign(new Error('Hubs config file too large'), {status: 413});
-  }
-  const hubsRaw = JSON.parse(fs.readFileSync(absHubsPath, 'utf8').replace(/^\uFEFF/, ''));
-  const hubsFile = validateHubsFile(hubsRaw);
-
-  const secretsFilePath = path.resolve(path.dirname(absHubsPath), hubsFile.secretsPath);
-  if (!fs.existsSync(secretsFilePath)) {
-    throw Object.assign(new Error(`Secrets file not found: ${secretsFilePath}`), {status: 404});
-  }
-  const secretsStat = fs.statSync(secretsFilePath);
-  if (secretsStat.size > MAX_CONFIG_BYTES) {
-    throw Object.assign(new Error('Secrets file too large'), {status: 413});
-  }
-  const secretsRaw = JSON.parse(fs.readFileSync(secretsFilePath, 'utf8').replace(/^\uFEFF/, ''));
-  const secretsFile = validateHubSecretsFile(secretsRaw);
-
-  for (const hub of hubsFile.hubs) {
-    if (!secretsFile.secrets[hub.secretRef]) {
-      throw new Error(`Secret reference ${hub.secretRef} for hub ${hub.id} not found in secrets file`);
-    }
-  }
-
-  return { hubsFile, secretsFile, secretsFilePath };
-}
-
-let saveTail = Promise.resolve();
-
-export function saveHubsTransaction(hubsFilePath, expectedRevision, mutator) {
-  const run = async () => {
-    const {hubsFile, secretsFile, secretsFilePath} = readHubsConfig(hubsFilePath);
-    if (expectedRevision !== undefined && expectedRevision !== null && hubsFile.revision !== expectedRevision) {
-      throw Object.assign(new Error('Revision conflict: configuration was modified by another request'), {
-        status: 409,
-        currentRevision: hubsFile.revision
-      });
-    }
-
-    const nextSecrets = {...secretsFile.secrets};
-    let newSecretAdded = false;
-
-    const generateSecretRef = (secretValue) => {
-      const ref = `sec-${crypto.randomBytes(8).toString('hex')}`;
-      nextSecrets[ref] = secretValue;
-      newSecretAdded = true;
-      return ref;
-    };
-
-    const nextHubs = mutator({
-      hubs: [...hubsFile.hubs],
-      createSecretRef: generateSecretRef,
-      currentSecrets: nextSecrets
-    });
-
-    const nextHubsFile = validateHubsFile({
-      schemaVersion: 1,
-      revision: hubsFile.revision + 1,
-      secretsPath: hubsFile.secretsPath,
-      hubs: nextHubs
-    });
-
-    const nextSecretsFile = validateHubSecretsFile({
-      schemaVersion: 1,
-      secrets: nextSecrets
-    });
-
-    // Verify all referenced secrets exist
-    for (const hub of nextHubsFile.hubs) {
-      if (!nextSecretsFile.secrets[hub.secretRef]) {
-        throw new Error(`Missing secret for hub ${hub.id}`);
-      }
-    }
-
-    // Check both serialized files before either write. Readers enforce this same limit.
-    const hubsContent = JSON.stringify(nextHubsFile, null, 2) + '\n';
-    const secretsContent = JSON.stringify(nextSecretsFile, null, 2) + '\n';
-    if (Buffer.byteLength(hubsContent, 'utf8') > MAX_CONFIG_BYTES ||
-        Buffer.byteLength(secretsContent, 'utf8') > MAX_CONFIG_BYTES) {
-      throw Object.assign(new Error('Configuration exceeds storage size limit'), {status: 413});
-    }
-
-    // Step 2: If new secrets were added, update secrets file first
-    if (newSecretAdded) {
-      writeAtomicFile(secretsFilePath, secretsContent);
-    }
-
-    // Step 3: Replace hubs.json (commit point)
-    writeAtomicFile(hubsFilePath, hubsContent);
-
-    return {
-      hubsFile: nextHubsFile,
-      secretsFile: nextSecretsFile,
-      secretsFilePath
-    };
-  };
-
-  const current = saveTail.then(run);
-  saveTail = current.catch(() => {});
-  return current;
-}
-
-/*
- * The functions below are the SQLite-backed Hub store used by the integrated
- * Node application.  The file helpers above remain available to the explicit
- * one-time migration tooling; normal runtime code never reads or writes a
- * hubs.json registration file.
- */
-
 export const HUB_SECRET_FILE_VERSION = 1;
 
 function secretPathValue(filename) {
@@ -331,7 +217,7 @@ export function writeHubSecret(filename, secret) {
   if (Buffer.byteLength(content, 'utf8') > MAX_CONFIG_BYTES) throw Object.assign(new Error('Hub secret store is full'), {status: 413});
   fs.mkdirSync(path.dirname(absolute), {recursive: true, mode: 0o700});
   if (process.platform === 'win32') writeAtomicPrivateFile(absolute, content);
-  else writeAtomicFile(absolute, content);
+  else writeAtomicSecretFile(absolute, content);
   return ref;
 }
 
