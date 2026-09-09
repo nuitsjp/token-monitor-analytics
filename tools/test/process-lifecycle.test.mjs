@@ -233,8 +233,7 @@ public static class TmaConsoleControl {
         }
         if (!ready) throw new InvalidOperationException("child Analytics process did not become ready");
       }
-      // Attach to the disposable child console, deliver a real CTRL_C_EVENT,
-      // then detach before waiting for clean shutdown.
+      // Attach to the disposable child console and deliver a real CTRL_C_EVENT.
       FreeConsole();
       if (!AttachConsole(process.dwProcessId)) throw new InvalidOperationException("AttachConsole failed: " + Marshal.GetLastWin32Error());
       // CTRL_C_EVENT uses process-group zero on Windows. Ignore it in this
@@ -242,8 +241,8 @@ public static class TmaConsoleControl {
       // the controller that is waiting for its exit.
       if (!SetConsoleCtrlHandler(IntPtr.Zero, true)) throw new InvalidOperationException("SetConsoleCtrlHandler failed: " + Marshal.GetLastWin32Error());
       if (!GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)) throw new InvalidOperationException("GenerateConsoleCtrlEvent failed: " + Marshal.GetLastWin32Error());
-      FreeConsole();
-      if (!SetConsoleCtrlHandler(IntPtr.Zero, false)) throw new InvalidOperationException("SetConsoleCtrlHandler restore failed: " + Marshal.GetLastWin32Error());
+      // Keep the controller's ignore handler until its process exits: Windows
+      // dispatches console events asynchronously, including after detachment.
       if (WaitForSingleObject(process.hProcess, 8000) != WAIT_OBJECT_0) {
         TerminateProcess(process.hProcess, 124);
         throw new TimeoutException("child Analytics process did not exit after CTRL_C_EVENT");
@@ -255,10 +254,8 @@ public static class TmaConsoleControl {
       TerminateProcess(process.hProcess, 125);
       throw;
     } finally {
-      // Detach before restoring the helper's default CTRL+C behavior. This
-      // avoids a late console event racing with the controller cleanup.
-      FreeConsole();
-      SetConsoleCtrlHandler(IntPtr.Zero, false);
+      // Process exit releases this disposable console. Detaching resets the
+      // handler table, so keep it attached and ignoring any late control event.
       if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
       if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
     }
