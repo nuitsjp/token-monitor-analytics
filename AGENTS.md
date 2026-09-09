@@ -6,13 +6,13 @@ Hubは既存Cloudflareの別リポジトリーです。AnalyticsはNode.jsの組
 
 Nodeは型除去でTypeScriptを直接実行します。enum、parameter properties、非type importの型、tsconfigパスエイリアスを導入しません。Nodeのnative `DatabaseSync`/`StatementSync`を直接使い、同期SQLiteをPromise互換APIで包みません。TypeScript変更後は`npm run typecheck`を実行します。
 
-Hub API仕様は`external/token-monitor/docs/API.md`と`external/token-monitor/worker/README.md`を参照します。Hub→Analyticsは認証付きSSE、Analytics→ブラウザーはSSEです。Hub履歴のHTTP取得は停止中の欠測補完と明示的な履歴更新に限り、SSEの代替ポーリングにはしません。
+Hub API仕様: [API資料](external/token-monitor/docs/API.md) / [Worker README](external/token-monitor/worker/README.md#endpoints)。Hub→Analyticsは認証付きSSE、Analytics→ブラウザーはSSEです。Hub履歴は起動・再接続・revision変更・手動操作でHTTP取得し、SSEの代替ポーリングにはしません。
 
 ## 正しさと安全
 
 観測保存・最新値・推定・日次行を`BEGIN IMMEDIATE`からCOMMITまでの同期transactionで直列化します。callbackは同期関数だけを許可し、通知はCOMMIT後に出します。ネットワークとSecretファイルI/Oはtransactionの外に置きます。未知・欠測はnull、0は有効な値として保持し、Hubの金額を独自計算せず、アカウントの推測帰属をしません。利用率と金額の対象・期間を一致させます。
 
-既定はloopback待受です。Ubuntuの承認済み公開構成では専用Tailscale IPを1つのlistenerに指定し、`viewerAuth.mode=tailscale`を使います。別のingest待受、`/api/ingest`、`/api/collector/status`、ingest専用Bearer、Hub設定ファイルの定期同期は実装しません。Hub Secretは`hub-secrets.json`へ分離し、OS権限で保護します。設定、env、DB、Secret、履歴、ログをフロントエンド・Git・配布物へ出しません。
+既定はloopback待受です。Ubuntuの承認済み公開構成では専用Tailscale IPを1つのlistenerに指定し、`viewerAuth.mode=tailscale`を使います。別のingest待受、`/api/ingest`、`/api/collector/status`、ingest専用Bearer、Hub設定ファイルの定期同期は実装しません。Hub Secretは`hub-secrets.json`へ分離し、OS権限で保護します。設定ファイル、env、DBファイル、Secretを静的配信・Git・ログ・配布物へ出しません。閲覧APIは必要な履歴と許可した設定項目だけを返します。
 
 Hub登録の正本はSQLiteの`hubs`テーブルです。Hub IDは再利用せず、削除はarchiveとします。管理操作は行versionで競合を検出し、COMMIT直後に同じプロセスの購読世代を更新します。旧Hub登録の初回切替は#27の移行CLIだけが扱い、通常起動・発行は旧設定やoutboxを読みません。
 
