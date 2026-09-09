@@ -448,3 +448,85 @@ test('readUpdateState does not overwrite completed status if runner finishes dur
     fs.rmSync(dir, {recursive: true, force: true});
   }
 });
+
+test('readUpdateState never resurrects an older job after a replacement during service check', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-reconcile-replacement-'));
+  const statePath = path.join(dir, 'update-state.json');
+  const oldJob = {
+    jobId: 'job-old',
+    targetCommitSha: '0123456789abcdef0123456789abcdef01234567',
+    status: 'running',
+    stage: 'deploying',
+    startedAt: '2026-09-06T12:00:00Z',
+    finishedAt: null
+  };
+  const newJob = {
+    ...oldJob,
+    jobId: 'job-new',
+    targetCommitSha: 'fedcba9876543210fedcba9876543210fedcba98',
+    stage: 'accepted',
+    startedAt: '2026-09-06T12:04:00Z'
+  };
+  try {
+    saveUpdateState(statePath, oldJob);
+    const result = readUpdateState(statePath, {
+      checkServiceActive: () => {
+        saveUpdateState(statePath, newJob);
+        return false;
+      },
+      now: () => '2026-09-06T12:05:00Z'
+    });
+    assert.equal(result.jobId, 'job-new');
+    assert.equal(result.status, 'running');
+    assert.equal(readUpdateState(statePath, {checkServiceActive: () => true}).jobId, 'job-new');
+
+    saveUpdateState(statePath, oldJob);
+    const missing = readUpdateState(statePath, {
+      checkServiceActive: () => {
+        fs.rmSync(statePath);
+        return false;
+      },
+      now: () => '2026-09-06T12:05:00Z'
+    });
+    assert.equal(missing, null);
+    assert.equal(fs.existsSync(statePath), false);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('update state preserves pinned repository and verified release metadata through terminal reconciliation', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tma-test-update-metadata-'));
+  const statePath = path.join(dir, 'update-state.json');
+  const state = {
+    jobId: 'job-metadata',
+    targetCommitSha: '0123456789abcdef0123456789abcdef01234567',
+    targetCommitDate: '2026-09-09T00:00:00Z',
+    targetMessage: 'Verified release',
+    repositoryUrl: 'https://example.invalid/repository.git',
+    branch: 'main',
+    initialConfigurationId: 'cfg-before',
+    expectedReleaseId: 'rel-after',
+    contentHash: 'b'.repeat(64),
+    archiveSha256: 'a'.repeat(64),
+    configurationId: 'cfg-after',
+    status: 'completed',
+    stage: 'success',
+    errorCode: null,
+    startedAt: '2026-09-09T00:00:01Z',
+    finishedAt: '2026-09-09T00:01:00Z'
+  };
+  try {
+    saveUpdateState(statePath, state);
+    const read = readUpdateState(statePath, {checkServiceActive: () => false});
+    assert.equal(read.repositoryUrl, state.repositoryUrl);
+    assert.equal(read.branch, state.branch);
+    assert.equal(read.expectedReleaseId, state.expectedReleaseId);
+    assert.equal(read.contentHash, state.contentHash);
+    assert.equal(read.archiveSha256, state.archiveSha256);
+    assert.equal(read.configurationId, state.configurationId);
+    assert.equal(read.status, 'completed');
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});

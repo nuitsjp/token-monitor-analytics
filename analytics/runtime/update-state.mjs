@@ -56,6 +56,15 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
   let errorCode = typeof raw.errorCode === 'string' ? raw.errorCode : null;
   const startedAt = typeof raw.startedAt === 'string' ? raw.startedAt : now();
   let finishedAt = typeof raw.finishedAt === 'string' ? raw.finishedAt : null;
+  const metadata = {
+    repositoryUrl: typeof raw.repositoryUrl === 'string' ? raw.repositoryUrl : null,
+    branch: typeof raw.branch === 'string' ? raw.branch : null,
+    initialConfigurationId: typeof raw.initialConfigurationId === 'string' ? raw.initialConfigurationId : null,
+    expectedReleaseId: typeof raw.expectedReleaseId === 'string' ? raw.expectedReleaseId : null,
+    contentHash: typeof raw.contentHash === 'string' ? raw.contentHash : null,
+    archiveSha256: typeof raw.archiveSha256 === 'string' ? raw.archiveSha256 : null,
+    configurationId: typeof raw.configurationId === 'string' ? raw.configurationId : null
+  };
 
   // Reconcile running status against systemd
   if (status === 'running') {
@@ -69,21 +78,53 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
         latestRaw = JSON.parse(fs.readFileSync(statePath, 'utf8').replace(/^\uFEFF/, ''));
       } catch {}
 
-      if (latestRaw && typeof latestRaw === 'object' && latestRaw.jobId === jobId) {
-        if (latestRaw.status !== 'running') {
-          // Runner already saved terminal status (completed/failed/aborted); do not overwrite!
-          return {
-            jobId,
-            targetCommitSha: typeof latestRaw.targetCommitSha === 'string' ? latestRaw.targetCommitSha : targetCommitSha,
-            targetCommitDate: latestRaw.targetCommitDate || null,
-            targetMessage: latestRaw.targetMessage || null,
-            status: VALID_STATUSES.has(latestRaw.status) ? latestRaw.status : 'aborted',
-            stage: VALID_STAGES.has(latestRaw.stage) ? latestRaw.stage : 'aborted',
-            errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
-            startedAt: typeof latestRaw.startedAt === 'string' ? latestRaw.startedAt : startedAt,
-            finishedAt: typeof latestRaw.finishedAt === 'string' ? latestRaw.finishedAt : null
-          };
-        }
+      const latestJobId = latestRaw && typeof latestRaw === 'object' && typeof latestRaw.jobId === 'string' ? latestRaw.jobId : null;
+      if (!latestJobId || latestJobId !== jobId) {
+        // A replacement job (or a removed state file) wins over this stale
+        // read. Returning null for a missing/invalid file avoids resurrecting
+        // the old job in a UI poll.
+        if (!latestJobId) return null;
+        const latestStatus = VALID_STATUSES.has(latestRaw.status) ? latestRaw.status : 'aborted';
+        const latestStage = VALID_STAGES.has(latestRaw.stage) ? latestRaw.stage : 'aborted';
+        return {
+          jobId: latestJobId,
+          targetCommitSha: typeof latestRaw.targetCommitSha === 'string' ? latestRaw.targetCommitSha : null,
+          targetCommitDate: latestRaw.targetCommitDate || null,
+          targetMessage: latestRaw.targetMessage || null,
+          repositoryUrl: latestRaw.repositoryUrl || null,
+          branch: latestRaw.branch || null,
+          initialConfigurationId: latestRaw.initialConfigurationId || null,
+          expectedReleaseId: latestRaw.expectedReleaseId || null,
+          contentHash: latestRaw.contentHash || null,
+          archiveSha256: latestRaw.archiveSha256 || null,
+          configurationId: latestRaw.configurationId || null,
+          status: latestStatus,
+          stage: latestStage,
+          errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
+          startedAt: typeof latestRaw.startedAt === 'string' ? latestRaw.startedAt : now(),
+          finishedAt: typeof latestRaw.finishedAt === 'string' ? latestRaw.finishedAt : null
+        };
+      }
+      if (latestRaw.status !== 'running') {
+        // Runner already saved terminal status (completed/failed/aborted); do not overwrite!
+        return {
+          jobId,
+          targetCommitSha: typeof latestRaw.targetCommitSha === 'string' ? latestRaw.targetCommitSha : targetCommitSha,
+          targetCommitDate: latestRaw.targetCommitDate || null,
+          targetMessage: latestRaw.targetMessage || null,
+          repositoryUrl: latestRaw.repositoryUrl || null,
+          branch: latestRaw.branch || null,
+          initialConfigurationId: latestRaw.initialConfigurationId || null,
+          expectedReleaseId: latestRaw.expectedReleaseId || null,
+          contentHash: latestRaw.contentHash || null,
+          archiveSha256: latestRaw.archiveSha256 || null,
+          configurationId: latestRaw.configurationId || null,
+          status: VALID_STATUSES.has(latestRaw.status) ? latestRaw.status : 'aborted',
+          stage: VALID_STAGES.has(latestRaw.stage) ? latestRaw.stage : 'aborted',
+          errorCode: typeof latestRaw.errorCode === 'string' ? latestRaw.errorCode : null,
+          startedAt: typeof latestRaw.startedAt === 'string' ? latestRaw.startedAt : startedAt,
+          finishedAt: typeof latestRaw.finishedAt === 'string' ? latestRaw.finishedAt : null
+        };
       }
 
       status = 'aborted';
@@ -96,6 +137,7 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
         targetCommitSha,
         targetCommitDate: raw.targetCommitDate || null,
         targetMessage: raw.targetMessage || null,
+        ...metadata,
         status,
         stage,
         errorCode,
@@ -114,6 +156,7 @@ export function readUpdateState(statePath, {checkServiceActive = defaultCheckSer
     targetCommitSha,
     targetCommitDate: raw.targetCommitDate || null,
     targetMessage: raw.targetMessage || null,
+    ...metadata,
     status,
     stage,
     errorCode,
@@ -134,6 +177,13 @@ export function saveUpdateState(statePath, state) {
     targetCommitSha: state.targetCommitSha,
     targetCommitDate: state.targetCommitDate ?? null,
     targetMessage: state.targetMessage ?? null,
+    repositoryUrl: state.repositoryUrl ?? null,
+    branch: state.branch ?? null,
+    initialConfigurationId: state.initialConfigurationId ?? null,
+    expectedReleaseId: state.expectedReleaseId ?? null,
+    contentHash: state.contentHash ?? null,
+    archiveSha256: state.archiveSha256 ?? null,
+    configurationId: state.configurationId ?? null,
     status: state.status,
     stage: state.stage,
     errorCode: state.errorCode ?? null,

@@ -306,7 +306,7 @@ async function reconnectHub(h){
 }
 
 let updateData=null,pollingRestart=false;
-const updateErrors={lock_conflict:'他の発行タスクまたは更新処理が実行中です。',fetch_failed:'mainブランチの最新コミット取得に失敗しました。ネットワーク接続を確認してください。',commit_not_found:'指定されたコミットがリモートのmainに見つかりません。',verification_failed:'新バージョンのローカル検証（テストまたはビルド）に失敗したため、適用を中止しました。現在のバージョンは維持されています。',deploy_failed:'成果物の配置またはSQLiteバックアップに失敗しました。',health_check_failed:'新バージョンの起動または疎通確認に失敗しました。ホストログを確認してください。',job_aborted:'更新処理が途中で中断されました（プロセス終了またはサービス停止）。',system_restarted:'OS再起動により更新処理が中断されました。',save_state_failed:'状態ファイルの保存に失敗しました。',unknown_error:'予期せぬエラーが発生しました。'};
+const updateErrors={lock_conflict:'他の発行タスクまたは更新処理が実行中です。',fetch_failed:'mainブランチの最新コミット取得に失敗しました。ネットワーク接続を確認してください。',invalid_remote_commit:'リモートブランチのコミット識別子を検証できないため、更新を中止しました。',main_moved:'確認後にmainが進んだため、指定SHAへの更新を中止しました。',already_current:'選択したコミットはすでに発行済みです。',commit_not_found:'指定されたコミットがリモートのmainに見つかりません。',verification_failed:'新バージョンのローカル検証（テストまたはビルド）に失敗したため、適用を中止しました。現在のバージョンは維持されます。',deploy_failed:'成果物の配置またはSQLiteバックアップに失敗しました。',health_check_failed:'新バージョンの起動または疎通確認に失敗しました。ホストログを確認してください。',configuration_changed:'受付後に起動設定が変更されたため、停止前に更新を中止しました。',migration_required:'新しいサービス構成には管理者による移行が必要です。',provision_required:'更新に必要な固定ツールがありません。管理者にprovision:ubuntuを依頼してください。',job_aborted:'更新処理が途中で中断されました（プロセス終了またはサービス停止）。',system_restarted:'OS再起動により更新処理が中断されました。',save_state_failed:'状態ファイルの保存に失敗しました。',unknown_error:'予期せぬエラーが発生しました。'};
 const stageNames={accepted:'受付済み',fetching:'取得中',verifying:'検証中',deploying:'配置中',restarting:'再起動中',success:'成功',failed:'失敗',aborted:'中断・状態不明'};
 
 async function loadUpdate(){
@@ -408,29 +408,36 @@ $('update-confirm-form').onsubmit=async e=>{
  $('update-confirm-dialog').close();
  if(!updateData?.candidate)return;
  try{
-  await post('/api/manage/update/apply',{targetCommitSha:updateData.candidate.targetCommitSha});
+  const applied=await post('/api/manage/update/apply',{targetCommitSha:updateData.candidate.targetCommitSha});
   await loadUpdate();
-  waitForRestart();
+  waitForRestart(applied.jobId,applied.targetCommitSha);
  }catch(err){notice(err.message);}
 };
 
-function waitForRestart(){
+function waitForRestart(jobId,targetCommitSha){
  if(pollingRestart)return;
  pollingRestart=true;
  $('update-restarting-overlay').hidden=false;
  let attempts=0;
  const maxAttempts=90;
- const timer=setInterval(async()=>{
+  const timer=setInterval(async()=>{
   attempts++;
   try{
-   const res=await fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(1500)});
-   if(res.ok){
-    clearInterval(timer);
-    pollingRestart=false;
-    $('update-restarting-overlay').hidden=true;
-    await refresh();
-    if(view==='update')await loadUpdate();
-    return;
+   const [health,state]=await Promise.all([
+    fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(1500)}),
+    fetch('/api/manage/update',{cache:'no-store',signal:AbortSignal.timeout(1500)})
+   ]);
+   if(health.ok&&state.ok){
+    const body=await state.json();
+    const current=body.current??{},job=body.job??null;
+    if(current.commitSha===targetCommitSha&&job?.jobId===jobId&&job?.status==='completed'&&job?.stage==='success'){
+     clearInterval(timer);
+     pollingRestart=false;
+     $('update-restarting-overlay').hidden=true;
+     await refresh();
+     if(view==='update')await loadUpdate();
+     return;
+    }
    }
   }catch{}
   if(attempts>=maxAttempts){
@@ -452,7 +459,7 @@ function connect(){
  current.addEventListener('update_job_changed',()=>loadUpdate());
  current.onerror=()=>{
   connection('ライブ再接続待ち');
-  if(updateData?.job?.status==='running')waitForRestart();
+  if(updateData?.job?.status==='running')waitForRestart(updateData.job.jobId,updateData.job.targetCommitSha);
  };
 }
 $('refresh').onclick=refresh;$('hub-select').onchange=draw;$('contract-select').onchange=()=>loadHistory().catch(e=>notice(e.message));

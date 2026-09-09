@@ -15,8 +15,10 @@ function defaultReadPublication(pubPath) {
       releaseId: typeof raw.releaseId === 'string' ? raw.releaseId : null,
       configurationId: typeof raw.configurationId === 'string' ? raw.configurationId : null,
       publicOrigin: typeof raw.publicOrigin === 'string' ? raw.publicOrigin : null,
-      commitSha: typeof raw.commitSha === 'string' ? raw.commitSha : null,
-      commitDate: typeof raw.commitDate === 'string' ? raw.commitDate : null,
+      commitSha: typeof raw.commitSha === 'string' ? raw.commitSha : (typeof raw.targetCommitSha === 'string' ? raw.targetCommitSha : null),
+      commitDate: typeof raw.commitDate === 'string' ? raw.commitDate : (typeof raw.targetCommitDate === 'string' ? raw.targetCommitDate : null),
+      contentHash: typeof raw.contentHash === 'string' ? raw.contentHash : null,
+      archiveSha256: typeof raw.archiveSha256 === 'string' ? raw.archiveSha256 : null,
       publishedAt: typeof raw.publishedAt === 'string' ? raw.publishedAt : null
     };
   } catch {
@@ -194,7 +196,10 @@ export class UpdateManager {
 
     try {
       const remote = await this.#fetchRemoteCommit({repositoryUrl, branch});
-      const targetSha = remote.commitSha;
+      const targetSha = typeof remote.commitSha === 'string' ? remote.commitSha.toLowerCase() : remote.commitSha;
+      if (!/^[0-9a-f]{40}$/i.test(targetSha)) {
+        throw Object.assign(new Error('Remote branch did not return a full commit SHA'), {code: 'invalid_remote_commit'});
+      }
       const hasUpdate = Boolean(currentSha ? currentSha !== targetSha : true);
       const webBase = repositoryUrl.replace(/\.git$/, '');
       const compareUrl = currentSha && currentSha !== targetSha
@@ -238,7 +243,9 @@ export class UpdateManager {
       releaseId: pub?.releaseId ?? null,
       commitSha: pub?.commitSha ?? null,
       commitDate: pub?.commitDate ?? null,
-      configurationId: pub?.configurationId ?? null
+      configurationId: pub?.configurationId ?? null,
+      contentHash: pub?.contentHash ?? null,
+      archiveSha256: pub?.archiveSha256 ?? null
     };
 
     const statePath = this.#config.update?.statePath ?? '/var/lib/tma-deploy/update-state.json';
@@ -268,6 +275,9 @@ export class UpdateManager {
     if (!this.#candidate || this.#candidate.targetCommitSha !== targetCommitSha) {
       throw Object.assign(new Error('Target commit SHA does not match current candidate. Please refresh update candidate.'), {status: 409, code: 'candidate_mismatch'});
     }
+    if (!this.#candidate.hasUpdate) {
+      throw Object.assign(new Error('The selected commit is already published'), {status: 409, code: 'already_current'});
+    }
 
     const statePath = this.#config.update.statePath;
     const currentJob = this.#readState(statePath, {checkServiceActive: this.#isServiceActive});
@@ -281,6 +291,13 @@ export class UpdateManager {
       targetCommitSha,
       targetCommitDate: this.#candidate.commitDate,
       targetMessage: this.#candidate.message,
+      repositoryUrl: this.#config.update.repositoryUrl,
+      branch: this.#config.update.branch,
+      initialConfigurationId: this.#readPublication(this.#config.update.publicationPath)?.configurationId ?? null,
+      expectedReleaseId: null,
+      contentHash: null,
+      archiveSha256: null,
+      configurationId: null,
       status: 'running',
       stage: 'accepted',
       errorCode: null,

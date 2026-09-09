@@ -17,6 +17,8 @@ const PUBLIC_ERROR_CODES = new Set([
   'update_manager_unavailable', 'check_failed', 'apply_failed', 'not_found',
   'secret_store_missing', 'secret_store_invalid', 'missing_secret',
   'history_not_ready', 'history_unavailable',
+  'already_current', 'candidate_mismatch', 'job_already_running', 'invalid_remote_commit',
+  'main_moved', 'configuration_changed', 'migration_required', 'provision_required',
 ]);
 const PUBLIC_CONNECTION_CODES = new Set([
   'network_error', 'auth_error', 'input_error', 'config_error', 'storage_error', 'permanent_error', 'missing_secret',
