@@ -386,7 +386,7 @@ function defaultInspectServices(options = {}) {
     let raw;
     try { raw = execFileSync(command.command, command.args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}); }
     catch (error) { throw errorWithCode(`Cannot inspect ${scope} service state`, 'service_inspection_failed', {cause: error}); }
-    const fields = Object.fromEntries(raw.trim().split(/\r?\n/).map(line => line.split(/=(.*)/s)).filter(parts => parts.length === 2));
+    const fields = Object.fromEntries(raw.trim().split(/\r?\n/).map(line => line.split(/=(.*)/s, 2)).filter(parts => parts.length === 2));
     if (!fields.LoadState) throw errorWithCode(`Cannot inspect ${scope} service state`, 'service_inspection_failed');
     return {
       scope, unit: name, loadState: fields.LoadState, active: fields.ActiveState === 'active',
