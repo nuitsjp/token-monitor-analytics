@@ -185,8 +185,8 @@ sha=$(git rev-parse HEAD)
 /home/tma/node-runtime/bin/node --experimental-strip-types tools/publish-ubuntu.mjs --apply --architecture amd64 --target-sha "$sha"
 systemctl --user is-enabled tma-analytics.service
 systemctl --user is-active tma-analytics.service
-if systemctl --user is-enabled --quiet tma-update.service; then
-  echo 'update oneshot must not be enabled by provisioning' >&2
+if [ "$(systemctl --user is-enabled tma-update.service)" != static ]; then
+  echo 'update oneshot must remain static after provisioning' >&2
   exit 1
 fi
 test -x /var/lib/tma-deploy/updater/node-runtime/bin/node
@@ -335,8 +335,8 @@ try {
  fs.writeFileSync('/tmp/tma-db-after-update.json',JSON.stringify({marker,appMetadataRows:Number(db.prepare('SELECT COUNT(*) AS count FROM app_metadata').get().count),schemaMigrations:Number(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count),integrity},null,2)+'\n',{mode:0o600});
 } finally { db.close(); }
 NODE
-if systemctl --user is-enabled --quiet tma-update.service; then
-  echo 'update oneshot must remain disabled after an on-demand run' >&2
+if [ "$(systemctl --user is-enabled tma-update.service)" != static ]; then
+  echo 'update oneshot must remain static after an on-demand run' >&2
   exit 1
 fi
 curl --connect-timeout 5 --max-time 30 --fail --silent --show-error http://127.0.0.1:18787/api/health > /tmp/tma-health-after-update.json
@@ -382,7 +382,7 @@ guest <<'EOF' | tee "$artifact_dir/service-after-reboot.txt"
 set -Eeuo pipefail
 systemctl --user is-enabled tma-analytics.service
 systemctl --user is-active tma-analytics.service
-if systemctl --user is-enabled --quiet tma-update.service; then
+if [ "$(systemctl --user is-enabled tma-update.service)" != static ]; then
   echo 'update oneshot unexpectedly enabled after reboot' >&2
   exit 1
 fi
