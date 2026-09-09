@@ -218,12 +218,13 @@ function parseLegacyLayout({analyticsConfigPath, collectorConfigPath, analyticsE
   const ingestEnv = collector.ingest_token_env;
   if (typeof ingestEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ingestEnv)) throw errorWithCode('Legacy Collector ingest token name is invalid', 'invalid_legacy_config');
   const analyticsIngestEnv = analytics.ingestTokenEnv;
-  if (typeof analyticsIngestEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(analyticsIngestEnv) || analyticsIngestEnv !== ingestEnv) {
-    throw errorWithCode('Legacy Analytics and Collector ingest token names do not match', 'invalid_legacy_config');
+  if (typeof analyticsIngestEnv !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(analyticsIngestEnv)) {
+    throw errorWithCode('Legacy Analytics ingest token name is invalid', 'invalid_legacy_config');
   }
   const runtimeEnvironment = loadLegacyEnvironment({analyticsEnvPath: resolvedAnalyticsEnvPath, collectorEnvPath: resolvedCollectorEnvPath, environment});
   const token = runtimeEnvironment[ingestEnv];
   if (typeof token !== 'string' || token.length < 1 || /[\r\n\0]/.test(token)) throw errorWithCode('Legacy Collector ingest token is unavailable', 'missing_legacy_secret');
+  if (runtimeEnvironment[analyticsIngestEnv] !== token) throw errorWithCode('Legacy Analytics and Collector ingest credentials do not match', 'legacy_ingest_mismatch');
   const hubs = readLegacyHubs(analytics, analyticsFile, collector, collectorFile);
   const contracts = Array.isArray(analytics.contracts) ? analytics.contracts : [];
   const hubIds = [...new Set([...hubs.hubs.map(hub => hub.id), ...contracts.map(contract => contract?.hubId)].filter(validId))].sort();

@@ -257,6 +257,19 @@ test('conflicting Analytics and Collector environment files fail before mutation
   assert.equal(fs.existsSync(f.options.statePath), false);
 });
 
+test('distinct legacy ingest variable names are accepted only for matching credentials', async t => {
+  const f = await setup(t);
+  const config = JSON.parse(fs.readFileSync(f.options.analyticsConfigPath, 'utf8'));
+  config.ingestTokenEnv = 'ANALYTICS_INGEST';
+  fs.writeFileSync(f.options.analyticsConfigPath, JSON.stringify(config));
+  f.options.environment.ANALYTICS_INGEST = f.options.environment.TMA_INGEST_TOKEN;
+  f.options.platform = migrationPlatform({databasePath: f.databasePath}, []);
+  await preflightMigration(f.options);
+  f.options.environment.ANALYTICS_INGEST = 'different-credential';
+  await assert.rejects(() => preflightMigration(f.options), error => error.code === 'legacy_ingest_mismatch');
+  assert.equal(fs.existsSync(f.options.statePath), false);
+});
+
 test('direct publication installs and proves the real Analytics server entrypoint', async t => {
   const f = await setup(t);
   const configDir = path.join(f.dir, 'direct-config');

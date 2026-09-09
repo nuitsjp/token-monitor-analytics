@@ -69,7 +69,7 @@ sudo -E node --experimental-strip-types tools/migrate.mjs \
 `--publication-user`を指定した場合は`TMA_DEPLOY_USER`より優先されます。旧systemd
 EnvironmentFileをCLIへ明示する場合は`--analytics-env`と`--collector-env`を使います。
 省略時は各設定ファイルと同じディレクトリーの`analytics.env`/`collector.env`を読みます。
-CLIへ渡した環境変数はファイル値より優先されます。AnalyticsとCollectorのingest環境変数名
+CLIへ渡した環境変数はファイル値より優先されます。AnalyticsとCollectorのingest資格情報の値
 は一致している必要があります。旧ingest tokenとBasic閲覧資格情報はdrainと候補設定の検証に
 メモリー上でだけ使い、移行stateへ保存しません。新しいSecret fileへ旧Hub Secretをコピー
 しません。
