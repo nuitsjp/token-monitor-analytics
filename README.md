@@ -45,3 +45,8 @@ Token Monitor Analytics (本ツール / Node.js 単一常駐アプリ)
    ▼ (LAN / Tailscale / ループバック経由)
 Web ブラウザ (ダッシュボード閲覧 / Hub 管理 / システム更新)
 ```
+
+## 設計ドキュメント
+
+- [設計・実装ガードレール](docs/design-policy.md): 目標、制約、品質要求、実装・検証の判断基準。
+- [アーキテクチャ設計の進め方](docs/architecture-process.md): 採用する方法、文書の役割分担、設計手順、初期設計の完了基準。
