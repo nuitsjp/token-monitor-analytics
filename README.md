@@ -4,39 +4,11 @@ Token Monitor Analytics は、[Token Monitor](https://github.com/Javis603/token-
 
 ---
 
-## 現在の実装と起動方法
+## 現在の状態
 
-段階 A の現在値受信・SQLite 保存・Basic 認証付き表示を実装しています。推定、履歴 GET、Web からの Hub 登録・停止・再開、手動更新は後続段階です。最初の対応・完了判定は Windows のみとし、Linux は後続で検証します。
+設計を整理するため、実装・テスト・実行設定・CIをトップの [old/](old/README.md) に退避しました。保存済みDBとローカル設定も同じ階層構造で保持しています。旧 Analytics は停止しており、ルートから起動する実装はありません。
 
-Windows で Node.js 24.18.0 以上の 24 系を使います。リポジトリのルートで実行してください。
-
-```powershell
-npm ci
-# .env がまだない場合だけ、Mock Hub 用の設定例をコピーする
-if (!(Test-Path -LiteralPath .env)) { Copy-Item -LiteralPath .env.example -Destination .env }
-```
-
-`.env` の `BASIC_USER` / `BASIC_PASSWORD` が画面のログイン情報です。`HUB_URL` / `HUB_SECRET` に接続先を設定してください。認証情報を URL に埋め込まないでください。`.env` と DB の既定保存先 `data/` は Git 管理から除外しています。
-
-```powershell
-mise run start
-```
-
-[現在値画面](http://127.0.0.1:17322/) を開き、`.env` の Basic 認証情報を入力します。設定の `HOST` は既定で `127.0.0.1`、`PORT` は `17322`、DB は `data/analytics.sqlite` です。`HUB_ID` は情報源の識別子で、同じ ID に別 URL を割り当てると起動を拒否します。別 Hub には別 ID を指定してください。現在の起動設定は一つの Hub を対象にします。
-
-Mock Hub を使う場合は、`.env.example` の接続先・共有シークレットに合わせ、別のターミナルで次を実行します。架空の2端末の値が5秒ごとに更新されます。
-
-```powershell
-mise run mock
-```
-
-停止は各ターミナルで `Ctrl+C` を押します。Hub 切断時は3秒間隔で再接続し、最後の保存値を時刻とともに表示します。不正データは採用せず次の正常通知を待ちます。保存失敗時は書き込みを止め、最後の保存値と原因を表示します。DB の権限・保存先・空き容量など原因を解消して Analytics を再起動してください。復旧時に DB を削除・初期化する必要はありません。
-
-```powershell
-mise run check
-```
-
-検証は架空の Mock Hub と一時 DB を使い、実 Hub の設定や保存済み DB を変更しません。CI も Windows で同じ検証コマンドを実行します。開発時の頻用操作は `mise run start` / `mise run mock` / `mise run test` / `mise run check` で実行できます。依存関係のインストールは初回またはlockfile変更時に `npm ci` を実行します。
+[アーキテクチャ設計書](docs/architecture.md)に確定済み仕様と退避した実装の事実を、[TODO.md](TODO.md)に未決・未検証事項をまとめています。旧実装の起動手順は [退避先の案内](old/README.md)を参照してください。
 
 ## 初期版の対象機能（未実装を含む）
 
@@ -60,32 +32,16 @@ mise run check
 
 ## 全体構成
 
-```text
-各端末 (Claude Code / ChatGPT 等)
-   │ トークン利用実績・利用枠
-   ▼
-Token Monitor Hub (既存の上流環境 / 複数対応)
-   │ SSE: 現在値のストリーミング受信
-   │ GET: 保持履歴の定期取得
-   ▼
-Token Monitor Analytics (本システム / Node.js 常駐プロセス)
-   ├─ Hub 接続管理 (並行受信・自動再接続)
-   ├─ 推定・データ処理 (共通キューによる直列化)
-   ├─ ローカル永続化 (組込 SQLite)
-   └─ Web 配信 (ダッシュボード表示 / ブラウザ向け SSE / Basic 認証)
-   ▼ (LAN / VPN / ローカルホスト)
-Web ブラウザ (ダッシュボード閲覧 / Hub 管理)
-```
+Node.js アプリケーションが外部 Hub から情報を取得し、組込 SQLite に保存してブラウザへ配信します。外部との関係、実行・保存の境界、内部責務は、[設計書の C4 図](docs/architecture.md#2-システム境界arc42-context-and-scope)で確認できます。
 
 ---
 
 ## 関連ドキュメント
 
-- [設計・実装ガードレール](docs/design-policy.md): システム目標、制約、品質要求、実装・検証の判断基準（正本）
-- [機能要件](docs/requirements.md): 機能範囲、業務ルール、利用者から見た動作と受け入れ条件
-- [文書方針](docs/document-policy.md): 記録の粒度、実装着手、計画具体化の基準
-- [開発計画](PLAN.md): 実装・検証の段階的計画と直近の作業
-- [アーキテクチャ設計書](docs/architecture.md): Hub API 仕様、データ識別・保存原則、受信処理の設計仕様
-- [機能詳細設計](docs/functional-design.md): API 項目対応、取得タイミング等の具体仕様
-- [用語定義](CONTEXT.md): ドメイン用語の定義
-- [アーキテクチャ設計の参考手法](docs/architecture-process.md): 必要に応じて参照する設計手法
+- [設計方針](docs/design-policy.md): 目標、機能範囲、制約、品質要求、製品の完了条件
+- [アーキテクチャ設計書](docs/architecture.md): C4、識別・状態・保存、重要シナリオ、判断理由と検証条件
+- [用語定義](CONTEXT.md): ドメイン用語の意味
+- [未決事項と残作業](TODO.md): 未決・未検証事項と影響範囲、確定済みの未実装機能
+- [文書方針](docs/document-policy.md): arc42 と C4 の採用方針、文書の役割、初期設計の完了基準
+- [設計と開発の進め方](PLAN.md): 現在の到達点と不足を補う順序
+- [旧実装・文書・調査資料](old/README.md): 元の構造を保った退避先
