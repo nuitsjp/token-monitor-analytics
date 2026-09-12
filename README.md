@@ -48,6 +48,10 @@ Web ブラウザ (ダッシュボード閲覧 / Hub 管理)
 ## 設計ドキュメント
 
 - [設計・実装ガードレール](docs/design-policy.md): システム目標、制約、品質要求、実装・検証の判断基準（正本）。
-- [アーキテクチャ設計の進め方](docs/architecture-process.md): 設計手順、各文書の役割分担、設計完了基準。
+- [機能要件](docs/requirements.md): 機能範囲、業務ルール、利用者から見た動作と受け入れ条件。
+- [文書方針](docs/document-policy.md): 必要な記録、実装への着手、計画を段階的に具体化する基準。
+- [開発計画](PLAN.md): 実装・検証まで含む全体の概略と、直近の作業・進捗。
+- [アーキテクチャ設計の参考](docs/architecture-process.md): 必要な説明に応じて選ぶ設計手法。
 - [用語定義](CONTEXT.md): ドメイン用語の定義。
 - [アーキテクチャ設計書](docs/architecture.md): Hub API 仕様、データ識別・保存原則、受信処理の設計仕様。
+- [機能詳細設計](docs/functional-design.md): 合意済みの API 項目の対応・取得時刻等の具体仕様。
