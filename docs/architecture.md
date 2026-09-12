@@ -2,14 +2,14 @@
 
 本書は、Token Monitor Analytics のシステム境界、構造、データモデル、状態の更新責務、および実行時の保存・通知境界を定義する設計書です。動作と検証条件は [機能仕様](../doc/spec/functional-spec.md)、Hub API の取得値・制約・調査根拠は [連携仕様](../doc/spec/interfaces.md)、製品要件は [設計方針](design-policy.md)、用語定義は [CONTEXT.md](../CONTEXT.md)、未決事項は [PLAN.md](../PLAN.md) を参照してください。
 
-※ 本文中の「実装済み」は、退避された旧実装（`old/`）における到達事実を示します（現行仕様への適合や実機検証は今後の実装フェーズで行います）。
+現行仕様に基づく実装は未着手です。本書の構成・処理は設計を示し、実装・検証状況は [PLAN.md](../PLAN.md) で管理します。
 
 ## 1. 目標・制約と対象スコープ
 
-複数 Hub から AI サービスの利用状況を収集・可視化し、同一契約・利用枠・対象期間の実測増分から利用許容量を推定します。Node.js 24 LTS の単一常駐プロセス、組込 SQLite、Web 全経路への Basic 認証適用、Windows 先行対応などの前提制約は [設計方針](design-policy.md) に従います。
+複数 Hub から AI サービスの利用状況を収集・可視化し、同一契約・利用枠・対象期間の実測増分から利用許容量を推定します。Node.js 24 LTS の単一常駐プロセス、組込 SQLite、限定された安全な範囲での利用者認証なしの運用、Windows 先行対応などの前提制約は [設計方針](design-policy.md) に従います。
 
 - **初期版の設計対象**: 複数 Hub の並行管理（登録・停止・再開）、現在値表示、利用許容量の推定、日次・月次実績の定期収集・補完、安全な手動更新。
-- **旧実装の到達範囲**: 単一 Hub からの現在値受信、入力検証、SQLite への保存、自動再接続、認証付き Web 表示。
+- **実装の出発点**: 起動・設定、現在値の受信・検証・保存・表示、再接続、Mock Hub と検証環境から作成します。
 
 ## 2. システム境界（Context and Scope）
 
@@ -21,7 +21,7 @@ flowchart LR
     Analytics["Token Monitor Analytics<br/>Software System: 利用状況の表示と推定履歴"]
     Hub["Token Monitor Hub<br/>External Software System: 複数の情報源"]
     Devices["端末の収集ソフトウェア<br/>External Software System"]
-    Person -->|閲覧・Hub管理・手動更新 / Basic認証| Analytics
+    Person -->|限定された安全な範囲で閲覧・管理 / 利用者認証なし| Analytics
     Analytics -->|現在値と保持履歴を取得 / 共有シークレット| Hub
     Devices -->|利用実績と利用枠を報告| Hub
 ```
@@ -52,12 +52,12 @@ flowchart LR
         DB[("ローカルデータベース<br/>Container: SQLite ファイル")]
     end
     User -->|閲覧・操作| Browser
-    Browser <-->|HTTP: JSON・SSE / Basic認証| App
+    Browser <-->|HTTP: JSON・SSE / 利用者認証なし| App
     App -->|SSE接続・履歴GET / 共有シークレット| Hub
     App -->|同一プロセス内のSQLite API| DB
 ```
 
-ブラウザは独立したクライアント環境、SQLite は Node.js プロセスに組み込まれた永続化境界です。Analytics は単一常駐プロセスとして動作し、全通信経路（HTML、静的ファイル、JSON API、ブラウザ向け SSE）に Basic 認証を一貫して適用します。
+ブラウザは独立したクライアント環境、SQLite は Node.js プロセスに組み込まれた永続化境界です。Analytics は単一常駐プロセスとして動作し、初期版の Web 経路（HTML、静的ファイル、JSON API、ブラウザ向け SSE）は利用者認証なしで提供します。利用範囲は利用者が管理する限定された安全な範囲とし、Hub への接続は共有シークレット認証を使用します。
 
 ### 4.2 C4 Component（アプリケーション内部構成）
 
@@ -67,11 +67,11 @@ flowchart LR
     Browser["ブラウザ Container"]
     DB[("SQLite Container")]
     subgraph Node["Analytics アプリケーション Container"]
-        Connection["Hub接続<br/>Component: hub-stream.js"]
-        Intake["取り込み制御<br/>Component: app.js のキュー・状態管理"]
-        Validation["入力検証<br/>Component: snapshot.js"]
-        Store["永続化<br/>Component: store.js"]
-        Web["Web配信<br/>Component: app.js のHTTP・SSE"]
+        Connection["Hub接続<br/>Component: 通信・再接続"]
+        Intake["取り込み制御<br/>Component: キュー・状態管理"]
+        Validation["入力検証<br/>Component: 受信データ検証"]
+        Store["永続化<br/>Component: 保存・読み出し"]
+        Web["Web配信<br/>Component: HTTP・SSE"]
     end
     Connection -->|SSE接続・再接続| Hub
     Connection -->|完了した通知・接続状態| Intake
@@ -79,19 +79,19 @@ flowchart LR
     Intake -->|観測を保存・現在値を取得| Store
     Store -->|トランザクション・読み出し| DB
     Intake -->|保存結果・状態変化| Web
-    Web <-->|認証付き画面・JSON・SSE| Browser
+    Web <-->|画面・JSON・SSE / 利用者認証なし| Browser
 ```
 
-| コンポーネント | 主な責務 | 旧実装の参照例 |
-| --- | --- | --- |
-| 起動・終了 | 設定読み込み、HTTP サーバー起動、DB 接続・終了処理、シャットダウン | [main.js](../old/src/main.js)、[config.js](../old/src/config.js) |
-| Hub 接続 | 共有シークレット認証、SSE チャンク受信、自動再接続、通信キャンセル | [hub-stream.js](../old/src/hub-stream.js) |
-| 入力検証 | JSON 構文、型、必須フィールド、数値範囲の検証、安全なデータへの正規化 | [snapshot.js](../old/src/snapshot.js) |
-| 取り込み制御 | 受信データの直列キューイング、各状態管理、表示用データの保持 | [app.js](../old/src/app.js) |
-| 永続化 | Hub 設定、観測データ、端末別データ、履歴のトランザクション管理と読み書き | [store.js](../old/src/store.js) |
-| Web 配信 | Basic 認証、静的ファイル配信、REST API、ブラウザ向け SSE 配信 | [app.js](../old/src/app.js)、[public/app.js](../old/public/app.js) |
+| コンポーネント | 主な責務 |
+| --- | --- |
+| 起動・終了 | 設定読み込み、HTTP サーバー起動、DB 接続・終了処理、シャットダウン |
+| Hub 接続 | 共有シークレット認証、SSE チャンク受信、自動再接続、通信キャンセル |
+| 入力検証 | JSON 構文、型、必須フィールド、数値範囲の検証、安全なデータへの正規化 |
+| 取り込み制御 | 受信データの直列キューイング、各状態管理、表示用データの保持 |
+| 永続化 | Hub 設定、観測データ、端末別データ、履歴のトランザクション管理と読み書き |
+| Web 配信 | 静的ファイル配信、REST API、ブラウザ向け SSE 配信、管理要求の受け渡し |
 
-※ 本コンポーネント構成は責務の論理境界を示します。初期版開発において、契約・枠の照合と推定、保持履歴取得、Hub 管理、手動更新の各責務を順次具体化します（[PLAN.md](../PLAN.md) の各未決事項を参照）。
+※ 本コンポーネント構成は責務の論理境界を示し、ファイル配置は実装時に決めます。初期版開発において、契約・枠の照合と推定、保持履歴取得、Hub 管理、手動更新の各責務を順次具体化します（[PLAN.md](../PLAN.md) の各未決事項を参照）。
 
 
 <a id="crosscutting"></a>
@@ -102,7 +102,7 @@ flowchart LR
 
 | 対象エンティティ | 同一性判定の規則 | 設計・実装状況 |
 | --- | --- | --- |
-| Hub | Analytics への登録単位で分離（URL のみで判定しない） | 旧実装は `HUB_ID` と URL の整合性を検証。Web 管理は未実装 |
+| Hub | Analytics への登録単位で分離（URL のみで判定しない） | 未実装。設定・Web 管理の契約は [U7](../PLAN.md#u7) |
 | 端末 | Hub と `deviceId` の組み合わせで識別。ID 変更時は別端末として扱い自動名寄せは行わない | 比較基準への反映方針は [U5](../PLAN.md#u5) で検討 |
 | 契約 | プロバイダーのアカウントおよび契約単位で識別。名称一致のみでの機械的結合は行わない | 結合根拠は [U2](../PLAN.md#u2) で検討 |
 | 利用枠 | 同一契約内の枠として識別。複数端末から報告された同一枠の消費率を単純合算しない | プロバイダー別規則は [U4](../PLAN.md#u4) で検討 |
@@ -123,15 +123,15 @@ flowchart LR
 
 | データエンティティ | 永続化規則 | 実装状況 |
 | --- | --- | --- |
-| Hub 設定・端末 | 情報源を分離して管理 | 実装済み |
-| 現在値観測・現在値参照 | 状態変化した観測を追記し、端末データと現在値参照を同一トランザクションで更新 | 実装済み |
+| Hub 設定・端末 | 情報源を分離して管理 | 未実装 |
+| 現在値観測・現在値参照 | 状態変化した観測を追記し、端末データと現在値参照を同一トランザクションで更新 | 未実装 |
 | 契約・利用枠の対応 | 契約と枠の対応関係を保持 | U2・U4 に依存 |
 | 比較基準・推定結果 | 起点・最新の観測対応、算出時点、対象区間、推定不可理由を保持 | U3・U5 に依存 |
 | 日次・月次実績 | 複合キーに基づき再取得データで更新（過去レコードは保持） | 未実装（U6） |
 | Hub 収集設定 | 有効／停止フラグを永続化し再起動時に復元 | 未実装（U6） |
 | 履歴取得ステータス | 定期取得の完了状況および最終成功日時を記録 | 未実装（U6） |
 
-旧実装の DB は `hubs`、`observations`、`observed_devices`、`current_observations` で構成され、1受信通知に含まれる観測データ、全端末行、現在値参照を単一トランザクションでコミットします（失敗時はロールバック）。
+1受信通知に含まれる観測データ、全端末行、現在値参照を単一トランザクションでコミットします（失敗時はロールバック）。物理テーブル定義は実装時に具体化します。
 
 コミット完了後、確定値を用いて UI 配信用の状態を更新しクライアントへ `update` を通知します。永続化コミットと画面通知は独立した確定点であり、コミット完了後の障害処理は [U9](../PLAN.md#u9) で扱います。
 
@@ -168,7 +168,7 @@ S1〜S9 は [機能仕様](../doc/spec/functional-spec.md#scenarios)・設計・
 <a id="s1"></a>
 ### S1. 通常の現在値受信と再受信
 
-現在値の受信・保存処理は旧実装で検証済みであり、推定処理は U2〜U4 の確定に依存します。
+現在値の受信・保存・表示は未実装・未検証です。推定処理は U2〜U5 の確定に依存しますが、観測単位の保存・表示は契約別推定と独立して実装します。
 
 ```mermaid
 sequenceDiagram
@@ -233,9 +233,9 @@ Hub 接続が切断を検知して取り込み制御へ状態を通知し、キ�
 - **動作・検証条件**: [機能仕様 S7](../doc/spec/functional-spec.md#s7)。比較基準と設定・取得完了状態の復元責務は U3・U5・U6 に依存します。
 
 <a id="s8"></a>
-### S8. 認証と管理操作
+### S8. Hub 管理操作
 
-Web 配信が認証境界となり、管理要求は入力検証後に管理処理へ渡します。操作契約、CSRF の方式、管理処理の担当、秘密情報の保存、結果通知の確定点は [U7](../PLAN.md#u7) に残ります。保護対象と動作・検証条件は [機能仕様 S8](../doc/spec/functional-spec.md#s8) を参照します。
+Web 配信は初期版で利用者認証を行わず、管理要求を入力検証・CSRF 検証後に管理処理へ渡します。操作契約、CSRF の方式、管理処理の担当、秘密情報の保存、結果通知の確定点は [U7](../PLAN.md#u7) に残ります。動作・検証条件は [機能仕様 S8](../doc/spec/functional-spec.md#s8)、後続の利用者認証は [U12](../PLAN.md#u12) を参照します。
 
 <a id="s9"></a>
 ### S9. 手動更新と障害復旧
@@ -244,10 +244,10 @@ Web 配信が認証境界となり、管理要求は入力検証後に管理処�
 
 ## 7. 配置と運用 (Deployment View)
 
-Windows 環境上に Node.js アプリケーションとローカル SQLite ファイルを配置し、ブラウザから同一ホストまたは許可されたネットワーク（LAN / VPN）経由でアクセスします（Linux 環境は後続対応）。
+Windows 環境上に Node.js アプリケーションとローカル SQLite ファイルを配置し、利用者が管理する限定された安全な範囲でブラウザからアクセスします（Linux 環境は後続対応）。初期版の利用者認証はありません。
 
-- **環境設定**: `.env` でポートや認証情報を設定し、DB ファイルは既定で `data/analytics.sqlite` を使用します。
-- **旧実装の参考情報**: 旧構成の起動手順は [old/README.md](../old/README.md)、依存関係は [package.json](../old/package.json) に保管されています。同梱の Mock Hub は開発・テスト用であり本番の常駐プロセスではありません。
+- **環境設定**: `.env` でポート等の実行設定を与え、Hub 接続設定と共有シークレットの管理は [U7](../PLAN.md#u7) で具体化します。DB ファイルは既定で `data/analytics.sqlite` を使用します。
+- **起動・検証環境**: Node.js の依存関係、起動・終了手順、設定例、Mock Hub、テスト実行環境は [PLAN.md の基礎機能](../PLAN.md#unimplemented) として新規作成します。Mock Hub は開発・テスト用であり本番の常駐プロセスではありません。
 
 ## 8. 設計判断 (Architecture Decisions)
 
@@ -257,8 +257,6 @@ Windows 環境上に Node.js アプリケーションとローカル SQLite フ�
 - [ADR 0002: モック駆動開発の採用方針](ard/0002-adopt-mock-driven-development.md)（Proposed）: 本番用 UI を共用し動作する画面で認識を合わせる開発プロセスの提案。
 - [ADR 0003: モック開発の補助製品選定](ard/0003-select-mock-tooling.md)（Proposed）: Storybook、MSW、Playwright の組み合わせ案と最小構成案の比較検討。
 
-※ 旧実装で採用した `eventsource-parser` は、SSE のチャンク受信・複数行・改行コードをパースするための軽量ライブラリです。
-
 <a id="quality-and-risks"></a>
 ## 9. 品質確認とリスク管理 (Quality Requirements / Risks)
 
@@ -266,5 +264,5 @@ Windows 環境上に Node.js アプリケーションとローカル SQLite フ�
 
 [機能仕様 S1〜S9](../doc/spec/functional-spec.md#scenarios) の検証条件と本書の担当・保存境界を組み合わせて確認します。今回の文書統合は未決事項の解消や、実装・実機検証の完了を意味しません。
 
-- **旧実装での検証実績**: 退避したテスト群（計20件）において、設定読み込み、入力検証、SSE チャンク処理、再接続、DB 保存・ロールバック、保存失敗処理、Basic 認証、機密保護などの動作を確認済みです。
-- **現行の未検証範囲とリスク**: 複数 Hub の並行管理、履歴データの補完、利用許容量の推定、手動更新、実機 Hub との長時間稼働・互換性については、今後の実装フェーズで検証します（詳細は [PLAN.md](../PLAN.md) の各未決事項を参照）。
+- **調査の証跡**: 固定版の上流調査と [Private Hub の実データサンプル](reference/hub-private/README.md) の取得条件は [連携仕様](../doc/spec/interfaces.md) に記録しています。単発応答は継続接続や現行実装の動作を保証しません。
+- **現行の未検証範囲とリスク**: 起動・終了、現在値の受信・検証・保存・表示、再接続、保存障害、管理操作、複数 Hub、履歴補完、推定、手動更新を含め、現行実装の動作はすべて未検証です。必要な検証を [PLAN.md](../PLAN.md) で追跡します。

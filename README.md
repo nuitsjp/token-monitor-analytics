@@ -4,7 +4,9 @@ Token Monitor Analytics は、複数の [Token Monitor](https://github.com/Javis
 
 ## プロジェクトの現状
 
-現在は**設計段階**です。過去の実装資産はすべて [old/](old/README.md) へ退避済みであり、現行コードの実装は未着手です。旧実装の確認や動作検証は [退避先の案内](old/README.md) を参照してください。
+現在は**設計段階**で、現行コードの実装は未着手です。要件・設計と Hub の調査資料は現行文書へ移管済みです。[PLAN.md](PLAN.md) に従って、現在値の受信・保存・表示と起動・検証環境から新規作成します。
+
+初期版は限定された安全な範囲で利用し、Analytics への利用者認証は後続で実装します。Hub 接続には上流が要求する共有シークレットを使用します。
 
 ## 初期版の計画機能
 
@@ -12,7 +14,7 @@ Token Monitor Analytics は、複数の [Token Monitor](https://github.com/Javis
 - 同一契約・利用枠・対象期間の実測増分に基づく利用許容量の推定と保存
 - 日次・月次実績の定期収集、過去データの補完、推移比較
 - 複数 Hub の一括管理（登録、並行収集、状態監視、個別停止・再開）
-- Basic 認証、安全な手動更新、障害発生時の復旧情報提示
+- 安全な手動更新、管理操作の入力検証・CSRF 対策、障害発生時の復旧情報提示
 
 ## 関連ドキュメント
 
@@ -23,4 +25,5 @@ Token Monitor Analytics は、複数の [Token Monitor](https://github.com/Javis
 - [設計・開発計画 (PLAN.md)](PLAN.md): 到達点、作業順序、未決・未検証事項、未実装機能
 - [用語定義 (CONTEXT.md)](CONTEXT.md): ドメイン用語の定義
 - [文書方針](docs/document-policy.md) / [共通標準](docs/standards/design-and-documentation.md): 文書の正本管理と設計・変更手続き
-- [退避資料 (old/)](old/README.md): 旧実装の起動方法と保管内容の案内
+- [プロジェクトテンプレート](project-template/README.md): 文書・設計の肥大化を抑え、モック駆動開発を導入するための汎用ひな形と個別プロジェクトへの適用手順
+- [Private Hub の実データサンプル](docs/reference/hub-private/README.md): 取得済み API 応答と調査時の条件・制約

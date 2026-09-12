@@ -2,13 +2,25 @@
 
 本書は、Token Monitor Hub が公開する参照 API、SSE 通知、返却データの意味と制約、調査根拠の正本です。Analytics が採用する動作は [機能仕様](functional-spec.md)、構造・保存境界は [設計書](../../docs/architecture.md) を参照します。
 
-以下は旧文書に記録された調査基準版の事実を移管したもので、今回の文書統合で現行上流を再検証したものではありません。文書の比較対象版 `c4182fd5bcdcd466f6bcd159026756323e084318` との互換性は未検証であり、[PLAN.md U1](../../PLAN.md#u1) で追跡します。
+以下は調査基準版の事実を本書へ集約したもので、今回の文書統合で現行上流を再検証したものではありません。文書の比較対象版 `c4182fd5bcdcd466f6bcd159026756323e084318` との互換性は未検証であり、[PLAN.md U1](../../PLAN.md#u1) で追跡します。
 
 ## 1. 調査根拠
 
-- [旧アーキテクチャ設計書](../../old/docs/architecture.md) の第1〜2節および第5.1〜5.2節。調査基準は上流コミット `2f60827e3028d283969dd74cde5b3f5664220442`（`v0.56.0`）です。
-- [Private Hub 単発取得ログ](../../old/docs/reference/hub-private/README.md)。取得日は 2026-09-12、Worker の `coreRevision: 36`、`runtimeRevision: 3` です。取得した参照 API の本文は、現行 Hub の継続取得や一貫したスナップショットを証明しません。
-- 調査対象は上流の API 仕様、Node Hub、Worker Hub、実績集計、履歴、利用枠正規化・収集状態、Claude・Codex プロバイダー、収集処理とリセット境界です。対応するソースの一覧は旧設計書 第1節にあり、上記基準コミットの内容を根拠とします。
+上流リポジトリ [Token Monitor](https://github.com/Javis603/token-monitor) の基準コミット [`2f60827e3028d283969dd74cde5b3f5664220442`](https://github.com/Javis603/token-monitor/commit/2f60827e3028d283969dd74cde5b3f5664220442)（`v0.56.0`）のソースコードと、稼働中の Private Hub（Cloudflare Worker 実装、`coreRevision: 36`、`runtimeRevision: 3`）の参照 API 応答を確認しました。実データ資料は [Private Hub 単発取得ログ](../../docs/reference/hub-private/README.md) に保存しています。
+
+| 根拠資料 | 主な確認内容 |
+| --- | --- |
+| [API 仕様書](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/docs/API.md) | 認証方式、ヘルスチェック、データ投入・集計仕様、契約情報 |
+| [Node Hub 実装](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/hub/server.js) | `getStats`, `getDevices`, `getHistory`, SSE 配信、リクエスト処理 |
+| [Worker Hub 実装](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/worker/src/index.js) | Durable Object による永続化・集計、SSE 配信、公開統計 |
+| [利用実績の集計](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/shared/usage.js) | 端末レコードの正規化・マージ、セッション集約、履歴集計 |
+| [履歴処理](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/shared/history.js) | 履歴データの正規化、プレビュー生成、履歴リビジョン管理 |
+| [利用枠の正規化](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/shared/limits/core.js) | 枠ウィンドウの正規化、プロバイダー別集約 |
+| [利用枠の収集状態](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/shared/limits/runtime.js) | 最終成功値と最新試行状態の分離管理 |
+| [Claude プロバイダー](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/shared/providers/claude/limits.js) / [Codex プロバイダー](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/shared/providers/codex/limits.js) | プロバイダー別の利用枠生成 |
+| [収集処理](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/shared/collector.js) / [リセット境界の更新](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/src/shared/limits/resetBoundary.js) | 収集処理とリセット境界の更新 |
+
+確認範囲は、上流の API 仕様、Node Hub、Worker Hub、実績集計、履歴、利用枠の正規化・収集状態、Claude・Codex プロバイダー、収集処理とリセット境界です。Private Hub では参照 API の接続・応答を確認しましたが、取得した本文は現行 Hub の継続取得や一貫したスナップショットを証明しません。
 
 <a id="hub-api"></a>
 ## 2. Hub API 経路・用途・認証

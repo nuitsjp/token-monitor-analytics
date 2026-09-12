@@ -17,15 +17,18 @@
 | [../doc/spec/interfaces.md](../doc/spec/interfaces.md) | Hub API の経路・取得項目・意味・制約、調査版と確認根拠 |
 | [architecture.md](architecture.md) | システム境界、構造、識別・保存モデル、状態の更新責務、S1〜S9 の処理・保存・通知境界 |
 | [mock-tooling.md](mock-tooling.md) | モック開発ツールの選定候補と運用ルール |
+| [reference/hub-private/README.md](reference/hub-private/README.md) | 実 Hub の取得済みサンプル、取得条件と確認範囲。API 調査の証跡として扱う |
 | [CONTEXT.md](../CONTEXT.md) | ドメイン用語の定義 |
 | [PLAN.md](../PLAN.md) | 到達点、作業順序、未決・未検証事項、確定済み未実装機能 |
 | [README.md](../README.md) | 製品概要、現在のステータス、計画機能、文書案内 |
 | [AGENTS.md](../AGENTS.md) | エージェント作業時の正本参照マッピングと完了前チェック項目 |
 | `docs/ard/0001-xxxxx.md` | 重大な設計判断を記録する ADR（4桁連番＋識別名） |
 
-※ `old/` は退避済みの旧実装・データ等の保管先であり、現行の仕様・指示には適用しません。
+※ 旧実装・旧文書から採用した仕様と調査根拠は現行文書へ移管済みです。旧資料を現行仕様・指示として適用せず、参照が必要な場合は Git 履歴を使用します。
 
 ※ `upstream/token-monitor/` は外部仕様の調査対象リポジトリであり、確認リビジョンと調査結果を連携仕様に記録します。
+
+※ [project-template/](../project-template/README.md) は他プロジェクト向けの独立した配布物です。その中の規約・文書配置・記入欄は配布先のためのひな形であり、本プロジェクトの現行仕様・採用標準には適用しません。
 
 詳細仕様は `doc/spec/` に置きます。2026-09-13 の文書統合で、設計書にあった動作仕様と API の事実を上記2文書へ移しました。設計書には責務と保存境界を残し、動作仕様は参照します。同じ規則を複数の正本へ重複定義しません。未決事項の詳細と状況は PLAN.md に残します。
 
@@ -54,7 +57,7 @@
 
 ## 2. C4 モデルと必須ダイアグラム
 
-[共通標準 第4節](standards/design-and-documentation.md#architecture-method) に従い、Mermaid で以下の3視点を定義します（Context 図と Container 図には認証境界を明示）。
+[共通標準 第4節](standards/design-and-documentation.md#architecture-method) に従い、Mermaid で以下の3視点を定義します（Context 図と Container 図には、初期版の Web は利用者認証なし、Hub 接続は共有シークレット認証であることを明示）。
 
 - **Context 図**: 利用者、Analytics、外部 Hub 間の関係とシステム境界。
 - **Container 図**: Node.js（Web・API）、ブラウザ、SQLite の実行・保存境界と通信。単一プロセス構成でも境界を明示する。
@@ -72,7 +75,7 @@
 設計判断の理由説明（4点）および ADR 作成条件は [共通標準 第2・5節](standards/design-and-documentation.md#completion) に従います。
 
 **初期設計の完了基準**:  
-重要シナリオ S1〜S9 のすべてについて、機能仕様と設計書を合わせて [共通標準 第5節の5項目](standards/design-and-documentation.md#completion)（同一性判定、更新担当、結果確定と通知契機、異常時の停止・継続範囲、検証方法）を具体的に説明できる状態とします。未決事項に依存するシナリオが残る間は未完了とし、製品初期版の完了は [設計方針 第6節](design-policy.md#product-completion) で判定します。
+初期版の重要シナリオ S1〜S9 のすべてについて、機能仕様と設計書を合わせて [共通標準 第5節の5項目](standards/design-and-documentation.md#completion)（同一性判定、更新担当、結果確定と通知契機、異常時の停止・継続範囲、検証方法）を具体的に説明できる状態とします。初期版の未決事項に依存するシナリオが残る間は未完了とし、製品初期版の完了は [設計方針 第6節](design-policy.md#product-completion) で判定します。後続の利用者認証（[U12](../PLAN.md#u12)）は初期版の完了条件に含めません。
 
 <a id="protected-agreements"></a>
 ## 5. このプロジェクトで保護する合意

@@ -1,0 +1,71 @@
+{
+  "source": "https://private.token-monitor-hub-private.workers.dev",
+  "startedAt": "2026-09-12T01:57:13.988Z",
+  "completedAt": "2026-09-12T01:57:14.734Z",
+  "sourceCommit": "2f60827e3028d283969dd74cde5b3f5664220442",
+  "results": [
+    {
+      "path": "/api/health",
+      "file": "health.json",
+      "status": 200,
+      "startedAt": "2026-09-12T01:57:13.990Z",
+      "completedAt": "2026-09-12T01:57:14.288Z",
+      "bytes": 487,
+      "sha256": "2e1d15ed758fad88186b977be3f56b5f31e6e0c28b899c0f0cb60fdefc260d01"
+    },
+    {
+      "path": "/api/stats",
+      "file": "stats.json",
+      "status": 200,
+      "startedAt": "2026-09-12T01:57:14.021Z",
+      "completedAt": "2026-09-12T01:57:14.734Z",
+      "bytes": 684730,
+      "sha256": "17dc164755c74af497a40c5a64f129936a8abd0c9dd6b1c3562667eb0baf40cb"
+    },
+    {
+      "path": "/api/devices",
+      "file": "devices.json",
+      "status": 200,
+      "startedAt": "2026-09-12T01:57:14.022Z",
+      "completedAt": "2026-09-12T01:57:14.574Z",
+      "bytes": 645316,
+      "sha256": "ecd2e3e6952285c0d1d6f6c58a0e04f7c2f44da6a33a99cc4c96d161837699f6"
+    },
+    {
+      "path": "/api/history",
+      "file": "history.json",
+      "status": 200,
+      "startedAt": "2026-09-12T01:57:14.023Z",
+      "completedAt": "2026-09-12T01:57:14.322Z",
+      "bytes": 183645,
+      "sha256": "abc7df14e78547e3cce640fb15b1ba27b6f62fc5fb48af3d305c5d7b2592d808"
+    },
+    {
+      "path": "/api/subscriptions",
+      "file": "subscriptions.json",
+      "status": 200,
+      "startedAt": "2026-09-12T01:57:14.023Z",
+      "completedAt": "2026-09-12T01:57:14.289Z",
+      "bytes": 74,
+      "sha256": "773eb9a7a2ab8ce403866ee8377dc9589753073fd9deb6bcbe816f11d3017d67"
+    },
+    {
+      "path": "/api/public/stats",
+      "file": "public-stats.json",
+      "status": 404,
+      "startedAt": "2026-09-12T01:57:14.024Z",
+      "completedAt": "2026-09-12T01:57:14.287Z",
+      "bytes": 26,
+      "sha256": "02c1a0904271571347f24896e8361482e0b74e8094630f044be391a71d7401c6"
+    },
+    {
+      "path": "/api/stats/stream",
+      "file": "stream-snapshot.sse",
+      "status": 200,
+      "startedAt": "2026-09-12T01:57:14.025Z",
+      "completedAt": "2026-09-12T01:57:14.677Z",
+      "bytes": 407537,
+      "sha256": "068e6cb99e0800d501163fc03a8f7f1f892ae5f32307b2a4af695a56838d9273"
+    }
+  ]
+}
