@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Token Monitor Analytics の現在値ダッシュボード">
+    <title>Token Monitor Analytics — 現在値</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="site-header">
+        <div class="brand-lockup">
+          <p class="kicker">Token Monitor Analytics</p>
+          <h1>利用状況ダッシュボード</h1>
+          <p class="subtitle">Hubから受信した現在値を、取得状態と観測時刻を分けて表示します。</p>
+        </div>
+        <button id="refresh-button" class="button button-primary" type="button">SSEを再接続</button>
+      </header>
+
+      <main id="main-content">
+        <section class="communication-panel" aria-labelledby="communication-heading">
+          <div class="section-heading compact-heading">
+            <div>
+              <p class="kicker">通信とデータ</p>
+              <h2 id="communication-heading">Analyticsの状態</h2>
+            </div>
+            <p id="transport-message" class="transport-message" aria-live="polite">接続状態を確認しています。</p>
+          </div>
+          <div class="connection-grid">
+            <article id="browser-connection-card" class="connection-card">
+              <div class="connection-card-heading">
+                <span class="connection-label">ブラウザ</span>
+                <span id="browser-connection-badge" class="status-pill status-pending">確認中</span>
+              </div>
+              <p id="browser-connection-detail" class="connection-detail">ネットワーク状態を確認しています。</p>
+            </article>
+            <article id="analytics-connection-card" class="connection-card">
+              <div class="connection-card-heading">
+                <span class="connection-label">Analytics</span>
+                <span id="analytics-connection-badge" class="status-pill status-pending">接続中</span>
+              </div>
+              <p id="analytics-connection-detail" class="connection-detail">現在値のストリームへ接続しています。</p>
+            </article>
+            <article id="data-connection-card" class="connection-card">
+              <div class="connection-card-heading">
+                <span class="connection-label">表示データ</span>
+                <span id="data-connection-badge" class="status-pill status-pending">未取得</span>
+              </div>
+              <p id="data-connection-detail" class="connection-detail">保存済みスナップショットを確認しています。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="overview-section" aria-labelledby="overview-heading">
+          <div class="section-heading">
+            <div>
+              <p class="kicker">現在値の概要</p>
+              <h2 id="overview-heading">全体の状況</h2>
+            </div>
+            <p class="section-caption">値が取得できない項目は「未取得」と表示します。</p>
+          </div>
+          <div class="overview-grid">
+            <article class="overview-card overview-card-emphasis">
+              <p class="metric-label">利用許容量の推定</p>
+              <strong id="estimation-value" class="overview-value">推定機能は未実装</strong>
+              <p id="estimation-detail" class="overview-detail">取得できた現在値の表示を続けています。</p>
+            </article>
+            <article class="overview-card">
+              <p class="metric-label">Hub</p>
+              <strong id="hub-count-value" class="overview-value">未取得</strong>
+              <p id="hub-count-detail" class="overview-detail">接続状態を確認しています。</p>
+            </article>
+            <article class="overview-card">
+              <p class="metric-label">上流の最終更新</p>
+              <strong id="latest-value" class="overview-value overview-value-small">未取得</strong>
+              <p id="latest-detail" class="overview-detail">Hubの上流更新時刻です。</p>
+            </article>
+            <article class="overview-card">
+              <p class="metric-label">保存済みスナップショット</p>
+              <strong id="snapshot-count-value" class="overview-value">未取得</strong>
+              <p id="snapshot-count-detail" class="overview-detail">前回保存値の有無を表示します。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="hub-section" aria-labelledby="hub-heading">
+          <div class="section-heading">
+            <div>
+              <p class="kicker">情報源ごとの表示</p>
+              <h2 id="hub-heading">Hub別の現在値</h2>
+            </div>
+            <p class="section-caption">Hub集計と端末別集計は混ぜずに表示します。</p>
+          </div>
+          <div id="hub-list" class="hub-list" aria-live="polite" aria-busy="true">
+            <div class="loading-state">
+              <span class="loading-dot" aria-hidden="true"></span>
+              <p>現在値を取得しています。</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <p>推定機能は未実装です。取得できた実測の利用枠・消費率・API換算額を表示しています。</p>
+      </footer>
+    </div>
+
+    <noscript>
+      <div class="noscript-message">このダッシュボードを表示するにはJavaScriptを有効にしてください。</div>
+    </noscript>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

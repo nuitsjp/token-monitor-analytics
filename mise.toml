@@ -1,0 +1,18 @@
+[tools]
+node = "24.18.0"
+
+[tasks.start]
+description = "Analytics を起動する"
+run = "npm start"
+
+[tasks.mock]
+description = "Mock Hub を起動する"
+run = "npm run mock"
+
+[tasks.test]
+description = "テストを実行する"
+run = "npm test"
+
+[tasks.check]
+description = "構文検査とテストを実行する"
+run = "npm run check"
