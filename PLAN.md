@@ -19,7 +19,7 @@ Token Monitor Analytics の初期アーキテクチャを設計し、実装に�
 
 チェックは成果物と確認結果が揃ってから更新する。用語集や設計書は内容ができた時点で作成し、空の ADR や文書を先に揃えない。
 
-2026-09-12: 手順 1 に着手した。上流を `upstream/token-monitor` にサブモジュール登録し、v0.56.0（`2f60827e3028d283969dd74cde5b3f5664220442`）のソースを調査した。[用語集](CONTEXT.md) と [設計書](docs/architecture.md) に確認結果を記録した。Private Hub の GET と SSE 初回 snapshot を取得し、[実データ資料](docs/reference/hub-private/README.md) に保存した。U2・U3 の初期方針を [設計書 第 3.3 節](docs/architecture.md#33-推定できる条件と単位) に記録した。U4 の対象期間判定方針は合意済みとして [設計書 第 3.4 節](docs/architecture.md#34-リセットと欠測) を参照する。U5 のログ複製の扱いは合意済みとして [設計書 第 3.2 節](docs/architecture.md#32-再受信と二重計上防止) を参照する。対象サービス・プランと各枠の識別詳細、および U5 の端末 ID 再利用・再インストール・収集範囲変更時の実績継続性が残るため、手順 1 全体は完了していない。手順 2～4 は未着手である。
+2026-09-12: 手順 1 に着手した。上流を `upstream/token-monitor` にサブモジュール登録し、v0.56.0（`2f60827e3028d283969dd74cde5b3f5664220442`）のソースを調査した。[用語集](CONTEXT.md) と [設計書](docs/architecture.md) に確認結果を記録した。Private Hub の GET と SSE 初回 snapshot を取得し、[実データ資料](docs/reference/hub-private/README.md) に保存した。U2・U3 の初期方針を [設計書 第 3.3 節](docs/architecture.md#33-推定できる条件と単位) に記録した。U4 の対象期間判定方針は合意済みとして [設計書 第 3.4 節](docs/architecture.md#34-リセットと欠測) を参照する。U5 のログ複製の扱いは合意済みとして [設計書 第 3.2 節](docs/architecture.md#32-再受信と二重計上防止) を参照する。端末 ID 変更時の初期方針は [設計書 第 3.1 節](docs/architecture.md#31-情報源と対象の分離) に、過去データを手動で新しい `deviceId` に結び付ける将来要件は [設計方針 第 6 節](docs/design-policy.md#6-事前相談と将来要件) に記録した。対象サービス・プランと各枠の識別詳細、および U5 の同じ端末 ID の再利用・収集範囲変更時の実績継続性が残るため、手順 1 全体は完了していない。手順 2～4 は未着手である。
 
 ## 1. Hub API の確認と識別ルールの整理
 
