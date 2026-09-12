@@ -6,11 +6,11 @@
 
 - **設計段階**: [機能仕様](doc/spec/functional-spec.md#scenarios) に重要シナリオ（S1〜S9）の動作・検証条件、[設計書](docs/architecture.md) に C4 モデル、各種責務を定義済みです。初期版の[未決事項](#open-items)に依存するシナリオが残るため初期設計は未完了であり、具体化できた機能から順次実装・検証を進めます。
 - **仕様の整理**: 機能仕様および設計方針を正本として仕様を整理済みです。具体的な未決・未検証事項は U1〜U11 として管理しています。
-- **汎用テンプレートの分離**: 設計・文書管理およびモック駆動開発の共通枠組みは、独立した配布物 [nuitsjp/aidd-project-template](https://github.com/nuitsjp/aidd-project-template) へ分離しました。本プロジェクトへの標準適用（U10・U11）は未決のまま維持しています。
-- **実装の出発点**: 基礎環境の構築（起動・設定、現在値の受信・検証・保存・表示、Mock Hub 等）から順次作成します（[第5節](#unimplemented)）。
-- **調査資料の管理**: Hub API の調査資料と Private Hub の実応答サンプルを [docs/reference/hub-private](docs/reference/hub-private/README.md) に記録済みです（単発調査であり、現行実装の動作検証ではありません）。
+- **汎用テンプレートの分離**: 設計・文書管理およびモック駆動開発の共通枠組みは、独立した配布物 [nuitsjp/aidd-project-template](https://github.com/nuitsjp/aidd-project-template) へ分離しました。モック駆動開発の既定採用（U10）とツール採否（U11）は未決です。
+- **実装の出発点**: 旧実装・テスト・ローカル DB・設定は再利用せず、現行仕様に基づき基礎環境から作り直します（[第5節](#unimplemented)）。
+- **調査資料の管理**: Hub API の調査事実は [連携仕様](doc/spec/interfaces.md)、Private Hub の実応答サンプルは [docs/reference/hub-private](docs/reference/hub-private/README.md) に記録済みです（単発調査であり、現行実装の動作検証ではありません）。
 - **利用者認証の後続化**: 初期版は限定された安全な利用環境を想定し、ダッシュボードの利用者認証は後続実装とします（[U12](#u12)）。外部 Hub 接続用の共有シークレット認証、入力検証、CSRF 対策は初期版の対象です。
-- **検証の状況**: 現行実装のテスト・実機検証は未実施です。確認根拠と未検証範囲は [設計書 第9節](docs/architecture.md#quality-and-risks) および [U1](#u1) で管理します。
+- **検証の状況**: 現行実装のテスト・実機検証は未実施です。過去実装の検証実績は現行実装の完了判定に算入しません。確認根拠と未検証範囲は [設計書 第9節](docs/architecture.md#quality-and-risks) および [U1](#u1) で管理します。
 - [x] **旧資産の削除**: 不要となった旧実装・旧設定（`old/`）の削除を完了しました。
 
 ## 2. 作業の進め方と順序
