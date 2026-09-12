@@ -1,6 +1,6 @@
 # 文書方針 (Document Policy)
 
-本プロジェクトでは、共通標準 `design-and-documentation`（版1）を採用します。本書は、文書の配置、適用範囲、保護すべき合意事項を定める正本です。
+本プロジェクトでは、共通標準 `design-and-documentation`（版1）を採用します。本書は、文書の配置、適用範囲、および保護すべき合意事項を定める正本です。
 
 <a id="document-structure"></a>
 ## 1. 文書の役割と配置
@@ -13,24 +13,22 @@
 | [standards/mock-driven-development.md](standards/mock-driven-development.md) | モック駆動開発の共通実施手順 |
 | [document-policy.md](document-policy.md) | 採用標準、文書構造、必須ダイアグラム、初期設計の完了基準 |
 | [design-policy.md](design-policy.md) | 製品目標、機能要件、制約事項、品質要求、完了条件 |
-| [../doc/spec/functional-spec.md](../doc/spec/functional-spec.md) | 詳細な動作仕様、推定・表示・履歴の規則、S1〜S9 の期待結果と検証条件、機能ごとの合意記録 |
-| [../doc/spec/interfaces.md](../doc/spec/interfaces.md) | Hub API の経路・取得項目・意味・制約、調査版と確認根拠 |
-| [architecture.md](architecture.md) | システム境界、構造、識別・保存モデル、状態の更新責務、S1〜S9 の処理・保存・通知境界 |
+| [../doc/spec/functional-spec.md](../doc/spec/functional-spec.md) | 詳細な動作仕様、推定・表示・履歴の規則、S1〜S9 の期待結果と検証条件 |
+| [../doc/spec/interfaces.md](../doc/spec/interfaces.md) | Hub API の経路・取得項目・制約、調査根拠 |
+| [architecture.md](architecture.md) | システム境界、構造、データモデル、状態更新責務、S1〜S9 の処理・保存境界 |
 | [mock-tooling.md](mock-tooling.md) | モック開発ツールの選定候補と運用ルール |
-| [reference/hub-private/README.md](reference/hub-private/README.md) | 実 Hub の取得済みサンプル、取得条件と確認範囲。API 調査の証跡として扱う |
+| [reference/hub-private/README.md](reference/hub-private/README.md) | 実 Hub の取得済みサンプル、取得条件と確認範囲（API 調査の証跡） |
 | [CONTEXT.md](../CONTEXT.md) | ドメイン用語の定義 |
-| [PLAN.md](../PLAN.md) | 到達点、作業順序、未決・未検証事項、確定済み未実装機能 |
+| [PLAN.md](../PLAN.md) | 開発計画、作業順序、未決・未検証事項、未実装機能 |
 | [README.md](../README.md) | 製品概要、現在のステータス、計画機能、文書案内 |
 | [AGENTS.md](../AGENTS.md) | エージェント作業時の正本参照マッピングと完了前チェック項目 |
 | `docs/ard/0001-xxxxx.md` | 重大な設計判断を記録する ADR（4桁連番＋識別名） |
 
-※ 旧実装・旧文書から採用した仕様と調査根拠は現行文書へ移管済みです。旧資料を現行仕様・指示として適用せず、参照が必要な場合は Git 履歴を使用します。
+※ `upstream/token-monitor/` は外部仕様の調査対象リポジトリ（git submodule）であり、確認リビジョンと調査結果は連携仕様に記録します。
 
-※ `upstream/token-monitor/` は外部仕様の調査対象リポジトリであり、確認リビジョンと調査結果を連携仕様に記録します。
+※ [外部プロジェクトテンプレート](https://github.com/nuitsjp/aidd-project-template) は他プロジェクト向けの独立した配布物です。その中の規約・ひな形は配布先のためのものであり、本プロジェクトの現行仕様には適用しません。
 
-※ [project-template/](../project-template/README.md) は他プロジェクト向けの独立した配布物です。その中の規約・文書配置・記入欄は配布先のためのひな形であり、本プロジェクトの現行仕様・採用標準には適用しません。
-
-詳細仕様は `doc/spec/` に置きます。2026-09-13 の文書統合で、設計書にあった動作仕様と API の事実を上記2文書へ移しました。設計書には責務と保存境界を残し、動作仕様は参照します。同じ規則を複数の正本へ重複定義しません。未決事項の詳細と状況は PLAN.md に残します。
+動作仕様および API 仕様は `doc/spec/` を正本とし、設計書（`docs/architecture.md`）には責務と保存境界を記録します。同一規則の重複定義を避け、未決事項は PLAN.md で管理します。
 
 ### アーキテクチャ設計書の章構成
 
@@ -53,7 +51,7 @@
 
 共通標準 `mock-driven-development`（版1）の既定適用は[提案中（U10）](../PLAN.md#u10)であり、ツール採否（[U11](../PLAN.md#u11)）とともに個別に判断します。個別の作業で明示指定された場合のみ適用します。
 
-機能仕様は [機能仕様書 第4節](../doc/spec/functional-spec.md#scenarios) の S1〜S9 を正本とし、モックによる確認方法・画面合意・承認記録も該当シナリオへ集約します。設計書は同じ ID で処理責務を対応付けます。画面合意は、API 仕様確認や保存・障害設計、実機検証を代替するものではありません。
+機能仕様は [機能仕様書 第4節](../doc/spec/functional-spec.md#scenarios) の S1〜S9 を正本とし、モックによる確認方法・画面合意・承認記録も該当シナリオへ集約します。設計書は同一 ID で処理責務を対応付けます。なお、画面合意は API 仕様確認や保存・障害設計、実機検証を代替するものではありません。
 
 ## 2. C4 モデルと必須ダイアグラム
 
