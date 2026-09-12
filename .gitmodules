@@ -1,0 +1,3 @@
+[submodule "upstream/token-monitor"]
+	path = upstream/token-monitor
+	url = https://github.com/Javis603/token-monitor.git
