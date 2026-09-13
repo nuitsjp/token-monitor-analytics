@@ -367,7 +367,7 @@ test('migrates a v1 database while preserving observations and adding estimation
 
   const reopenedDb = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    assert.equal(reopenedDb.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(reopenedDb.prepare('PRAGMA user_version').get().user_version, 8);
     assert.equal(reopenedDb.prepare(`
       SELECT COUNT(*) AS count
       FROM sqlite_master
@@ -555,7 +555,7 @@ function makeV2Fixture(dbPath, invalidRegistry = false) {
   }
   store.close();
   const db = new DatabaseSync(dbPath);
-  db.exec('DROP TABLE shared_estimation_events; DROP TABLE shared_estimation_state; DROP TABLE device_contracts; DROP TABLE contracts; PRAGMA user_version = 2;');
+  db.exec('DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; DROP TABLE shared_estimation_events; DROP TABLE shared_estimation_state; DROP TABLE device_contracts; DROP TABLE contracts; PRAGMA user_version = 2;');
   const oldView = { id: 'old-series', tool: 'codex', deviceIds: ['device-a'], status: 'estimated', lastResult: { baseCapacityUsd: 100 } };
   db.prepare('INSERT INTO estimation_hubs (hub_id, state_json) VALUES (?, ?)').run('private', JSON.stringify({
     registry: [{ deviceId: invalidRegistry ? 'unknown-device' : 'device-a', tool: 'codex', accounts: ['account-a'] }],
@@ -574,7 +574,7 @@ test('v2 migration preserves every old row, unifies contracts, and never reuses 
   const before = makeV2Fixture(dbPath);
   const store = track(new AnalyticsStore(dbPath));
   const db = new DatabaseSync(dbPath, { readOnly: true });
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
   for (const [table, rows] of Object.entries(before)) assert.deepEqual(db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(), rows);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM contracts').get().count, 1);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM device_contracts').get().count, 2);

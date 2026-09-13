@@ -29,6 +29,8 @@ const MESSAGES = {
   cost_not_increased: '起点からの利用額増分が正ではありません。起点を維持しています。',
   disconnected: 'Hub 接続が途切れたため、比較を中断しました。',
   invalid_notification: '不正な通知により観測が欠けたため、比較を中断しました。',
+  incomplete_replay_history: '旧版の比較基準を検証できないため、結果を保持して新しい観測を待っています。',
+  recovery: '正常終了を確認できないため、結果を保持して比較を再開します。',
   restart: '再起動前後の未観測区間を除外して比較を再開します。',
   migration: '移行前の観測を比較起点にせず、新しい観測を待っています。',
   source_set_changed: '対象端末の構成が変わりました。過去の結果を保持しています。',
@@ -679,6 +681,25 @@ export function seedEstimation({ devices = [], registry, receivedAt } = {}, sett
     return group;
   });
   return { state: { version: 1, registry: effectiveRegistry, groups }, events: [] };
+}
+
+/** Replay committed estimator inputs without rewriting the append-only results. */
+export function replayEstimation({ inputs, readObservation }, settings) {
+  let state = null;
+  for (const input of inputs) {
+    if (input.kind === 'checkpoint') state = copy(input.state);
+    else if (input.kind === 'notification') {
+      const devices = input.devices.map((device) => ({
+        ...device, observation: readObservation(device.observationId),
+      }));
+      state = advanceEstimation(state, {
+        devices, registry: input.registry, receivedAt: input.receivedAt,
+      }, settings ?? input.settings).state;
+    } else if (input.kind === 'gap') {
+      state = interruptEstimation(state, input).state;
+    } else throw new Error('Unknown estimation input kind');
+  }
+  return { state, events: [] };
 }
 
 export function interruptEstimation(previous, { hubId, at, reason } = {}) {

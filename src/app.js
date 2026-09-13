@@ -30,8 +30,6 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
   try {
     store.registerHubs(configuration.hubs.map((hub) => hub.id));
     saved = store.readState();
-    for (const hub of saved.hubs) store.markEstimationGap(hub.id, 'restart', new Date().toISOString());
-    saved = store.readState();
   } catch (error) {
     store.close();
     throw error;
@@ -245,6 +243,19 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
     store.close();
     throw error;
   }
+  try {
+    store.beginCollection(new Date().toISOString());
+    for (const hub of saved.hubs) {
+      if (!hub.collectionEnabled || statuses.get(hub.id).configuration !== 'valid') {
+        store.markEstimationGap(hub.id, 'disconnected', new Date().toISOString());
+      }
+    }
+    saved = store.readState();
+  } catch (error) {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    throw error;
+  }
   for (const savedHub of saved.hubs) {
     if (savedHub.collectionEnabled && statuses.get(savedHub.id).configuration === 'valid') {
       connections.push(collect(configured.get(savedHub.id)));
@@ -260,7 +271,8 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
     for (const client of clients.keys()) client.end();
     clients.clear();
     await new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); });
-    store.close();
+    try { if (storage.state === 'normal') store.finishCollection(); }
+    finally { store.close(); }
   }
   return {
     server, store, state, drain: () => queue,

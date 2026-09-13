@@ -55,7 +55,7 @@ function fixture(t) {
     state.registry.find((source) => source.tool === global.provider && source.hubId === relation.hub_id).accounts = [id];
   }
   db.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(state));
-  db.exec('PRAGMA user_version = 4');
+  db.exec('DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; PRAGMA user_version = 4');
   return { db, dbPath, relations };
 }
 
@@ -70,7 +70,7 @@ function preserved(db) {
   };
 }
 
-test('schema 4 migration merges a generic contract across Hubs while preserving observations and events and rebasing current comparisons', (t) => {
+test('schema 4 migration merges a generic contract across Hubs while preserving observations, events, and the previous result', (t) => {
   const { db, dbPath, relations } = fixture(t);
   const before = preserved(db);
   assert.ok(before.tables.shared_estimation_events.length > 0);
@@ -80,11 +80,11 @@ test('schema 4 migration merges a generic contract across Hubs while preserving 
   store.close();
   const after = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 8);
     const { groups: beforeGroups, ...beforeRows } = before;
     const { groups: afterGroups, ...afterRows } = preserved(after);
     assert.deepEqual(afterRows, beforeRows);
-    assert.ok(afterGroups.filter(group => group.view.active).every(group => group.baseline === null));
+    assert.ok(afterGroups.filter(group => group.view.active).length > 0);
     const contracts = after.prepare("SELECT * FROM contracts WHERE provider = 'unknown-service'").all();
     assert.equal(contracts.length, 1);
     assert.equal(contracts[0].scope_hub_id, '');
@@ -95,7 +95,7 @@ test('schema 4 migration merges a generic contract across Hubs while preserving 
     assert.equal(groups.length, 1);
     assert.deepEqual(groups[0].view.hubIds, ['private', 'work']);
     assert.equal(groups[0].baseline, null);
-    assert.equal(groups[0].view.lastResult, null);
+    assert.equal(groups[0].view.lastResult.baseCapacityUsd, 100);
     assert.equal(after.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
     assert.deepEqual(after.prepare('PRAGMA foreign_key_check').all(), []);
   } finally { after.close(); }
@@ -114,14 +114,14 @@ function version5Fixture(t) {
   delete old.view.methodVersion;
   state.groups = [old];
   connection.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(state));
-  connection.exec('PRAGMA user_version = 5');
+  connection.exec('DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; PRAGMA user_version = 5');
   return { db: connection, dbPath, old };
 }
 
 const usageTables = [...TABLES, 'contracts', 'device_contracts'];
 const rows = db => usageTables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
 
-test('schema 5から6への移行は旧結果を履歴へ隔離し観測・契約関連・eventsを改変しない', t => {
+test('schema 5から8への移行は旧結果を保持し現行系列の比較基準を新しい観測まで待機させる', t => {
   const { db, dbPath, old } = version5Fixture(t);
   const before = rows(db);
   db.close();
@@ -130,7 +130,7 @@ test('schema 5から6への移行は旧結果を履歴へ隔離し観測・契�
   store.close();
   const after = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 8);
     assert.deepEqual(rows(after), before);
     const checkpoint = JSON.parse(after.prepare('SELECT state_json FROM shared_estimation_state WHERE id = 1').get().state_json);
     const archived = checkpoint.groups.find(group => group.id === old.id);
@@ -139,7 +139,9 @@ test('schema 5から6への移行は旧結果を履歴へ隔離し観測・契�
     assert.deepEqual(archived.view.lastResult, old.view.lastResult);
     assert.equal(archived.baseline, null);
     assert.ok(checkpoint.groups.some(group => group.view.active));
-    assert.ok(checkpoint.groups.filter(group => group.view.active).every(group => group.view.methodVersion === 2 && group.view.lastResult === null && group.baseline === null));
+    assert.ok(checkpoint.groups.filter(group => group.view.active).every(group => (
+      group.view.methodVersion === 2 && group.view.lastResult === null && group.baseline === null
+    )));
     assert.ok(!state.estimates.filter(view => view.active).some(view => view.lastResult?.baseCapacityUsd === 749.8163790236914));
     assert.equal(after.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
     assert.deepEqual(after.prepare('PRAGMA foreign_key_check').all(), []);
@@ -155,7 +157,7 @@ test('schema 5から6への移行は旧結果を履歴へ隔離し観測・契�
   } finally { resumed.close(); }
 });
 
-test('schema 6への移行失敗は版番号・checkpoint・全データをschema 5のまま保つ', t => {
+test('schema 5から8への移行で旧処理が失敗した場合は版番号・checkpoint・全データをschema 5のまま保つ', t => {
   const { db, dbPath } = version5Fixture(t);
   const before = rows(db);
   const checkpoint = db.prepare('SELECT * FROM shared_estimation_state').all();
@@ -165,6 +167,21 @@ test('schema 6への移行失敗は版番号・checkpoint・全データをschem
   const after = new DatabaseSync(dbPath, { readOnly: true });
   try {
     assert.equal(after.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.deepEqual(rows(after), before);
+    assert.deepEqual(after.prepare('SELECT * FROM shared_estimation_state').all(), checkpoint);
+  } finally { after.close(); }
+});
+
+test('schema 6から8へのcheckpoint移行失敗は版番号・checkpoint・全データをschema 6のまま保つ', t => {
+  const { db, dbPath } = fixture(t);
+  const before = rows(db);
+  const checkpoint = db.prepare('SELECT * FROM shared_estimation_state').all();
+  db.exec("DROP TABLE IF EXISTS estimation_inputs; DROP TABLE IF EXISTS estimation_runtime; PRAGMA user_version = 6; CREATE TRIGGER fail_checkpoint BEFORE UPDATE ON shared_estimation_state BEGIN SELECT RAISE(ABORT, 'injected checkpoint migration failure'); END;");
+  db.close();
+  assert.throws(() => new AnalyticsStore(dbPath), /injected checkpoint migration failure/);
+  const after = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 6);
     assert.deepEqual(rows(after), before);
     assert.deepEqual(after.prepare('SELECT * FROM shared_estimation_state').all(), checkpoint);
   } finally { after.close(); }

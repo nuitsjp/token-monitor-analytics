@@ -345,7 +345,7 @@ test('a limits-only refresh does not estimate and history filters, pages, valida
   assert.deepEqual((await (await fetch(`${f.url()}/api/estimates/history?scope=legacy`)).json()).items, []);
 });
 
-test('invalid, disconnected, and restarted collection all rebase estimation from new cost and rate clocks', async (t) => {
+test('invalid and disconnected collection rebase while a restart keeps the saved estimation clock', async (t) => {
   const f = await fixture(t, { initialSnapshot: fixedSnapshot(2, T0), reconnectMs: 30 });
   await waitForEstimates(f, (view) => view.status === 'collecting');
 
@@ -363,8 +363,17 @@ test('invalid, disconnected, and restarted collection all rebase estimation from
   await assertFreshBaseline(f, 7, T4, 8, T5);
 
   await f.restart();
-  await waitForEstimates(f, (view) => view.reason === 'awaiting_refresh');
-  await assertFreshBaseline(f, 9, T6, 10, T7);
+  await waitForEstimates(f, (view) => (
+    view.status === 'estimated'
+    && view.lastResult?.evidence?.baseline?.cost === 7 * 48
+  ));
+  f.hub.broadcast(fixedSnapshot(9, T6));
+  f.hub.broadcast(fixedSnapshot(10, T7));
+  await waitForEstimates(f, (view) => (
+    view.status === 'estimated'
+    && view.lastResult?.evidence?.baseline?.cost === 7 * 48
+    && view.lastResult?.evidence?.latest?.cost === 10 * 48
+  ));
 });
 
 test('estimation history stays readable after save failure and returns 503 after a read failure', async (t) => {

@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { advanceEstimation, interruptEstimation, seedEstimation } from './estimation.js';
+import { advanceEstimation, interruptEstimation, replayEstimation, seedEstimation } from './estimation.js';
 import { contractId, contractScope, contractAccountKey, deviceKey } from './identity.js';
 import { buildMetrics } from './metrics.js';
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 8;
 const SCHEMA_COLUMNS = Object.freeze({
   hubs: [
     ['id', 'TEXT', 1, 1],
@@ -64,11 +64,28 @@ const SCHEMA_COLUMNS = Object.freeze({
     ['recorded_at', 'TEXT', 1, 0],
     ['status', 'TEXT', 1, 0],
     ['event_json', 'TEXT', 1, 0]
+  ],
+  estimation_inputs: [
+    ['id', 'INTEGER', 0, 1],
+    ['input_json', 'TEXT', 1, 0]
+  ],
+  estimation_runtime: [
+    ['id', 'INTEGER', 0, 1],
+    ['interrupted', 'INTEGER', 1, 0]
   ]
 });
 
+const REPLAY_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS estimation_inputs (id INTEGER PRIMARY KEY, input_json TEXT NOT NULL) STRICT;
+  CREATE TABLE IF NOT EXISTS estimation_runtime (id INTEGER PRIMARY KEY CHECK (id = 1), interrupted INTEGER NOT NULL CHECK (interrupted IN (0, 1))) STRICT;
+  INSERT OR IGNORE INTO estimation_runtime VALUES (1, 0);
+`;
+
 const V1_SCHEMA_TABLES = Object.freeze(['hubs', 'observations', 'current_devices']);
 const V2_SCHEMA_TABLES = Object.freeze([...V1_SCHEMA_TABLES, 'estimation_hubs', 'estimation_events']);
+const PRE_REPLAY_SCHEMA_TABLES = Object.freeze(
+  Object.keys(SCHEMA_COLUMNS).filter((table) => !['estimation_inputs', 'estimation_runtime'].includes(table))
+);
 const SCHEMA_INDEXES = Object.freeze({
   observations_by_device: Object.freeze({
     table: 'observations',
@@ -153,6 +170,14 @@ function rollbackQuietly(db) {
   }
 }
 
+function rollbackSavepointQuietly(db, name) {
+  try {
+    db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`);
+  } catch {
+    // Preserve the error that caused the migration step to fail.
+  }
+}
+
 function createSchema(db) {
   db.exec(`
     BEGIN IMMEDIATE;
@@ -200,6 +225,7 @@ function createSchema(db) {
     CREATE INDEX estimation_events_by_series
       ON estimation_events (hub_id, series_id, id);
     ${SHARED_SCHEMA_SQL}
+    ${REPLAY_SCHEMA_SQL}
     PRAGMA user_version = ${SCHEMA_VERSION};
     COMMIT;
   `);
@@ -263,8 +289,17 @@ function assertSchema(db, tables, indexes) {
   assertForeignKeys(db, tables);
 }
 
+function preserveLastResults(previousGroups, nextGroups) {
+  const previousById = new Map(previousGroups.map((group) => [group.id, group]));
+  for (const group of nextGroups) {
+    const previousResult = previousById.get(group.id)?.view?.lastResult;
+    if (previousResult) group.view.lastResult = structuredClone(previousResult);
+  }
+}
+
 function migrateSchema(db, version) {
-  db.exec('BEGIN IMMEDIATE');
+  const savepoint = 'migrate_schema';
+  db.exec(`SAVEPOINT ${savepoint}`);
   try {
     if (version === 1) db.exec(`
       CREATE TABLE estimation_hubs (
@@ -303,8 +338,37 @@ function migrateSchema(db, version) {
       const seeded = seedEstimation({ devices, registry: readRegistry(db), receivedAt: new Date().toISOString() });
       db.prepare('INSERT INTO shared_estimation_state (id, state_json) VALUES (1, ?)').run(JSON.stringify(seeded.state));
     }
+    db.exec(REPLAY_SCHEMA_SQL);
     assertSchema(db, Object.keys(SCHEMA_COLUMNS), SCHEMA_INDEXES);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec(`RELEASE ${savepoint}`);
+  } catch (error) {
+    rollbackSavepointQuietly(db, savepoint);
+    throw error;
+  }
+}
+
+function assertCompatibleSchema(db, estimationSettings) {
+  const version = db.prepare('PRAGMA user_version').get()?.user_version;
+  if (version === 1 || version === 2) {
+    const indexes = { observations_by_device: SCHEMA_INDEXES.observations_by_device };
+    if (version === 2) indexes.estimation_events_by_series = SCHEMA_INDEXES.estimation_events_by_series;
+    assertSchema(db, version === 1 ? V1_SCHEMA_TABLES : V2_SCHEMA_TABLES, indexes);
+  } else {
+    if (![3, 4, 5, 6, 7, SCHEMA_VERSION].includes(version)) throw schemaError();
+    assertSchema(db, version === SCHEMA_VERSION ? Object.keys(SCHEMA_COLUMNS) : PRE_REPLAY_SCHEMA_TABLES, SCHEMA_INDEXES);
+  }
+  if (version === SCHEMA_VERSION) return;
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (version === 1 || version === 2) migrateSchema(db, version);
+    else {
+      if (version === 3) migrateGrokContracts(db);
+      if (version === 3 || version === 4) migrateContractScopes(db);
+      if (version < 6) migrateUsagePolicy(db);
+    }
+    migrateEstimationCheckpoint(db, estimationSettings, version);
     db.exec('COMMIT');
   } catch (error) {
     rollbackQuietly(db);
@@ -312,24 +376,9 @@ function migrateSchema(db, version) {
   }
 }
 
-function assertCompatibleSchema(db) {
-  const version = db.prepare('PRAGMA user_version').get()?.user_version;
-  if (version === 1 || version === 2) {
-    const indexes = { observations_by_device: SCHEMA_INDEXES.observations_by_device };
-    if (version === 2) indexes.estimation_events_by_series = SCHEMA_INDEXES.estimation_events_by_series;
-    assertSchema(db, version === 1 ? V1_SCHEMA_TABLES : V2_SCHEMA_TABLES, indexes);
-    migrateSchema(db, version);
-    return;
-  }
-  if (![3, 4, 5, SCHEMA_VERSION].includes(version)) throw schemaError();
-  assertSchema(db, Object.keys(SCHEMA_COLUMNS), SCHEMA_INDEXES);
-  if (version === 3) migrateGrokContracts(db);
-  if (version === 3 || version === 4) migrateContractScopes(db);
-  if (version < 6) migrateUsagePolicy(db);
-}
-
 function migrateGrokContracts(db) {
-  db.exec('BEGIN IMMEDIATE');
+  const savepoint = 'migrate_grok_contracts';
+  db.exec(`SAVEPOINT ${savepoint}`);
   try {
     // These are derived relationships. Raw observations and estimation events stay intact.
     db.exec("DELETE FROM device_contracts WHERE tool = 'grok'; DELETE FROM contracts WHERE provider = 'grok';");
@@ -350,15 +399,16 @@ function migrateGrokContracts(db) {
       db.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(state));
     }
     db.exec('PRAGMA user_version = 4');
-    db.exec('COMMIT');
+    db.exec(`RELEASE ${savepoint}`);
   } catch (error) {
-    rollbackQuietly(db);
+    rollbackSavepointQuietly(db, savepoint);
     throw error;
   }
 }
 
 function migrateContractScopes(db) {
-  db.exec('BEGIN IMMEDIATE');
+  const savepoint = 'migrate_contract_scopes';
+  db.exec(`SAVEPOINT ${savepoint}`);
   try {
     const contracts = db.prepare("SELECT * FROM contracts WHERE scope_hub_id <> ''").all();
     const changedTools = new Set(contracts.map((contract) => contract.provider));
@@ -385,25 +435,29 @@ function migrateContractScopes(db) {
       const state = parseStoredJson(checkpoint.state_json);
       const seeded = seedEstimation({ devices: readDevices(db), registry: readRegistry(db), receivedAt: new Date().toISOString() }).state;
       state.registry = [...state.registry.filter((source) => !changedTools.has(source.tool)), ...seeded.registry.filter((source) => changedTools.has(source.tool))];
-      state.groups = [...state.groups.filter((group) => !changedTools.has(group.view.tool)), ...seeded.groups.filter((group) => changedTools.has(group.view.tool))];
+      const replacements = seeded.groups.filter((group) => changedTools.has(group.view.tool));
+      preserveLastResults(state.groups, replacements);
+      state.groups = [...state.groups.filter((group) => !changedTools.has(group.view.tool)), ...replacements];
       db.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(state));
     }
     db.exec('PRAGMA user_version = 5');
-    db.exec('COMMIT');
+    db.exec(`RELEASE ${savepoint}`);
   } catch (error) {
-    rollbackQuietly(db);
+    rollbackSavepointQuietly(db, savepoint);
     throw error;
   }
 }
 
 function migrateUsagePolicy(db) {
-  db.exec('BEGIN IMMEDIATE');
+  const savepoint = 'migrate_usage_policy';
+  db.exec(`SAVEPOINT ${savepoint}`);
   try {
     const checkpoint = db.prepare('SELECT state_json FROM shared_estimation_state WHERE id = 1').get();
     if (checkpoint) {
       const old = parseStoredJson(checkpoint.state_json);
       const seeded = seedEstimation({ devices: readDevices(db), registry: readRegistry(db), receivedAt: new Date().toISOString() }).state;
       const freshIds = new Set(seeded.groups.map(group => group.id));
+      preserveLastResults(old.groups, seeded.groups);
       const archived = old.groups.filter(group => !freshIds.has(group.id)).map(group => ({
         ...group, baseline: null, latest: null,
         view: { ...group.view, active: false, reason: 'method_changed', message: '集計方法の変更前の記録です。現在の推定には使いません。' },
@@ -412,11 +466,33 @@ function migrateUsagePolicy(db) {
       db.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(seeded));
     }
     db.exec('PRAGMA user_version = 6');
-    db.exec('COMMIT');
+    db.exec(`RELEASE ${savepoint}`);
   } catch (error) {
-    rollbackQuietly(db);
+    rollbackSavepointQuietly(db, savepoint);
     throw error;
   }
+}
+
+function migrateEstimationCheckpoint(db, settings, sourceVersion) {
+  db.exec(REPLAY_SCHEMA_SQL);
+  const checkpoint = db.prepare('SELECT state_json FROM shared_estimation_state WHERE id = 1').get();
+  if (checkpoint) {
+    let state = parseStoredJson(checkpoint.state_json);
+    // Schema 7 replay invented freshness and notification boundaries. Its
+    // results remain visible as previous results, but its baseline is unsafe.
+    if (sourceVersion === 7) {
+      state = interruptEstimation(state, { reason: 'incomplete_replay_history' }).state;
+    }
+    db.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(state));
+    if (!db.prepare('SELECT 1 FROM estimation_inputs LIMIT 1').get()) {
+      appendEstimationInput(db, { kind: 'checkpoint', state });
+    }
+  }
+  db.exec('PRAGMA user_version = 8');
+}
+
+function appendEstimationInput(db, input) {
+  db.prepare('INSERT INTO estimation_inputs (input_json) VALUES (?)').run(JSON.stringify(input));
 }
 
 function validateHubIds(ids) {
@@ -601,7 +677,7 @@ export class AnalyticsStore {
       db = new DatabaseSync(dbPath);
       db.exec('PRAGMA foreign_keys = ON');
       if (isNew) createSchema(db);
-      else assertCompatibleSchema(db);
+      else assertCompatibleSchema(db, estimationSettings);
     } catch (error) {
       try {
         db?.close();
@@ -612,6 +688,46 @@ export class AnalyticsStore {
     }
     this.#db = db;
     this.#estimationSettings = estimationSettings;
+    const last = db.prepare('SELECT input_json FROM estimation_inputs ORDER BY id DESC LIMIT 1').get();
+    this.#hubGaps = new Map(last ? parseStoredJson(last.input_json).hubGaps ?? [] : []);
+  }
+
+  beginCollection(at) {
+    if (this.#db.prepare('SELECT interrupted FROM estimation_runtime WHERE id = 1').get().interrupted) {
+      for (const { id } of this.#db.prepare('SELECT id FROM hubs').all()) this.markEstimationGap(id, 'recovery', at);
+    }
+    this.#db.prepare('UPDATE estimation_runtime SET interrupted = 1 WHERE id = 1').run();
+  }
+
+  finishCollection() {
+    this.#db.prepare('UPDATE estimation_runtime SET interrupted = 0 WHERE id = 1').run();
+  }
+
+  rebuildEstimation() {
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      const select = this.#db.prepare('SELECT observation_json FROM observations WHERE id = ?');
+      // Only retain currently referenced observations, not the full history.
+      let cache = new Map();
+      const rows = this.#db.prepare('SELECT input_json FROM estimation_inputs ORDER BY id').iterate();
+      function* inputs() {
+        for (const row of rows) {
+          const input = parseStoredJson(row.input_json);
+          if (input.kind === 'notification') {
+            cache = new Map(input.devices.map(({ observationId }) => [observationId,
+              cache.get(observationId) ?? parseStoredJson(select.get(observationId).observation_json)]));
+          }
+          yield input;
+        }
+      }
+      const result = replayEstimation({ inputs: inputs(), readObservation: (id) => cache.get(id) });
+      if (result.state) this.#db.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(result.state));
+      this.#db.exec('COMMIT');
+      return result.state;
+    } catch (error) {
+      rollbackQuietly(this.#db);
+      throw error;
+    }
   }
 
   registerHubs(ids) {
@@ -790,9 +906,10 @@ export class AnalyticsStore {
         ...device,
         gapReason: device.hubId === hubId ? undefined : this.#hubGaps.get(device.hubId),
       }));
+      const registry = readRegistry(this.#db);
       const estimationResult = advanceEstimation(
         previousState,
-        { devices: estimationDevices, registry: readRegistry(this.#db), receivedAt: analyticsReceivedAt },
+        { devices: estimationDevices, registry, receivedAt: analyticsReceivedAt },
         this.#estimationSettings
       );
       persistEstimation(
@@ -801,6 +918,14 @@ export class AnalyticsStore {
         estimation.insert
       );
 
+      appendEstimationInput(this.#db, {
+        kind: 'notification', hubId, receivedAt: analyticsReceivedAt, registry,
+        settings: this.#estimationSettings,
+        devices: estimationDevices.map(({ observation, metadata, ...device }) => ({
+          ...device, metadata: { stale: metadata.stale === true },
+        })),
+        hubGaps: [...this.#hubGaps].filter(([id]) => id !== hubId),
+      });
       this.#db.exec('COMMIT');
       this.#hubGaps.delete(hubId);
     } catch (error) {
@@ -817,6 +942,7 @@ export class AnalyticsStore {
       throw new TypeError('estimation gap reason must be a non-empty string');
     }
     validateReceivedAt(at);
+    if (this.#hubGaps.get(hubId) === reason) return;
 
     const selectHub = this.#db.prepare('SELECT 1 AS present FROM hubs WHERE id = ?');
     const estimation = estimationStatements(this.#db);
@@ -837,6 +963,10 @@ export class AnalyticsStore {
         estimation.upsert,
         estimation.insert
       );
+      appendEstimationInput(this.#db, {
+        kind: 'gap', hubId, reason, at,
+        hubGaps: [...new Map([...this.#hubGaps, [hubId, reason]])],
+      });
       this.#db.exec('COMMIT');
       this.#hubGaps.set(hubId, reason);
     } catch (error) {

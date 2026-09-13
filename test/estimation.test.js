@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { advanceEstimation, interruptEstimation, seedEstimation } from '../src/estimation.js';
+import { advanceEstimation, interruptEstimation, replayEstimation, seedEstimation } from '../src/estimation.js';
 import { contractId } from '../src/identity.js';
 
 const HUB_ID = 'hub-a';
@@ -569,6 +569,26 @@ test('advanceEstimationとinterruptEstimationは入力previousを破壊変更し
 
   interruptEstimation(estimated.state, { at: timeAt(20), reason: 'disconnected' });
   assert.deepEqual(estimated.state, beforeInterrupt);
+});
+
+test('受信入力を順番通り再生し欠測状態とイベント履歴を維持する', () => {
+  const frames = [snapshot(0, [baseDevice()]), snapshot(10, [makeDevice({ cost: 10, usedPercent: 20, observedAt: timeAt(10) })]),
+    snapshot(20, [{ ...makeDevice({ cost: 20, usedPercent: 30, observedAt: timeAt(20) }), present: false }])];
+  let expected = null;
+  const observations = new Map();
+  const inputs = frames.map((frame, index) => {
+    return { kind: 'notification', ...frame, settings: {}, devices: frame.devices.map(({ observation, ...device }) => {
+      observations.set(index, observation);
+      return { ...device, observationId: index };
+    }) };
+  });
+  // Use the same persisted observation IDs for the online comparison.
+  expected = null;
+  for (const input of inputs) expected = advanceEstimation(expected, { ...input,
+    devices: input.devices.map((device) => ({ ...device, observation: observations.get(device.observationId) })) }).state;
+  const rebuilt = replayEstimation({ inputs: inputs.values(), readObservation: (id) => observations.get(id) });
+  assert.deepEqual(rebuilt.state, expected);
+  assert.deepEqual(rebuilt.events, []);
 });
 
 test('同一Codex契約を異なるHubが報告すると利用額を合算して150 USDを算出する', () => {
