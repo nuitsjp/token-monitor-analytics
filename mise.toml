@@ -1,0 +1,9 @@
+[tasks.real]
+description = "実データ用の Analytics を起動"
+run = "node src/main.js real"
+dir = "{{config_root}}"
+
+[tasks.mock]
+description = "Mock 専用の Analytics と Hub を起動"
+run = "node src/main.js mock"
+dir = "{{config_root}}"

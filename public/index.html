@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Token Monitor Analytics</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/style.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/">Token Monitor <span>Analytics</span></a>
+      <span id="browser-status" class="badge muted" role="status">接続中</span>
+    </header>
+    <main>
+      <div class="page-heading"><div><p class="eyebrow">USAGE & CAPACITY</p><h1>利用状況</h1><p class="intro">Hubと端末の利用実績、契約ごとの利用枠、利用許容量の推定とその根拠を確認できます。</p></div><div class="page-tools"><label class="toggle"><input id="show-not-configured" type="checkbox"> 未設定の取得元も表示</label><span class="scope-note">現在値・推定履歴</span></div></div>
+      <section id="overall" class="overall" aria-labelledby="overall-heading"></section>
+      <section id="contracts" aria-labelledby="contracts-heading"></section>
+      <section id="estimates" aria-labelledby="estimates-heading"></section>
+      <div id="storage-status" role="alert" hidden></div>
+      <div id="hubs"><p class="empty">保存済みの状態を読み込んでいます。</p></div>
+      <aside class="feature-note"><strong>API換算額は実際の請求額とは異なります。</strong><span>推定は比較可能な利用額と消費率の増分から算出した参考値です。取得条件がそろわない場合は理由と前回の結果を表示します。日次・月次の実績履歴は今後の対応です。</span></aside>
+    </main>
+    <footer>Token Monitor Analytics <span>保存に成功したデータを表示</span></footer>
+  </body>
+</html>
