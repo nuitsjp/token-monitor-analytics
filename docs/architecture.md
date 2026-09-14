@@ -190,8 +190,8 @@ Windows 環境上に Node.js アプリケーションとローカル SQLite フ�
 | モードの排他起動と保存先分離 | Real・Mock | 2026-09-13 | 相互排他が `RUNTIME_IN_USE` で成立し、分離後の全行ハッシュと整合性が元 DB と一致します | `3a8e2d2` |
 | Windows の初期設定 | 共通 | 2026-09-13 | `npm run setup` で設定ファイルの継承除外と実行ユーザー・SYSTEM・Administrators への許可を確認しました | `3a8e2d2` |
 
-- 実 Hub の通信切断・自動再接続、長時間稼働、別端末からの JSON API 直接取得と SSE 再接続は未検証です（[U1](../PLAN.md#u1)）。
-- 実ディスク障害・読み取り権限異常と、保存停止範囲の管理操作への適用は未検証です（[U9](../PLAN.md#u9)）。
+- 別端末で画面・JSON API・SSE更新とブラウザー通信復旧後の自動再接続を確認しました。実 Hub 上流の回線断と、スリープ・ネットワーク切替を含む長時間稼働は未検証です（[U1](../PLAN.md#u1)、[合否表](project.md#verification)）。
+- 実 DB の複製で書き込み競合、保存失敗中の管理操作、読み取り専用ファイルでの失敗と復旧を確認しました。稼働中の実 DB 読み出し不能は未検証です（[U9](../PLAN.md#u9)、[合否表](project.md#verification)）。
 - 稼働中の DB へ外部から読み取り接続を張ると COMMIT が `database is locked` で失敗し、全 Hub の保存が止まります。全件照合は停止中の複製に対して行います。
 - `accountKey` と `accountEmail` は上流が生成する値で公式契約IDとは等価でなく、Claude の組織識別は未解決です（[Issue #34](https://github.com/nuitsjp/token-monitor-analytics/issues/34)）。
 - 手動更新の実機検証は移行を伴わない起動に限られ、移行と失敗時の保全は古い版の DB を作る自動テストで検証しています（[U8](../PLAN.md#u8)）。

@@ -8,6 +8,8 @@
 
 上流リポジトリ [Token Monitor](https://github.com/Javis603/token-monitor) の基準コミット [`2f60827e3028d283969dd74cde5b3f5664220442`](https://github.com/Javis603/token-monitor/commit/2f60827e3028d283969dd74cde5b3f5664220442)（`v0.56.0`）のソースコード、および稼働中の Private Hub（Cloudflare Worker 実装、`coreRevision: 36`、`runtimeRevision: 3`）の参照 API 応答を確認しました。実データ資料は [Private Hub 実データ資料](../../docs/reference/hub-private/README.md) に保存しています。
 
+比較対象 `c4182fd5` までの4コミット・42ファイルを2026-09-14に静的照合しました。HubのAPI実装、利用実績・履歴の正規化、共有利用枠処理とAPI仕様書は変更ありません。収集側のカスタムスキャンパス、セッションの日時・プロジェクト情報の補完、`clientHealth` のチェックID追加は、Analyticsの `src/observations.js` が既に受理する型・項目です。API・アカウント識別・履歴・利用枠に修正が必要な不互換は見つかりませんでした。旧版・新版Hubを切り替える相互運用試験と上流全テストは未実施であり、この結果はソース差分の確認範囲に限ります。
+
 | 根拠資料 | 主な確認内容 |
 | --- | --- |
 | [API 仕様書](https://github.com/Javis603/token-monitor/blob/2f60827e3028d283969dd74cde5b3f5664220442/docs/API.md) | 認証方式、ヘルスチェック、データ投入・集計仕様、契約情報 |
