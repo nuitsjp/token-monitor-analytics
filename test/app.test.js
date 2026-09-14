@@ -284,7 +284,24 @@ test('two SSE observations produce an estimate and a history response with the c
   assert.equal(body.items.some((item) => item.status === 'estimated'), true);
   assert.equal(body.nextCursor, null);
   assert.equal(JSON.stringify(body).includes(f.secret), false);
-  assert.equal((await fetch(`${f.url()}/api/history`)).status, 501);
+  assert.equal(f.app.state().features.history, 'implemented');
+  await f.app.fetchHistory('alpha', 'test');
+  const historyResponse = await fetch(`${f.url()}/api/history?hubId=alpha&tool=codex`);
+  assert.equal(historyResponse.status, 200);
+  const historyBody = await historyResponse.json();
+  assert.equal(historyBody.kind, 'daily');
+  assert.ok(historyBody.items.length > 0);
+  const localToday = (() => {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return now.getFullYear() + '-' + month + '-' + day;
+  })();
+  for (const item of historyBody.items) {
+    assert.equal(item.hubId, 'alpha');
+    assert.equal(item.tool, 'codex');
+    assert.ok(item.date < localToday);
+  }
 });
 
 test('a limits-only refresh does not estimate and history filters, pages, validates, and supports HEAD', async (t) => {

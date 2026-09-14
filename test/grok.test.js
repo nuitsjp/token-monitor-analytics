@@ -143,7 +143,7 @@ function v3Fixture(ws) {
   send(store, 'work', [grok('token-b', 'same@example.com'), codex]);
   store.close();
   const db = new DatabaseSync(ws.dbPath);
-  db.exec("DELETE FROM device_contracts WHERE tool = 'grok'; DELETE FROM contracts WHERE provider = 'grok'; DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; PRAGMA user_version = 3;");
+  db.exec("DELETE FROM device_contracts WHERE tool = 'grok'; DELETE FROM contracts WHERE provider = 'grok'; DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; DROP TABLE daily_usage; DROP TABLE monthly_usage; DROP TABLE history_fetch_state; PRAGMA user_version = 3;");
   for (const row of db.prepare('SELECT * FROM observations ORDER BY id').all()) {
     const report = JSON.parse(row.observation_json).limits.providers.find((provider) => provider.provider === 'grok');
     const id = createHash('sha256').update(JSON.stringify([row.hub_id, 'grok', report.accountKey])).digest('hex');
@@ -164,7 +164,7 @@ test('v3 migration merges only Grok relationships, preserves observations and ev
   const { groups: afterGroups, ...afterRows } = snapshot(after);
   assert.deepEqual(afterRows, beforeRows);
   assert.ok(afterGroups.filter(group => group.view.active).every(group => group.baseline === null));
-  assert.equal(after.prepare('PRAGMA user_version').get().user_version, 8);
+  assert.equal(after.prepare('PRAGMA user_version').get().user_version, 10);
   assert.equal(after.prepare("SELECT COUNT(*) AS count FROM contracts WHERE provider = 'grok'").get().count, 1);
   assert.equal(after.prepare("SELECT COUNT(*) AS count FROM device_contracts WHERE tool = 'grok'").get().count, 2);
   assert.equal(after.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');

@@ -71,7 +71,65 @@ export function makeSnapshot({
   };
 }
 
-export async function startMockHub({ host = '127.0.0.1', port = 8787, secret = 'mock-secret', automatic = true, scenario = 'normal' } = {}) {
+function mockLocalDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
+}
+
+function makeHistoryDevices({ deviceCount = 2, historyMode = 'normal', historyDays = 5 } = {}) {
+  const now = new Date();
+  const todayKey = mockLocalDateKey(now);
+  const devices = [];
+  for (let index = 0; index < deviceCount; index++) {
+    const daily = [];
+    for (let back = historyDays; back >= 1; back--) {
+      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+      const key = mockLocalDateKey(day);
+      const cost = (index + 1) * back * 1.5;
+      daily.push({
+        date: key,
+        tokens: Math.round(cost * 1000),
+        cost,
+        perClient: { codex: { tokens: Math.round(cost * 1000), cost } },
+      });
+    }
+    // 当日分の未確定エントリ。U6の当日分除外により保存対象外となる。
+    daily.push({
+      date: todayKey,
+      tokens: 10,
+      cost: 0.01,
+      perClient: { codex: { tokens: 10, cost: 0.01 } },
+    });
+    const months = new Map();
+    for (const day of daily) {
+      const month = day.date.slice(0, 7);
+      const entry = months.get(month) ?? { month, tokens: 0, cost: 0, perClient: {} };
+      entry.tokens += day.tokens;
+      entry.cost += day.cost;
+      const client = entry.perClient.codex ?? { tokens: 0, cost: 0 };
+      client.tokens += day.perClient.codex.tokens;
+      client.cost += day.perClient.codex.cost;
+      entry.perClient.codex = client;
+      months.set(month, entry);
+    }
+    const periodWindows = historyMode === 'missing-today'
+      ? null
+      : {
+        today: { key: todayKey, endsAt: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString() },
+        timeZone: historyMode === 'invalid-tz' ? 'Invalid/Zone' : 'Asia/Tokyo',
+      };
+    devices.push({
+      deviceId: 'device-' + (index + 1),
+      periodWindows,
+      history: { daily, monthly: [...months.values()] },
+    });
+  }
+  return devices;
+}
+
+export async function startMockHub({ host = '127.0.0.1', port = 8787, secret = 'mock-secret', automatic = true, scenario = 'normal', historyMode = 'normal', historyDelayMs = 0 } = {}) {
   let current = makeSnapshot();
   let sequence = 0;
   let requests = 0;
@@ -95,6 +153,14 @@ export async function startMockHub({ host = '127.0.0.1', port = 8787, secret = '
       const initial = structuredClone(current);
       initial.at = initial.stats.updatedAt = new Date().toISOString();
       emit(response, 'snapshot', initial);
+    } else if (request.url === '/api/devices' || request.url.startsWith('/api/devices?')) {
+      requests++;
+      const sendDevices = () => {
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ devices: makeHistoryDevices({ historyMode }) }));
+      };
+      if (historyDelayMs > 0) setTimeout(sendDevices, historyDelayMs);
+      else sendDevices();
     } else { response.writeHead(404).end(); }
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });

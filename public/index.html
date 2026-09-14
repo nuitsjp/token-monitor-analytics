@@ -19,9 +19,30 @@
       <section id="overall" class="overall" aria-labelledby="overall-heading"></section>
       <section id="contracts" aria-labelledby="contracts-heading"></section>
       <section id="estimates" aria-labelledby="estimates-heading"></section>
+      <section id="usage-history" class="usage-history" aria-labelledby="usage-history-heading">
+        <div class="usage-history-heading">
+          <div><p class="eyebrow">SAVED USAGE</p><h2 id="usage-history-heading">日次・月次の実績履歴</h2></div>
+          <span class="badge muted">端末別</span>
+        </div>
+        <p class="history-intro">日付は各端末の現地日付です。タイムゾーンが異なる端末では、同じ日付でも同一時間帯ではありません。複数端末の値は合算しません。</p>
+        <div id="history-collection-status" class="history-collection-status" aria-live="polite"></div>
+        <form id="usage-history-form" class="usage-history-form">
+          <label>単位<select id="history-kind" name="kind"><option value="daily">日次</option><option value="monthly">月次</option></select></label>
+          <label>Hub<input id="history-hub" name="hubId" list="history-hub-options" placeholder="すべて"></label>
+          <datalist id="history-hub-options"></datalist>
+          <label>端末<input id="history-device" name="deviceId" list="history-device-options" placeholder="すべて"></label>
+          <datalist id="history-device-options"></datalist>
+          <label>ツール<input id="history-tool" name="tool" list="history-tool-options" placeholder="すべて"></label>
+          <datalist id="history-tool-options"></datalist>
+          <label>開始<input id="history-from" name="from" type="date"></label>
+          <label>終了<input id="history-to" name="to" type="date"></label>
+          <button id="history-fetch" type="submit">履歴を取得</button>
+        </form>
+        <div id="usage-history-results" aria-live="polite"><p class="empty">条件を指定して履歴を取得してください。</p></div>
+      </section>
       <div id="storage-status" role="alert" hidden></div>
       <div id="hubs"><p class="empty">保存済みの状態を読み込んでいます。</p></div>
-      <aside class="feature-note"><strong>API換算額は実際の請求額とは異なります。</strong><span>推定は比較可能な利用額と消費率の増分から算出した参考値です。取得条件がそろわない場合は理由と前回の結果を表示します。日次・月次の実績履歴は今後の対応です。</span></aside>
+      <aside class="feature-note"><strong>API換算額は実際の請求額とは異なります。</strong><span>推定は比較可能な利用額と消費率の増分から算出した参考値です。取得条件がそろわない場合は理由と前回の結果を表示します。</span></aside>
     </main>
     <footer>Token Monitor Analytics <span>保存に成功したデータを表示</span></footer>
   </body>

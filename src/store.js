@@ -5,7 +5,7 @@ import { advanceEstimation, interruptEstimation, replayEstimation, seedEstimatio
 import { contractId, contractScope, contractAccountKey, deviceKey } from './identity.js';
 import { buildMetrics } from './metrics.js';
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 10;
 const SCHEMA_COLUMNS = Object.freeze({
   hubs: [
     ['id', 'TEXT', 1, 1],
@@ -72,6 +72,41 @@ const SCHEMA_COLUMNS = Object.freeze({
   estimation_runtime: [
     ['id', 'INTEGER', 0, 1],
     ['interrupted', 'INTEGER', 1, 0]
+  ],
+  daily_usage: [
+    ['hub_id', 'TEXT', 1, 1],
+    ['device_id', 'TEXT', 1, 2],
+    ['local_date', 'TEXT', 1, 3],
+    ['tool', 'TEXT', 1, 4],
+    ['tokens', 'REAL', 1, 0],
+    ['cost', 'REAL', 1, 0],
+    ['record_json', 'TEXT', 1, 0]
+  ],
+  monthly_usage: [
+    ['hub_id', 'TEXT', 1, 1],
+    ['device_id', 'TEXT', 1, 2],
+    ['month', 'TEXT', 1, 3],
+    ['tool', 'TEXT', 1, 4],
+    ['tokens', 'REAL', 1, 0],
+    ['cost', 'REAL', 1, 0],
+    ['record_json', 'TEXT', 1, 0]
+  ],
+  history_fetch_state: [
+    ['hub_id', 'TEXT', 1, 1],
+    ['last_success_at', 'TEXT', 0, 0],
+    ['last_attempt_at', 'TEXT', 0, 0],
+    ['devices_json', 'TEXT', 1, 0]
+  ]
+});
+
+// Schema 9 already contains the history tables, but predates the persisted
+// device date judgment. Keep its shape for pre-migration validation.
+const SCHEMA9_COLUMNS = Object.freeze({
+  ...SCHEMA_COLUMNS,
+  history_fetch_state: [
+    ['hub_id', 'TEXT', 1, 1],
+    ['last_success_at', 'TEXT', 0, 0],
+    ['last_attempt_at', 'TEXT', 0, 0]
   ]
 });
 
@@ -83,8 +118,13 @@ const REPLAY_SCHEMA_SQL = `
 
 const V1_SCHEMA_TABLES = Object.freeze(['hubs', 'observations', 'current_devices']);
 const V2_SCHEMA_TABLES = Object.freeze([...V1_SCHEMA_TABLES, 'estimation_hubs', 'estimation_events']);
+const REPLAY_TABLES = Object.freeze(['estimation_inputs', 'estimation_runtime']);
+const HISTORY_TABLES = Object.freeze(['daily_usage', 'monthly_usage', 'history_fetch_state']);
 const PRE_REPLAY_SCHEMA_TABLES = Object.freeze(
-  Object.keys(SCHEMA_COLUMNS).filter((table) => !['estimation_inputs', 'estimation_runtime'].includes(table))
+  Object.keys(SCHEMA_COLUMNS).filter((table) => !REPLAY_TABLES.includes(table) && !HISTORY_TABLES.includes(table))
+);
+const PRE_HISTORY_SCHEMA_TABLES = Object.freeze(
+  Object.keys(SCHEMA_COLUMNS).filter((table) => !HISTORY_TABLES.includes(table))
 );
 const SCHEMA_INDEXES = Object.freeze({
   observations_by_device: Object.freeze({
@@ -105,6 +145,12 @@ const SCHEMA_INDEXES = Object.freeze({
   }),
   shared_estimation_events_by_series: Object.freeze({
     table: 'shared_estimation_events', columns: Object.freeze(['series_id', 'id']), unique: 0
+  }),
+  daily_usage_by_hub_date: Object.freeze({
+    table: 'daily_usage', columns: Object.freeze(['hub_id', 'local_date', 'device_id', 'tool']), unique: 0
+  }),
+  monthly_usage_by_hub_month: Object.freeze({
+    table: 'monthly_usage', columns: Object.freeze(['hub_id', 'month', 'device_id', 'tool']), unique: 0
   })
 });
 const SCHEMA_FOREIGN_KEYS = Object.freeze({
@@ -115,6 +161,9 @@ const SCHEMA_FOREIGN_KEYS = Object.freeze({
   ]),
   estimation_hubs: Object.freeze([['hubs', 'hub_id', 'id']]),
   estimation_events: Object.freeze([['hubs', 'hub_id', 'id']]),
+  daily_usage: Object.freeze([['hubs', 'hub_id', 'id']]),
+  monthly_usage: Object.freeze([['hubs', 'hub_id', 'id']]),
+  history_fetch_state: Object.freeze([['hubs', 'hub_id', 'id']]),
   device_contracts: Object.freeze([
     ['current_devices', 'hub_id', 'hub_id'], ['current_devices', 'device_id', 'device_id'],
     ['contracts', 'contract_id', 'id'],
@@ -157,6 +206,53 @@ const SHARED_SCHEMA_SQL = `
   ) STRICT;
   CREATE INDEX shared_estimation_events_by_series ON shared_estimation_events (series_id, id);
 `;
+
+const HISTORY_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS daily_usage (
+    hub_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    local_date TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    tokens REAL NOT NULL,
+    cost REAL NOT NULL,
+    record_json TEXT NOT NULL,
+    PRIMARY KEY (hub_id, device_id, local_date, tool),
+    FOREIGN KEY (hub_id) REFERENCES hubs(id)
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS daily_usage_by_hub_date
+    ON daily_usage (hub_id, local_date, device_id, tool);
+  CREATE TABLE IF NOT EXISTS monthly_usage (
+    hub_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    month TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    tokens REAL NOT NULL,
+    cost REAL NOT NULL,
+    record_json TEXT NOT NULL,
+    PRIMARY KEY (hub_id, device_id, month, tool),
+    FOREIGN KEY (hub_id) REFERENCES hubs(id)
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS monthly_usage_by_hub_month
+    ON monthly_usage (hub_id, month, device_id, tool);
+  CREATE TABLE IF NOT EXISTS history_fetch_state (
+    hub_id TEXT PRIMARY KEY,
+    last_success_at TEXT,
+    last_attempt_at TEXT,
+    devices_json TEXT NOT NULL DEFAULT '[]',
+    FOREIGN KEY (hub_id) REFERENCES hubs(id)
+  ) STRICT;
+`;
+
+const PRE_REPLAY_SCHEMA_INDEXES = Object.freeze(
+  Object.fromEntries(
+    Object.entries(SCHEMA_INDEXES).filter(([, index]) => !HISTORY_TABLES.includes(index.table)),
+  )
+);
+const PRE_HISTORY_SCHEMA_INDEXES = Object.freeze(
+  Object.fromEntries(
+    Object.entries(SCHEMA_INDEXES).filter(([, index]) => !HISTORY_TABLES.includes(index.table)),
+  )
+);
 
 function schemaError() {
   return new Error('database schema is incompatible');
@@ -225,15 +321,16 @@ function createSchema(db) {
     CREATE INDEX estimation_events_by_series
       ON estimation_events (hub_id, series_id, id);
     ${SHARED_SCHEMA_SQL}
+    ${HISTORY_SCHEMA_SQL}
     ${REPLAY_SCHEMA_SQL}
     PRAGMA user_version = ${SCHEMA_VERSION};
     COMMIT;
   `);
 }
 
-function assertColumns(db, tables) {
+function assertColumns(db, tables, columnsByTable = SCHEMA_COLUMNS) {
   for (const table of tables) {
-    const expectedColumns = SCHEMA_COLUMNS[table];
+    const expectedColumns = columnsByTable[table];
     const columns = db.prepare(`PRAGMA table_info(${table})`).all();
     if (
       columns.length !== expectedColumns.length
@@ -283,8 +380,8 @@ function assertForeignKeys(db, tables) {
   }
 }
 
-function assertSchema(db, tables, indexes) {
-  assertColumns(db, tables);
+function assertSchema(db, tables, indexes, columnsByTable = SCHEMA_COLUMNS) {
+  assertColumns(db, tables, columnsByTable);
   assertIndexes(db, indexes);
   assertForeignKeys(db, tables);
 }
@@ -339,8 +436,8 @@ function migrateSchema(db, version) {
       db.prepare('INSERT INTO shared_estimation_state (id, state_json) VALUES (1, ?)').run(JSON.stringify(seeded.state));
     }
     db.exec(REPLAY_SCHEMA_SQL);
-    assertSchema(db, Object.keys(SCHEMA_COLUMNS), SCHEMA_INDEXES);
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    assertSchema(db, PRE_HISTORY_SCHEMA_TABLES, PRE_HISTORY_SCHEMA_INDEXES);
+    db.exec('PRAGMA user_version = 8');
     db.exec(`RELEASE ${savepoint}`);
   } catch (error) {
     rollbackSavepointQuietly(db, savepoint);
@@ -355,23 +452,56 @@ function assertCompatibleSchema(db, estimationSettings) {
     if (version === 2) indexes.estimation_events_by_series = SCHEMA_INDEXES.estimation_events_by_series;
     assertSchema(db, version === 1 ? V1_SCHEMA_TABLES : V2_SCHEMA_TABLES, indexes);
   } else {
-    if (![3, 4, 5, 6, 7, SCHEMA_VERSION].includes(version)) throw schemaError();
-    assertSchema(db, version === SCHEMA_VERSION ? Object.keys(SCHEMA_COLUMNS) : PRE_REPLAY_SCHEMA_TABLES, SCHEMA_INDEXES);
+    if (![3, 4, 5, 6, 7, 8, 9, SCHEMA_VERSION].includes(version)) throw schemaError();
+    if (version === SCHEMA_VERSION) {
+      assertSchema(db, Object.keys(SCHEMA_COLUMNS), SCHEMA_INDEXES);
+    } else if (version === 9) {
+      assertSchema(db, Object.keys(SCHEMA_COLUMNS), SCHEMA_INDEXES, SCHEMA9_COLUMNS);
+    } else if (version === 8) {
+      assertSchema(db, PRE_HISTORY_SCHEMA_TABLES, PRE_HISTORY_SCHEMA_INDEXES);
+    } else {
+      assertSchema(db, PRE_REPLAY_SCHEMA_TABLES, PRE_REPLAY_SCHEMA_INDEXES);
+    }
   }
   if (version === SCHEMA_VERSION) return;
 
   db.exec('BEGIN IMMEDIATE');
   try {
-    if (version === 1 || version === 2) migrateSchema(db, version);
-    else {
-      if (version === 3) migrateGrokContracts(db);
-      if (version === 3 || version === 4) migrateContractScopes(db);
-      if (version < 6) migrateUsagePolicy(db);
+    if (version === 1 || version === 2) {
+      migrateSchema(db, version);
+      migrateEstimationCheckpoint(db, estimationSettings, version);
+      migrateHistoryTables(db);
     }
-    migrateEstimationCheckpoint(db, estimationSettings, version);
+    else {
+      if (version < 8) {
+        if (version === 3) migrateGrokContracts(db);
+        if (version === 3 || version === 4) migrateContractScopes(db);
+        if (version < 6) migrateUsagePolicy(db);
+        migrateEstimationCheckpoint(db, estimationSettings, version);
+      }
+      migrateHistoryTables(db);
+    }
     db.exec('COMMIT');
   } catch (error) {
     rollbackQuietly(db);
+    throw error;
+  }
+}
+
+function migrateHistoryTables(db) {
+  const savepoint = 'migrate_history_tables';
+  db.exec(`SAVEPOINT ${savepoint}`);
+  try {
+    db.exec(HISTORY_SCHEMA_SQL);
+    const historyColumns = db.prepare('PRAGMA table_info(history_fetch_state)').all();
+    if (!historyColumns.some((column) => column.name === 'devices_json')) {
+      db.exec("ALTER TABLE history_fetch_state ADD COLUMN devices_json TEXT NOT NULL DEFAULT '[]'");
+    }
+    assertSchema(db, Object.keys(SCHEMA_COLUMNS), SCHEMA_INDEXES);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    db.exec(`RELEASE ${savepoint}`);
+  } catch (error) {
+    rollbackSavepointQuietly(db, savepoint);
     throw error;
   }
 }
@@ -511,6 +641,107 @@ function validateReceivedAt(value) {
   }
 }
 
+const HISTORY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const HISTORY_MONTH_PATTERN = /^\d{4}-\d{2}$/;
+const HISTORY_CURSOR_PATTERN = /^[A-Za-z0-9_-]+$/;
+const HISTORY_KINDS = Object.freeze(['daily', 'monthly']);
+
+function validHistoryDate(value) {
+  if (typeof value !== 'string' || !HISTORY_DATE_PATTERN.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const probe = new Date(0);
+  probe.setUTCFullYear(year, month - 1, day);
+  probe.setUTCHours(0, 0, 0, 0);
+  return probe.getUTCFullYear() === year
+    && probe.getUTCMonth() === month - 1
+    && probe.getUTCDate() === day;
+}
+
+function validHistoryMonth(value) {
+  if (typeof value !== 'string' || !HISTORY_MONTH_PATTERN.test(value)) return false;
+  const month = Number(value.slice(5, 7));
+  return month >= 1 && month <= 12;
+}
+
+function validHistoryPeriod(value, kind) {
+  return kind === 'daily' ? validHistoryDate(value) : validHistoryMonth(value);
+}
+
+function encodeHistoryCursor(row, kind) {
+  return Buffer.from(JSON.stringify({
+    kind,
+    period: row.periodKey,
+    hubId: row.hubId,
+    deviceId: row.deviceId,
+    tool: row.tool,
+  }), 'utf8').toString('base64url');
+}
+
+function decodeHistoryCursor(value, kind) {
+  if (typeof value !== 'string' || value.length === 0 || !HISTORY_CURSOR_PATTERN.test(value)) {
+    throw new TypeError('history before cursor must be a base64url string');
+  }
+
+  let cursor;
+  try {
+    const bytes = Buffer.from(value, 'base64url');
+    if (bytes.length === 0 || bytes.toString('base64url') !== value) throw new Error('non-canonical cursor');
+    cursor = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new TypeError('history before cursor is invalid');
+  }
+
+  if (!isPlainObject(cursor)
+    || Object.keys(cursor).length !== 5
+    || cursor.kind !== kind
+    || typeof cursor.period !== 'string'
+    || !validHistoryPeriod(cursor.period, kind)
+    || typeof cursor.hubId !== 'string'
+    || cursor.hubId.length === 0
+    || typeof cursor.deviceId !== 'string'
+    || cursor.deviceId.length === 0
+    || typeof cursor.tool !== 'string'
+    || cursor.tool.length === 0) {
+    throw new TypeError('history before cursor is invalid');
+  }
+  return cursor;
+}
+
+// Validate the public history query at the HTTP/store boundary. The before
+// cursor remains opaque to callers, while its kind and complete sort key are
+// checked here so a page cannot silently mix daily and monthly rows.
+export function validateHistoryQuery(options = {}) {
+  if (!isPlainObject(options)) throw new TypeError('history query must be an object');
+  const kind = options.kind === undefined ? 'daily' : options.kind;
+  if (!HISTORY_KINDS.includes(kind)) throw new TypeError('invalid history kind');
+
+  const from = options.from;
+  const to = options.to;
+  if (from !== undefined && !validHistoryPeriod(from, kind)) {
+    throw new TypeError('history from date is invalid');
+  }
+  if (to !== undefined && !validHistoryPeriod(to, kind)) {
+    throw new TypeError('history to date is invalid');
+  }
+  if (from !== undefined && to !== undefined && from > to) {
+    throw new TypeError('history from must be before or equal to to');
+  }
+
+  const limit = options.limit === undefined ? 100 : options.limit;
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 500) {
+    throw new TypeError('history limit must be an integer between 1 and 500');
+  }
+
+  const before = options.before;
+  if (before !== undefined) decodeHistoryCursor(before, kind);
+
+  return { kind, hubId: options.hubId, deviceId: options.deviceId, tool: options.tool,
+    from, to, limit, before };
+}
+
 function validateNormalizedNotification(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new TypeError('normalized notification must be an object');
@@ -525,6 +756,15 @@ function validateNormalizedNotification(value) {
 
 function parseStoredJson(value) {
   return value === null ? null : JSON.parse(value);
+}
+
+function readHistoryMetadata(value) {
+  const record = parseStoredJson(value);
+  return {
+    todayKey: typeof record?.todayKey === 'string' ? record.todayKey : null,
+    timeZone: typeof record?.timeZone === 'string' ? record.timeZone : null,
+    fetchedAt: typeof record?.fetchedAt === 'string' ? record.fetchedAt : null,
+  };
 }
 
 function isPlainObject(value) {
@@ -1009,6 +1249,190 @@ export class AnalyticsStore {
     return {
       items,
       nextCursor: hasNext ? rows[limit - 1].id : null
+    };
+  }
+
+  setCollectionEnabled(hubId, enabled) {
+    if (typeof hubId !== 'string' || hubId.length === 0) {
+      throw new TypeError('hub id must be a non-empty string');
+    }
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.#db.prepare(
+        'UPDATE hubs SET collection_enabled = ? WHERE id = ?',
+      ).run(enabled ? 1 : 0, hubId);
+      if (result.changes !== 1) throw new Error('hub is not registered');
+      this.#db.exec('COMMIT');
+    } catch (error) {
+      rollbackQuietly(this.#db);
+      throw error;
+    }
+  }
+
+  // U6: 日次・月次実績の確定点。履歴行と取得完了状態を同一トランザクションで
+  // コミットする。成功をもって取得成功とし、保存失敗は成功扱いにしない（S2）。
+  // Hub側応答にない過去レコードは削除せず、再取得データで非破壊更新する。
+  commitHistory(hubId, { daily = [], monthly = [], devices = [] } = {}, fetchedAt) {
+    if (typeof hubId !== 'string' || hubId.length === 0) {
+      throw new TypeError('hub id must be a non-empty string');
+    }
+    if (!Array.isArray(daily) || !Array.isArray(monthly) || !Array.isArray(devices)) {
+      throw new TypeError('history records must be arrays');
+    }
+    validateReceivedAt(fetchedAt);
+    for (const record of [...daily, ...monthly]) {
+      if (!record || typeof record !== 'object') throw new TypeError('history record is invalid');
+      if (typeof record.deviceId !== 'string' || record.deviceId.length === 0) {
+        throw new TypeError('history device id must be a non-empty string');
+      }
+      if (typeof record.tool !== 'string' || record.tool.length === 0) {
+        throw new TypeError('history tool must be a non-empty string');
+      }
+      if (typeof record.tokens !== 'number' || !Number.isFinite(record.tokens) || record.tokens < 0) {
+        throw new TypeError('history tokens must be a finite non-negative number');
+      }
+      if (typeof record.cost !== 'number' || !Number.isFinite(record.cost) || record.cost < 0) {
+        throw new TypeError('history cost must be a finite non-negative number');
+      }
+      for (const [name, value] of [['todayKey', record.todayKey], ['timeZone', record.timeZone], ['fetchedAt', record.fetchedAt]]) {
+        if (value !== undefined && value !== null && typeof value !== 'string') {
+          throw new TypeError(`history ${name} must be a string or null`);
+        }
+      }
+    }
+    const savedDevices = devices.map((device) => {
+      if (!isPlainObject(device) || typeof device.deviceId !== 'string' || device.deviceId.length === 0) {
+        throw new TypeError('history device state is invalid');
+      }
+      const todayKey = device.todayKey === undefined ? null : device.todayKey;
+      const timeZone = device.timeZone === undefined ? null : device.timeZone;
+      const dailyStatus = device.dailyStatus;
+      if ((todayKey !== null && typeof todayKey !== 'string')
+        || (timeZone !== null && typeof timeZone !== 'string')
+        || !['available', 'no_previous_day', 'unknown_today'].includes(dailyStatus)) {
+        throw new TypeError('history device state is invalid');
+      }
+      return { deviceId: device.deviceId, todayKey, timeZone, dailyStatus };
+    });
+    const recordJson = (record) => JSON.stringify({
+      tokens: record.tokens,
+      cost: record.cost,
+      todayKey: record.todayKey ?? null,
+      timeZone: record.timeZone ?? null,
+      fetchedAt: record.fetchedAt ?? null,
+    });
+    const upsertDeviceState = this.#db.prepare(`
+      INSERT INTO history_fetch_state (hub_id, last_success_at, last_attempt_at, devices_json)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (hub_id) DO UPDATE SET
+        last_success_at = excluded.last_success_at,
+        last_attempt_at = excluded.last_attempt_at,
+        devices_json = excluded.devices_json
+    `);
+    const upsertDeviceStateJson = JSON.stringify(savedDevices);
+    const upsertDaily = this.#db.prepare(`
+      INSERT INTO daily_usage (hub_id, device_id, local_date, tool, tokens, cost, record_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (hub_id, device_id, local_date, tool) DO UPDATE SET
+        tokens = excluded.tokens,
+        cost = excluded.cost,
+        record_json = excluded.record_json
+    `);
+    const upsertMonthly = this.#db.prepare(`
+      INSERT INTO monthly_usage (hub_id, device_id, month, tool, tokens, cost, record_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (hub_id, device_id, month, tool) DO UPDATE SET
+        tokens = excluded.tokens,
+        cost = excluded.cost,
+        record_json = excluded.record_json
+    `);
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      if (this.#db.prepare('SELECT 1 AS present FROM hubs WHERE id = ?').get(hubId) === undefined) {
+        throw new Error('hub is not registered');
+      }
+      for (const record of daily) {
+        if (typeof record.date !== 'string') throw new TypeError('daily record date is invalid');
+        upsertDaily.run(hubId, record.deviceId, record.date, record.tool, record.tokens, record.cost,
+          recordJson(record));
+      }
+      for (const record of monthly) {
+        if (typeof record.month !== 'string') throw new TypeError('monthly record month is invalid');
+        upsertMonthly.run(hubId, record.deviceId, record.month, record.tool, record.tokens, record.cost,
+          recordJson(record));
+      }
+      upsertDeviceState.run(hubId, fetchedAt, fetchedAt, upsertDeviceStateJson);
+      this.#db.exec('COMMIT');
+    } catch (error) {
+      rollbackQuietly(this.#db);
+      throw error;
+    }
+  }
+
+  readHistoryFetchState(hubId) {
+    if (hubId !== undefined && (typeof hubId !== 'string' || hubId.length === 0)) {
+      throw new TypeError('hub id must be a non-empty string');
+    }
+    if (hubId) {
+      const row = this.#db.prepare(
+        'SELECT hub_id AS hubId, last_success_at AS lastSuccessAt, last_attempt_at AS lastAttemptAt, devices_json AS devicesJson FROM history_fetch_state WHERE hub_id = ?',
+      ).get(hubId);
+      return row ? {
+        hubId: row.hubId, lastSuccessAt: row.lastSuccessAt, lastAttemptAt: row.lastAttemptAt,
+        devices: parseStoredJson(row.devicesJson),
+      } : null;
+    }
+    return this.#db.prepare(
+      'SELECT hub_id AS hubId, last_success_at AS lastSuccessAt, last_attempt_at AS lastAttemptAt, devices_json AS devicesJson FROM history_fetch_state ORDER BY hub_id',
+    ).all().map((row) => ({
+      hubId: row.hubId, lastSuccessAt: row.lastSuccessAt, lastAttemptAt: row.lastAttemptAt,
+      devices: parseStoredJson(row.devicesJson),
+    }));
+  }
+
+  readHistory(options = {}) {
+    const { kind, hubId, deviceId, tool, from, to, limit, before } = validateHistoryQuery(options);
+    const cursor = before === undefined ? null : decodeHistoryCursor(before, kind);
+    const table = kind === 'daily' ? 'daily_usage' : 'monthly_usage';
+    const keyColumn = kind === 'daily' ? 'local_date' : 'month';
+    const keyName = kind === 'daily' ? 'date' : 'month';
+    const conditions = [];
+    const parameters = [];
+    if (hubId !== undefined) { conditions.push('hub_id = ?'); parameters.push(hubId); }
+    if (deviceId !== undefined) { conditions.push('device_id = ?'); parameters.push(deviceId); }
+    if (tool !== undefined) { conditions.push('tool = ?'); parameters.push(tool); }
+    if (from !== undefined) { conditions.push(`${keyColumn} >= ?`); parameters.push(from); }
+    if (to !== undefined) { conditions.push(`${keyColumn} <= ?`); parameters.push(to); }
+    if (cursor) {
+      conditions.push(`(
+        ${keyColumn} < ?
+        OR (${keyColumn} = ? AND hub_id > ?)
+        OR (${keyColumn} = ? AND hub_id = ? AND device_id > ?)
+        OR (${keyColumn} = ? AND hub_id = ? AND device_id = ? AND tool > ?)
+      )`);
+      parameters.push(
+        cursor.period,
+        cursor.period, cursor.hubId,
+        cursor.period, cursor.hubId, cursor.deviceId,
+        cursor.period, cursor.hubId, cursor.deviceId, cursor.tool,
+      );
+    }
+    const where = conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`;
+    const rows = this.#db.prepare(`
+      SELECT hub_id AS hubId, device_id AS deviceId, ${keyColumn} AS periodKey, tool, tokens, cost, record_json AS recordJson
+      FROM ${table}
+      ${where}
+      ORDER BY ${keyColumn} DESC, hub_id, device_id, tool
+      LIMIT ?
+    `).all(...parameters, limit + 1);
+    const hasNext = rows.length > limit;
+    return {
+      kind,
+      items: rows.slice(0, limit).map((row) => ({
+        hubId: row.hubId, deviceId: row.deviceId, [keyName]: row.periodKey, tool: row.tool,
+        tokens: row.tokens, cost: row.cost, ...readHistoryMetadata(row.recordJson),
+      })),
+      nextCursor: hasNext ? encodeHistoryCursor(rows[limit - 1], kind) : null,
     };
   }
 

@@ -1,3 +1,11 @@
+import {
+  compareHistoryItems,
+  historyPeriods,
+  historySearch,
+  monthlyCompletion,
+  readAllHistoryPages,
+} from './history.js';
+
 const hubRoot = document.querySelector('#hubs');
 const overallRoot = document.querySelector('#overall');
 const contractRoot = document.querySelector('#contracts');
@@ -6,6 +14,13 @@ const browserStatus = document.querySelector('#browser-status');
 const storageStatus = document.querySelector('#storage-status');
 const showNotConfigured = document.querySelector('#show-not-configured');
 const scopeNote = document.querySelector('.scope-note');
+const usageHistoryForm = document.querySelector('#usage-history-form');
+const usageHistoryResults = document.querySelector('#usage-history-results');
+const historyCollectionStatus = document.querySelector('#history-collection-status');
+const historyKind = document.querySelector('#history-kind');
+const historyFrom = document.querySelector('#history-from');
+const historyTo = document.querySelector('#history-to');
+const historyFetch = document.querySelector('#history-fetch');
 const number = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
 const money = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 const dateTime = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -14,6 +29,10 @@ const expanded = new Set();
 const histories = new Map();
 let latestState;
 let legacyHubFilter = '';
+const usageHistory = {
+  items: [], loaded: false, loading: false, error: null, pageCount: 0,
+  kind: 'daily', visibleCount: 100, compareLeft: null, compareRight: null, requestId: 0,
+};
 const estimateStatuses = { estimated: '推定済み', collecting: '観測待ち', unavailable: '推定不可', 'settings-required': '設定が必要' };
 const sourceReasons = {
   stale_device: '端末の報告が古い',
@@ -654,6 +673,297 @@ function deviceCard(device, state, hub) {
   return card;
 }
 
+function historyStatusView(state) {
+  const fragment = document.createDocumentFragment();
+  const statusLabels = {
+    unfetched: ['履歴未取得', 'muted'],
+    fetching: ['履歴取得中', 'warning'],
+    ready: ['履歴取得成功', 'good'],
+    retrying: ['通信失敗・再試行待ち', 'warning'],
+    invalid: ['取得データ不正', 'danger'],
+    stopped: ['履歴取得停止', 'warning'],
+  };
+  const hubs = Array.isArray(state?.hubs) ? state.hubs : [];
+  for (const hub of hubs) {
+    const item = element('article', 'history-source-status');
+    const heading = element('div', 'history-source-heading');
+    const current = hub.history ?? {};
+    const [label, tone] = statusLabels[current.state] ?? ['状態不明', 'muted'];
+    heading.append(element('strong', '', hub.id), badge(label, tone));
+    item.append(heading);
+    if (current.lastSuccessAt) item.append(element('p', '', `最終取得成功 ${formattedTime(current.lastSuccessAt)}`));
+    if (current.nextRetryAt) item.append(element('p', '', `次回の再試行 ${formattedTime(current.nextRetryAt)}`));
+    if (current.error) item.append(element('p', 'history-source-error', current.error));
+    for (const device of Array.isArray(current.devices) ? current.devices : []) {
+      const identity = [device.deviceId ?? '端末ID未取得', device.timeZone ? `タイムゾーン ${device.timeZone}` : null].filter(Boolean).join(' · ');
+      if (device.dailyStatus === 'no_previous_day') {
+        item.append(element('p', 'history-source-note', `${identity}：取得成功・前日データなし`));
+      } else if (device.dailyStatus === 'unknown_today') {
+        item.append(element('p', 'history-source-error', `${identity}：端末現地日付が不明なため日次履歴を保存していません`));
+      }
+    }
+    fragment.append(item);
+  }
+  if (!hubs.length) fragment.append(element('p', 'empty', '表示できるHubがありません。'));
+  return fragment;
+}
+
+function replaceHistoryOptions(id, values) {
+  const list = document.querySelector(id);
+  if (!list) return;
+  const fragment = document.createDocumentFragment();
+  for (const value of [...new Set(values.filter((entry) => typeof entry === 'string' && entry.length))].sort()) {
+    const option = document.createElement('option');
+    option.value = value;
+    fragment.append(option);
+  }
+  list.replaceChildren(fragment);
+}
+
+function updateHistoryOptions(state) {
+  const hubs = Array.isArray(state?.hubs) ? state.hubs : [];
+  const loaded = usageHistory.items;
+  replaceHistoryOptions('#history-hub-options', [...hubs.map((hub) => hub.id), ...loaded.map((item) => item?.hubId)]);
+  replaceHistoryOptions('#history-device-options', [
+    ...hubs.flatMap((hub) => (Array.isArray(hub.devices) ? hub.devices : []).map((device) => device.deviceId)),
+    ...loaded.map((item) => item?.deviceId),
+  ]);
+  const currentTools = hubs.flatMap((hub) => (Array.isArray(hub.devices) ? hub.devices : []).flatMap((device) => {
+    const periods = device.observation?.periods ?? {};
+    return Object.values(periods).flatMap((period) => Object.keys(period?.clientCosts ?? {}));
+  }));
+  replaceHistoryOptions('#history-tool-options', [...currentTools, ...loaded.map((item) => item?.tool)]);
+}
+
+function historyFilters() {
+  const data = new FormData(usageHistoryForm);
+  return Object.fromEntries(['kind', 'hubId', 'deviceId', 'tool', 'from', 'to']
+    .map((name) => [name, String(data.get(name) ?? '').trim()]));
+}
+
+async function fetchHistoryPage(filters, before) {
+  const response = await fetch(`/api/history?${historySearch(filters, before)}`);
+  let page = null;
+  try { page = await response.json(); } catch { /* handled below */ }
+  if (!response.ok) throw new Error(page?.error || '履歴を取得できませんでした。接続と保存状態を確認してください。');
+  return page;
+}
+
+async function loadUsageHistory() {
+  const filters = historyFilters();
+  if (filters.from && filters.to && filters.from > filters.to) {
+    usageHistory.error = '開始は終了以前の日付を指定してください。';
+    renderUsageHistoryResults();
+    return;
+  }
+  const requestId = ++usageHistory.requestId;
+  usageHistory.loading = true;
+  usageHistory.error = null;
+  if (historyFetch) { historyFetch.disabled = true; historyFetch.textContent = '取得中…'; }
+  renderUsageHistoryResults();
+  try {
+    const result = await readAllHistoryPages((before) => fetchHistoryPage(filters, before));
+    if (requestId !== usageHistory.requestId) return;
+    if (result.kind !== filters.kind) throw new Error('取得した履歴の種別が要求と一致しません。');
+    usageHistory.items = result.items;
+    usageHistory.kind = filters.kind;
+    usageHistory.pageCount = result.pageCount;
+    usageHistory.loaded = true;
+    usageHistory.visibleCount = 100;
+    const periods = historyPeriods(result.items, filters.kind);
+    usageHistory.compareLeft = periods.at(-1) ?? null;
+    usageHistory.compareRight = periods[0] ?? null;
+    updateHistoryOptions(latestState);
+  } catch (error) {
+    if (requestId !== usageHistory.requestId) return;
+    usageHistory.error = error.message;
+  } finally {
+    if (requestId === usageHistory.requestId) {
+      usageHistory.loading = false;
+      if (historyFetch) {
+        historyFetch.disabled = false;
+        historyFetch.textContent = usageHistory.loaded ? '履歴を更新' : '履歴を取得';
+      }
+      renderUsageHistoryResults();
+    }
+  }
+}
+
+function signedHistoryText(value, formatter, suffix = '') {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '差分なし';
+  return `${value > 0 ? '+' : ''}${formatter.format(value)}${suffix}`;
+}
+
+function historyValueLines(item) {
+  if (!item) return element('span', 'history-missing', '未取得');
+  const value = element('div', 'history-values');
+  value.append(
+    element('span', '', typeof item.tokens === 'number' && Number.isFinite(item.tokens) ? `${preciseNumber.format(item.tokens)} tokens` : 'tokens 未取得'),
+    element('span', '', typeof item.cost === 'number' && Number.isFinite(item.cost) ? money.format(item.cost) : 'API換算額 未取得'),
+  );
+  return value;
+}
+
+function historyPeriodBadge(item, kind) {
+  if (kind === 'daily') return badge('確定分', 'good');
+  const completion = monthlyCompletion(item?.month, item?.todayKey);
+  if (completion === 'partial') return badge('途中集計', 'warning');
+  if (completion === 'final') return badge('確定分', 'good');
+  return badge('確定状況不明', 'muted');
+}
+
+function historyComparison(periods) {
+  const section = element('section', 'history-comparison');
+  section.append(element('h3', '', '2期間の比較'));
+  if (periods.length < 1) {
+    section.append(element('p', 'empty', '比較できる期間がありません。'));
+    return section;
+  }
+  const controls = element('div', 'history-compare-controls');
+  const makeSelect = (label, value, onChange) => {
+    const field = element('label', '', label);
+    const select = document.createElement('select');
+    for (const period of periods) {
+      const option = element('option', '', period);
+      option.value = period;
+      select.append(option);
+    }
+    select.value = periods.includes(value) ? value : periods[0];
+    select.addEventListener('change', onChange);
+    field.append(select);
+    return field;
+  };
+  controls.append(
+    makeSelect('期間A', usageHistory.compareLeft, (event) => {
+      usageHistory.compareLeft = event.target.value;
+      renderUsageHistoryResults();
+    }),
+    makeSelect('期間B', usageHistory.compareRight, (event) => {
+      usageHistory.compareRight = event.target.value;
+      renderUsageHistoryResults();
+    }),
+  );
+  section.append(controls, element('p', 'history-help', '差分は期間Bから期間Aを引いた値です。片方の期間に値がない端末・ツールは「未取得」とし、差分を算出しません。'));
+  const rows = compareHistoryItems(usageHistory.items, {
+    kind: usageHistory.kind,
+    leftPeriod: usageHistory.compareLeft,
+    rightPeriod: usageHistory.compareRight,
+  });
+  const table = element('table', 'history-table');
+  const head = document.createElement('thead');
+  const heading = document.createElement('tr');
+  for (const text of ['Hub・端末・ツール', `期間A ${usageHistory.compareLeft ?? ''}`, `期間B ${usageHistory.compareRight ?? ''}`, '差分（B − A）']) heading.append(element('th', '', text));
+  head.append(heading);
+  const body = document.createElement('tbody');
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    const identity = element('td');
+    identity.append(element('strong', '', row.hubId ?? 'Hub未取得'), element('span', '', row.deviceId ?? '端末ID未取得'), element('span', '', row.tool ?? 'ツール未取得'));
+    const left = element('td');
+    left.append(historyValueLines(row.left));
+    if (usageHistory.kind === 'monthly' && row.left) left.append(historyPeriodBadge(row.left, usageHistory.kind));
+    const right = element('td');
+    right.append(historyValueLines(row.right));
+    if (usageHistory.kind === 'monthly' && row.right) right.append(historyPeriodBadge(row.right, usageHistory.kind));
+    const delta = element('td');
+    const values = element('div', 'history-values');
+    values.append(
+      element('span', '', signedHistoryText(row.tokenDifference, preciseNumber, ' tokens')),
+      element('span', '', signedHistoryText(row.costDifference, preciseNumber, ' USD')),
+    );
+    delta.append(values);
+    tr.append(identity, left, right, delta);
+    body.append(tr);
+  }
+  table.append(head, body);
+  const wrapper = element('div', 'history-table-wrap');
+  wrapper.append(table);
+  section.append(wrapper);
+  return section;
+}
+
+function historyRows() {
+  const section = element('section', 'history-browse');
+  section.append(element('h3', '', usageHistory.kind === 'daily' ? '日次履歴' : '月次履歴'));
+  const table = element('table', 'history-table');
+  const head = document.createElement('thead');
+  const heading = document.createElement('tr');
+  const periodLabel = usageHistory.kind === 'daily' ? '端末現地日付' : '端末現地月';
+  for (const text of ['Hub', '端末', 'ツール', periodLabel, 'トークン数', 'API換算額', '確定状況', '取得情報']) heading.append(element('th', '', text));
+  head.append(heading);
+  const body = document.createElement('tbody');
+  for (const item of usageHistory.items.slice(0, usageHistory.visibleCount)) {
+    const row = document.createElement('tr');
+    const period = usageHistory.kind === 'daily' ? item.date : item.month;
+    row.append(
+      element('td', '', item.hubId ?? '未取得'),
+      element('td', '', item.deviceId ?? '未取得'),
+      element('td', '', item.tool ?? '未取得'),
+      element('td', 'history-period', period ?? '未取得'),
+      element('td', '', typeof item.tokens === 'number' && Number.isFinite(item.tokens) ? preciseNumber.format(item.tokens) : '未取得'),
+      element('td', '', typeof item.cost === 'number' && Number.isFinite(item.cost) ? money.format(item.cost) : '未取得'),
+    );
+    const status = element('td');
+    status.append(historyPeriodBadge(item, usageHistory.kind));
+    const metadata = element('td', 'history-metadata');
+    metadata.append(
+      element('span', '', item.timeZone ? `タイムゾーン ${item.timeZone}` : 'タイムゾーン 未取得'),
+      element('span', '', item.todayKey ? `取得時の端末日付 ${item.todayKey}` : '取得時の端末日付 未取得'),
+      element('span', '', `履歴取得 ${formattedTime(item.fetchedAt)}`),
+    );
+    row.append(status, metadata);
+    body.append(row);
+  }
+  table.append(head, body);
+  const wrapper = element('div', 'history-table-wrap');
+  wrapper.append(table);
+  section.append(wrapper);
+  if (usageHistory.visibleCount < usageHistory.items.length) {
+    const more = element('button', 'history-more', `さらに表示（残り${usageHistory.items.length - usageHistory.visibleCount}件）`);
+    more.type = 'button';
+    more.addEventListener('click', () => {
+      usageHistory.visibleCount += 100;
+      renderUsageHistoryResults();
+    });
+    section.append(more);
+  }
+  return section;
+}
+
+function renderUsageHistoryResults() {
+  if (!usageHistoryResults) return;
+  const fragment = document.createDocumentFragment();
+  if (usageHistory.loading) fragment.append(element('p', 'history-loading', '対象範囲の全ページを取得中…'));
+  if (usageHistory.error) {
+    fragment.append(element('p', 'error-detail', `${usageHistory.error}${usageHistory.loaded ? ' 以前に表示した履歴は保持しています。' : ''}`));
+  }
+  if (!usageHistory.loaded) {
+    if (!usageHistory.loading && !usageHistory.error) fragment.append(element('p', 'empty', '条件を指定して履歴を取得してください。'));
+    usageHistoryResults.replaceChildren(fragment);
+    return;
+  }
+  fragment.append(element('p', 'history-result-summary', `${usageHistory.items.length}件を${usageHistory.pageCount}ページから取得しました。比較は対象範囲の全ページを使用しています。`));
+  if (!usageHistory.items.length) fragment.append(element('p', 'empty', '条件に一致する保存済み履歴はありません。'));
+  else fragment.append(historyComparison(historyPeriods(usageHistory.items, usageHistory.kind)), historyRows());
+  usageHistoryResults.replaceChildren(fragment);
+}
+
+function resetUsageHistoryForKind() {
+  usageHistory.requestId += 1;
+  usageHistory.items = [];
+  usageHistory.loaded = false;
+  usageHistory.loading = false;
+  usageHistory.error = null;
+  usageHistory.pageCount = 0;
+  usageHistory.kind = historyKind?.value ?? 'daily';
+  usageHistory.compareLeft = null;
+  usageHistory.compareRight = null;
+  if (historyFrom) { historyFrom.type = usageHistory.kind === 'monthly' ? 'month' : 'date'; historyFrom.value = ''; }
+  if (historyTo) { historyTo.type = usageHistory.kind === 'monthly' ? 'month' : 'date'; historyTo.value = ''; }
+  if (historyFetch) { historyFetch.disabled = false; historyFetch.textContent = '履歴を取得'; }
+  renderUsageHistoryResults();
+}
+
 function render(state) {
   latestState = state;
   const hubs = Array.isArray(state?.hubs) ? state.hubs : [];
@@ -670,6 +980,8 @@ function render(state) {
   if (overallRoot) overallRoot.replaceChildren(overallView(state));
   if (contractRoot) contractRoot.replaceChildren(contractsView(state));
   if (estimateRoot) estimateRoot.replaceChildren(estimates(state));
+  if (historyCollectionStatus) historyCollectionStatus.replaceChildren(historyStatusView(state));
+  updateHistoryOptions(state);
   const fragment = document.createDocumentFragment();
   for (const hub of hubs) {
     const card = element('section', 'hub');
@@ -681,7 +993,7 @@ function render(state) {
     const status = hub.status ?? {};
     if (status.configuration === 'invalid') badges.append(badge('設定不正', 'danger'));
     if (status.configuration === 'missing') badges.append(badge('接続設定なし', 'warning'));
-    if (!hub.collectionEnabled) badges.append(badge('収集停止', 'warning'));
+    if (!hub.collectionEnabled || status.collectionStopped === true) badges.append(badge('収集停止', 'warning'));
     badges.append(badge(status.connection === 'connected' ? 'Hub 接続正常' : '未接続', status.connection === 'connected' ? 'good' : 'muted'));
     badges.append(badge(storage.state === 'normal' ? '保存正常' : storage.message, storage.state === 'normal' ? 'muted' : 'danger'));
     heading.append(badges);
@@ -716,3 +1028,8 @@ connection.onopen = () => { browserStatus.textContent = 'ブラウザ 接続正�
 connection.onerror = () => { browserStatus.textContent = 'ブラウザ 未接続・再接続中'; browserStatus.className = 'badge warning'; };
 for (const event of ['status', 'update']) connection.addEventListener(event, (message) => render(JSON.parse(message.data)));
 showNotConfigured?.addEventListener('change', () => { if (latestState) render(latestState); });
+usageHistoryForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  loadUsageHistory();
+});
+historyKind?.addEventListener('change', resetUsageHistoryForKind);

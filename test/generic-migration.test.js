@@ -55,7 +55,7 @@ function fixture(t) {
     state.registry.find((source) => source.tool === global.provider && source.hubId === relation.hub_id).accounts = [id];
   }
   db.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(state));
-  db.exec('DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; PRAGMA user_version = 4');
+  db.exec('DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; DROP TABLE daily_usage; DROP TABLE monthly_usage; DROP TABLE history_fetch_state; PRAGMA user_version = 4');
   return { db, dbPath, relations };
 }
 
@@ -80,7 +80,7 @@ test('schema 4 migration merges a generic contract across Hubs while preserving 
   store.close();
   const after = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 10);
     const { groups: beforeGroups, ...beforeRows } = before;
     const { groups: afterGroups, ...afterRows } = preserved(after);
     assert.deepEqual(afterRows, beforeRows);
@@ -114,7 +114,7 @@ function version5Fixture(t) {
   delete old.view.methodVersion;
   state.groups = [old];
   connection.prepare('UPDATE shared_estimation_state SET state_json = ? WHERE id = 1').run(JSON.stringify(state));
-  connection.exec('DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; PRAGMA user_version = 5');
+  connection.exec('DROP TABLE estimation_inputs; DROP TABLE estimation_runtime; DROP TABLE daily_usage; DROP TABLE monthly_usage; DROP TABLE history_fetch_state; PRAGMA user_version = 5');
   return { db: connection, dbPath, old };
 }
 
@@ -130,7 +130,7 @@ test('schema 5から8への移行は旧結果を保持し現行系列の比較�
   store.close();
   const after = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(after.prepare('PRAGMA user_version').get().user_version, 10);
     assert.deepEqual(rows(after), before);
     const checkpoint = JSON.parse(after.prepare('SELECT state_json FROM shared_estimation_state WHERE id = 1').get().state_json);
     const archived = checkpoint.groups.find(group => group.id === old.id);

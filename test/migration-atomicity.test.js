@@ -129,7 +129,7 @@ for (const version of [1, 2]) {
     const retried = new AnalyticsStore(dbPath);
     retried.close();
     const migrated = new DatabaseSync(dbPath, { readOnly: true });
-    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 10);
     assert.equal(migrated.prepare('SELECT COUNT(*) AS count FROM estimation_inputs').get().count, 1);
     assert.equal(migrated.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'contracts'").get().count, 1);
     assert.equal(migrated.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');

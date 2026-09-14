@@ -1,13 +1,15 @@
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AnalyticsStore } from './store.js';
+import { AnalyticsStore, validateHistoryQuery } from './store.js';
 import { normalizeNotification, ValidationError } from './observations.js';
 import { readEvents } from './sse.js';
+import { HistoryValidationError, selectHistoryPayload } from './history.js';
 
 const assets = new Map([
   ['/', ['text/html; charset=utf-8', new URL('../public/index.html', import.meta.url)]],
   ['/app.js', ['text/javascript; charset=utf-8', new URL('../public/app.js', import.meta.url)]],
+  ['/history.js', ['text/javascript; charset=utf-8', new URL('../public/history.js', import.meta.url)]],
   ['/style.css', ['text/css; charset=utf-8', new URL('../public/style.css', import.meta.url)]],
   ['/favicon.svg', ['image/svg+xml', new URL('../public/favicon.svg', import.meta.url)]],
 ]);
@@ -22,14 +24,16 @@ function errorDetails(error) {
   };
 }
 
-export async function startAnalytics({ configuration, log = () => {}, reconnectMs = 3000 }) {
+export async function startAnalytics({ configuration, log = () => {}, reconnectMs = 3000, historyRetryMs = 3600000, historyPollMs = 60000, now = () => new Date() }) {
   const store = new AnalyticsStore(configuration.dbPath, {
     estimationSettings: configuration.estimation ?? {},
   });
   let saved;
+  let persistedHistory;
   try {
     store.registerHubs(configuration.hubs.map((hub) => hub.id));
     saved = store.readState();
+    persistedHistory = new Map(store.readHistoryFetchState().map((entry) => [entry.hubId, entry]));
   } catch (error) {
     store.close();
     throw error;
@@ -41,6 +45,7 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
       configuration: !input ? 'missing' : input.configError ? 'invalid' : 'valid',
       configurationError: input?.configError ?? null,
       connection: 'disconnected', connectionDetail: null, validationError: null,
+      collectionStopped: !hub.collectionEnabled,
     }];
   }));
   const clients = new Map();
@@ -51,12 +56,59 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
   let queue = Promise.resolve();
   let stopPromise;
 
+  // U6: Hubごとの履歴取得制御。SSE受信・保存キューとは独立して通信待機し、
+  // 保存だけを共通キューへ直列化する。generationで停止前後の遅着応答を破棄する。
+  const historyControls = new Map();
+  const hubStopFlags = new Map();
+  const hubAborts = new Map();
+  // Hubごとの収集ループの直列化。停止後に再開しても二重に収集しない。
+  const hubLoops = new Map();
+  const pendingStarts = new Set();
+
+  function historyControl(hubId) {
+    if (!historyControls.has(hubId)) {
+      const persisted = persistedHistory.get(hubId);
+      historyControls.set(hubId, {
+        generation: 0, fetching: false, pending: null, abort: null, retryTimer: null,
+        lastSuccess: persisted?.lastSuccessAt ?? null, devices: persisted?.devices ?? [],
+        nextRetryAt: null, invalidDay: null, error: null,
+      });
+    }
+    return historyControls.get(hubId);
+  }
+  function hubSignal(hubId) {
+    if (!hubAborts.has(hubId)) hubAborts.set(hubId, new AbortController());
+    return hubAborts.get(hubId).signal;
+  }
+  function hubEnabled(hubId) {
+    return saved.hubs.find((hub) => hub.id === hubId)?.collectionEnabled === true
+      && statuses.get(hubId)?.configuration === 'valid'
+      && hubStopFlags.get(hubId) !== true;
+  }
+  function hostLocalDateKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return year + '-' + month + '-' + day;
+  }
+
+  function historyState(hub) {
+    const control = historyControl(hub.id);
+    return {
+      state: statuses.get(hub.id).collectionStopped ? 'stopped'
+        : control.fetching ? 'fetching' : control.nextRetryAt ? 'retrying'
+          : control.invalidDay ? 'invalid' : control.lastSuccess ? 'ready' : 'unfetched',
+      lastSuccessAt: control.lastSuccess, nextRetryAt: control.nextRetryAt,
+      error: control.error, devices: control.devices,
+    };
+  }
+
   function state() {
     return {
       phase, storage, mode: configuration.mode,
-      features: { estimation: 'implemented', estimationHistory: 'implemented', history: 'unimplemented', hubManagement: 'unimplemented' },
+      features: { estimation: 'implemented', estimationHistory: 'implemented', history: 'implemented', hubManagement: 'unimplemented' },
       contracts: saved.contracts, estimates: saved.estimates, metrics: saved.metrics, legacyEstimateCount: saved.legacyEstimateCount,
-      hubs: saved.hubs.map((hub) => ({ ...hub, status: { ...statuses.get(hub.id) } })),
+      hubs: saved.hubs.map((hub) => ({ ...hub, status: { ...statuses.get(hub.id) }, history: historyState(hub) })),
     };
   }
 
@@ -87,6 +139,10 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
       state: kind,
       message: kind === 'unreadable' ? '更新停止・DB 参照不能' : '保存失敗',
     };
+    for (const control of historyControls.values()) {
+      clearHistoryRetry(control);
+      control.abort?.abort();
+    }
     log({ level: 'error', operation: kind === 'unreadable' ? 'read-state' : 'save-notification', hubId, ...errorDetails(error) });
     broadcast('status');
   }
@@ -128,15 +184,168 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
     return true;
   }
 
+  function clearHistoryRetry(control) {
+    if (control.retryTimer) clearTimeout(control.retryTimer);
+    control.retryTimer = null;
+    control.nextRetryAt = null;
+  }
+
+  function scheduleHistoryRetry(hub) {
+    const control = historyControl(hub.id);
+    clearHistoryRetry(control);
+    control.nextRetryAt = new Date(now().getTime() + historyRetryMs).toISOString();
+    control.retryTimer = setTimeout(() => {
+      control.retryTimer = null;
+      control.nextRetryAt = null;
+      fetchHistory(hub, 'retry');
+    }, historyRetryMs);
+    control.retryTimer.unref();
+  }
+
+  // 全ての自動取得契機が同じ成功・再試行状態を参照する。
+  function fetchHistory(hub, reason) {
+    const control = historyControl(hub.id);
+    if (phase !== 'running' || storage.state !== 'normal' || !hubEnabled(hub.id)) return Promise.resolve();
+    if (control.fetching) return control.pending;
+    const at = now();
+    if (reason !== 'manual' && reason !== 'restart') {
+      if (control.nextRetryAt) return Promise.resolve();
+      if (control.invalidDay === hostLocalDateKey(at)) return Promise.resolve();
+      if (reason === 'scheduled' || reason === 'reconnect') {
+        const since = new Date(at.getFullYear(), at.getMonth(), at.getDate(), reason === 'scheduled' || at.getHours() >= 1 ? 1 : 0);
+        if (at < since || (control.lastSuccess && new Date(control.lastSuccess) >= since)) return Promise.resolve();
+      }
+    }
+    clearHistoryRetry(control);
+    control.fetching = true;
+    control.error = null;
+    control.invalidDay = null;
+    const generation = control.generation;
+    const abort = new AbortController();
+    control.abort = abort;
+    control.pending = receiveHistory(hub, reason, control, generation, abort);
+    return control.pending;
+  }
+
+  async function receiveHistory(hub, reason, control, generation, abort) {
+    broadcast('status');
+    const onGlobalAbort = () => abort.abort();
+    controller.signal.addEventListener('abort', onGlobalAbort, { once: true });
+    try {
+      const response = await fetch(hub.url.replace(/\/$/, '') + '/api/devices', {
+        headers: { Authorization: 'Bearer ' + hub.secret, Accept: 'application/json' },
+        signal: abort.signal, redirect: 'manual',
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error('history request failed with HTTP ' + response.status);
+      }
+      let payload;
+      try { payload = await response.json(); }
+      catch (error) {
+        if (error instanceof SyntaxError) throw new HistoryValidationError('history JSON is invalid');
+        throw error;
+      }
+      const fetchedAt = now().toISOString();
+      const records = selectHistoryPayload(payload, fetchedAt);
+      // 停止の採否は受信完了時点で固定する。受付済みの保存を後の停止で破棄しない。
+      if (abort.signal.aborted || phase !== 'running' || control.generation !== generation || !hubEnabled(hub.id)) return;
+      queue = queue.then(() => {
+        if (storage.state !== 'normal') return;
+        try { store.commitHistory(hub.id, records, fetchedAt); }
+        catch (error) { stopSaving('failed', hub.id, error); return; }
+        try { saved = store.readState(); }
+        catch (error) { stopSaving('unreadable', hub.id, error); return; }
+        control.lastSuccess = fetchedAt;
+        control.devices = records.devices;
+        control.invalidDay = null;
+        control.error = null;
+        clearHistoryRetry(control);
+        broadcast('update');
+      }).catch((error) => { stopSaving('failed', hub.id, error); });
+      await queue;
+    } catch (error) {
+      if (abort.signal.aborted || controller.signal.aborted || control.generation !== generation) return;
+      log({ level: 'error', operation: 'history-fetch', hubId: hub.id, reason, ...errorDetails(error) });
+      if (error instanceof HistoryValidationError) {
+        control.invalidDay = hostLocalDateKey(now());
+        control.error = '履歴応答の形式が不正です。次回の定期取得を待ちます。';
+      } else {
+        control.error = '履歴の通信に失敗しました。';
+        scheduleHistoryRetry(hub);
+      }
+    } finally {
+      controller.signal.removeEventListener('abort', onGlobalAbort);
+      control.abort = null;
+      control.fetching = false;
+      broadcast('status');
+    }
+  }
+
+  function stopHubCollection(hubId) {
+    if (!configured.has(hubId)) return Promise.resolve();
+    const control = historyControl(hubId);
+    control.generation += 1;
+    control.abort?.abort();
+    clearHistoryRetry(control);
+    hubStopFlags.set(hubId, true);
+    hubAborts.get(hubId)?.abort();
+    queue = queue.then(() => {
+      // 受信済み処理が終わった後に停止を表示する。設定保存の失敗とは独立する。
+      statuses.get(hubId).collectionStopped = true;
+      if (storage.state !== 'normal') { broadcast('status'); return; }
+      try { store.setCollectionEnabled(hubId, false); }
+      catch (error) { stopSaving('failed', hubId, error); return; }
+      try { saved = store.readState(); }
+      catch (error) { stopSaving('unreadable', hubId, error); return; }
+      if (saveGap(hubId, 'collection_stopped', now().toISOString())) broadcast('status');
+    }).catch((error) => { stopSaving('failed', hubId, error); });
+    return queue;
+  }
+
+  function startHubCollection(hubId) {
+    const hub = configured.get(hubId);
+    if (!hub || hubEnabled(hubId)) return Promise.resolve();
+    const control = historyControl(hubId);
+    const generation = ++control.generation;
+    const pending = resume();
+    pendingStarts.add(pending);
+    pending.finally(() => pendingStarts.delete(pending));
+    return pending;
+
+    async function resume() {
+      // 旧通信の終了待ちは共通保存キューの外で行う。他Hubの受信・保存を止めない。
+      await Promise.all([hubLoops.get(hubId), control.pending]);
+      if (control.generation !== generation || phase !== 'running' || storage.state !== 'normal') return;
+      queue = queue.then(() => {
+        if (control.generation !== generation || phase !== 'running' || storage.state !== 'normal') return;
+        try { store.setCollectionEnabled(hubId, true); }
+        catch (error) { stopSaving('failed', hubId, error); return; }
+        try { saved = store.readState(); }
+        catch (error) { stopSaving('unreadable', hubId, error); return; }
+        hubAborts.set(hubId, new AbortController());
+        hubStopFlags.set(hubId, false);
+        statuses.get(hubId).collectionStopped = false;
+        broadcast('status');
+        if (!hubEnabled(hubId)) return;
+        const loop = collect(hub);
+        connections.push(loop);
+        hubLoops.set(hubId, loop);
+        fetchHistory(hub, 'restart');
+      }).catch((error) => { stopSaving('failed', hubId, error); });
+      await queue;
+    }
+  }
+
   async function collect(hub) {
     const status = statuses.get(hub.id);
     const endpoint = `${hub.url.replace(/\/$/, '')}/api/stats/stream`;
-    while (!controller.signal.aborted) {
+    while (!controller.signal.aborted && hubStopFlags.get(hub.id) !== true) {
       status.connectionDetail = null;
       try {
         const response = await fetch(endpoint, {
           headers: { Authorization: `Bearer ${hub.secret}`, Accept: 'text/event-stream' },
-          signal: controller.signal,
+          signal: hubSignal(hub.id),
           redirect: 'manual',
         });
         if (!response.ok) {
@@ -152,15 +361,16 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
         status.connection = 'connected';
         status.connectionDetail = null;
         broadcast('status');
+        fetchHistory(hub, 'reconnect');
         for await (const frame of readEvents(response.body)) {
-          if (controller.signal.aborted) break;
+          if (controller.signal.aborted || hubStopFlags.get(hub.id) === true) break;
           if (frame.event === 'snapshot' || frame.event === 'stats') accept(hub.id, frame.data, new Date().toISOString());
         }
       } catch (error) {
-        if (!controller.signal.aborted) log({ level: 'error', operation: 'hub-connection', hubId: hub.id, http: status.connectionDetail, ...errorDetails(error) });
+        if (!controller.signal.aborted && hubStopFlags.get(hub.id) !== true) log({ level: 'error', operation: 'hub-connection', hubId: hub.id, http: status.connectionDetail, ...errorDetails(error) });
       } finally {
         status.connection = 'disconnected';
-        if (phase === 'running') {
+        if (phase === 'running' && hubStopFlags.get(hub.id) !== true) {
           const at = new Date().toISOString();
           queue = queue.then(() => {
             if (storage.state === 'normal' && !saveGap(hub.id, 'disconnected', at)) return;
@@ -168,7 +378,8 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
           }).catch((error) => { stopSaving('failed', hub.id, error); });
         }
       }
-      if (!controller.signal.aborted) await delay(reconnectMs, undefined, { signal: controller.signal }).catch(() => {});
+      if (hubStopFlags.get(hub.id) === true) break;
+      if (!controller.signal.aborted) await delay(reconnectMs, undefined, { signal: hubSignal(hub.id) }).catch(() => {});
     }
   }
 
@@ -224,8 +435,39 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
         respond(503, { error: 'DB 参照不能のため取得できません' });
       }
     } else if (path === '/api/history') {
-      response.writeHead(storage.state === 'unreadable' ? 503 : 501, { 'Content-Type': 'application/json; charset=utf-8' });
-      response.end(JSON.stringify({ error: storage.state === 'unreadable' ? 'DB 参照不能のため取得できません' : '履歴機能は未実装です' }));
+      const respond = (code, body) => {
+        response.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+        response.end(request.method === 'HEAD' ? undefined : JSON.stringify(body));
+      };
+      const params = new URL(request.url, 'http://localhost').searchParams;
+      const options = {
+        kind: params.get('kind') ?? 'daily',
+        hubId: params.get('hubId') ?? undefined,
+        deviceId: params.get('deviceId') ?? undefined,
+        tool: params.get('tool') ?? undefined,
+        from: params.get('from') ?? undefined,
+        to: params.get('to') ?? undefined,
+        before: params.get('before') ?? undefined,
+        limit: params.has('limit') ? Number(params.get('limit')) : 100,
+      };
+      try {
+        if ([...params.keys()].some((name) => !['kind', 'hubId', 'deviceId', 'tool', 'from', 'to', 'limit', 'before'].includes(name) || params.getAll(name).length > 1)
+          || ['hubId', 'deviceId', 'tool', 'from', 'to', 'before'].some((name) => params.has(name) && !params.get(name).trim())
+          || (params.has('limit') && !/^\d+$/.test(params.get('limit')))) throw new TypeError('invalid history query');
+        validateHistoryQuery(options);
+      } catch {
+        respond(400, { error: '履歴取得条件が不正です' });
+        return;
+      }
+      if (storage.state === 'unreadable') {
+        respond(503, { error: 'DB 参照不能のため取得できません' });
+        return;
+      }
+      try { respond(200, store.readHistory(options)); }
+      catch (error) {
+        stopSaving('unreadable', null, error);
+        respond(503, { error: 'DB 参照不能のため取得できません' });
+      }
     } else if (assets.has(path)) {
       const [type, filename] = assets.get(path);
       response.writeHead(200, { 'Content-Type': type });
@@ -258,14 +500,44 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
   }
   for (const savedHub of saved.hubs) {
     if (savedHub.collectionEnabled && statuses.get(savedHub.id).configuration === 'valid') {
-      connections.push(collect(configured.get(savedHub.id)));
+      const loop = collect(configured.get(savedHub.id));
+      connections.push(loop);
+      hubLoops.set(savedHub.id, loop);
     }
   }
+
+  // U6: 初回接続時はSSEを直ちに開始し、履歴GETの完了を待たない（S2）。
+  // 定期取得は稼働マシンの現地時刻で毎日午前1時にHubごとに取得する。
+  for (const savedHub of saved.hubs) {
+    if (savedHub.collectionEnabled && statuses.get(savedHub.id).configuration === 'valid') {
+      historyControl(savedHub.id);
+      // collect()がhubSignal()で遅延生成したコントローラを上書きしないこと。
+      // 上書きすると停止時に古いシグナルが残り収集ループが終了しない。
+      if (!hubAborts.has(savedHub.id)) hubAborts.set(savedHub.id, new AbortController());
+      fetchHistory(configured.get(savedHub.id), 'initial').catch(() => {});
+    }
+  }
+  const historyScheduler = setInterval(() => {
+    if (phase !== 'running' || storage.state !== 'normal' || now().getHours() < 1) return;
+    for (const hub of configured.values()) fetchHistory(hub, 'scheduled');
+  }, historyPollMs);
+  historyScheduler.unref();
 
   async function shutdown() {
     phase = 'stopping';
     controller.abort();
+    clearInterval(historyScheduler);
+    for (const control of historyControls.values()) {
+      control.generation += 1;
+      if (control.abort) control.abort.abort();
+      clearHistoryRetry(control);
+    }
+    for (const abort of hubAborts.values()) {
+      try { abort.abort(); } catch { /* ignore */ }
+    }
     await Promise.all(connections);
+    await Promise.all(pendingStarts);
+    await Promise.all([...historyControls.values()].map((control) => control.pending));
     await queue;
     broadcast('status');
     for (const client of clients.keys()) client.end();
@@ -278,5 +550,12 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
     server, store, state, drain: () => queue,
     stop: () => { stopPromise ??= shutdown(); return stopPromise; },
     address: server.address(),
+    fetchHistory: (hubId, reason = 'manual') => {
+      const hub = configured.get(hubId);
+      if (!hub) return Promise.resolve();
+      return fetchHistory(hub, reason);
+    },
+    stopHubCollection,
+    startHubCollection,
   };
 }
