@@ -172,6 +172,7 @@ Windows 環境上に Node.js アプリケーションとローカル SQLite フ�
 | D-10 | `POST /api/hubs` に id・url・secret。成功 201（secret は返さない）、検証失敗 400 と理由コード、同一オリジン検証失敗 403、保存失敗 500。検証規則は設定ファイル読み込みと同じ | 2026-09-14 利用者の応答「合意します。」（提示コミット 79b82aa）。`src/config.js` の既存検証 | UC-1、S8 |
 | D-11 | `POST /api/hubs/{id}/stop` は本文を使わず、成功 200 で id・status・storage を返す。未登録の id は 404 と `hub_not_found`、JSON 以外と同一オリジン検証失敗は D-9 と同じ 403。停止済みへの要求も 200 で状態を変えない。保存失敗時も通信は停止し「収集停止」と「保存失敗」を併記する | 2026-09-14 利用者の応答「OKです。」（提示コミット 0ce3156）。[機能仕様 S5](../doc/spec/functional-spec.md#s5) の停止契機と保存の分離 | UC-2、S5、S8 |
 | D-12 | `POST /api/hubs/{id}/resume` は本文を使わず、成功 200 で id・status・storage を返す。未登録の id・JSON 以外・同一オリジン検証失敗の扱いは D-11 と同じ。収集中への要求も 200 で収集を二重に始めない。保存に失敗した場合は収集を始めない | 2026-09-14 利用者の応答「推奨に従います」（提示コミット cadd7b7）。[機能仕様 S5](../doc/spec/functional-spec.md#s5) の再開と世代確認 | UC-3、S5、S8 |
+| D-13 | 起動ログの契約。成功時の `started` に `version`（`git rev-parse --short HEAD`、取得不能なら null）・`schemaVersion`・`migratedFrom` を含める。DB のスキーマ起因の起動失敗は `startup` に `code`（`SCHEMA_INCOMPATIBLE` または `MIGRATION_FAILED`）、`dbPath`、`schemaVersion`、`supportedVersions` または `stage`・`targetVersion`・`sqliteCode`、`recovery` を含めて終了コード 1 で止まる。復旧情報は起動ログにだけ出し、画面には出さない | 2026-09-14 利用者の応答「1: 規定で良い、2: 規定で良い、3: 規定で良い　合意。」（提示コミット f3688bb）。[機能仕様 S9](../doc/spec/functional-spec.md#s9) の結果・原因・復旧情報の提示 | UC-4、S9、P-2 |
 
 実装を破棄しても本節の決定は破棄しない。出所を書けない根拠は決定にせず PLAN.md の未決事項として扱う。
 
@@ -193,7 +194,7 @@ Windows 環境上に Node.js アプリケーションとローカル SQLite フ�
 - 実ディスク障害・読み取り権限異常と、保存停止範囲の管理操作への適用は未検証です（[U9](../PLAN.md#u9)）。
 - 稼働中の DB へ外部から読み取り接続を張ると COMMIT が `database is locked` で失敗し、全 Hub の保存が止まります。全件照合は停止中の複製に対して行います。
 - `accountKey` と `accountEmail` は上流が生成する値で公式契約IDとは等価でなく、Claude の組織識別は未解決です（[Issue #34](https://github.com/nuitsjp/token-monitor-analytics/issues/34)）。
-- Hub 管理と手動更新は未実装で、初期版の受け入れ検証は完了していません（[U7](../PLAN.md#u7)・[U8](../PLAN.md#u8)）。
+- 手動更新の実機検証は移行を伴わない起動に限られ、移行と失敗時の保全は古い版の DB を作る自動テストで検証しています（[U8](../PLAN.md#u8)）。
 
 <a id="patterns"></a>
 ## 10. 実現パターン
@@ -247,7 +248,7 @@ sequenceDiagram
 
 - 追加の根拠（[仕組みの追加基準](standards/design-and-documentation.md#design-decisions)）: (1) [機能仕様 S9](../doc/spec/functional-spec.md#s9) と [設計方針 第5節](design-policy.md#5-データ保全と変更管理の境界) が求める更新結果・失敗原因・復旧情報の提示に対応する。(2) 導入しないと移行失敗が「起動に失敗しました」の 1 行になり、DB の版も失敗した段階も分からず、復旧の判断材料が得られない。(3) P-1 は Web 要求で始まりプロセスが生きたまま完了する系列で、起動経路で起きる更新には役割表もシーケンスも当たらない。利用者が SQLite を直接開いて版を確かめる手動運用では復旧情報の提示という要求を満たさない。(4) U8 は初期版の完了条件で、実 Hub の運用開始前に要る。追加するのはログの項目と版の表示で、新しい層や依存は増やさない。
 - 適用条件と関与コンテナ: 利用者がコードを更新して再起動する操作と、その起動時の互換性確認・移行・結果提示。関与するのは利用者の端末（git）、Analytics アプリケーション（起動制御、実行環境、取り込み制御、永続化、Web 配信）、ブラウザ。
-- 役割表（実装パスは段階4完了時に確定）:
+- 役割表:
 
 | 役割 | 責務 | 実装パス |
 | --- | --- | --- |
@@ -282,4 +283,4 @@ sequenceDiagram
 
 - 整合性: 結果確定点は移行トランザクションの COMMIT で、失敗時は ROLLBACK により `user_version`・テーブル定義・データが移行前に戻る。対応範囲外の版は書き込みを始めない。起動制御は失敗の原因コード、段階、DB のパス、DB の版と対応する版、復旧手順をログに出して終了コード 1 で止まる。自動更新・自動ロールバック・DB 初期化は行わない。
 - モックに置き換える境界と合成点: 外部 Hub（`mock/hub.js`）。合成点は `src/runtime.js` の mode 分岐 1 箇所で、モック専用の型・画面・通信層は作らない。移行と失敗時の保全は古い版の DB を作る自動テストで再現する。
-- 設計判断への参照: [第8節](#8-設計判断-architecture-decisions) D-6（保存先と排他起動）。起動ログの契約は段階3で決定表へ追加する。
+- 設計判断への参照: [第8節](#8-設計判断-architecture-decisions) D-6（保存先と排他起動）、D-13（起動ログの契約）。

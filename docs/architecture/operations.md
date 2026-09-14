@@ -1,6 +1,6 @@
 # 配置と運用の手順
 
-本書は [設計書 第7節](../architecture.md#7-配置と運用-deployment-view) の詳細です。設定ファイルの形、初期設定・起動・終了、別端末からの接続、状態確認と復旧、自動検証と Mock Hub の手順を定めます。
+本書は [設計書 第7節](../architecture.md#7-配置と運用-deployment-view) の詳細です。設定ファイルの形、初期設定・起動・終了、別端末からの接続、手動更新と復旧、状態確認と復旧、自動検証と Mock Hub の手順を定めます。
 
 ## 設定ファイル
 
@@ -46,6 +46,10 @@ New-NetFirewallRule -DisplayName 'Token Monitor Analytics' -Direction Inbound -A
 ## 状態確認と復旧
 
 画面は `/`、保存済み現在値・契約・共通推定状態のJSONは `/api/state`、ブラウザ向けSSEは `/api/events` です。`state` は全体の `contracts`、`estimates`、`metrics`、`legacyEstimateCount` と、Hubごとの `contractIds`・`estimateIds`・`metrics` を返します。SSEは接続時と更新時に現在の状態全体を送ります。推定イベント履歴は `GET` または `HEAD /api/estimates/history` から取得できます。`scope=global`（既定）または `scope=legacy` を指定でき、`hubId` は任意、`seriesId`・`before`・`limit` も指定できます。旧方式と共通推定の履歴IDはscopeで分離し、`limit` の既定値は50、結果は新しいイベント順の `items` と `nextCursor` です。入力不正は400、DB参照不能は503を返します。日次・月次実績は `GET` または `HEAD /api/history` から読み出します。条件・複合カーソル・応答は [機能仕様 第3.2節](../../doc/spec/functional-spec.md#32-履歴読み出しapi) に従います。入力検証をDB操作の前に行い、400応答では保存状態を変更しません。DB読み出し失敗は503とし、保存済み表示を保持します。Hubごとの history で取得状態、最終成功日時、再試行予定、端末別の日次判定を通知します。
+
+## 手動更新と復旧
+
+更新は起動したターミナルで Ctrl+C を押して終了を待ち、`git pull` の後に同じモードを起動します。起動が成功すると `started` ログと画面のフッターにアプリの版（HEAD の短縮ハッシュ）、スキーマ版、移行した元の版が出ます。起動が `startup` ログで止まった場合は `code` を見ます。`MIGRATION_FAILED` は移行に失敗し、DB は移行前の版とデータのままです。`stage`・`sqliteCode`・`dbPath` で原因を確かめ、解消して同じモードを再起動するか、`git checkout` で以前の版へ戻して起動します。`SCHEMA_INCOMPATIBLE` は DB の版がこの版のコードの対応範囲外で、DB は書き換えていません。`schemaVersion` と `supportedVersions` を見て、DB を作った版以降のコードへ合わせます。いずれも `recovery` に同じ手順が入ります。DB の削除・初期化・手作業での書き換えは行いません。
 
 ログはターミナルと `.local/real.log` または `.local/mock.log` に記録します。設定障害・待受失敗・既存 DB 障害で起動できない場合は、記録された処理と原因を確認し、修正後に同じモードを再起動します。稼働中の保存失敗・DB 参照不能では全 Hub の保存が停止し、画面は保持値を表示します。原因解消後に再起動してください。SQLiteが数値のエラーコードを提供する場合は `sqliteCode` に記録します。DB を削除して復旧させる手順は設けません。ログファイルの書き込み失敗はターミナルへ明示し、保存停止状態の通知を妨げないようにします。
 
