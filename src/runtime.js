@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { loadConfiguration, ConfigurationError } from './config.js';
+import { loadConfiguration, ConfigurationError, parseHubs } from './config.js';
+import { readHubRegistry } from './hub-registry.js';
 import { startAnalytics } from './app.js';
+
+// 登録練習用のMock Hub。再起動後も登録済みの接続先が同じになるよう固定ポートで待ち受ける。
+const MOCK_REGISTRATION_PORT = 8788;
+const MOCK_REGISTRATION_SECRET = 'mock';
 
 export class RuntimeInUseError extends Error {
   constructor() {
@@ -34,12 +39,12 @@ async function acquireRuntime(rootDir) {
 export async function startRuntime({ mode, rootDir = process.cwd(), env = process.env, log = () => {} }) {
   if (!['real', 'mock'].includes(mode)) throw new ConfigurationError('mode_invalid');
   const release = await acquireRuntime(rootDir);
-  let mock;
+  const mocks = [];
   let app;
   async function close() {
     try { if (app) await app.stop(); }
     finally {
-      try { if (mock) await mock.close(); }
+      try { await Promise.all(mocks.map((hub) => hub.close())); }
       finally { await release(); }
     }
   }
@@ -48,8 +53,18 @@ export async function startRuntime({ mode, rootDir = process.cwd(), env = proces
     if (mode === 'mock') {
       const { startMockHub } = await import('../mock/hub.js');
       const secret = randomUUID();
-      mock = await startMockHub({ host: '127.0.0.1', port: 0, secret });
-      configuration.hubs = [{ id: 'mock', url: mock.url, secret, configError: null }];
+      const builtIn = await startMockHub({ host: '127.0.0.1', port: 0, secret });
+      mocks.push(builtIn);
+      // 自動登録はしない。画面から登録する練習相手として起動するだけ。
+      const registration = await startMockHub({
+        host: '127.0.0.1', port: MOCK_REGISTRATION_PORT, secret: MOCK_REGISTRATION_SECRET,
+      });
+      mocks.push(registration);
+      configuration.hubs = [
+        { id: 'mock', url: builtIn.url, secret, configError: null },
+        ...parseHubs({ hubs: readHubRegistry(configuration.registryPath) }),
+      ];
+      configuration.mockRegistration = { url: registration.url, secret: MOCK_REGISTRATION_SECRET };
     }
     app = await startAnalytics({ configuration, log });
     let stopped;

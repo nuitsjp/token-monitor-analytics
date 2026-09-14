@@ -5,6 +5,30 @@ import { AnalyticsStore, validateHistoryQuery } from './store.js';
 import { normalizeNotification, ValidationError } from './observations.js';
 import { readEvents } from './sse.js';
 import { HistoryValidationError, selectHistoryPayload } from './history.js';
+import { validateHubRegistration } from './config.js';
+import { appendHubRegistration } from './hub-registry.js';
+
+const REGISTRATION_BODY_LIMIT = 4096;
+
+// D-9: 管理操作は同一オリジンからのJSON POSTだけ受け付ける。
+// Origin が無い要求（ブラウザー以外）は素通しし、Origin があるときだけ待受ホストと突き合わせる。
+function sameOrigin(request) {
+  const origin = request.headers.origin;
+  if (origin === undefined) return true;
+  if (request.headers['sec-fetch-site'] === 'same-origin') return true;
+  try { return new URL(origin).host === request.headers.host; } catch { return false; }
+}
+
+async function readJsonBody(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > REGISTRATION_BODY_LIMIT) throw new TypeError('request body is too large');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
 
 const assets = new Map([
   ['/', ['text/html; charset=utf-8', new URL('../public/index.html', import.meta.url)]],
@@ -106,9 +130,11 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
   function state() {
     return {
       phase, storage, mode: configuration.mode,
-      features: { estimation: 'implemented', estimationHistory: 'implemented', history: 'implemented', hubManagement: 'unimplemented' },
+      features: { estimation: 'implemented', estimationHistory: 'implemented', history: 'implemented', hubManagement: 'implemented' },
+      // 登録練習用のMock Hubは設定が持つときだけ返す。実データでは項目ごと出さない。
+      ...(configuration.mockRegistration ? { mockRegistration: configuration.mockRegistration } : {}),
       contracts: saved.contracts, estimates: saved.estimates, metrics: saved.metrics, legacyEstimateCount: saved.legacyEstimateCount,
-      hubs: saved.hubs.map((hub) => ({ ...hub, status: { ...statuses.get(hub.id) }, history: historyState(hub) })),
+      hubs: saved.hubs.map((hub) => ({ ...hub, url: configured.get(hub.id)?.url ?? null, status: { ...statuses.get(hub.id) }, history: historyState(hub) })),
     };
   }
 
@@ -383,15 +409,80 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
     }
   }
 
+  // 起動時と同じ手順で収集を始める。collect()が遅延生成するコントローラを先に用意する。
+  function beginCollecting(hub) {
+    historyControl(hub.id);
+    if (!hubAborts.has(hub.id)) hubAborts.set(hub.id, new AbortController());
+    const loop = collect(hub);
+    connections.push(loop);
+    hubLoops.set(hub.id, loop);
+    fetchHistory(hub, 'initial').catch(() => {});
+  }
+
+  // D-10: 登録は受信・保存と同じキューで直列化する。保存が成ってから収集を始める。
+  function registerHub(input) {
+    const done = queue.then(() => {
+      const { hub, error } = validateHubRegistration(input);
+      if (error) return { status: 400, body: { error } };
+      if (configured.has(hub.id) || saved.hubs.some((row) => row.id === hub.id)) {
+        return { status: 400, body: { error: 'hub_id_duplicate' } };
+      }
+      if (phase !== 'running' || storage.state !== 'normal') {
+        log({ level: 'error', operation: 'register-hub', hubId: hub.id, reason: storage.message ?? '受付を停止しています。' });
+        return { status: 500, body: { error: 'registration_failed' } };
+      }
+      try { appendHubRegistration(configuration.registryPath, hub); }
+      catch (failure) {
+        log({ level: 'error', operation: 'register-hub', hubId: hub.id, ...errorDetails(failure) });
+        return { status: 500, body: { error: 'registration_failed' } };
+      }
+      try {
+        store.registerHubs([hub.id]);
+        saved = store.readState();
+      } catch (failure) {
+        stopSaving('failed', hub.id, failure);
+        return { status: 500, body: { error: 'registration_failed' } };
+      }
+      statuses.set(hub.id, {
+        configuration: 'valid', configurationError: null,
+        connection: 'disconnected', connectionDetail: null, validationError: null,
+        collectionStopped: false,
+      });
+      configured.set(hub.id, hub);
+      beginCollecting(hub);
+      log({ level: 'info', operation: 'register-hub', hubId: hub.id, url: hub.url });
+      broadcast('status');
+      return { status: 201, body: { id: hub.id, url: hub.url, status: { ...statuses.get(hub.id) } } };
+    }).catch((failure) => {
+      stopSaving('failed', null, failure);
+      return { status: 500, body: { error: 'registration_failed' } };
+    });
+    queue = done.then(() => {});
+    return done;
+  }
+
   const server = createServer((request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    const path = request.url.split('?')[0];
+    if (request.method === 'POST' && path === '/api/hubs') {
+      const respond = (code, body) => {
+        response.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify(body));
+      };
+      const type = (request.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+      if (type !== 'application/json') { respond(403, { error: 'unsupported_media_type' }); return; }
+      if (!sameOrigin(request)) { respond(403, { error: 'origin_mismatch' }); return; }
+      readJsonBody(request)
+        .then((body) => registerHub(body), () => ({ status: 400, body: { error: 'invalid_request' } }))
+        .then(({ status, body }) => respond(status, body));
+      return;
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.writeHead(405, { Allow: 'GET, HEAD' }).end();
       return;
     }
-    const path = request.url.split('?')[0];
     if (path === '/api/state') {
       response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       response.end(request.method === 'HEAD' ? undefined : JSON.stringify(state()));

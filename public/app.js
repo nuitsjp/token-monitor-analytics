@@ -21,6 +21,14 @@ const historyKind = document.querySelector('#history-kind');
 const historyFrom = document.querySelector('#history-from');
 const historyTo = document.querySelector('#history-to');
 const historyFetch = document.querySelector('#history-fetch');
+const hubList = document.querySelector('#hub-list');
+const hubForm = document.querySelector('#hub-form');
+const hubMockNote = document.querySelector('#hub-mock-note');
+const hubRegistrationResult = document.querySelector('#hub-registration-result');
+const hubRegisterButton = document.querySelector('#hub-register');
+const hubIdInput = document.querySelector('#hub-id');
+const hubUrlInput = document.querySelector('#hub-url');
+const hubSecretInput = document.querySelector('#hub-secret');
 const number = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
 const money = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 const dateTime = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -34,6 +42,16 @@ const usageHistory = {
   kind: 'daily', visibleCount: 100, compareLeft: null, compareRight: null, requestId: 0,
 };
 const estimateStatuses = { estimated: '推定済み', collecting: '観測待ち', unavailable: '推定不可', 'settings-required': '設定が必要' };
+const registrationErrors = {
+  hub_id_invalid: 'ID を入力してください。',
+  hub_id_duplicate: '同じ ID の Hub が既に登録されています。',
+  invalid_url: 'URL は http または https で始まり、利用者情報・クエリ・フラグメントを含まない形式で入力してください。',
+  invalid_secret: '共有シークレットの形式が不正です。',
+  origin_mismatch: 'この画面と同じアドレス以外からの登録は受け付けません。',
+  unsupported_media_type: '登録要求の形式が不正です。',
+  invalid_request: '登録要求の形式が不正です。',
+  registration_failed: '接続設定を保存できませんでした。',
+};
 const sourceReasons = {
   stale_device: '端末の報告が古い',
   missing_cost: '利用額を取得できない',
@@ -964,6 +982,67 @@ function resetUsageHistoryForKind() {
   renderUsageHistoryResults();
 }
 
+function hubManagementView(state) {
+  const hubs = Array.isArray(state?.hubs) ? state.hubs : [];
+  if (!hubs.length) return element('p', 'empty', '登録済みのHubはありません。');
+  const table = element('table', 'history-table');
+  const head = document.createElement('thead');
+  const heading = document.createElement('tr');
+  for (const text of ['ID', 'URL', '接続状態', '収集状態']) heading.append(element('th', '', text));
+  head.append(heading);
+  const body = document.createElement('tbody');
+  for (const hub of hubs) {
+    const status = hub.status ?? {};
+    const row = document.createElement('tr');
+    row.append(element('td', '', stringValue(hub.id) ?? 'ID未取得'), element('td', '', stringValue(hub.url) ?? '接続設定なし'));
+    const connection = element('td');
+    connection.append(badge(status.connection === 'connected' ? 'Hub 接続正常' : '未接続', status.connection === 'connected' ? 'good' : 'muted'));
+    const collection = element('td');
+    const stopped = hub.collectionEnabled === false || status.collectionStopped === true;
+    collection.append(badge(stopped ? '収集停止' : '収集中', stopped ? 'warning' : 'good'));
+    row.append(connection, collection);
+    body.append(row);
+  }
+  table.append(head, body);
+  const wrapper = element('div', 'history-table-wrap');
+  wrapper.append(table);
+  return wrapper;
+}
+
+function renderHubManagement(state) {
+  if (hubList) hubList.replaceChildren(hubManagementView(state));
+  if (!hubMockNote) return;
+  // Mockモードのときだけ、登録練習用のHubを案内する。実データでは項目自体が返らない。
+  const mock = state?.mockRegistration;
+  hubMockNote.hidden = !mock;
+  hubMockNote.textContent = mock ? `登録練習用のモック Hub: ${mock.url}（シークレット: ${mock.secret}）` : '';
+}
+
+async function registerHub(event) {
+  event.preventDefault();
+  const show = (className, text) => hubRegistrationResult?.replaceChildren(element('p', className, text));
+  const body = JSON.stringify({
+    id: hubIdInput?.value ?? '', url: hubUrlInput?.value ?? '', secret: hubSecretInput?.value ?? '',
+  });
+  if (hubRegisterButton) hubRegisterButton.disabled = true;
+  try {
+    const response = await fetch('/api/hubs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) {
+      hubForm.reset();
+      show('history-result-summary', `${payload.id} を登録しました。収集を開始しています。`);
+    } else {
+      show('error-detail', registrationErrors[payload.error] ?? '登録できませんでした。');
+    }
+  } catch {
+    show('error-detail', '登録要求を送信できませんでした。');
+  } finally {
+    if (hubRegisterButton) hubRegisterButton.disabled = false;
+  }
+}
+
 function render(state) {
   latestState = state;
   const hubs = Array.isArray(state?.hubs) ? state.hubs : [];
@@ -981,6 +1060,7 @@ function render(state) {
   if (contractRoot) contractRoot.replaceChildren(contractsView(state));
   if (estimateRoot) estimateRoot.replaceChildren(estimates(state));
   if (historyCollectionStatus) historyCollectionStatus.replaceChildren(historyStatusView(state));
+  renderHubManagement(state);
   updateHistoryOptions(state);
   const fragment = document.createDocumentFragment();
   for (const hub of hubs) {
@@ -1033,3 +1113,4 @@ usageHistoryForm?.addEventListener('submit', (event) => {
   loadUsageHistory();
 });
 historyKind?.addEventListener('change', resetUsageHistoryForKind);
+hubForm?.addEventListener('submit', registerHub);

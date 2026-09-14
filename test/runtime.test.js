@@ -477,3 +477,52 @@ test('forced child termination releases the runtime lock and leaves the mock dat
   await runtime.stop();
   runtime = null;
 });
+
+test('mock runtime offers a second Hub for registration practice and keeps the registration after a restart', async (t) => {
+  const port = await freePort();
+  const rootDir = createWorkspace({ port });
+  let runtime;
+  t.after(async () => {
+    await runtime?.stop();
+    cleanupWorkspace(rootDir);
+  });
+
+  runtime = await startRuntime({
+    mode: 'mock',
+    rootDir,
+    env: { ANALYTICS_HOST: HOST, ANALYTICS_PORT: String(port) },
+    log: () => {},
+  });
+  await waitForHub(runtime, 'mock', 'mock');
+
+  const state = await readState(runtime);
+  assert.equal(state.features.hubManagement, 'implemented');
+  assert.equal(state.mockRegistration.secret, 'mock');
+  assert.match(state.mockRegistration.url, /^http:\/\/127\.0\.0\.1:\d+$/);
+  assert.deepEqual(state.hubs.map((hub) => hub.id), ['mock']);
+
+  const response = await fetch(`http://${HOST}:${runtime.app.address.port}/api/hubs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'practice', ...state.mockRegistration }),
+  });
+  assert.equal(response.status, 201);
+  await waitForHub(runtime, 'mock', 'practice');
+  assert.equal(existsSync(join(rootDir, '.local', 'hubs.mock.json')), true);
+  assert.equal(readFileSync(join(rootDir, '.local', 'hubs.json'), 'utf8'), '{"hubs":[]}');
+
+  await runtime.stop();
+  const restartPort = await freePort();
+  runtime = await startRuntime({
+    mode: 'mock',
+    rootDir,
+    env: { ANALYTICS_HOST: HOST, ANALYTICS_PORT: String(restartPort) },
+    log: () => {},
+  });
+  await waitForHub(runtime, 'mock', 'practice');
+  const restarted = await readState(runtime);
+  assert.deepEqual(restarted.hubs.map((hub) => hub.id).sort(), ['mock', 'practice']);
+  assert.equal(restarted.hubs.find((hub) => hub.id === 'practice').url, state.mockRegistration.url);
+  await runtime.stop();
+  runtime = null;
+});

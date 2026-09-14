@@ -2,6 +2,15 @@
 
 本書は、Token Monitor Analytics のシステム境界、構造、データモデル、状態更新責務、および実行時の保存・処理境界を定義する設計書です。動作仕様と検証条件は [機能仕様](../doc/spec/functional-spec.md)、Hub API の仕様・制約は [連携仕様](../doc/spec/interfaces.md)、製品要件は [設計方針](design-policy.md)、用語定義は [CONTEXT.md](../CONTEXT.md)、開発計画・未決事項は [PLAN.md](../PLAN.md) を参照してください。
 
+## 全体設計の合意
+
+- 提示コミット: {{COMMIT_HASH}}
+- 対象節: {{AGREED_SECTIONS}}
+- 応答の原文:
+  > {{USER_RESPONSE}}
+
+この欄が埋まるまで、どのユースケースも段階4（実処理接続）に入りません。
+
 ## 1. 目標・制約と対象スコープ
 
 複数 Hub から AI サービスの利用状況を収集・可視化し、同一契約・利用枠・対象期間の実測増分から利用許容量を推定します。Node.js 24 LTS の単一常駐プロセス、組込 SQLite、限定された安全な利用環境での利用者認証なし運用、Windows 先行対応などの前提制約は [設計方針](design-policy.md) に従います。
@@ -368,11 +377,9 @@ New-NetFirewallRule -DisplayName 'Token Monitor Analytics' -Direction Inbound -A
 
 **過去の設計判断：Hub横断の共通契約とschema 3（2026-09-13）:** 実データで同じCodex Pro5x契約が複数Hubに現れ、Hub別方式のままでは契約枠の消費率を重複して扱います。画面上のカードを統合するだけでは、推定に必要な全Hubの利用額と契約枠の対応を修正できません。そのため、Hub・端末・ツールと契約の関係をn:nで永続化し、全関係ソースから共通推定を算出しながら、旧方式の履歴を保持するschema 3移行を行いました。その後、schema 5で全 provider の契約をHub横断へ統合し、schema 6で利用実績の収集範囲を考慮する方式へ更新し、現在はschema 8で欠測情報を含む受信入力を保存して再計算する方式へ更新しています。
 
-主要な設計判断は ADR（Architecture Decision Records）として記録しています。
+決定表の1行で足りない設計判断は ADR（Architecture Decision Records）として記録しています。
 
 - [ADR 0001: 共通キューによる処理の直列化](ard/0001-serial-processing-queue.md)（Adopted）: 並行受信したデータの照合から保存までを単一キューで直列化し整合性を担保（通信待機はキュー外で実行）。
-- [ADR 0002: モック駆動開発の採用方針](ard/0002-adopt-mock-driven-development.md)（Proposed）: 本番用 UI を共用し動作する画面で認識を合わせる開発プロセスの提案。
-- [ADR 0003: モック開発の補助製品選定](ard/0003-select-mock-tooling.md)（Proposed）: Storybook、MSW、Playwright の組み合わせ案と最小構成案の比較検討。
 
 ### 決定一覧
 
@@ -407,3 +414,50 @@ New-NetFirewallRule -DisplayName 'Token Monitor Analytics' -Direction Inbound -A
 - 稼働中の DB へ外部から読み取り接続を張ると COMMIT が `database is locked` で失敗し、全 Hub の保存が止まります。全件照合は停止中の複製に対して行います。
 - `accountKey` と `accountEmail` は上流が生成する値で公式契約IDとは等価でなく、Claude の組織識別は未解決です（[Issue #34](https://github.com/nuitsjp/token-monitor-analytics/issues/34)）。
 - Hub 管理と手動更新は未実装で、初期版の受け入れ検証は完了していません（[U7](../PLAN.md#u7)・[U8](../PLAN.md#u8)）。
+
+<a id="patterns"></a>
+## 10. 実現パターン
+
+ユースケースの実現方法の型を P-1 から番号で定義します。ユースケースごとには作らず、既存パターンで説明できないユースケースが現れた時だけ、[仕組みの追加基準](standards/design-and-documentation.md#design-decisions) の4問に答えて追加します。シーケンス図はパターンごとに1本です。
+
+### P-1. 管理操作
+
+- 適用条件と関与コンテナ: 利用者の Web 操作で Hub の設定や収集状態を変える操作（登録、収集の停止・再開）。関与するのはブラウザ、Analytics アプリケーション（Web 配信、入力検証、設定保存、取り込み制御、永続化）、外部 Hub。
+- 役割表（実装パスは段階4完了時に確定）:
+
+| 役割 | 責務 | 実装パス |
+| --- | --- | --- |
+| 画面 | Hub 一覧の表示、登録入力、結果表示 | public/app.js |
+| Web 配信 | 管理要求の受付、同一オリジン検証、JSON 解析、応答 | src/app.js |
+| 入力検証 | ID・URL・共有シークレットの形式と重複の検証 | src/config.js |
+| 設定保存 | 接続設定の永続化（保存先は設計判断 D-8） | |
+| 取り込み制御 | Hub の登録、収集の開始・停止、状態の配信 | src/app.js |
+| 永続化 | hubs 表の登録と収集有効フラグ | src/store.js |
+
+- 主成功系列（参加者名は役割名）:
+
+```mermaid
+sequenceDiagram
+  participant 画面
+  participant Web配信
+  participant 入力検証
+  participant 設定保存
+  participant 取り込み制御
+  participant 永続化
+  participant 外部Hub
+  画面->>Web配信: POST 管理要求（JSON）
+  Web配信->>Web配信: 同一オリジン検証
+  Web配信->>入力検証: ID・URL・シークレット
+  入力検証-->>Web配信: 検証結果
+  Web配信->>設定保存: 接続設定を保存
+  設定保存-->>Web配信: 保存完了（結果確定点）
+  Web配信->>取り込み制御: 登録して収集開始
+  取り込み制御->>永続化: hubs 表へ登録
+  取り込み制御->>外部Hub: SSE 接続
+  取り込み制御-->>画面: 状態を SSE で配信
+  Web配信-->>画面: 201（秘密情報を含まない）
+```
+
+- 整合性: 状態更新の主体は取り込み制御。結果確定点は接続設定の保存成功で、その後に hubs 表への登録と収集開始を行う。障害時は、検証失敗と保存失敗では登録せず理由を返し、収集開始後の接続失敗は接続エラー状態として表示して登録は維持する。管理要求は既存の保存キューで直列化する。
+- モックに置き換える境界と合成点: 外部 Hub（`mock/hub.js`）。合成点は `src/runtime.js` の mode 分岐1箇所で、モック専用の型・画面・通信層は作らない。
+- 設計判断への参照: D-8（接続設定と共有シークレットの保存先）、D-9（CSRF 対策の方式）、D-10（管理 API の契約）。合意までは [PLAN.md U7](../PLAN.md#u7) の提案として管理する。

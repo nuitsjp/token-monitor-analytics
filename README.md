@@ -44,6 +44,7 @@ Node.js 24 と mise を使用します。リポジトリのルートで `npm run
 - [Hub 連携仕様](doc/spec/interfaces.md): Hub API の仕様、取得項目、制約事項
 - [アーキテクチャ設計書](docs/architecture.md): システム構造、コンポーネント責務、状態管理、保存・処理境界
 - [設計・開発計画 (PLAN.md)](PLAN.md): 開発計画、作業順序、未決・未検証事項、未実装機能一覧
+- [プロジェクト定義](docs/project.md): ユースケースと合意記録、検証結果の合否表
 - [用語定義 (CONTEXT.md)](CONTEXT.md): ドメイン用語の定義
 - [文書方針](docs/document-policy.md) / [設計・文書作成の共通標準](docs/standards/design-and-documentation.md): 文書体系、正本管理、設計変更の手続き
 - [外部プロジェクトテンプレート](https://github.com/nuitsjp/aidd-project-template): 設計・文書管理およびモック駆動開発を導入するための汎用ひな形

@@ -1,6 +1,21 @@
 # 文書方針 (Document Policy)
 
-本プロジェクトでは、共通標準 `design-and-documentation`（版1）を採用します。本書は、文書の配置、適用範囲、および保護すべき合意事項を定める正本です。
+本書は、標準の採用記録、モック駆動開発の適用範囲、文書の配置、および保護すべき合意事項を定める正本です。
+
+<a id="adoption"></a>
+## 採用記録
+
+導入状態: **適用済み**（2026-09-14、配布版 4 の試験適用）。
+
+| 項目 | 内容 |
+| --- | --- |
+| 配布元・版 | [aidd-project-template](https://github.com/nuitsjp/aidd-project-template) / 版4 |
+| 設計・文書標準 | [project-template-design-and-documentation / 版3](standards/design-and-documentation.md) |
+| モック標準 | [project-template-mock-driven-development / 版3](standards/mock-driven-development.md) |
+| 採用日・判断者・合意の根拠 | 2026-09-14。判断者: リポジトリ所有者。配布版 4 の試験適用先として本プロジェクトを選び、次のユースケース（Hub 管理）から適用する判断に基づく |
+| プロジェクト固有の差分と理由 | 既存の文書体系（設計方針、機能仕様、連携仕様、設計書、CONTEXT.md）を維持し、`project.md` はユースケースと合意記録、合否表だけを持つ。実装済みのシナリオ S1〜S9 はユースケースへ遡及して書き直さない。設計書は既存の 9 節に第10節（実現パターン）を加える。`PLAN.md` は既存の節に「ユースケース進捗」と「再開情報」を加える |
+
+`standards/` の本文は編集せず、固有の差分は上の表に理由付きで書きます。テンプレートの新版は自動適用しません。`scripts/doc_check.py` を変更ごとに実行し、出力を報告に含めます。
 
 <a id="document-structure"></a>
 ## 1. 文書の役割と配置
@@ -9,49 +24,49 @@
 
 | ファイル | 正本とする内容 |
 | --- | --- |
-| [standards/design-and-documentation.md](standards/design-and-documentation.md) | プロジェクト横断で再利用する設計・文書作成の共通標準 |
-| [standards/mock-driven-development.md](standards/mock-driven-development.md) | モック駆動開発の共通実施手順 |
-| [document-policy.md](document-policy.md) | 採用標準、文書構造、必須ダイアグラム、初期設計の完了基準 |
+| [standards/design-and-documentation.md](standards/design-and-documentation.md) | 設計・文書作成の共通標準（配布元からの輸入物） |
+| [standards/mock-driven-development.md](standards/mock-driven-development.md) | ユースケースごとの段階とゲート条件、仕掛かりの上限、モックの境界（配布元からの輸入物） |
+| [document-policy.md](document-policy.md) | 採用記録、文書構造、必須ダイアグラム、初期設計の完了基準、保護する合意 |
 | [design-policy.md](design-policy.md) | 製品目標、機能要件、制約事項、品質要求、完了条件 |
 | [../doc/spec/functional-spec.md](../doc/spec/functional-spec.md) | 詳細な動作仕様、推定・表示・履歴の規則、S1〜S9 の期待結果と検証条件 |
 | [../doc/spec/interfaces.md](../doc/spec/interfaces.md) | Hub API の経路・取得項目・制約、調査根拠 |
-| [architecture.md](architecture.md) | システム境界、構造、データモデル、状態更新責務、S1〜S9 の処理・保存境界 |
-| [mock-tooling.md](mock-tooling.md) | モック開発ツールの選定候補と運用ルール |
-| [reference/hub-private/README.md](reference/hub-private/README.md) | 実 Hub の取得済みサンプル、取得条件と確認範囲（API 調査の証跡） |
+| [project.md](project.md) | ユースケースと合意記録、検証結果の合否表 |
+| [architecture.md](architecture.md) | 全体設計の合意、システム境界、構造、データモデル、状態更新責務、S1〜S9 の処理・保存境界、設計判断、実現パターン |
+| [reference/hub-private/README.md](reference/hub-private/README.md) | 実 Hub の取得済みサンプル、取得条件と確認範囲（外部システムの実測応答） |
 | [CONTEXT.md](../CONTEXT.md) | ドメイン用語の定義 |
-| [PLAN.md](../PLAN.md) | 開発計画、作業順序、未決・未検証事項、未実装機能 |
+| [PLAN.md](../PLAN.md) | 現在地、作業順序、未決・未検証事項、ユースケース進捗、再開情報 |
 | [README.md](../README.md) | 製品概要、現在のステータス、計画機能、文書案内 |
-| [AGENTS.md](../AGENTS.md) | エージェント作業時の正本参照マッピングと完了前チェック項目 |
-| `docs/ard/0001-xxxxx.md` | 重大な設計判断を記録する ADR（4桁連番＋識別名） |
+| [AGENTS.md](../AGENTS.md) | エージェント作業時の正本参照と作業原則 |
+| [ard/0001-serial-processing-queue.md](ard/0001-serial-processing-queue.md) | 設計判断の表の1行では足りない決定の記録（ADR） |
 
 ※ `upstream/token-monitor/` は外部仕様の調査対象リポジトリ（git submodule）であり、確認リビジョンと調査結果は連携仕様に記録します。
 
-※ [外部プロジェクトテンプレート](https://github.com/nuitsjp/aidd-project-template) は他プロジェクト向けの独立した配布物です。その中の規約・ひな形は配布先のためのものであり、本プロジェクトの現行仕様には適用しません。
+- **新設の禁止**: 本表にない規約・方針・プロセス文書を新設しません。プロジェクト固有の規則は採用記録の差分欄、[設計方針](design-policy.md) の制約、または該当する実現パターンに書きます。
+- **図の形式**: 図は Mermaid で書きます。システムコンテキストとコンテナは flowchart または C4 専用構文、系列は sequenceDiagram を使います。
 
-動作仕様および API 仕様は `doc/spec/` を正本とし、設計書（`docs/architecture.md`）には責務と保存境界を記録します。同一規則の重複定義を避け、未決事項は PLAN.md で管理します。
+動作仕様および API 仕様は `doc/spec/` を正本とし、設計書には責務と保存境界を記録します。同一規則の重複定義を避け、未決事項は PLAN.md で管理します。
 
 ### アーキテクチャ設計書の章構成
 
-設計書の構成は以下の9節とし、詳細仕様は `doc/spec/`、目標・制約は設計方針、用語は CONTEXT.md、未決事項は PLAN.md を参照します。
-
 | 節 | 記載内容 |
 | :---: | --- |
+| 冒頭 | 全体設計の合意（提示コミット、対象節、利用者の応答の原文） |
 | 1 | 目標・制約への参照、合意済みスコープと到達点 |
 | 2 | システム境界、C4 Context、Hub 連携仕様への参照 |
 | 3 | アーキテクチャ解決方針 |
 | 4 | C4 Container / Component、責務と依存関係 |
 | 5 | 識別規則、比較基準の管理責務、保存モデル、状態管理、排他制御 |
-| 6 | 重要実行時シナリオ（S1〜S9）の担当、保存・通知の確定点、未決の処理境界、機能仕様の動作・検証条件への参照 |
+| 6 | 重要実行時シナリオ（S1〜S9）の担当、保存・通知の確定点、機能仕様の動作・検証条件への参照 |
 | 7 | システム配置と運用 |
-| 8 | 設計判断と ADR 参照 |
-| 9 | 品質確認、検証実績、未検証範囲とリスク |
+| 8 | 設計判断の決定表（ID、決定、根拠とした事実と出所、影響する範囲）と ADR 参照 |
+| 9 | 品質確認の現状、未検証範囲とリスク |
+| 10 | 実現パターン（役割表、シーケンス図、整合性、モック境界） |
 
 <a id="mock-development"></a>
-### モック駆動開発の統合
+<a id="mock-scope"></a>
+### モック駆動開発の適用範囲
 
-共通標準 `mock-driven-development`（版1）の既定適用は[提案中（U10）](../PLAN.md#u10)であり、ツール採否（[U11](../PLAN.md#u11)）とともに個別に判断します。個別の作業で明示指定された場合のみ適用します。
-
-機能仕様は [機能仕様書 第4節](../doc/spec/functional-spec.md#scenarios) の S1〜S9 を正本とし、モックによる確認方法・画面合意・承認記録も該当シナリオへ集約します。設計書は同一 ID で処理責務を対応付けます。なお、画面合意は API 仕様確認や保存・障害設計、実機検証を代替するものではありません。
+ユースケースの主成功系列または拡張系列を新設・変更する作業は対象です。ユースケースの文面を変えない作業（確定済み仕様の不具合修正、振る舞いを変えない内部変更、文書修正）と、実装済みのシナリオ S1〜S9 に対する変更は対象外です。各ユースケースの適用可否は [project.md 第3節](project.md#usecases) のカタログ表に記します。モックの境界は外部 Hub（`mock/hub.js`）で、合成点は `src/runtime.js` の起動モード分岐1箇所です。
 
 ## 2. C4 モデルと必須ダイアグラム
 
@@ -63,19 +78,16 @@
 
 ## 3. 設計の進め方
 
-共通標準の手順に基づき、Hub API のデータ構造と取得値の調査事実を起点とします。Hub、端末、契約、利用枠、対象期間の対応関係を精査してコンポーネント責務を定めます。
-
-各状態（Hub 接続、収集設定、データ保存、推定可否）は独立して管理し、重要シナリオ S1〜S9 における振る舞いと画面通知を明確化します。
+Hub API のデータ構造と取得値の調査事実を起点とし、各状態（Hub 接続、収集設定、データ保存、推定可否）は独立して管理します。新しいユースケースは [モック標準 第2節](standards/mock-driven-development.md#workflow) の段階で進め、全体設計の合意欄が埋まるまで実処理接続に入りません。
 
 <a id="initial-design-completion"></a>
 ## 4. 判断の記録と初期設計の完了基準
 
-設計判断の理由説明（4点）および ADR 作成条件は [共通標準 第2・5節](standards/design-and-documentation.md#completion) に従います。
+設計判断は設計書 第8節の決定表に出所付きで記録し、ADR は表の1行で足りない場合のみ作成します（[共通標準 第5節](standards/design-and-documentation.md#completion)）。
 
-**初期設計の完了基準**:  
-初期版の重要シナリオ S1〜S9 のすべてについて、機能仕様と設計書を合わせて [共通標準 第5節の5項目](standards/design-and-documentation.md#completion)（同一性判定、更新担当、結果確定と通知契機、異常時の停止・継続範囲、検証方法）を具体的に説明できる状態とします。初期版の未決事項に依存するシナリオが残る間は未完了とし、製品初期版の完了は [設計方針 第6節](design-policy.md#product-completion) で判定します。後続の利用者認証（[U12](../PLAN.md#u12)）は初期版の完了条件に含めません。
+**初期設計の完了基準**: 初期版の重要シナリオ S1〜S9 のすべてについて、機能仕様と設計書を合わせて同一性判定、更新担当、結果確定と通知契機、異常時の停止・継続範囲、検証方法を具体的に説明できる状態とします。製品初期版の完了は [設計方針 第6節](design-policy.md#product-completion) で判定します。後続の利用者認証（[U12](../PLAN.md#u12)）は初期版の完了条件に含めません。
 
 <a id="protected-agreements"></a>
 ## 5. このプロジェクトで保護する合意
 
-本書の文書構造、必須ダイアグラム、設計手順、完了基準、および設計方針の内容は、[共通標準 第6節](standards/design-and-documentation.md#agreement-changes) に基づき保護されます。採用版の変更、正本の分離方針、保護規則自体の改定を含め、明示的な合意なく変更・削除・緩和することはできません。
+本書の文書構造、必須ダイアグラム、設計手順、完了基準、設計方針の内容、[設計書](architecture.md) の全体設計の合意欄と第8節の設計判断 ID、および [project.md](project.md) の合意記録は、[共通標準 第6節](standards/design-and-documentation.md#agreement-changes) に基づき保護されます。採用版の変更、正本の分離方針、保護規則自体の改定を含め、明示的な合意なく変更・削除・緩和することはできません。設計判断は、実装の破棄や文書の再編でも削除しません。

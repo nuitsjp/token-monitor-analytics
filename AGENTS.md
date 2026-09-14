@@ -1,15 +1,22 @@
 # エージェント行動指針
 
-作業着手前に [文書方針](docs/document-policy.md) で適用範囲を確認し、作業内容に応じた正本を参照してください（複数に該当する場合はすべて適用）。ファイルの移動・削除や新規作成も対象です。
+作業の現在地は [PLAN.md](PLAN.md) 第1節が唯一の正本です。着手前に現在のユースケースと段階を確認し、段階を自分の判断で進めません。
 
-| 作業内容 | 参照する正本 |
+作業時は下表の正本を参照します。
+
+| 作業 | 参照する正本 |
 | --- | --- |
-| すべての変更 | [設計方針](docs/design-policy.md)、[保護する合意](docs/document-policy.md#protected-agreements)、[共通標準 第6節](docs/standards/design-and-documentation.md#agreement-changes) |
-| 設計の検討、設計・実装の作成・変更・レビュー | 設計方針、[機能仕様](doc/spec/functional-spec.md)・[連携仕様](doc/spec/interfaces.md)・[設計書](docs/architecture.md)の関係箇所、[共通標準 第2・4・5節](docs/standards/design-and-documentation.md) |
-| コード・モック・テスト・実行設定の変更 | [文書方針（モック駆動開発）](docs/document-policy.md#mock-development)、[モック駆動開発の共通標準](docs/standards/mock-driven-development.md) |
-| 文書（`README.md`・`CONTEXT.md`・`PLAN.md`・`AGENTS.md`・`docs/**`・`doc/spec/**`）の作成・変更・レビュー | 文書方針、[共通標準 第3〜5節](docs/standards/design-and-documentation.md) |
+| すべての変更 | [設計方針](docs/design-policy.md)、[保護する合意](docs/document-policy.md#protected-agreements)、[変更手続き](docs/standards/design-and-documentation.md#agreement-changes) |
+| 仕様・設計・実装・テストの作成・変更・レビュー | [設計・実装の原則](docs/standards/design-and-documentation.md#implementation-principles)、[機能仕様](doc/spec/functional-spec.md)、[連携仕様](doc/spec/interfaces.md)、対象ユースケースの本文と受け入れ条件（[プロジェクト定義](docs/project.md#usecases)） |
+| 全体構造・実現パターン・設計判断の参照と変更 | [設計書](docs/architecture.md)、[全体設計と先行してよい成果物](docs/standards/design-and-documentation.md#architecture-method) |
+| 層・抽象化・依存関係などの追加 | [仕組みの追加基準](docs/standards/design-and-documentation.md#design-decisions) |
+| モック対象となるユースケースの変更、次のユースケースへ進む判断 | [適用範囲](docs/document-policy.md#mock-development)、[モック駆動開発の標準](docs/standards/mock-driven-development.md#workflow)、[PLAN.md](PLAN.md) のユースケース進捗の状態語 |
+| 文書の作成・変更・移動・削除 | [文書と記録の基準](docs/standards/design-and-documentation.md#document-roles)、[文書の役割と配置](docs/document-policy.md#document-structure) |
+| 導入、規約・標準・文書方針の改訂 | [文書方針](docs/document-policy.md)、[標準の扱い](docs/standards/design-and-documentation.md) |
 
-※ 文書のみの作業では、モック駆動開発の規約自体を改定する場合を除き、同規約の参照は不要です。
+## 作業原則
 
-- 未決・未検証事項や作業状況は [PLAN.md](PLAN.md) で確認・更新し、確定した仕様は各正本へ反映します。
-- 作業完了前に [共通標準 第6節](docs/standards/design-and-documentation.md#agreement-changes) に基づき、着手時の合意・指示内容と差分を照合し、必須事項の欠落や未決事項の誤った完了扱いがないことを確認します。
+- **停止点**: 人の確認を待つのは、全体設計の合意と、ユースケースごとの動作合意（段階3）の2箇所です。停止点では作業を止めて応答を待ち、応答の原文を合意記録に引用します。質問は未確定事項に限り、合意済み事項の再確認は求めません。合意待ちの間に進めてよい作業は [モック標準第2節](docs/standards/mock-driven-development.md#workflow) に従います。
+- **スコープの遵守**: 依頼範囲に必要な作業のみを進め、推測による機能追加や無関係なリファクタリングは行いません。調査や評価の依頼では所見を成果物とし、実装は変更しません。
+- **文書**: `docs/standards/` は編集しません。文書には現在の状態だけを書き、経緯は git、証跡はテストと CI に置きます。規約・標準・文書方針の改訂は実装作業と別の変更にします。
+- **完了基準と報告**: 完了前に `scripts/doc_check.py` を実行して出力を報告に含め、[完了基準](docs/standards/design-and-documentation.md#completion) に照らします。未実施の検証は「未検証」と明記し、未検証のまま状態語を進めません。失敗時はエラー出力を提示します。

@@ -114,7 +114,19 @@ function readHubFile(rootDir) {
   }
 }
 
-function parseHubs(document) {
+// Web からの登録も起動時の読み込みと同じ規則で検証する。理由コードは最初の1件を返す。
+export function validateHubRegistration(input) {
+  if (!isRecord(input)) return { hub: null, error: 'invalid_request' };
+  const id = typeof input.id === 'string' ? input.id.trim() : '';
+  if (!id) return { hub: null, error: 'hub_id_invalid' };
+  const url = validateUrl(input.url);
+  if (url.error) return { hub: null, error: url.error };
+  const secret = validateSecret(input.secret);
+  if (secret.error) return { hub: null, error: secret.error };
+  return { hub: { id, url: url.value, secret: secret.value, configError: null }, error: null };
+}
+
+export function parseHubs(document) {
   if (!isRecord(document)) throw new ConfigurationError('configuration_structure_invalid');
   if (!Array.isArray(document.hubs)) throw new ConfigurationError('hubs_array_invalid');
 
@@ -166,6 +178,8 @@ export function loadConfiguration({ rootDir = process.cwd(), env = process.env, 
     port,
     dbPath: path.join(resolvedRoot, 'data', mode, 'analytics.sqlite'),
     configPath,
+    // Web から登録した接続設定の保存先。実データは既存の設定ファイルへ追記する。
+    registryPath: path.join(resolvedRoot, '.local', mode === 'real' ? 'hubs.json' : 'hubs.mock.json'),
     logPath: path.join(resolvedRoot, '.local', `${mode}.log`),
     hubs,
     estimation

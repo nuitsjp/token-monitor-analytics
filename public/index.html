@@ -40,6 +40,22 @@
         </form>
         <div id="usage-history-results" aria-live="polite"><p class="empty">条件を指定して履歴を取得してください。</p></div>
       </section>
+      <section id="hub-management" class="usage-history" aria-labelledby="hub-management-heading">
+        <div class="usage-history-heading">
+          <div><p class="eyebrow">HUB MANAGEMENT</p><h2 id="hub-management-heading">Hub 管理</h2></div>
+          <span class="badge muted">登録と収集</span>
+        </div>
+        <p class="history-intro">登録した接続設定はこの PC にだけ保存します。共有シークレットは画面にも API 応答にも出しません。</p>
+        <p id="hub-mock-note" class="history-intro" hidden></p>
+        <div id="hub-list"></div>
+        <form id="hub-form" class="usage-history-form">
+          <label>ID<input id="hub-id" name="id" autocomplete="off" required></label>
+          <label>URL<input id="hub-url" name="url" placeholder="http://127.0.0.1:8788" autocomplete="off" required></label>
+          <label>共有シークレット<input id="hub-secret" name="secret" type="password" autocomplete="off" required></label>
+          <button id="hub-register" type="submit">登録</button>
+        </form>
+        <div id="hub-registration-result" aria-live="polite"></div>
+      </section>
       <div id="storage-status" role="alert" hidden></div>
       <div id="hubs"><p class="empty">保存済みの状態を読み込んでいます。</p></div>
       <aside class="feature-note"><strong>API換算額は実際の請求額とは異なります。</strong><span>推定は比較可能な利用額と消費率の増分から算出した参考値です。取得条件がそろわない場合は理由と前回の結果を表示します。</span></aside>
