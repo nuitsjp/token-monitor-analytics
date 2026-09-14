@@ -25,6 +25,7 @@ const hubList = document.querySelector('#hub-list');
 const hubForm = document.querySelector('#hub-form');
 const hubMockNote = document.querySelector('#hub-mock-note');
 const hubRegistrationResult = document.querySelector('#hub-registration-result');
+const hubOperationResult = document.querySelector('#hub-operation-result');
 const hubRegisterButton = document.querySelector('#hub-register');
 const hubIdInput = document.querySelector('#hub-id');
 const hubUrlInput = document.querySelector('#hub-url');
@@ -51,6 +52,11 @@ const registrationErrors = {
   unsupported_media_type: '登録要求の形式が不正です。',
   invalid_request: '登録要求の形式が不正です。',
   registration_failed: '接続設定を保存できませんでした。',
+};
+const stopErrors = {
+  hub_not_found: '対象の Hub が一覧にありません。',
+  origin_mismatch: 'この画面と同じアドレス以外からの停止は受け付けません。',
+  unsupported_media_type: '停止要求の形式が不正です。',
 };
 const sourceReasons = {
   stale_device: '端末の報告が古い',
@@ -988,7 +994,7 @@ function hubManagementView(state) {
   const table = element('table', 'history-table');
   const head = document.createElement('thead');
   const heading = document.createElement('tr');
-  for (const text of ['ID', 'URL', '接続状態', '収集状態']) heading.append(element('th', '', text));
+  for (const text of ['ID', 'URL', '接続状態', '収集状態', '操作']) heading.append(element('th', '', text));
   head.append(heading);
   const body = document.createElement('tbody');
   for (const hub of hubs) {
@@ -1000,7 +1006,13 @@ function hubManagementView(state) {
     const collection = element('td');
     const stopped = hub.collectionEnabled === false || status.collectionStopped === true;
     collection.append(badge(stopped ? '収集停止' : '収集中', stopped ? 'warning' : 'good'));
-    row.append(connection, collection);
+    const operation = element('td');
+    const stop = element('button', 'hub-stop', '停止');
+    stop.type = 'button';
+    stop.disabled = stopped;
+    stop.addEventListener('click', () => stopHub(hub.id, stop));
+    operation.append(stop);
+    row.append(connection, collection, operation);
     body.append(row);
   }
   table.append(head, body);
@@ -1016,6 +1028,29 @@ function renderHubManagement(state) {
   const mock = state?.mockRegistration;
   hubMockNote.hidden = !mock;
   hubMockNote.textContent = mock ? `登録練習用のモック Hub: ${mock.url}（シークレット: ${mock.secret}）` : '';
+}
+
+async function stopHub(hubId, button) {
+  const show = (className, text) => hubOperationResult?.replaceChildren(element('p', className, text));
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/hubs/${encodeURIComponent(hubId)}/stop`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) {
+      const failed = payload.storage?.state && payload.storage.state !== 'normal';
+      show(failed ? 'error-detail' : 'history-result-summary', failed
+        ? `${payload.id} の収集を停止しました。停止設定の保存に失敗したため、再起動後は最後に保存できた設定に戻ります。`
+        : `${payload.id} の収集を停止しました。`);
+    } else {
+      show('error-detail', stopErrors[payload.error] ?? '停止できませんでした。');
+      button.disabled = false;
+    }
+  } catch {
+    show('error-detail', '停止要求を送信できませんでした。');
+    button.disabled = false;
+  }
 }
 
 async function registerHub(event) {

@@ -402,6 +402,8 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
             if (storage.state === 'normal' && !saveGap(hub.id, 'disconnected', at)) return;
             broadcast('status');
           }).catch((error) => { stopSaving('failed', hub.id, error); });
+        } else if (phase === 'running') {
+          broadcast('status'); // 停止による切断も画面へ反映する（UC-2）
         }
       }
       if (hubStopFlags.get(hub.id) === true) break;
@@ -466,14 +468,30 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     const path = request.url.split('?')[0];
-    if (request.method === 'POST' && path === '/api/hubs') {
+    const stopRequest = request.method === 'POST' ? /^\/api\/hubs\/([^/]+)\/stop$/.exec(path) : null;
+    if (request.method === 'POST' && (path === '/api/hubs' || stopRequest)) {
       const respond = (code, body) => {
         response.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
         response.end(JSON.stringify(body));
       };
+      // D-9: 管理 API は JSON の POST だけを受け付け、同一オリジン検証を通す。
       const type = (request.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
       if (type !== 'application/json') { respond(403, { error: 'unsupported_media_type' }); return; }
       if (!sameOrigin(request)) { respond(403, { error: 'origin_mismatch' }); return; }
+      if (stopRequest) {
+        let hubId = null;
+        try { hubId = decodeURIComponent(stopRequest[1]); } catch { /* 不正なエンコードは未登録扱い */ }
+        if (hubId === null || !configured.has(hubId) || !saved.hubs.some((hub) => hub.id === hubId)) {
+          respond(404, { error: 'hub_not_found' });
+          return;
+        }
+        // S5: 停止は保存失敗でも成立する。受信済み処理が終わり停止表示が確定してから応答する。
+        stopHubCollection(hubId).then(() => {
+          log({ level: 'info', operation: 'stop-hub', hubId });
+          respond(200, { id: hubId, status: { ...statuses.get(hubId) }, storage: { ...storage } });
+        });
+        return;
+      }
       readJsonBody(request)
         .then((body) => registerHub(body), () => ({ status: 400, body: { error: 'invalid_request' } }))
         .then(({ status, body }) => respond(status, body));
