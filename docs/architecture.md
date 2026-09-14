@@ -395,6 +395,7 @@ New-NetFirewallRule -DisplayName 'Token Monitor Analytics' -Direction Inbound -A
 | D-8 | Web から登録した接続設定と共有シークレットは、実データでは `.local/hubs.json`、モックでは `.local/hubs.mock.json` に保存し、SQLite の hubs 表には秘密情報を持たない（[第10節 P-1](#patterns)） | 2026-09-14 利用者の応答「合意します。」（提示コミット 79b82aa）。`.local/` の既存アクセス権設定（第7節） | UC-1〜UC-3、S8 |
 | D-9 | 管理 API は JSON の POST だけを受け付け、`Origin` が待受ホストと一致するか `Sec-Fetch-Site` が同一オリジンであることを検証し、満たさない要求は 403 で拒否する。利用者認証は U12 のまま | 2026-09-14 利用者の応答「合意します。」（提示コミット 79b82aa）。[設計方針 第3.3節](design-policy.md#33-認証と信頼境界) | UC-1〜UC-3、S8 |
 | D-10 | `POST /api/hubs` に id・url・secret。成功 201（secret は返さない）、検証失敗 400 と理由コード、同一オリジン検証失敗 403、保存失敗 500。検証規則は設定ファイル読み込みと同じ | 2026-09-14 利用者の応答「合意します。」（提示コミット 79b82aa）。`src/config.js` の既存検証 | UC-1、S8 |
+| D-11 | `POST /api/hubs/{id}/stop` は本文を使わず、成功 200 で id・status・storage を返す。未登録の id は 404 と `hub_not_found`、JSON 以外と同一オリジン検証失敗は D-9 と同じ 403。停止済みへの要求も 200 で状態を変えない。保存失敗時も通信は停止し「収集停止」と「保存失敗」を併記する | 2026-09-14 利用者の応答「OKです。」（提示コミット 0ce3156）。[機能仕様 S5](../doc/spec/functional-spec.md#s5) の停止契機と保存の分離 | UC-2、S5、S8 |
 
 実装を破棄しても本節の決定は破棄しない。出所を書けない根拠は決定にせず PLAN.md の未決事項として扱う。
 
