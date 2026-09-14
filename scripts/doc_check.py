@@ -19,9 +19,8 @@ EXCLUDE_RELPATHS = {"docs/reference"}
 EVIDENCE_EXTRA_EXCLUDE = {"public", "static", "assets", "src", "frontend", "test", "tests"}
 EVIDENCE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".log", ".sha256"}
 # 行数上限の正本: docs/standards/design-and-documentation.md §3
-# docs/architecture.md だけ本プロジェクト固有の上限（docs/document-policy.md の採用記録の差分欄）。
 LINE_LIMITS = {"PLAN.md": 100, "docs/project.md": 300,
-               "docs/architecture.md": 500, "docs/document-policy.md": 100}
+               "docs/architecture.md": 200, "docs/document-policy.md": 100}
 PLACEHOLDER_HASH = "sha256:" + "0" * 64
 # 配布元が `--print-hashes` の出力で更新する。
 EXPECTED_HASHES = {
