@@ -27,7 +27,7 @@ Node.js 24 と mise を使用します。リポジトリのルートで `npm run
 
 テストは `npm test` で実行します。外部 npm 依存はありません。`npm start` と `npm run start:mock` もそれぞれ同じ実データ用・Mock用の起動処理を使います。
 
-実 Hub への切り替え、LAN 待受、設定例、ログと復旧の手順は [設計書 第7節](docs/architecture.md#7-配置と運用-deployment-view) に記載しています。
+実 Hub への切り替え、LAN 待受、設定例、ログと復旧の手順は [配置と運用の手順](docs/architecture/operations.md) に記載しています（配置の全体は [設計書 第7節](docs/architecture.md#7-配置と運用-deployment-view)）。
 
 ## 初期版の提供機能
 

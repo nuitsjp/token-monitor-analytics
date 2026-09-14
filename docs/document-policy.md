@@ -13,7 +13,7 @@
 | 設計・文書標準 | [project-template-design-and-documentation / 版3](standards/design-and-documentation.md) |
 | モック標準 | [project-template-mock-driven-development / 版3](standards/mock-driven-development.md) |
 | 採用日・判断者・合意の根拠 | 2026-09-14。判断者: リポジトリ所有者。配布版 4 の試験適用先として本プロジェクトを選び、次のユースケース（Hub 管理）から適用する判断に基づく |
-| プロジェクト固有の差分と理由 | 既存の文書体系（設計方針、機能仕様、連携仕様、設計書、CONTEXT.md）を維持し、`project.md` はユースケースと合意記録、合否表だけを持つ。実装済みのシナリオ S1〜S9 はユースケースへ遡及して書き直さない。設計書は既存の 9 節に第10節（実現パターン）を加える。`PLAN.md` は既存の節に「ユースケース進捗」と「再開情報」を加える。設計書 `architecture.md` の行数上限は標準の 200 行に代えて 500 行とする。理由: 本プロジェクトの設計書は arc42 の 10 節構成に C4 の Context・Container・Component 図と実現パターンのシーケンス図（Mermaid 計約 70 行）、第8節の決定表 D-1 以降を 1 文書に置くため、第5節・第6節を除いた骨格だけで約 260 行になり、200 行は構成を変えずに満たせない（2026-09-14 計測、466 行）。決定表と実現パターンは保護する合意と `scripts/doc_check.py` の照合対象のため他文書へ移さない。判定 7 は標準の 200 行で NG を報告し続けるので、設計書の行数はこの欄の上限で人が判定する。500 行を超えたら標準の手順（重複の削除、確定先への参照への置換、分割）を行う |
+| プロジェクト固有の差分と理由 | 既存の文書体系（設計方針、機能仕様、連携仕様、設計書、CONTEXT.md）を維持し、`project.md` はユースケースと合意記録、合否表だけを持つ。実装済みのシナリオ S1〜S9 はユースケースへ遡及して書き直さない。設計書は既存の 9 節に第10節（実現パターン）を加える。`PLAN.md` は既存の節に「ユースケース進捗」と「再開情報」を加える。設計書は第5〜7節の詳細（識別・保存モデル、S1〜S9 の処理境界、運用手順）を `architecture/` 配下の 3 文書へ分け、`architecture.md` には要約と既存アンカーを残す。設計書 `architecture.md` の行数上限は標準の 200 行に代えて 300 行とする。理由: 必須の C4 図 3 本と実現パターンのシーケンス図（Mermaid 約 70 行）、保護する合意である第8節の決定表 D-1 以降を要約と同じ文書に置くため、要約後も約 240 行になる（2026-09-14 計測）。`scripts/doc_check.py` の判定 7 は標準の 200 行で報告し続けるので、設計書の行数はこの欄の上限で人が判定する |
 
 `standards/` の本文は編集せず、固有の差分は上の表に理由付きで書きます。テンプレートの新版は自動適用しません。`scripts/doc_check.py` を変更ごとに実行し、出力を報告に含めます。
 
@@ -31,7 +31,10 @@
 | [../doc/spec/functional-spec.md](../doc/spec/functional-spec.md) | 詳細な動作仕様、推定・表示・履歴の規則、S1〜S9 の期待結果と検証条件 |
 | [../doc/spec/interfaces.md](../doc/spec/interfaces.md) | Hub API の経路・取得項目・制約、調査根拠 |
 | [project.md](project.md) | ユースケースと合意記録、検証結果の合否表 |
-| [architecture.md](architecture.md) | 全体設計の合意、システム境界、構造、データモデル、状態更新責務、S1〜S9 の処理・保存境界、設計判断、実現パターン |
+| [architecture.md](architecture.md) | 全体設計の合意、システム境界、構造、識別・保存・状態管理と S1〜S9 の要約、配置、設計判断、品質確認、実現パターン |
+| [architecture/crosscutting.md](architecture/crosscutting.md) | 設計書 第5節の詳細: 同一性の判定表、比較基準の管理、保存モデルと確定点、状態管理、排他制御と通知 |
+| [architecture/runtime-view.md](architecture/runtime-view.md) | 設計書 第6節の詳細: S1〜S9 の処理境界、永続化トランザクション、通知契機 |
+| [architecture/operations.md](architecture/operations.md) | 設計書 第7節の詳細: 設定ファイルの形、初期設定・起動・終了、別端末からの接続、状態確認と復旧、自動検証 |
 | [reference/hub-private/README.md](reference/hub-private/README.md) | 実 Hub の取得済みサンプル、取得条件と確認範囲（外部システムの実測応答） |
 | [CONTEXT.md](../CONTEXT.md) | ドメイン用語の定義 |
 | [PLAN.md](../PLAN.md) | 現在地、作業順序、未決・未検証事項、ユースケース進捗、再開情報 |
@@ -61,6 +64,8 @@
 | 8 | 設計判断の決定表（ID、決定、根拠とした事実と出所、影響する範囲）と ADR 参照 |
 | 9 | 品質確認の現状、未検証範囲とリスク |
 | 10 | 実現パターン（役割表、シーケンス図、整合性、モック境界） |
+
+第5〜7節は要約と既存のアンカーを設計書に置き、詳細は `architecture/` 配下の対応する文書を正本とします。
 
 <a id="mock-development"></a>
 <a id="mock-scope"></a>
