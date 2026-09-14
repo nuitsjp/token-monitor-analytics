@@ -25,25 +25,13 @@
 - 実 Hub および別端末からの通信切断・自動再接続、JSON API の直接取得、長時間稼働を実機検証する。
 - 調査基準コミットと比較対象版 `c4182fd5` の差分を精査して API・識別項目・履歴・利用枠の互換性を確認し、各機能の実装後に Windows 実機で受け入れ条件を検証する（Linux 対応は後続）。
 
-### <a id="u2"></a>U2. 利用額の契約帰属
+### 解消済みの未決事項（U2〜U6）
 
-解消済み。確定先は [機能仕様 第1.5節](doc/spec/functional-spec.md#15-利用額契約集合利用枠の対応)・[第1.2節](doc/spec/functional-spec.md#12-計算式と成立条件)、[連携仕様 第3.5節](doc/spec/interfaces.md#35-hub横断同一性の確認範囲2026-09-13)、[設計書 第5.1節](docs/architecture.md#identity)・[第7節](docs/architecture.md#7-配置と運用-deployment-view) です。
-
-### <a id="u3"></a>U3. 比較基準・観測・推定結果の管理
-
-解消済み。確定先は [機能仕様 第1.6節](doc/spec/functional-spec.md#16-比較の中断と再開)、[設計書 第5.2節](docs/architecture.md#52-比較基準と推定結果の管理)・[第5.6節](docs/architecture.md#56-排他制御と通知シーケンス) です。
-
-### <a id="u4"></a>U4. 利用枠を観測間で識別する規則
-
-解消済み。確定先は [機能仕様 第1.5節](doc/spec/functional-spec.md#15-利用額契約集合利用枠の対応)、[連携仕様 第4節](doc/spec/interfaces.md#limit-fields)、[設計書 第5.1節](docs/architecture.md#identity) です。
-
-### <a id="u5"></a>U5. 端末変更と比較基準の分離
-
-解消済み。確定先は [設計書 第5.1節](docs/architecture.md#identity)、[機能仕様 第1.5節](doc/spec/functional-spec.md#15-利用額契約集合利用枠の対応)・[第1.6節](doc/spec/functional-spec.md#16-比較の中断と再開) です。
-
-### <a id="u6"></a>U6. 履歴取得・日付・収集停止の制御
-
-解消済み。確定先は [機能仕様 S2](doc/spec/functional-spec.md#s2)・[S5](doc/spec/functional-spec.md#s5)・[第3節](doc/spec/functional-spec.md#history)、[設計書 第5.4節](docs/architecture.md#54-日次月次実績の保存) です。Web 管理画面からの停止・再開操作は UC-2・UC-3 で扱います。
+- <a id="u2"></a>U2. 利用額の契約帰属: 確定先は [機能仕様 第1.5節](doc/spec/functional-spec.md#15-利用額契約集合利用枠の対応)・[第1.2節](doc/spec/functional-spec.md#12-計算式と成立条件)、[連携仕様 第3.5節](doc/spec/interfaces.md#35-hub横断同一性の確認範囲2026-09-13)、[設計書 第5.1節](docs/architecture.md#identity)・[第7節](docs/architecture.md#7-配置と運用-deployment-view) です。
+- <a id="u3"></a>U3. 比較基準・観測・推定結果の管理: 確定先は [機能仕様 第1.6節](doc/spec/functional-spec.md#16-比較の中断と再開)、[設計書 第5.2節](docs/architecture.md#52-比較基準と推定結果の管理)・[第5.6節](docs/architecture.md#56-排他制御と通知シーケンス) です。
+- <a id="u4"></a>U4. 利用枠を観測間で識別する規則: 確定先は [機能仕様 第1.5節](doc/spec/functional-spec.md#15-利用額契約集合利用枠の対応)、[連携仕様 第4節](doc/spec/interfaces.md#limit-fields)、[設計書 第5.1節](docs/architecture.md#identity) です。
+- <a id="u5"></a>U5. 端末変更と比較基準の分離: 確定先は [設計書 第5.1節](docs/architecture.md#identity)、[機能仕様 第1.5節](doc/spec/functional-spec.md#15-利用額契約集合利用枠の対応)・[第1.6節](doc/spec/functional-spec.md#16-比較の中断と再開) です。
+- <a id="u6"></a>U6. 履歴取得・日付・収集停止の制御: 確定先は [機能仕様 S2](doc/spec/functional-spec.md#s2)・[S5](doc/spec/functional-spec.md#s5)・[第3節](doc/spec/functional-spec.md#history)、[設計書 第5.4節](docs/architecture.md#54-日次月次実績の保存) です。Web 管理画面からの停止・再開操作は UC-2・UC-3 で扱います。
 
 ### <a id="u7"></a>U7. Hub 管理と秘密情報
 
@@ -76,6 +64,10 @@
 ### <a id="u13"></a>U13. 設計書の行数上限
 
 **現状:** [設計書](docs/architecture.md) は 460 行前後で、採用した標準の上限 200 行を超えています。既存の arc42 構成（保存モデルの第5節と実行時シナリオの第6節が大半）を維持しているためで、`scripts/doc_check.py` の判定 7 が NG を報告します。**解消条件:** UC-1 の完了後に、第5節・第6節の分割または要約で上限内に収めるか、本プロジェクト固有の上限を採用記録の差分欄に理由付きで定めること。
+
+### <a id="u14"></a>U14. 配布版 5（スキル）の着手条件の観測
+
+**現状:** 配布版 4 の試験適用で、次の 3 点を UC-1 の各段階で記録します。段階の手順が飛ばされたか（段階1→2→3 は順に実施、飛ばしなし）。段階3の提示が形式を満たしたか（提示コミット `79b82aa` で 8 項目と返答様式を提示）。設計書の記入に毎回同じ迷いが出たか（1 件。既存の arc42 構成と行数上限の衝突。[U13](#u13)）。**解消条件:** UC-1 の段階5完了時に記録を確定し、その記録だけを根拠に配布版 5 の要否を判定すること。
 
 ## <a id="unimplemented"></a>4. 確定済みだが未完了の機能
 
