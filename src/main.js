@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ConfigurationError } from './config.js';
-import { startRuntime, RuntimeInUseError } from './runtime.js';
+import { startRuntime, describeStartupFailure } from './runtime.js';
 
 const rootDir = process.cwd();
 let runtime;
@@ -23,7 +23,8 @@ try {
   mkdirSync(resolve(rootDir, '.local'), { recursive: true });
   logFile = resolve(rootDir, '.local', `${mode}.log`);
   runtime = await startRuntime({ mode, rootDir, log });
-  log({ level: 'info', operation: 'started', mode, host: runtime.configuration.host, port: runtime.app.address.port });
+  const schema = runtime.app.store.schema;
+  log({ level: 'info', operation: 'started', mode, host: runtime.configuration.host, port: runtime.app.address.port, version: runtime.version, schemaVersion: schema.version, migratedFrom: schema.migratedFrom });
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
@@ -34,8 +35,7 @@ try {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 } catch (error) {
-  const entry = { level: 'error', operation: 'startup', reason: error instanceof ConfigurationError || error instanceof RuntimeInUseError ? error.message : '起動に失敗しました。', code: typeof error.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : null };
-  try { log(entry); }
+  try { log(describeStartupFailure(error)); }
   catch { console.error('ログファイルに記録できませんでした。'); }
   if (runtime) await runtime.stop();
   process.exitCode = 1;

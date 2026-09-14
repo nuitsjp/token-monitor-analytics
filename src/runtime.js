@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -14,6 +15,32 @@ export class RuntimeInUseError extends Error {
     super('実データ用またはMock用が既に起動しています。先に起動したターミナルで Ctrl+C を押して終了してください。');
     this.code = 'RUNTIME_IN_USE';
   }
+}
+
+// 更新元は git pull なので、アプリの版は HEAD の短縮ハッシュで識別する（UC-4）。git が使えなければ null。
+export function readVersion(rootDir) {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: rootDir, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const RECOVERY = {
+  SCHEMA_INCOMPATIBLE: 'DB は書き換えていません。この DB を作った版以降のコードへ git pull または git checkout で合わせて同じモードで起動してください。DB を削除・初期化しないでください。',
+  MIGRATION_FAILED: 'DB は移行前の版とデータのままです。原因を解消して同じモードで再起動するか、git checkout で以前の版へ戻して起動してください。DB を削除・初期化しないでください。',
+};
+
+// 起動失敗をログ 1 行に要約する。スキーマ関連は原因コード・段階・版・復旧手順まで出し、それ以外は汎用文にとどめる。
+export function describeStartupFailure(error) {
+  const code = typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : null;
+  const entry = { level: 'error', operation: 'startup', reason: error instanceof ConfigurationError || error instanceof RuntimeInUseError ? error.message : '起動に失敗しました。', code };
+  if (code === 'SCHEMA_INCOMPATIBLE') {
+    Object.assign(entry, { reason: 'DB のスキーマ版がこの版のアプリの対応範囲外です。', dbPath: error.dbPath ?? null, schemaVersion: error.schemaVersion, supportedVersions: error.supportedVersions, recovery: RECOVERY[code] });
+  } else if (code === 'MIGRATION_FAILED') {
+    Object.assign(entry, { reason: 'DB のスキーマ移行に失敗しました。', dbPath: error.dbPath ?? null, stage: error.stage, schemaVersion: error.schemaVersion, targetVersion: error.targetVersion, sqliteCode: error.sqliteCode, recovery: RECOVERY[code] });
+  }
+  return entry;
 }
 
 async function acquireRuntime(rootDir) {
@@ -48,8 +75,9 @@ export async function startRuntime({ mode, rootDir = process.cwd(), env = proces
       finally { await release(); }
     }
   }
+  let configuration;
   try {
-    const configuration = loadConfiguration({ rootDir, env, mode });
+    configuration = loadConfiguration({ rootDir, env, mode });
     if (mode === 'mock') {
       const { startMockHub } = await import('../mock/hub.js');
       const secret = randomUUID();
@@ -66,14 +94,16 @@ export async function startRuntime({ mode, rootDir = process.cwd(), env = proces
       ];
       configuration.mockRegistration = { url: registration.url, secret: MOCK_REGISTRATION_SECRET };
     }
-    app = await startAnalytics({ configuration, log });
+    const version = readVersion(rootDir);
+    app = await startAnalytics({ configuration, version, log });
     let stopped;
     return {
-      app, configuration,
+      app, configuration, version,
       stop: () => { stopped ??= close(); return stopped; },
     };
   } catch (error) {
     await close();
+    if (configuration && (error?.code === 'SCHEMA_INCOMPATIBLE' || error?.code === 'MIGRATION_FAILED')) error.dbPath = configuration.dbPath;
     throw error;
   }
 }

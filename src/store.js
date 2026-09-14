@@ -254,8 +254,25 @@ const PRE_HISTORY_SCHEMA_INDEXES = Object.freeze(
   )
 );
 
-function schemaError() {
-  return new Error('database schema is incompatible');
+const SUPPORTED_SCHEMA_VERSIONS = `1〜${SCHEMA_VERSION}`;
+
+// 起動制御が復旧情報をログへ出せるよう、版と段階を持たせる（UC-4）。
+function schemaError(version) {
+  const error = new Error('database schema is incompatible');
+  error.code = 'SCHEMA_INCOMPATIBLE';
+  error.schemaVersion = Number.isInteger(version) ? version : null;
+  error.supportedVersions = SUPPORTED_SCHEMA_VERSIONS;
+  return error;
+}
+
+function migrationError(stage, version, cause) {
+  const error = new Error(`schema migration failed at ${stage}: ${cause.message}`, { cause });
+  error.code = 'MIGRATION_FAILED';
+  error.stage = stage;
+  error.schemaVersion = version;
+  error.targetVersion = SCHEMA_VERSION;
+  error.sqliteCode = Number.isInteger(cause.errcode) ? cause.errcode : null;
+  return error;
 }
 
 function rollbackQuietly(db) {
@@ -452,7 +469,7 @@ function assertCompatibleSchema(db, estimationSettings) {
     if (version === 2) indexes.estimation_events_by_series = SCHEMA_INDEXES.estimation_events_by_series;
     assertSchema(db, version === 1 ? V1_SCHEMA_TABLES : V2_SCHEMA_TABLES, indexes);
   } else {
-    if (![3, 4, 5, 6, 7, 8, 9, SCHEMA_VERSION].includes(version)) throw schemaError();
+    if (![3, 4, 5, 6, 7, 8, 9, SCHEMA_VERSION].includes(version)) throw schemaError(version);
     if (version === SCHEMA_VERSION) {
       assertSchema(db, Object.keys(SCHEMA_COLUMNS), SCHEMA_INDEXES);
     } else if (version === 9) {
@@ -463,29 +480,32 @@ function assertCompatibleSchema(db, estimationSettings) {
       assertSchema(db, PRE_REPLAY_SCHEMA_TABLES, PRE_REPLAY_SCHEMA_INDEXES);
     }
   }
-  if (version === SCHEMA_VERSION) return;
+  if (version === SCHEMA_VERSION) return { version, migratedFrom: null };
 
+  let stage = 'begin';
+  const run = (name, step) => { stage = name; step(); };
   db.exec('BEGIN IMMEDIATE');
   try {
     if (version === 1 || version === 2) {
-      migrateSchema(db, version);
-      migrateEstimationCheckpoint(db, estimationSettings, version);
-      migrateHistoryTables(db);
+      run('schema', () => migrateSchema(db, version));
+      run('estimation-checkpoint', () => migrateEstimationCheckpoint(db, estimationSettings, version));
+      run('history-tables', () => migrateHistoryTables(db));
     }
     else {
       if (version < 8) {
-        if (version === 3) migrateGrokContracts(db);
-        if (version === 3 || version === 4) migrateContractScopes(db);
-        if (version < 6) migrateUsagePolicy(db);
-        migrateEstimationCheckpoint(db, estimationSettings, version);
+        if (version === 3) run('grok-contracts', () => migrateGrokContracts(db));
+        if (version === 3 || version === 4) run('contract-scopes', () => migrateContractScopes(db));
+        if (version < 6) run('usage-policy', () => migrateUsagePolicy(db));
+        run('estimation-checkpoint', () => migrateEstimationCheckpoint(db, estimationSettings, version));
       }
-      migrateHistoryTables(db);
+      run('history-tables', () => migrateHistoryTables(db));
     }
-    db.exec('COMMIT');
+    run('commit', () => db.exec('COMMIT'));
   } catch (error) {
     rollbackQuietly(db);
-    throw error;
+    throw migrationError(stage, version, error);
   }
+  return { version: SCHEMA_VERSION, migratedFrom: version };
 }
 
 function migrateHistoryTables(db) {
@@ -901,6 +921,7 @@ export class AnalyticsStore {
   #closed = false;
   #estimationSettings;
   #hubGaps = new Map();
+  #schema;
 
   constructor(dbPath, { estimationSettings = {} } = {}) {
     if (typeof dbPath !== 'string' || dbPath.length === 0) {
@@ -916,8 +937,8 @@ export class AnalyticsStore {
     try {
       db = new DatabaseSync(dbPath);
       db.exec('PRAGMA foreign_keys = ON');
-      if (isNew) createSchema(db);
-      else assertCompatibleSchema(db, estimationSettings);
+      if (isNew) { createSchema(db); this.#schema = { version: SCHEMA_VERSION, migratedFrom: null }; }
+      else this.#schema = assertCompatibleSchema(db, estimationSettings);
     } catch (error) {
       try {
         db?.close();
@@ -931,6 +952,9 @@ export class AnalyticsStore {
     const last = db.prepare('SELECT input_json FROM estimation_inputs ORDER BY id DESC LIMIT 1').get();
     this.#hubGaps = new Map(last ? parseStoredJson(last.input_json).hubGaps ?? [] : []);
   }
+
+  // 起動時に確認したスキーマ版と、この起動で移行した元の版（移行なしは null）。
+  get schema() { return { ...this.#schema }; }
 
   beginCollection(at) {
     if (this.#db.prepare('SELECT interrupted FROM estimation_runtime WHERE id = 1').get().interrupted) {

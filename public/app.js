@@ -12,6 +12,7 @@ const contractRoot = document.querySelector('#contracts');
 const estimateRoot = document.querySelector('#estimates');
 const browserStatus = document.querySelector('#browser-status');
 const storageStatus = document.querySelector('#storage-status');
+const appVersion = document.querySelector('#app-version');
 const showNotConfigured = document.querySelector('#show-not-configured');
 const scopeNote = document.querySelector('.scope-note');
 const usageHistoryForm = document.querySelector('#usage-history-form');
@@ -1087,6 +1088,11 @@ function render(state) {
     const modeLabel = state.mode === 'mock' ? 'Mock データ' : '実データ';
     if (scopeNote) scopeNote.textContent = modeLabel;
     document.title = `${modeLabel} · Token Monitor Analytics`;
+  }
+  if (appVersion && state.runtime) {
+    const { version, schemaVersion, migratedFrom } = state.runtime;
+    const migrated = migratedFrom === null || migratedFrom === undefined ? '' : `（${migratedFrom} から移行）`;
+    appVersion.textContent = `版 ${version ?? '不明'} · スキーマ ${schemaVersion}${migrated}`;
   }
   const storage = state.storage;
   if (storageStatus) {

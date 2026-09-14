@@ -48,7 +48,7 @@ function errorDetails(error) {
   };
 }
 
-export async function startAnalytics({ configuration, log = () => {}, reconnectMs = 3000, historyRetryMs = 3600000, historyPollMs = 60000, now = () => new Date() }) {
+export async function startAnalytics({ configuration, version = null, log = () => {}, reconnectMs = 3000, historyRetryMs = 3600000, historyPollMs = 60000, now = () => new Date() }) {
   const store = new AnalyticsStore(configuration.dbPath, {
     estimationSettings: configuration.estimation ?? {},
   });
@@ -130,6 +130,8 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
   function state() {
     return {
       phase, storage, mode: configuration.mode,
+      // アプリの版と起動時に確認したスキーマ版。更新結果の提示に使う（UC-4）。
+      runtime: { version, schemaVersion: store.schema.version, migratedFrom: store.schema.migratedFrom },
       features: { estimation: 'implemented', estimationHistory: 'implemented', history: 'implemented', hubManagement: 'implemented' },
       // 登録練習用のMock Hubは設定が持つときだけ返す。実データでは項目ごと出さない。
       ...(configuration.mockRegistration ? { mockRegistration: configuration.mockRegistration } : {}),
