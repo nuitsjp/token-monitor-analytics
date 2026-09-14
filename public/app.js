@@ -53,11 +53,12 @@ const registrationErrors = {
   invalid_request: '登録要求の形式が不正です。',
   registration_failed: '接続設定を保存できませんでした。',
 };
-const stopErrors = {
+const controlErrors = {
   hub_not_found: '対象の Hub が一覧にありません。',
-  origin_mismatch: 'この画面と同じアドレス以外からの停止は受け付けません。',
-  unsupported_media_type: '停止要求の形式が不正です。',
+  origin_mismatch: 'この画面と同じアドレス以外からの操作は受け付けません。',
+  unsupported_media_type: '操作要求の形式が不正です。',
 };
+const controlLabels = { stop: '停止', resume: '再開' };
 const sourceReasons = {
   stale_device: '端末の報告が古い',
   missing_cost: '利用額を取得できない',
@@ -1007,11 +1008,11 @@ function hubManagementView(state) {
     const stopped = hub.collectionEnabled === false || status.collectionStopped === true;
     collection.append(badge(stopped ? '収集停止' : '収集中', stopped ? 'warning' : 'good'));
     const operation = element('td');
-    const stop = element('button', 'hub-stop', '停止');
-    stop.type = 'button';
-    stop.disabled = stopped;
-    stop.addEventListener('click', () => stopHub(hub.id, stop));
-    operation.append(stop);
+    const action = stopped ? 'resume' : 'stop';
+    const control = element('button', 'hub-control', controlLabels[action]);
+    control.type = 'button';
+    control.addEventListener('click', () => controlHub(hub.id, action, control));
+    operation.append(control);
     row.append(connection, collection, operation);
     body.append(row);
   }
@@ -1030,25 +1031,26 @@ function renderHubManagement(state) {
   hubMockNote.textContent = mock ? `登録練習用のモック Hub: ${mock.url}（シークレット: ${mock.secret}）` : '';
 }
 
-async function stopHub(hubId, button) {
+// 停止・再開は同じ経路で扱う。成功時は状態配信が一覧を描き直す。
+async function controlHub(hubId, action, button) {
   const show = (className, text) => hubOperationResult?.replaceChildren(element('p', className, text));
   button.disabled = true;
   try {
-    const response = await fetch(`/api/hubs/${encodeURIComponent(hubId)}/stop`, {
+    const response = await fetch(`/api/hubs/${encodeURIComponent(hubId)}/${action}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
     });
     const payload = await response.json().catch(() => ({}));
     if (response.ok) {
       const failed = payload.storage?.state && payload.storage.state !== 'normal';
-      show(failed ? 'error-detail' : 'history-result-summary', failed
-        ? `${payload.id} の収集を停止しました。停止設定の保存に失敗したため、再起動後は最後に保存できた設定に戻ります。`
-        : `${payload.id} の収集を停止しました。`);
+      if (!failed) show('history-result-summary', `${payload.id} の収集を${controlLabels[action]}しました。`);
+      else if (action === 'stop') show('error-detail', `${payload.id} の収集を停止しました。停止設定の保存に失敗したため、再起動後は最後に保存できた設定に戻ります。`);
+      else show('error-detail', `${payload.id} の再開設定を保存できませんでした。収集は始まっていません。`);
     } else {
-      show('error-detail', stopErrors[payload.error] ?? '停止できませんでした。');
+      show('error-detail', controlErrors[payload.error] ?? `${controlLabels[action]}できませんでした。`);
       button.disabled = false;
     }
   } catch {
-    show('error-detail', '停止要求を送信できませんでした。');
+    show('error-detail', `${controlLabels[action]}要求を送信できませんでした。`);
     button.disabled = false;
   }
 }

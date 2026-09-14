@@ -468,8 +468,8 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     const path = request.url.split('?')[0];
-    const stopRequest = request.method === 'POST' ? /^\/api\/hubs\/([^/]+)\/stop$/.exec(path) : null;
-    if (request.method === 'POST' && (path === '/api/hubs' || stopRequest)) {
+    const controlRequest = request.method === 'POST' ? /^\/api\/hubs\/([^/]+)\/(stop|resume)$/.exec(path) : null;
+    if (request.method === 'POST' && (path === '/api/hubs' || controlRequest)) {
       const respond = (code, body) => {
         response.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
         response.end(JSON.stringify(body));
@@ -478,16 +478,18 @@ export async function startAnalytics({ configuration, log = () => {}, reconnectM
       const type = (request.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
       if (type !== 'application/json') { respond(403, { error: 'unsupported_media_type' }); return; }
       if (!sameOrigin(request)) { respond(403, { error: 'origin_mismatch' }); return; }
-      if (stopRequest) {
+      if (controlRequest) {
         let hubId = null;
-        try { hubId = decodeURIComponent(stopRequest[1]); } catch { /* 不正なエンコードは未登録扱い */ }
+        try { hubId = decodeURIComponent(controlRequest[1]); } catch { /* 不正なエンコードは未登録扱い */ }
         if (hubId === null || !configured.has(hubId) || !saved.hubs.some((hub) => hub.id === hubId)) {
           respond(404, { error: 'hub_not_found' });
           return;
         }
-        // S5: 停止は保存失敗でも成立する。受信済み処理が終わり停止表示が確定してから応答する。
-        stopHubCollection(hubId).then(() => {
-          log({ level: 'info', operation: 'stop-hub', hubId });
+        // S5: 停止は保存失敗でも成立し、再開は保存が成ってから収集を始める。状態が確定してから応答する。
+        const action = controlRequest[2];
+        const applied = action === 'stop' ? stopHubCollection(hubId) : startHubCollection(hubId);
+        applied.then(() => {
+          log({ level: 'info', operation: `${action}-hub`, hubId });
           respond(200, { id: hubId, status: { ...statuses.get(hubId) }, storage: { ...storage } });
         });
         return;
