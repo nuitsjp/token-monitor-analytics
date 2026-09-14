@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 // Web から登録した接続設定の保存先。保存先の決定は呼び出し側が渡すパスだけに閉じる。
@@ -28,6 +28,11 @@ export function appendHubRegistration(filePath, { id, url, secret }) {
   const directory = path.dirname(filePath);
   mkdirSync(directory, { recursive: true });
   const temporary = path.join(directory, `${path.basename(filePath)}.${process.pid}.tmp`);
-  writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
-  renameSync(temporary, filePath);
+  try {
+    writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+    renameSync(temporary, filePath);
+  } catch (error) {
+    try { unlinkSync(temporary); } catch { /* Keep the original write or rename error. */ }
+    throw error;
+  }
 }

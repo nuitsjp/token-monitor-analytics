@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startAnalytics } from '../src/app.js';
 import { startMockHub } from '../mock/hub.js';
 import { parseHubs } from '../src/config.js';
-import { readHubRegistry } from '../src/hub-registry.js';
+import { appendHubRegistration, readHubRegistry } from '../src/hub-registry.js';
 
 const SECRET = 'registration-hub-secret-never-expose';
 const SECOND_SECRET = 'registration-second-secret-never-expose';
@@ -183,4 +183,28 @@ test('再起動後も登録したHubは一覧に残り、収集を続ける', as
   await waitForCollection(f, 'alpha');
   assert.equal(f.view('alpha').url, f.hub.url);
   assert.equal((await (await fetch(`${f.url()}/api/state`)).text()).includes(SECRET), false);
+});
+
+test('読取専用レジストリの置換失敗は一時ファイルを残さず元の例外を返す', async (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('Windows の読取専用属性で発生する置換失敗を検証する');
+    return;
+  }
+
+  const directory = assertSafeFixtureDirectory(await mkdtemp(join(tmpdir(), 'token-analytics-hubs-')));
+  const registryPath = join(directory, 'hubs.mock.json');
+  const original = '{"hubs":[]}\n';
+  await writeFile(registryPath, original, 'utf8');
+  await chmod(registryPath, 0o444);
+  t.after(async () => {
+    await chmod(registryPath, 0o666).catch(() => {});
+    await rm(assertSafeFixtureDirectory(directory), { recursive: true, force: true });
+  });
+
+  assert.throws(
+    () => appendHubRegistration(registryPath, { id: 'alpha', url: 'http://127.0.0.1:1', secret: SECRET }),
+    (error) => error.code === 'EPERM' || error.code === 'EACCES',
+  );
+  assert.equal(await readFile(registryPath, 'utf8'), original);
+  assert.deepEqual((await readdir(directory)).filter((name) => name.endsWith('.tmp')), []);
 });
