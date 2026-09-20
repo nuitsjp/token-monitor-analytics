@@ -91,7 +91,7 @@
 
 .hubPanel { border-color: #b9ddd3; }
 .hubList { margin-top: 8px; }
-.hub { padding: 10px 0; }
+.hub { padding: 3px 0; }
 .hubHeading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; }
 .hubIdentity { display: flex; align-items: baseline; min-width: 0; gap: 6px; }
 .hubName { flex-shrink: 0; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #163b32; font-size: 14px; font-weight: 700; }
@@ -100,6 +100,7 @@
 .hubUsage { display: flex; align-items: baseline; justify-content: flex-end; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .hubUsage strong { color: #0b725b; font-size: 13px; }
 .hubUsage span, .hubUsage small, .hubWaiting { color: #70877f; font-size: 12px; }
+.hubCharts { display: flex; justify-content: space-evenly; gap: 16px; margin: 12px 0 10px; }
 .hubDonut { position: relative; width: 104px; height: 104px; flex: 0 0 auto; }
 .hubDonut svg { display: block; width: 100%; height: 100%; }
 .hubDonut > div { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none; }

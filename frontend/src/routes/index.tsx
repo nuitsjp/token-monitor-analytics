@@ -170,25 +170,27 @@ function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey
   const totalTokens = hubs.reduce((total, hub) => total + (hub.state?.periods[period].totalTokens ?? 0), 0);
   const totalCost = hubs.reduce((total, hub) => total + (hub.state?.periods[period].costUsd ?? 0), 0);
   let offset = 0;
+  let costOffset = 0;
   const segments = hubs.map((hub, index) => {
     const share = totalTokens > 0 ? (hub.state?.periods[period].totalTokens ?? 0) / totalTokens * 100 : 0;
-    const segment = { hub, share, offset, color: index === 0 ? '#14866e' : index === 1 ? '#648fed' : `hsl(${(index * 137.5 + 160) % 360} 48% 48%)` };
+    const costShare = totalCost > 0 ? (hub.state?.periods[period].costUsd ?? 0) / totalCost * 100 : 0;
+    const segment = { hub, share, offset, costShare, costOffset, color: index === 0 ? '#14866e' : index === 1 ? '#648fed' : `hsl(${(index * 137.5 + 160) % 360} 48% 48%)` };
     offset += share;
+    costOffset += costShare;
     return segment;
   });
 
   return <>
-    <div className={classes.toolBody}>
-      <div className={classes.hubDonut}>
-        <svg viewBox="0 0 120 120" aria-label="Hub別トークン使用量の内訳">
+    <div className={classes.hubCharts}>
+      {(['tokens', 'cost'] as const).map((metric) => <div key={metric} className={classes.hubDonut}>
+        <svg viewBox="0 0 120 120" aria-label={metric === 'tokens' ? 'Hub別トークン使用量の内訳' : 'Hub別推定コストの内訳'}>
           <circle cx="60" cy="60" r="50" fill="none" stroke="#e5ece9" strokeWidth="16" />
-          {segments.filter(({ share }) => share > 0).map(({ hub, share, offset: start, color }) => <circle key={hub.hubId} cx="60" cy="60" r="50" pathLength="100" fill="none" stroke={color} strokeWidth="16" strokeDasharray={`${share} ${100 - share}`} strokeDashoffset={-start} transform="rotate(-90 60 60)" tabIndex={0}>
+          {segments.map((segment) => ({ ...segment, share: metric === 'tokens' ? segment.share : segment.costShare, start: metric === 'tokens' ? segment.offset : segment.costOffset })).filter(({ share }) => share > 0).map(({ hub, share, start, color }) => <circle key={hub.hubId} cx="60" cy="60" r="50" pathLength="100" fill="none" stroke={color} strokeWidth="16" strokeDasharray={`${share} ${100 - share}`} strokeDashoffset={-start} transform="rotate(-90 60 60)" tabIndex={0}>
             <title>{hub.name}: {share.toFixed(1)}%</title>
           </circle>)}
         </svg>
-        <div><strong title={`${totalTokens.toLocaleString('en-US')} tokens`}>{formatTokens(totalTokens)}</strong><small>tokens</small></div>
-      </div>
-      <div className={classes.toolLead}><small>推定コスト</small><strong>${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong><span>Hub別の使用量</span></div>
+        <div><strong title={metric === 'tokens' ? `${totalTokens.toLocaleString('en-US')} tokens` : `$${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}>{metric === 'tokens' ? formatTokens(totalTokens) : `$${formatTokens(totalCost)}`}</strong><small>{metric === 'tokens' ? 'tokens' : '推定コスト'}</small></div>
+      </div>)}
     </div>
     <div className={classes.hubList}>{segments.map(({ hub, share, color }) => {
     const usage = hub.state?.periods[period];
