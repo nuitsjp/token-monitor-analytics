@@ -1,6 +1,6 @@
 # Token Monitor Analytics
 
-Reactテンプレートを適用した開発開始用の基盤です。トップ画面、Node.jsサーバー、空のSQLiteを起動できます。製品機能・ユースケース・業務テーブルは未定義です。
+Reactテンプレートを適用した開発開始用の基盤です。トップ画面、Node.jsサーバー、空のSQLiteを起動できます。最初のユースケースであるHub受信・保存の仕様と実現パターンは合意済みです。テーブル設計は合意待ちで、製品機能は未実装です。
 
 ## 起動
 
@@ -33,6 +33,6 @@ Lint、文書検査、設定の基盤テスト、型検査、本番ビルドを�
 ## 文書
 
 - [プロジェクト定義](docs/project.md): 採用済み基盤、実行手順、検証範囲。
-- [アーキテクチャ](docs/architecture.md): 現在の構成と未合意の境界。
+- [アーキテクチャ](docs/architecture.md): 合意済み設計と実装状況。
 - [React構成](docs/architecture-react.md): 責務とテスト分離。
 - [文書方針](docs/document-policy.md): 採用版と適用範囲。
