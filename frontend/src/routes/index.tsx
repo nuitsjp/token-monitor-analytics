@@ -28,11 +28,14 @@ function Home() {
           利用状況を取得できませんでした
         </Alert>
       ) : (
-        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
-          {overview.data.hubs.map((hub) => (
-            <UsageCard key={hub.hubId} hub={hub} />
-          ))}
-        </SimpleGrid>
+        <Stack gap="lg">
+          <UsageTotal hubs={overview.data.hubs} />
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
+            {overview.data.hubs.map((hub) => (
+              <UsageCard key={hub.hubId} hub={hub} />
+            ))}
+          </SimpleGrid>
+        </Stack>
       )}
     </Stack>
   );
@@ -40,10 +43,57 @@ function Home() {
 
 function LoadingCards() {
   return (
-    <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
-      <Skeleton height={240} radius="lg" />
-      <Skeleton height={240} radius="lg" />
-    </SimpleGrid>
+    <Stack gap="lg">
+      <Skeleton height={160} radius="lg" />
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
+        <Skeleton height={240} radius="lg" />
+        <Skeleton height={240} radius="lg" />
+      </SimpleGrid>
+    </Stack>
+  );
+}
+
+function UsageTotal({ hubs }: { hubs: HubUsageOverview[] }) {
+  const totals = hubs.reduce(
+    (result, hub) => {
+      if (hub.usage) {
+        result.todayTokens += hub.usage.todayTokens;
+        result.todayCostUsd += hub.usage.todayCostUsd;
+        result.deviceCount += hub.usage.deviceCount;
+        result.receivedHubCount += 1;
+      }
+      return result;
+    },
+    { todayTokens: 0, todayCostUsd: 0, deviceCount: 0, receivedHubCount: 0 },
+  );
+
+  return (
+    <Card className={classes.totalCard} padding="xl" radius="lg">
+      <Stack gap="lg">
+        <Group justify="space-between" align="baseline">
+          <Title order={2} className={classes.totalTitle}>
+            全Hub合計
+          </Title>
+          <Text className={classes.totalContext}>
+            受信済み {totals.receivedHubCount} / 登録 {hubs.length} Hub
+          </Text>
+        </Group>
+        <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="lg">
+          <TotalMetric label="今日の使用トークン数" value={totals.todayTokens.toLocaleString()} />
+          <TotalMetric label="今日の推定コスト" value={`$${totals.todayCostUsd.toFixed(2)}`} />
+          <TotalMetric label="端末数" value={`${totals.deviceCount.toLocaleString()}台`} />
+        </SimpleGrid>
+      </Stack>
+    </Card>
+  );
+}
+
+function TotalMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <Text className={classes.totalLabel}>{label}</Text>
+      <Text className={classes.totalValue}>{value}</Text>
+    </div>
   );
 }
 
