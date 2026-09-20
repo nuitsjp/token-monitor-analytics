@@ -44,4 +44,12 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
 
-基盤の最終検証は未検証です。製品の単体・E2Eテストは未作成で、現時点の `verify` は設定の基盤テスト、Lint、文書、型、本番ビルドのみを実行します。
+基盤の検証（Windows、Node.js 24.19.0、2026-09-20、対象 `da3125f`）:
+
+- `npm run setup`・`npm run verify`: 合格。設定テスト3件、Lint、文書、型、本番ビルドを確認。
+- `npm audit`: 脆弱性0件。
+- 本番entryの一時Node検証: health・HTML・静的アセットの200、サンプルAPIの404、空SQLite・WAL・整合性、同じDBでの再起動とIPC通常終了を2回確認。
+- `npm run dev`・HTTP取得・`npm run db:check`: 合格。終了後に3000/5173番の停止を確認。
+- ブラウザー描画確認: 未検証。`playwright-cli -s=edge attach --cdp=msedge` は接続先ポートの拒否で失敗。LinuxおよびCIも未検証。
+
+製品の単体・E2Eテストは未作成で、現時点の `verify` は設定の基盤テスト、Lint、文書、型、本番ビルドのみを実行します。
