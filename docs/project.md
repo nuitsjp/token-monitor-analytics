@@ -2,7 +2,7 @@
 
 ## 1. 目的と範囲
 
-利用者がHubの最新情報をローカルで利用できるよう、まずUC-1の受信・保存を対象とします。UC-1-Mは実装とローカル手動確認を終え、完成系の承認待ちです。旧製品の機能を暗黙に復元しません。
+利用者がHubの最新情報をローカルで利用できるよう、UC-1の受信・保存を完了しました。次にUC-2で、保存済みの最新利用状況を画面に表示します。旧製品の機能を暗黙に復元しません。
 
 ## 2. 基盤の制約
 
@@ -14,12 +14,13 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 | UC ID | 主アクター | 目的 | 実装順序 | 実現パターン | モック適用 |
 | --- | --- | --- | --- | --- | --- |
 | [UC-1](usecases/UC-1.md) | 利用者 | Hubの最新情報をローカルに保存する | 1 | [UCP-1](architecture.md#patterns) | 対象外（UI確認不要） |
+| [UC-2](usecases/UC-2.md) | 利用者 | 登録Hubの最新利用状況を閲覧する | 2 | [UCP-2](architecture.md#ucp-2) | 対象（UI確認必要） |
 
 <a id="design"></a>
 ## 4. 確認した事実
 
 - 配布元 `a60085b` のReact拡張を採用しました。基盤構成は [アーキテクチャ](architecture.md) に記載しています。
-- Hubの固定版 `8b6cee22eabb7bf7ce0226655b46907300e14a04` の `src/hub/server.js`、`worker/src/index.js`、`src/shared/hubProtocol.js` と `docs/API.md` を静的に確認しました。初回snapshot、全体置換stats、鮮度更新freshnessが設計の根拠です。現在の実Hubとの相互接続は未検証です。
+- Hubの固定版 `8b6cee22eabb7bf7ce0226655b46907300e14a04` の `src/hub/server.js`、`worker/src/index.js`、`src/shared/hubProtocol.js` と `docs/API.md` を静的に確認しました。初回snapshot、全体置換stats、鮮度更新freshnessが設計の根拠です。現在の実Hubとの相互接続も検証済みです。
 - [取得済みのHub実測資料](reference/hub-private/README.md) は保全しています。過去の観測であり、新製品の連携仕様や合意の代用にはしません。
 
 <a id="commands"></a>
