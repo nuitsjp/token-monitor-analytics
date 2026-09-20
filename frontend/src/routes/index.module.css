@@ -1,5 +1,5 @@
 .eyebrow {
-  color: rgb(255 255 255 / 72%);
+  color: var(--mantine-color-teal-7);
   font-size: var(--mantine-font-size-xs);
   font-weight: 700;
   letter-spacing: 0.12em;

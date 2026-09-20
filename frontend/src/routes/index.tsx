@@ -15,7 +15,8 @@ function Home() {
   });
 
   return (
-    <Stack gap="lg">
+    <Stack gap="xs">
+      <Text className={classes.eyebrow}>Token Monitor Analytics</Text>
       {overview.isPending ? (
         <LoadingCards />
       ) : overview.isError ? (
@@ -66,12 +67,9 @@ function UsageTotal({ hubs }: { hubs: HubUsageOverview[] }) {
     <Card className={classes.overview} padding="lg" radius="lg">
       <Stack gap="md">
         <Group justify="space-between" align="flex-end">
-          <div>
-            <Text className={classes.eyebrow}>Token Monitor Analytics</Text>
-            <Title order={1} className={classes.overviewTitle}>
-              利用状況
-            </Title>
-          </div>
+          <Title order={1} className={classes.overviewTitle}>
+            利用状況
+          </Title>
           <Text className={classes.totalContext}>
             受信済み {totals.receivedHubCount} / 登録 {hubs.length} Hub
           </Text>
