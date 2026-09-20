@@ -1,19 +1,21 @@
 .eyebrow {
-  color: var(--mantine-color-teal-7);
+  color: rgb(255 255 255 / 72%);
   font-size: var(--mantine-font-size-xs);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
-.totalCard {
+.overview {
   color: white;
   background: linear-gradient(135deg, var(--mantine-color-teal-8), var(--mantine-color-cyan-8));
-  box-shadow: 0 18px 45px rgb(8 127 140 / 18%);
+  box-shadow: 0 12px 32px rgb(8 127 140 / 16%);
 }
 
-.totalTitle {
-  font-size: var(--mantine-font-size-lg);
+.overviewTitle {
+  color: white;
+  font-size: clamp(1.65rem, 4vw, 2rem);
+  line-height: 1.1;
 }
 
 .totalContext,
@@ -27,16 +29,16 @@
 }
 
 .totalValue {
-  font-size: clamp(1.45rem, 4vw, 2rem);
+  font-size: clamp(1.3rem, 3.5vw, 1.75rem);
   font-weight: 750;
   line-height: 1.2;
   letter-spacing: -0.025em;
 }
 
 .card {
-  min-height: 240px;
+  min-height: 190px;
   border-color: var(--mantine-color-gray-3);
-  box-shadow: 0 14px 35px rgb(24 45 59 / 7%);
+  box-shadow: 0 10px 26px rgb(24 45 59 / 6%);
 }
 
 .hubName {
@@ -44,7 +46,7 @@
 }
 
 .primaryValue {
-  font-size: clamp(1.8rem, 5vw, 2.5rem);
+  font-size: clamp(1.65rem, 4vw, 2.15rem);
   font-weight: 750;
   line-height: 1.15;
   letter-spacing: -0.035em;
@@ -52,7 +54,7 @@
 
 .pending {
   display: grid;
-  min-height: 140px;
+  min-height: 105px;
   place-items: center;
   text-align: center;
 }

@@ -15,12 +15,7 @@ function Home() {
   });
 
   return (
-    <Stack gap="xl">
-      <Stack gap={4}>
-        <Text className={classes.eyebrow}>Token Monitor Analytics</Text>
-        <Title order={1}>利用状況</Title>
-        <Text c="dimmed">登録Hubから受信した最新情報です。</Text>
-      </Stack>
+    <Stack gap="lg">
       {overview.isPending ? (
         <LoadingCards />
       ) : overview.isError ? (
@@ -30,7 +25,7 @@ function Home() {
       ) : (
         <Stack gap="lg">
           <UsageTotal hubs={overview.data.hubs} />
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
             {overview.data.hubs.map((hub) => (
               <UsageCard key={hub.hubId} hub={hub} />
             ))}
@@ -43,11 +38,11 @@ function Home() {
 
 function LoadingCards() {
   return (
-    <Stack gap="lg">
-      <Skeleton height={160} radius="lg" />
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
-        <Skeleton height={240} radius="lg" />
-        <Skeleton height={240} radius="lg" />
+    <Stack gap="md">
+      <Skeleton height={128} radius="lg" />
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+        <Skeleton height={190} radius="lg" />
+        <Skeleton height={190} radius="lg" />
       </SimpleGrid>
     </Stack>
   );
@@ -68,12 +63,15 @@ function UsageTotal({ hubs }: { hubs: HubUsageOverview[] }) {
   );
 
   return (
-    <Card className={classes.totalCard} padding="xl" radius="lg">
-      <Stack gap="lg">
-        <Group justify="space-between" align="baseline">
-          <Title order={2} className={classes.totalTitle}>
-            全Hub合計
-          </Title>
+    <Card className={classes.overview} padding="lg" radius="lg">
+      <Stack gap="md">
+        <Group justify="space-between" align="flex-end">
+          <div>
+            <Text className={classes.eyebrow}>Token Monitor Analytics</Text>
+            <Title order={1} className={classes.overviewTitle}>
+              利用状況
+            </Title>
+          </div>
           <Text className={classes.totalContext}>
             受信済み {totals.receivedHubCount} / 登録 {hubs.length} Hub
           </Text>
@@ -99,8 +97,8 @@ function TotalMetric({ label, value }: { label: string; value: string }) {
 
 function UsageCard({ hub }: { hub: HubUsageOverview }) {
   return (
-    <Card className={classes.card} padding="xl" radius="lg" withBorder>
-      <Stack gap="lg">
+    <Card className={classes.card} padding="lg" radius="lg" withBorder>
+      <Stack gap="md">
         <Title order={2} className={classes.hubName}>
           {hub.name}
         </Title>
