@@ -12,27 +12,27 @@ type PeriodKey = 'today' | 'month' | 'total';
 
 const PERIODS = {
   today: {
-    tokens: '51.35M', exactTokens: '51,350,620 tokens', cost: '$36.01', activeDays: '1', range: '2026年9月21日',
+    tokens: 51350620, cost: '$36.01', activeDays: '1', range: '2026年9月21日',
     bars: [4, 18, 34, 12, 8, 27, 45, 14, 6, 21, 62, 33, 17, 49, 78, 52, 26, 66, 38, 23, 57],
     labels: ['0時', '6時', '12時', '18時', '24時'],
   },
   month: {
-    tokens: '4.65B', exactTokens: '4,653,088,644 tokens', cost: '$1,880.88', activeDays: '17', range: '2026年9月1日 — 9月21日',
+    tokens: 4653088644, cost: '$1,880.88', activeDays: '17', range: '2026年9月1日 — 9月21日',
     bars: [4, 42, 100, 7, 1, 29, 8, 4, 2, 5, 27, 7, 2, 4, 11, 8, 53, 13, 8, 7, 4],
     labels: ['9/1', '9/5', '9/10', '9/15', '9/21'],
   },
   total: {
-    tokens: '29.42B', exactTokens: '29,420,800,000 tokens', cost: '$11,890.42', activeDays: '173', range: '2025年9月22日 — 2026年9月21日',
+    tokens: 29420800000, cost: '$11,890.42', activeDays: '173', range: '2025年9月22日 — 2026年9月21日',
     bars: [18, 28, 24, 37, 33, 42, 46, 39, 52, 49, 58, 54, 62, 67, 61, 73, 69, 78, 82, 87, 94],
     labels: ['2025/10', '2026/1', '4月', '7月', '9月'],
   },
 } as const;
 
 const TOOL_ROWS = [
-  ['Codex', '4.08B', '87.7%'], ['Antigravity', '423.43M', '9.1%'], ['Cursor', '97.71M', '2.1%'], ['その他', '51.18M', '1.1%'],
+  ['Codex', 4080000000, '87.7%'], ['Antigravity', 423430000, '9.1%'], ['Cursor', 97710000, '2.1%'], ['その他', 51180000, '1.1%'],
 ] as const;
 const MODEL_ROWS = [
-  ['gpt-5.6-luna', '2.33B', 50], ['gpt-5.6-sol', '1.12B', 24], ['gpt-6-astra', '651.43M', 14], ['gemini-3.8-flash', '418.78M', 9], ['その他', '139.59M', 3],
+  ['gpt-5.6-luna', 2330000000, 50], ['gpt-5.6-sol', 1120000000, 24], ['gpt-6-astra', 651430000, 14], ['gemini-3.8-flash', 418780000, 9], ['その他', 139590000, 3],
 ] as const;
 const ACTIVITY = Array.from({ length: 182 }, (_, index) => (index * 17 + Math.floor(index / 9)) % 5);
 
@@ -77,7 +77,7 @@ function Dashboard() {
         </header>
 
         <section className={classes.kpis} aria-label="主要指標">
-          <Kpi label="トークン" value={selected.tokens} suffix="tokens" note={selected.exactTokens} />
+          <Kpi label="トークン" value={formatTokens(selected.tokens)} note="選択期間の合計" />
           <Kpi label="推定コスト" value={selected.cost} note="USD · 選択期間の合計" />
           <Kpi label="アクティブ日数" value={selected.activeDays} suffix="日" note="3日 連続利用" />
           <Kpi label="デバイス" value={overview.isPending ? '—' : String(deviceCount)} suffix="台" note={`受信済み ${receivedHubs} Hub`} live />
@@ -88,7 +88,7 @@ function Dashboard() {
             <PanelHeader title="利用トレンド" caption="トークン / 日" />
             <div className={classes.chartLegend}><span><i />Tokyo Hub</span><span><i />Osaka Hub</span></div>
             <div className={classes.chart} role="img" aria-label={`${selected.range}の固定サンプルトレンド`}>
-              <div className={classes.axis}><span>1.59B</span><span>1.06B</span><span>530.98M</span><span>0</span></div>
+              <div className={classes.axis}>{[1590000000, 1060000000, 530980000, 0].map((value) => <span key={value}>{formatTokens(value)}</span>)}</div>
               <div className={classes.chartBody}>
                 <div className={classes.gridLines}><i /><i /><i /><i /></div>
                 <div className={classes.bars}>{selected.bars.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}</div>
@@ -112,14 +112,14 @@ function Dashboard() {
             <PanelHeader title="ツール" />
             <div className={classes.toolBody}>
               <div className={classes.donut}><strong>87.7%</strong><small>Codex</small></div>
-              <div className={classes.toolLead}><small>最も利用したツール</small><strong>Codex</strong><span>4.08B tokens</span></div>
+              <div className={classes.toolLead}><small>最も利用したツール</small><strong>Codex</strong><span>{formatTokens(TOOL_ROWS[0][1])} tokens</span></div>
             </div>
-            <div className={classes.dataRows}>{TOOL_ROWS.map(([name, value, share]) => <div key={name}><span><i />{name}</span><b>{value}</b><small>{share}</small></div>)}</div>
+            <div className={classes.dataRows}>{TOOL_ROWS.map(([name, value, share]) => <div key={name}><span><i />{name}</span><b>{formatTokens(value)}</b><small>{share}</small></div>)}</div>
           </section>
 
           <section className={classes.panel} id="models">
             <PanelHeader title="モデル" />
-            <div className={classes.modelList}>{MODEL_ROWS.map(([name, value, share]) => <div key={name}><span>{name}</span><b>{value} <small>{share}%</small></b><i><em style={{ width: `${share * 2}%` }} /></i></div>)}</div>
+            <div className={classes.modelList}>{MODEL_ROWS.map(([name, value, share]) => <div key={name}><span>{name}</span><b>{formatTokens(value)} <small>{share}%</small></b><i><em style={{ width: `${share * 2}%` }} /></i></div>)}</div>
           </section>
 
           <section className={`${classes.panel} ${classes.hubPanel}`} id="hubs">
@@ -212,5 +212,5 @@ function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey
 }
 
 function formatTokens(value: number) {
-  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
 }

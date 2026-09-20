@@ -49,7 +49,7 @@
 .chartLegend span { display: flex; align-items: center; gap: 5px; }
 .chartLegend i { width: 6px; height: 6px; border-radius: 2px; background: #16856d; }
 .chartLegend span:last-child i { background: #9acbbd; }
-.chart { display: grid; grid-template-columns: 68px 1fr; height: 205px; margin-top: 4px; }
+.chart { display: grid; grid-template-columns: 100px 1fr; height: 205px; margin-top: 4px; }
 .axis { display: flex; flex-direction: column; justify-content: space-between; padding: 5px 8px 26px 0; color: #7c948d; font-size: 12px; text-align: right; }
 .chartBody { position: relative; min-width: 0; padding-bottom: 25px; }
 .gridLines { position: absolute; inset: 3px 0 25px; display: flex; flex-direction: column; justify-content: space-between; }
@@ -73,7 +73,7 @@
 .donut { display: grid; width: 104px; height: 104px; flex: 0 0 auto; place-content: center; border-radius: 50%; background: radial-gradient(circle, #fff 0 50%, transparent 51%), conic-gradient(#14866e 0 87.7%, #648fed 87.7% 96.8%, #7bc1b2 96.8% 98.9%, #cad8d3 98.9%); text-align: center; }
 .donut strong { font-size: 20px; }
 .donut small { color: #70877f; font-size: 12px; }
-.toolLead { display: grid; gap: 4px; }
+.toolLead { display: grid; gap: 4px; min-width: 0; }
 .toolLead small, .toolLead span { color: #7b918a; font-size: 12px; }
 .toolLead strong { font-size: 14px; }
 .dataRows { display: grid; gap: 7px; }
@@ -81,11 +81,11 @@
 .dataRows span { display: flex; align-items: center; gap: 7px; }
 .dataRows i { width: 6px; height: 6px; border-radius: 50%; background: #14866e; }
 .dataRows div:nth-child(2) i { background: #648fed; }.dataRows div:nth-child(3) i { background: #7bc1b2; }.dataRows div:nth-child(4) i { background: #cad8d3; }
-.dataRows b { font-weight: 600; }.dataRows small { color: #799089; font-size: 12px; }
+.dataRows b { font-weight: 600; white-space: nowrap; }.dataRows small { color: #799089; font-size: 12px; }
 
 .modelList { display: grid; gap: 13px; margin-top: 14px; }
 .modelList > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; color: #27483f; font-size: 13px; }
-.modelList b { font-size: 12px; font-weight: 600; }.modelList b small { color: #7d938c; font-size: 12px; font-weight: 400; }
+.modelList b { font-size: 12px; font-weight: 600; white-space: nowrap; }.modelList b small { color: #7d938c; font-size: 12px; font-weight: 400; }
 .modelList > div > span { overflow-wrap: anywhere; }
 .modelList > div > i { grid-column: 1 / -1; margin: 0; }.modelList em { background: #369a80; }
 
@@ -140,6 +140,6 @@
 @media (max-width: 430px) {
   .headingLine h1 { font-size: 22px; }.headingLine span { display: none; }
   .kpi { padding: 14px; }.kpi > strong { font-size: 23px; }.kpiSuffix { display: block; margin: 1px 0 0; }
-  .chart { grid-template-columns: 68px 1fr; }.chartLegend { justify-content: flex-start; margin-top: 6px; }
+  .chart { grid-template-columns: 100px 1fr; }.chartLegend { justify-content: flex-start; margin-top: 6px; }
   .toolBody { gap: 12px; }.donut { width: 88px; height: 88px; }
 }
