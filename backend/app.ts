@@ -5,10 +5,12 @@ import { openDatabase } from './db/database.ts';
 import { appRouter, type AppRouter } from './http/router.ts';
 import type { AppConfig } from './config.ts';
 import { registerHub } from './db/hub-state.ts';
+import { readHubConfigFile } from './hub/config-file.ts';
 import { startHubReceiver } from './hub/receiver.ts';
 
 // DBはアプリインスタンスが所有し、モジュール単位のsingletonを作らない。
 export async function createApp(config: AppConfig) {
+    const hubs = readHubConfigFile(config.hubConfigPath);
     const app = Fastify({
         bodyLimit: 1024 * 1024,
         logger: {
@@ -19,14 +21,17 @@ export async function createApp(config: AppConfig) {
         },
     });
     const db = openDatabase(config.databasePath);
-    let receiver: ReturnType<typeof startHubReceiver> | undefined;
-    app.addHook('onClose', async () => { await receiver?.stop(); db.close(); });
+    const receivers: ReturnType<typeof startHubReceiver>[] = [];
+    app.addHook('onClose', async () => {
+        await Promise.all(receivers.map(receiver => receiver.stop()));
+        db.close();
+    });
     try {
-        if (config.hub) {
-            registerHub(db, config.hub.id, config.hub.name);
-            app.addHook('onListen', async () => { receiver = startHubReceiver(config.hub!, db, app.log); });
-        }
-        else app.log.info('Hub接続設定がないため受信は無効です');
+        for (const hub of hubs)
+            registerHub(db, hub.id, hub.name);
+        app.addHook('onListen', async () => {
+            receivers.push(...hubs.map(hub => startHubReceiver(hub, db, app.log)));
+        });
         app.addHook('onRequest', async (req, reply) => {
             if (!req.url.startsWith('/api/'))
                 return;

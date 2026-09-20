@@ -13,6 +13,8 @@ npm run dev
 
 開発画面は http://127.0.0.1:5173/ です。終了は Ctrl+C。設定はセットアップで生成する `.env`、DBは既定で `data/app.sqlite` です。旧DBは使用しません。
 
+Hub接続設定は [設定例](config/hubs.example.json) を `data/hubs.local.json` へコピーし、2つのHubのID・表示名・HTTP(S) origin・認証トークンを記入します。実ファイルはGit管理対象外です。別の場所に置く場合は `.env` の `HUB_CONFIG_PATH` を変更します。
+
 本番形式でのローカル起動:
 
 ```sh
@@ -20,7 +22,7 @@ npm run build
 npm start
 ```
 
-http://127.0.0.1:3000/ を開きます。バックエンドはループバックで起動し、利用者向けWeb認証は未実装です。Hub接続には `.env` に `HUB_ID`、`HUB_NAME`、`HUB_URL`（HTTP(S) origin）、`HUB_TOKEN` を設定します。全項目未設定なら受信は無効です。認証情報をコミットしないでください。設定・DB確認・停止後の復旧は [運用手順](docs/project.md#commands) を参照してください。
+http://127.0.0.1:3000/ を開きます。バックエンドはループバックで起動し、利用者向けWeb認証は未実装です。設定ファイルがない、不正、2件以外、またはHub IDが重複する場合は起動しません。認証情報をコミットしないでください。設定・DB確認・停止後の復旧は [運用手順](docs/project.md#commands) を参照してください。
 
 ## 検証
 

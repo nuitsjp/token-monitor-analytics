@@ -37,23 +37,18 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 | 文書検査 | `python scripts/doc_check.py .` |
 | DB整合性 | `npm run db:check` |
 
-設定は `.env`、DBは既定で `data/app.sqlite` です。DB・秘密設定は追跡しません。旧DBは接続しません。Hub受信は以下の4項目をすべて設定すると有効になります。全項目未設定の場合は受信を無効にして基盤のみ起動し、一部だけの設定は起動エラーになります。本番経路に仕様合意用モックはありません。
+設定は `.env`、DBは既定で `data/app.sqlite` です。DB・秘密設定は追跡しません。旧DBは接続しません。`.env` の `HUB_CONFIG_PATH` で、Git管理外の接続設定JSONを指定します。本番経路に仕様合意用モックはありません。
 
-| 設定 | 内容 |
-| --- | --- |
-| HUB_ID | 提供元を識別する安定したID。別の提供元には別IDを指定 |
-| HUB_NAME | Hubの表示名。起動時に登録・更新 |
-| HUB_URL | HubのHTTP(S) origin。パス・認証情報・クエリは含めない |
-| HUB_TOKEN | Bearer認証に使う秘密情報 |
+設定JSONは `{ "hubs": [...] }` の形式で、Hubを正確に2件指定します。各要素の `id`、`name`、`url`、`token` は必須です。IDは重複不可、URLはパス・認証情報・クエリを含まないHTTP(S) originです。形式は [設定例](../config/hubs.example.json) を参照します。アプリケーションは設定ファイルを更新しません。
 
-Hubへの接続先は `/api/stats/stream` です。接続先URL・認証情報はDBへ保存しません。受信停止時にはログのcause（response、connection、disconnected、invalid-notification、database）を確認し、原因を解消して再起動します。自動再接続はありません。Webの `/health` はWebサーバーの稼働確認であり、Hub受信の正常性を示しません。
+Hubへの接続先は `/api/stats/stream` です。接続先URL・認証情報はDBへ保存しません。設定ファイルが存在しない、JSONや項目が不正、2件でない、またはIDが重複する場合は起動しません。起動後に一方の受信が停止しても、もう一方とWebサーバーは継続します。停止したHubはログのcause（response、connection、disconnected、invalid-notification、database）を確認し、原因を解消してアプリケーションを再起動します。自動再接続はありません。Webの `/health` はWebサーバーの稼働確認であり、Hub受信の正常性を示しません。
 
 DB確認には別の読み取り専用SQLite接続を使い、`SELECT h.hub_id,h.name,s.received_at,s.stats_json FROM hubs h LEFT JOIN hub_states s ON s.hub_id=h.hub_id` を実行します。初回受信前の状態・受信時刻はNULLです。DBの整合性検査は `npm run db:check` で行います。
 
 <a id="verification"></a>
 ## 6. 検証結果
 
-UC-1-Mは2 Hub・設定ファイル対応へ改訂済みで、既存テーブル設計も合意済みです。1 Hub版の手動確認後、完成系承認前に段階4へ戻りました。改訂版の実Hub・段階6のE2E・Linux/CIは未検証です。基盤の検証と製品の受け入れ検証は区別します。
+UC-1-Mは2 Hub・設定ファイル対応の実装とローカル手動確認を完了し、段階5の完成系承認待ちです。改訂版の実Hub・段階6のE2E・Linux/CIは未検証です。基盤の検証と製品の受け入れ検証は区別します。
 
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |

@@ -1,6 +1,6 @@
 # アーキテクチャ
 
-UC-1の合意済み設計を記録します。1 Hub版から2 Hub・設定ファイル対応へ実装を改訂中です。完成系の承認と段階6の検証は未実施です。実装済みの基盤は [React構成](architecture-react.md)、テンプレート採用範囲は [文書方針](document-policy.md#adoption) を参照します。
+UC-1の合意済み設計を記録します。2 Hub・設定ファイル対応を実装済みです。完成系の承認と段階6の検証は未実施です。実装済みの基盤は [React構成](architecture-react.md)、テンプレート採用範囲は [文書方針](document-policy.md#adoption) を参照します。
 
 ## 全体設計の合意
 
@@ -38,8 +38,8 @@ flowchart LR
 
 | 役割 | 責務 | 実装パス |
 | --- | --- | --- |
-| 起動・終了管理 | 設定ファイル・DBを準備し、2つのHubを同期してから受信開始。終了時は両方の受信を止めてからDBを閉じる | 実装改訂中 |
-| 接続設定読込 | `.env` で指定したJSONを検証し、2つの接続情報を返す。ファイルは更新しない | 実装改訂中 |
+| 起動・終了管理 | 設定ファイル・DBを準備し、2つのHubを同期してから受信開始。終了時は両方の受信を止めてからDBを閉じる | backend/app.ts、backend/main.ts、backend/config.ts |
+| 接続設定読込 | `.env` で指定したJSONを検証し、2つの接続情報を返す。ファイルは更新しない | backend/hub/config-file.ts |
 | Hub受信処理 | 認証付きSSE接続、通知の解析・境界検証、受信順の保存呼び出し | backend/hub/receiver.ts、backend/hub/protocol.ts |
 | 最新状態の保存処理 | 次の状態の計算、SQL実行、受信元・受信時刻との一括保存 | backend/db/hub-state.ts、backend/db/database.ts |
 

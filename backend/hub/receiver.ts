@@ -1,11 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyBaseLogger } from 'fastify';
-import type { HubConfig } from '../config.ts';
+import type { HubConnectionConfig } from './config-file.ts';
 import { saveHubState, updateHubFreshness } from '../db/hub-state.ts';
 import { parseHubNotification } from './protocol.ts';
 
 // 接続は1回のみ。失敗後の再開はアプリケーションの再起動で行う。
-export function startHubReceiver(config: HubConfig, db: DatabaseSync, log: FastifyBaseLogger): { stop: () => Promise<void> } {
+export function startHubReceiver(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger): { stop: () => Promise<void> } {
     const controller = new AbortController();
     const done = receive(config, db, log, controller.signal).catch(() => {
         // 外部由来の例外・URL・応答本文には秘密情報が含まれ得るため出力しない。
@@ -15,7 +15,7 @@ export function startHubReceiver(config: HubConfig, db: DatabaseSync, log: Fasti
     return { stop: async () => { controller.abort(); await done; } };
 }
 
-async function receive(config: HubConfig, db: DatabaseSync, log: FastifyBaseLogger, signal: AbortSignal): Promise<void> {
+async function receive(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger, signal: AbortSignal): Promise<void> {
     const response = await fetch(new URL('/api/stats/stream', config.url), {
         headers: { Authorization: `Bearer ${config.token}`, Accept: 'text/event-stream', 'x-token-monitor-stream': '2' },
         redirect: 'error', signal,
