@@ -50,6 +50,6 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 - `npm audit`: 脆弱性0件。
 - 本番entryの一時Node検証: health・HTML・静的アセットの200、サンプルAPIの404、空SQLite・WAL・整合性、同じDBでの再起動とIPC通常終了を2回確認。
 - `npm run dev`・HTTP取得・`npm run db:check`: 合格。終了後に3000/5173番の停止を確認。
-- ブラウザー描画確認: 未検証。`playwright-cli -s=edge attach --cdp=msedge` は接続先ポートの拒否で失敗。LinuxおよびCIも未検証。
+- ブラウザー描画確認: 合格。利用者の「Chromeを利用してください」に従い、`playwright-cli -s=analytics-chrome open http://127.0.0.1:3000/ --browser=chrome` でChrome 153の一時セッションを起動。タイトル・見出し・準備中の文面と再読み込み後の描画を確認。初回にfavicon未配置の404が1件あり、アプリのJavaScriptエラーはなし。LinuxおよびCIは未検証。
 
 製品の単体・E2Eテストは未作成で、現時点の `verify` は設定の基盤テスト、Lint、文書、型、本番ビルドのみを実行します。
