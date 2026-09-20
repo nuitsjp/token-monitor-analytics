@@ -7,8 +7,9 @@ import '@mantine/core/styles.css';
 import './style.css';
 import { queryClient } from './features/query-client.ts';
 import { router } from './app/router.ts';
+import { cssVariablesResolver, theme } from './app/theme.ts';
 createRoot(document.getElementById('root')!).render(<StrictMode>
-<MantineProvider theme={{ primaryColor: 'teal', defaultRadius: 'md', fontFamily: 'Inter, "Yu Gothic UI", Meiryo, sans-serif' }}>
+<MantineProvider theme={theme} cssVariablesResolver={cssVariablesResolver}>
 <QueryClientProvider client={queryClient}>
 <RouterProvider router={router}/>
 </QueryClientProvider>

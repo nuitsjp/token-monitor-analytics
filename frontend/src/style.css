@@ -1,12 +1,14 @@
 :root {
-  color: #18352f;
-  background: #f4f7f6;
+  color: var(--tm-text-1);
+  background: var(--tm-surface-page);
   font-family: Inter, "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
   font-synthesis: none;
+  font-variant-numeric: tabular-nums;
 }
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { margin: 0; min-width: 320px; background: #f4f7f6; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; min-width: 320px; background: var(--tm-surface-page); font-size: var(--mantine-font-size-md); }
 button, input, select, textarea { font: inherit; }
 a { color: inherit; }

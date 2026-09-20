@@ -1,9 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Tooltip } from '@mantine/core';
+import { useEffect, useRef, useState } from 'react';
+import { Badge, Progress, Tooltip } from '@mantine/core';
 import type { HubUsageOverview } from '../../../contracts/usage-overview.ts';
 import { getUsageOverview } from '../features/usage-overview.ts';
+import { seriesColor, tokens } from '../app/theme.ts';
 import classes from './index.module.css';
 
 export const Route = createFileRoute('/')({ component: Dashboard });
@@ -12,37 +13,60 @@ type PeriodKey = 'today' | 'month' | 'total';
 
 const PERIODS = {
   today: {
-    tokens: 51350620, cost: '$36.01', activeDays: '1', range: '2026年9月21日',
+    tokens: 51350620, cost: '$36.01', activeDays: '1', range: '2026年9月21日', shortRange: '9/21',
     bars: [4, 18, 34, 12, 8, 27, 45, 14, 6, 21, 62, 33, 17, 49, 78, 52, 26, 66, 38, 23, 57],
-    labels: ['0時', '6時', '12時', '18時', '24時'],
+    labels: { 0: '0時', 5: '6時', 10: '12時', 15: '18時', 20: '24時' } as Record<number, string>,
   },
   month: {
-    tokens: 4653088644, cost: '$1,880.88', activeDays: '17', range: '2026年9月1日 — 9月21日',
+    tokens: 4653088644, cost: '$1,880.88', activeDays: '17', range: '2026年9月1日 — 9月21日', shortRange: '9/1–9/21',
     bars: [4, 42, 100, 7, 1, 29, 8, 4, 2, 5, 27, 7, 2, 4, 11, 8, 53, 13, 8, 7, 4],
-    labels: ['9/1', '9/5', '9/10', '9/15', '9/21'],
+    labels: { 0: '9/1', 4: '9/5', 9: '9/10', 14: '9/15', 20: '9/21' } as Record<number, string>,
   },
   total: {
-    tokens: 29420800000, cost: '$11,890.42', activeDays: '173', range: '2025年9月22日 — 2026年9月21日',
+    tokens: 29420800000, cost: '$11,890.42', activeDays: '173', range: '2025年9月22日 — 2026年9月21日', shortRange: '2025/9–2026/9',
     bars: [18, 28, 24, 37, 33, 42, 46, 39, 52, 49, 58, 54, 62, 67, 61, 73, 69, 78, 82, 87, 94],
-    labels: ['2025/10', '2026/1', '4月', '7月', '9月'],
+    labels: { 0: '2025/10', 5: '2026/1', 10: '4月', 15: '7月', 20: '9月' } as Record<number, string>,
   },
 } as const;
+const TREND_AXIS_MAX = 1590000000;
+const TREND_SPLIT = 0.82;
 
 const TOOL_ROWS = [
-  ['Codex', 4080000000, '87.7%'], ['Antigravity', 423430000, '9.1%'], ['Cursor', 97710000, '2.1%'], ['その他', 51180000, '1.1%'],
-] as const;
+  { name: 'Codex', value: 4080000000, share: 87.7 }, { name: 'Antigravity', value: 423430000, share: 9.1 },
+  { name: 'Cursor', value: 97710000, share: 2.1 }, { name: 'その他', value: 51180000, share: 1.1, neutral: true },
+];
 const MODEL_ROWS = [
-  ['gpt-5.6-luna', 2330000000, 50], ['gpt-5.6-sol', 1120000000, 24], ['gpt-6-astra', 651430000, 14], ['gemini-3.8-flash', 418780000, 9], ['その他', 139590000, 3],
+  { name: 'gpt-5.6-luna', value: 2330000000, share: 50 }, { name: 'gpt-5.6-sol', value: 1120000000, share: 24 },
+  { name: 'gpt-6-astra', value: 651430000, share: 14 }, { name: 'gemini-3.8-flash', value: 418780000, share: 9 },
+  { name: 'その他', value: 139590000, share: 3, neutral: true },
+];
+const LIMITS = [
+  { name: 'Codex', value: 95, detail: 'Weekly', reset: 'リセットまで 6日14時間' },
+  { name: 'Cursor', value: 97, detail: 'Models', reset: 'リセットまで 22時間' },
+  { name: 'Grok', value: 98, detail: 'Weekly', reset: 'リセットまで 4日10時間' },
+];
+
+const SECTIONS = [
+  { id: 'top', label: 'ダッシュボード', icon: 'dashboard' },
+  { id: 'trend', label: 'トレンド', icon: 'trend' },
+  { id: 'hubs', label: 'Hub・デバイス', icon: 'devices' },
+  { id: 'tools', label: 'ツール', icon: 'tools' },
+  { id: 'models', label: 'モデル', icon: 'models' },
+  { id: 'limits', label: '利用枠', icon: 'limits' },
+  { id: 'activity', label: 'アクティビティ', icon: 'activity' },
 ] as const;
-const ACTIVITY = Array.from({ length: 182 }, (_, index) => (index * 17 + Math.floor(index / 9)) % 5);
+type IconName = (typeof SECTIONS)[number]['icon'];
+const SECTION_IDS = SECTIONS.map((section) => section.id);
 
 function Dashboard() {
   const [period, setPeriod] = useState<PeriodKey>('month');
   const selected = PERIODS[period];
   const overview = useQuery({ queryKey: ['usage-overview'], queryFn: getUsageOverview, staleTime: Infinity });
-  const receivedHubs = overview.data?.hubs.filter((hub) => hub.state !== null).length ?? 0;
-  const registeredHubs = overview.data?.hubs.length ?? 0;
-  const deviceCount = overview.data?.hubs.reduce((sum, hub) => sum + (hub.state?.devices.length ?? 0), 0) ?? 0;
+  const hubs = overview.data?.hubs ?? [];
+  const receivedHubs = hubs.filter((hub) => hub.state !== null).length;
+  const deviceCount = hubs.reduce((sum, hub) => sum + (hub.state?.devices.length ?? 0), 0);
+  const fetchedAt = overview.dataUpdatedAt ? formatTime(overview.dataUpdatedAt) : null;
+  const activeSection = useActiveSection(SECTION_IDS);
 
   return (
     <div className={classes.workspace}>
@@ -51,166 +75,345 @@ function Dashboard() {
           <span className={classes.brandMark}>Σ</span>
           <span><strong>Token Monitor</strong><small>ANALYTICS</small></span>
         </a>
-        <p className={classes.navLabel}>WORKSPACE</p>
-        <nav className={classes.navigation} aria-label="ダッシュボード内ナビゲーション">
-          <a href="#top" aria-current="page"><NavigationIcon name="dashboard" />ダッシュボード</a>
-          <a href="#trend"><NavigationIcon name="trend" />トレンド</a>
-          <a href="#tools"><NavigationIcon name="tools" />ツール</a>
-          <a href="#models"><NavigationIcon name="models" />モデル</a>
-          <a href="#hubs"><NavigationIcon name="devices" />Hub・デバイス</a>
-          <a href="#limits"><NavigationIcon name="limits" />利用枠</a>
+        <nav className={classes.navigation} aria-label="ページ内の見出し">
+          {SECTIONS.map((section) => (
+            <a key={section.id} href={`#${section.id}`} aria-current={activeSection === section.id ? 'location' : undefined}>
+              <NavigationIcon name={section.icon} />{section.label}
+            </a>
+          ))}
         </nav>
         <div className={classes.sidebarStatus}>
-          <p><i className={classes.liveDot} />受信済み {receivedHubs} / 登録 {registeredHubs} Hub</p>
+          <p>受信済み {receivedHubs} / 登録 {hubs.length} Hub</p>
           <p>デバイス {deviceCount} 台</p>
+          {fetchedAt ? <p>取得 {fetchedAt}</p> : null}
         </div>
       </aside>
 
-      <main className={classes.main} id="top">
-        <header className={classes.pageHeader}>
-          <div><div className={classes.headingLine}><h1>ダッシュボード</h1><span>固定データを含む</span></div><p>{selected.range}</p></div>
-          <div className={classes.periodSwitch} role="group" aria-label="集計期間">
-            {(Object.keys(PERIODS) as PeriodKey[]).map((key) => (
-              <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{key.toUpperCase()}</button>
-            ))}
-          </div>
-        </header>
+      <main className={classes.main}>
+        <div id="top" className={classes.overview}>
+          <header className={classes.pageHeader}>
+            <div><div className={classes.headingLine}><h1>ダッシュボード</h1><span>固定データを含む</span></div><p>{selected.range}</p></div>
+            <div className={classes.periodSwitch} role="group" aria-label="集計期間">
+              {(Object.keys(PERIODS) as PeriodKey[]).map((key) => (
+                <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{key.toUpperCase()}</button>
+              ))}
+            </div>
+          </header>
 
-        <section className={classes.kpis} aria-label="主要指標">
-          <Kpi label="トークン" value={formatTokens(selected.tokens)} note="選択期間の合計" />
-          <Kpi label="推定コスト" value={selected.cost} note="USD · 選択期間の合計" />
-          <Kpi label="アクティブ日数" value={selected.activeDays} suffix="日" note="3日 連続利用" />
-          <Kpi label="デバイス" value={overview.isPending ? '—' : String(deviceCount)} suffix="台" note={`受信済み ${receivedHubs} Hub`} live />
-        </section>
+          <section className={classes.kpis} aria-label="主要指標">
+            <Kpi label="トークン" value={formatTokens(selected.tokens)} note="選択期間の合計" />
+            <Kpi label="推定コスト" value={selected.cost} note="USD 換算" />
+            <Kpi label="アクティブ日数" value={selected.activeDays} suffix="日" note="3日 連続利用" />
+            <Kpi label="デバイス" value={overview.isPending ? '—' : String(deviceCount)} suffix="台" note={`受信済み ${receivedHubs} Hub`} saved />
+          </section>
+        </div>
 
         <div className={classes.primaryGrid}>
-          <section className={`${classes.panel} ${classes.trendPanel}`} id="trend">
-            <PanelHeader title="利用トレンド" caption="トークン / 日" />
-            <div className={classes.chartLegend}><span><i />Tokyo Hub</span><span><i />Osaka Hub</span></div>
-            <div className={classes.chart} role="img" aria-label={`${selected.range}の固定サンプルトレンド`}>
-              <div className={classes.axis}>{[1590000000, 1060000000, 530980000, 0].map((value) => <span key={value}>{formatTokens(value)}</span>)}</div>
-              <div className={classes.chartBody}>
-                <div className={classes.gridLines}><i /><i /><i /><i /></div>
-                <div className={classes.bars}>{selected.bars.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}</div>
-                <div className={classes.chartLabels}>{selected.labels.map((label) => <span key={label}>{label}</span>)}</div>
-              </div>
-            </div>
+          <section className={`${classes.panel} ${classes.trendPanel}`} id="trend" aria-labelledby="trend-title">
+            <PanelHeader id="trend-title" title="利用トレンド" caption={`トークン / 日 · ${period.toUpperCase()}`} />
+            <TrendChart period={period} hubs={hubs} />
           </section>
 
-          <section className={classes.panel} id="limits">
-            <PanelHeader title="利用枠" />
-            <div className={classes.limitList}>
-              <Limit name="Codex" value={95} detail="Weekly" reset="リセットまで 6日14時間" />
-              <Limit name="Cursor" value={97} detail="Models" reset="リセットまで 22時間" />
-              <Limit name="Grok" value={98} detail="Weekly" reset="リセットまで 4日10時間" />
-            </div>
+          <section className={`${classes.panel} ${classes.hubPanel}`} id="hubs" aria-labelledby="hubs-title">
+            <PanelHeader id="hubs-title" title="Hub・デバイス" caption={[selected.shortRange, fetchedAt ? `取得 ${fetchedAt}` : null].filter(Boolean).join(' · ')} saved />
+            {overview.isPending ? <HubLoading /> : overview.isError ? <div className={classes.hubError}>Hub・デバイスを取得できませんでした</div> : <HubList hubs={hubs} period={period} />}
           </section>
         </div>
 
         <div className={classes.secondaryGrid}>
-          <section className={classes.panel} id="tools">
-            <PanelHeader title="ツール" />
-            <div className={classes.toolBody}>
-              <div className={classes.donut}><strong>87.7%</strong><small>Codex</small></div>
-              <div className={classes.toolLead}><small>最も利用したツール</small><strong>Codex</strong><span>{formatTokens(TOOL_ROWS[0][1])} tokens</span></div>
+          <section className={classes.panel} id="tools" aria-labelledby="tools-title">
+            <PanelHeader id="tools-title" title="ツール" caption="トークン構成比" />
+            <p className={classes.lead}><small>最も利用したツール</small><strong>{TOOL_ROWS[0].name}</strong><span>{formatTokens(TOOL_ROWS[0].value)} tokens</span></p>
+            <RankList rows={TOOL_ROWS} />
+          </section>
+
+          <section className={classes.panel} id="models" aria-labelledby="models-title">
+            <PanelHeader id="models-title" title="モデル" caption="トークン構成比" />
+            <RankList rows={MODEL_ROWS} />
+          </section>
+
+          <section className={classes.panel} id="limits" aria-labelledby="limits-title">
+            <PanelHeader id="limits-title" title="利用枠" caption="残量" />
+            <div className={classes.limitList}>
+              {LIMITS.map((limit) => <Limit key={limit.name} {...limit} />)}
             </div>
-            <div className={classes.dataRows}>{TOOL_ROWS.map(([name, value, share]) => <div key={name}><span><i />{name}</span><b>{formatTokens(value)}</b><small>{share}</small></div>)}</div>
-          </section>
-
-          <section className={classes.panel} id="models">
-            <PanelHeader title="モデル" />
-            <div className={classes.modelList}>{MODEL_ROWS.map(([name, value, share]) => <div key={name}><span>{name}</span><b>{formatTokens(value)} <small>{share}%</small></b><i><em style={{ width: `${share * 2}%` }} /></i></div>)}</div>
-          </section>
-
-          <section className={`${classes.panel} ${classes.hubPanel}`} id="hubs">
-            <PanelHeader title="Hub・デバイス" live />
-            {overview.isPending ? <HubLoading /> : overview.isError ? <div className={classes.hubError}>Hub・デバイスを取得できませんでした</div> : <HubList hubs={overview.data.hubs} period={period} />}
           </section>
         </div>
 
-        <section className={`${classes.panel} ${classes.activityPanel}`} aria-labelledby="activity-title">
-          <div className={classes.activityCopy}><h2 id="activity-title">アクティビティ</h2><strong>173</strong><span>アクティブ日数</span></div>
-          <div className={classes.heatmap} role="img" aria-label="固定サンプルのアクティビティヒートマップ">{ACTIVITY.map((level, index) => <i key={index} data-level={level} />)}</div>
-          <div className={classes.heatLegend}>少 <i /><i /><i /><i /> 多</div>
+        <section className={`${classes.panel} ${classes.activityPanel}`} id="activity" aria-labelledby="activity-title">
+          <ActivityHeatmap />
         </section>
       </main>
     </div>
   );
 }
 
-function NavigationIcon({ name }: { name: 'dashboard' | 'trend' | 'tools' | 'models' | 'devices' | 'limits' }) {
-  const paths = {
+function useActiveSection(ids: readonly string[]) {
+  const [active, setActive] = useState(ids[0]);
+  useEffect(() => {
+    const visible = new Map<string, number>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) visible.set(entry.target.id, entry.boundingClientRect.top);
+        else visible.delete(entry.target.id);
+      }
+      if (!visible.size) return;
+      // 見えている見出しのうち、最も上にあるものを現在地にする。
+      const next = [...visible.entries()].sort((left, right) => left[1] - right[1])[0][0];
+      setActive(next);
+    }, { rootMargin: '-15% 0px -60% 0px' });
+    for (const id of ids) {
+      const target = document.getElementById(id);
+      if (target) observer.observe(target);
+    }
+    return () => observer.disconnect();
+  }, [ids]);
+  return active;
+}
+
+function NavigationIcon({ name }: { name: IconName }) {
+  const paths: Record<IconName, string> = {
     dashboard: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
     trend: 'M3 3v18h18 M6 15l5-5 4 3 6-8',
     tools: 'M8 7V4h8v3 M3 7h18v14H3z M3 12h18 M10 12v3h4v-3',
     models: 'M9 3h6v6H9z M2 16h6v5H2z M16 16h6v5h-6z M12 9v4 M5 16v-3h14v3',
     devices: 'M2 3h20v14H2z M12 17v4 M7 21h10',
     limits: 'M4 19a10 10 0 1 1 16 0 M12 13l5-6 M5 13H3 M12 5V3 M19 13h2',
+    activity: 'M3 4h18v16H3z M3 9h18 M8 2v4 M16 2v4 M7 13h3v3H7z M14 13h3v3h-3z',
   };
   return <svg className={classes.navIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
 
-function Kpi({ label, value, suffix, note, live = false }: { label: string; value: string; suffix?: string; note: string; live?: boolean }) {
-  return <div className={classes.kpi}><div className={classes.kpiLabel}>{label}{live ? <span className={classes.realBadge}>LIVE</span> : null}</div><strong>{value}</strong>{suffix ? <span className={classes.kpiSuffix}>{suffix}</span> : null}<small>{note}</small></div>;
+const BADGE_STYLES = { label: { fontSize: '12px' } };
+
+function SourceBadge({ saved }: { saved: boolean }) {
+  return saved
+    ? <Badge variant="light" color="brand" size="md" radius="sm" tt="none" fw={600} styles={BADGE_STYLES}>保存値</Badge>
+    : <Badge variant="outline" color="gray" size="md" radius="sm" tt="none" fw={600} styles={BADGE_STYLES}>固定サンプル</Badge>;
 }
 
-function PanelHeader({ title, caption, live = false }: { title: string; caption?: string; live?: boolean }) {
-  return <header className={classes.panelHeader}><div><h2>{title}</h2>{caption ? <span>{caption}</span> : null}</div>{live ? <span className={classes.realBadge}>LIVE</span> : <span className={classes.staticBadge}>固定サンプル</span>}</header>;
+function Kpi({ label, value, suffix, note, saved = false }: { label: string; value: string; suffix?: string; note: string; saved?: boolean }) {
+  return (
+    <div className={classes.kpi}>
+      <div className={classes.kpiLabel}>{label}{saved ? <SourceBadge saved /> : null}</div>
+      <div className={classes.kpiValue}><strong>{value}</strong>{suffix ? <span>{suffix}</span> : null}</div>
+      <small>{note}</small>
+    </div>
+  );
+}
+
+function PanelHeader({ id, title, caption, saved = false }: { id: string; title: string; caption?: string; saved?: boolean }) {
+  return (
+    <header className={classes.panelHeader}>
+      <div><h2 id={id}>{title}</h2>{caption ? <span>{caption}</span> : null}</div>
+      <SourceBadge saved={saved} />
+    </header>
+  );
+}
+
+function TrendChart({ period, hubs }: { period: PeriodKey; hubs: HubUsageOverview[] }) {
+  const selected = PERIODS[period];
+  const legend = [0, 1].map((index) => hubs[index]?.name ?? `Hub ${index + 1}`);
+  const ticks = [TREND_AXIS_MAX, TREND_AXIS_MAX / 2, 0];
+  return (
+    <>
+      <div className={classes.chartLegend}>
+        {legend.map((name, index) => <span key={name}><span className={classes.swatch} style={{ background: seriesColor(index) }} />{name}</span>)}
+      </div>
+      <div className={classes.chart} role="img" aria-label={`${selected.range}の固定サンプルトレンド`}>
+        <div className={classes.plot}>
+          {ticks.map((value, index) => (
+            <div key={value} className={classes.gridline} style={{ top: `${(index / (ticks.length - 1)) * 100}%` }}><span>{formatTokens(value)}</span></div>
+          ))}
+          <div className={classes.bars} style={{ gridTemplateColumns: `repeat(${selected.bars.length}, minmax(0, 1fr))` }}>
+            {selected.bars.map((height, index) => {
+              const total = Math.round((height / 100) * TREND_AXIS_MAX);
+              return (
+                <Tooltip key={index} label={`${formatTokens(total)} tokens`} events={{ hover: true, focus: true, touch: true }}>
+                  <div className={classes.bar} style={{ height: `${height}%` }} tabIndex={0} aria-label={`${index + 1}番目: ${formatTokens(total)} tokens`}>
+                    <span style={{ flexGrow: 1 - TREND_SPLIT, background: seriesColor(1) }} />
+                    <span style={{ flexGrow: TREND_SPLIT, background: seriesColor(0) }} />
+                  </div>
+                </Tooltip>
+              );
+            })}
+          </div>
+        </div>
+        <div className={classes.chartLabels} style={{ gridTemplateColumns: `repeat(${selected.bars.length}, minmax(0, 1fr))` }}>
+          {Object.entries(selected.labels).map(([index, label]) => <span key={label} style={{ gridColumn: Number(index) + 1 }}>{label}</span>)}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function RankList({ rows }: { rows: { name: string; value: number; share: number; neutral?: boolean }[] }) {
+  return (
+    <div className={classes.rankList}>
+      {rows.map((row) => (
+        <div key={row.name} className={classes.rankRow}>
+          <div className={classes.rankLabel}><span className={classes.rankName}>{row.name}</span><strong>{formatTokens(row.value)}</strong><small>{formatPercent(row.share)}</small></div>
+          <Progress value={row.share} size={4} radius="xl" color={row.neutral ? tokens.neutralSeries : 'brand'} aria-label={`${row.name}の構成比`} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function limitColor(remaining: number) {
+  if (remaining < 10) return tokens.status.danger;
+  if (remaining < 20) return tokens.status.warn;
+  return 'brand';
 }
 
 function Limit({ name, value, detail, reset }: { name: string; value: number; detail: string; reset: string }) {
-  return <div className={classes.limit}><div><strong>{name}</strong><b>{value}% <small>残り</small></b></div><i><em style={{ width: `${value}%` }} /></i><p><span>{detail}</span><span>{reset}</span></p></div>;
+  return (
+    <div className={classes.limit}>
+      <div className={classes.limitLabel}><strong>{name}</strong><span style={{ color: value < 20 ? limitColor(value) : undefined }}>{value}% <small>残り</small></span></div>
+      <Progress value={value} size={4} radius="xl" color={limitColor(value)} aria-label={`${name}の残量`} />
+      <p><span>{detail}</span><span>{reset}</span></p>
+    </div>
+  );
 }
 
 function HubLoading() {
-  return <div className={classes.hubLoading} aria-label="Hub・デバイスを読み込み中"><i /><i /><i /></div>;
+  return <div className={classes.hubLoading} aria-label="Hub・デバイスを読み込み中"><span /><span /><span /></div>;
 }
 
 function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey }) {
   const totalTokens = hubs.reduce((total, hub) => total + (hub.state?.periods[period].totalTokens ?? 0), 0);
   const totalCost = hubs.reduce((total, hub) => total + (hub.state?.periods[period].costUsd ?? 0), 0);
-  const segments = hubs.map((hub, index) => {
-    const share = totalTokens > 0 ? (hub.state?.periods[period].totalTokens ?? 0) / totalTokens * 100 : 0;
-    const costShare = totalCost > 0 ? (hub.state?.periods[period].costUsd ?? 0) / totalCost * 100 : 0;
-    return { hub, share, costShare, color: index === 0 ? '#14866e' : index === 1 ? '#648fed' : `hsl(${(index * 137.5 + 160) % 360} 48% 48%)` };
-  });
+  const segments = hubs.map((hub, index) => ({
+    hub,
+    share: totalTokens > 0 ? ((hub.state?.periods[period].totalTokens ?? 0) / totalTokens) * 100 : 0,
+    costShare: totalCost > 0 ? ((hub.state?.periods[period].costUsd ?? 0) / totalCost) * 100 : 0,
+    color: seriesColor(index),
+  }));
 
-  return <>
-    <div className={classes.hubCharts}>
-      {(['tokens', 'cost'] as const).map((metric) => <div key={metric} className={classes.hubMetric}>
-        <small>{metric === 'tokens' ? 'トークン' : '推定コスト'}</small>
-        <strong title={metric === 'tokens' ? `${totalTokens.toLocaleString('en-US')} トークン` : undefined}>{metric === 'tokens' ? formatTokens(totalTokens) : `$${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</strong>
-        <div className={classes.hubStack} role="group" aria-label={metric === 'tokens' ? 'Hub別トークン使用量の内訳' : 'Hub別推定コストの内訳'}>
-          {segments.map((segment) => ({ ...segment, share: metric === 'tokens' ? segment.share : segment.costShare })).filter(({ share }) => share > 0).map(({ hub, share, color }) => <Tooltip key={hub.hubId} label={`${hub.name}: ${share.toFixed(1)}%`} events={{ hover: true, focus: true, touch: true }}>
-            <span style={{ flexGrow: share, background: color }} tabIndex={0} aria-label={`${hub.name}: ${share.toFixed(1)}%`} />
-          </Tooltip>)}
-        </div>
-      </div>)}
-    </div>
-    <div className={classes.hubList}>{segments.map(({ hub, share, color }) => {
-    const usage = hub.state?.periods[period];
-    const hostnames = hub.state?.devices.map((device) => device.hostname).join(', ');
-
-    return <article key={hub.hubId} className={classes.hub} aria-label={hub.name}>
-      <div className={classes.hubHeading}>
-        <div className={classes.hubIdentity}>
-          <i className={classes.hubDot} style={{ background: color }} title={usage ? `${share.toFixed(1)}%` : '未受信'} />
-          <span className={classes.hubName} title={hub.name}>{hub.name}</span>
-          {hostnames ? <Tooltip label={hostnames} multiline maw={360} events={{ hover: true, focus: true, touch: true }}>
-            <span className={classes.hostnames} tabIndex={0}>{hostnames}</span>
-          </Tooltip> : null}
-        </div>
-        {usage ? <div className={classes.hubUsage}>
-          <strong title={`${usage.totalTokens.toLocaleString('en-US')} tokens`}>{formatTokens(usage.totalTokens)}</strong>
-          <span>/</span>
-          <small>${usage.costUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</small>
-        </div> : <span className={classes.hubWaiting}>未受信</span>}
+  return (
+    <>
+      <div className={classes.hubCharts}>
+        {(['tokens', 'cost'] as const).map((metric) => (
+          <div key={metric} className={classes.hubMetric}>
+            <small>{metric === 'tokens' ? 'トークン' : '推定コスト'}</small>
+            <strong title={metric === 'tokens' ? `${totalTokens.toLocaleString('en-US')} トークン` : undefined}>{metric === 'tokens' ? formatTokens(totalTokens) : formatUsd(totalCost)}</strong>
+            <div className={classes.hubStack} role="group" aria-label={metric === 'tokens' ? 'Hub別トークン使用量の内訳' : 'Hub別推定コストの内訳'}>
+              {segments.map((segment) => ({ ...segment, share: metric === 'tokens' ? segment.share : segment.costShare })).filter(({ share }) => share > 0).map(({ hub, share, color }) => (
+                <Tooltip key={hub.hubId} label={`${hub.name}: ${share.toFixed(1)}%`} events={{ hover: true, focus: true, touch: true }}>
+                  <span style={{ flexGrow: share, background: color }} tabIndex={0} aria-label={`${hub.name}: ${share.toFixed(1)}%`} />
+                </Tooltip>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
-      {!usage ? <p className={classes.emptyHub}>まだ情報を受信していません</p> : null}
-    </article>;
-  })}</div></>;
+      <div className={classes.hubList}>
+        {segments.map(({ hub, share, color }) => {
+          const usage = hub.state?.periods[period];
+          const hostnames = hub.state?.devices.map((device) => device.hostname).join(', ');
+          return (
+            <article key={hub.hubId} className={classes.hub} aria-label={hub.name}>
+              <div className={classes.hubHeading}>
+                <div className={classes.hubIdentity}>
+                  <span className={classes.hubDot} style={{ background: color }} title={usage ? `${share.toFixed(1)}%` : '未受信'} />
+                  <span className={classes.hubName} title={hub.name}>{hub.name}</span>
+                  {hostnames ? (
+                    <Tooltip label={hostnames} multiline maw={360} events={{ hover: true, focus: true, touch: true }}>
+                      <span className={classes.hostnames} tabIndex={0}>{hostnames}</span>
+                    </Tooltip>
+                  ) : null}
+                </div>
+                {usage ? (
+                  <div className={classes.hubUsage}>
+                    <strong title={`${usage.totalTokens.toLocaleString('en-US')} tokens`}>{formatTokens(usage.totalTokens)}</strong>
+                    <span>/</span>
+                    <small>{formatUsd(usage.costUsd)}</small>
+                  </div>
+                ) : <span className={classes.hubWaiting}>未受信</span>}
+              </div>
+              {!usage ? <p className={classes.emptyHub}>まだ情報を受信していません</p> : null}
+            </article>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+const WEEKDAY_LABELS: Record<number, string> = { 1: '月', 3: '水', 5: '金' };
+
+function activityCells() {
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 363);
+  start.setDate(start.getDate() - start.getDay());
+  const cells: { date: Date; level: number }[] = [];
+  for (let index = 0; ; index += 1) {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    if (date > end) break;
+    // 固定サンプル。日付に対して決定的な 0〜4 のレベルを割り当てる。
+    cells.push({ date, level: (index * 17 + Math.floor(index / 9)) % 5 });
+  }
+  return cells;
+}
+
+function ActivityHeatmap() {
+  const [cells] = useState(activityCells);
+  const scroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const toLatest = () => { if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth; };
+    toLatest();
+    window.addEventListener('resize', toLatest);
+    return () => window.removeEventListener('resize', toLatest);
+  }, []);
+  const weeks = Math.ceil(cells.length / 7);
+  const activeDays = cells.filter((cell) => cell.level > 0).length;
+  // 週の先頭日の月が前の週と変わった列に月ラベルを置く。
+  const weekStarts = Array.from({ length: weeks }, (_, week) => cells[week * 7].date);
+  const monthLabels = weekStarts
+    .map((date, week) => ({ date, week }))
+    .filter(({ date, week }) => week > 0 && weekStarts[week - 1].getMonth() !== date.getMonth());
+
+  return (
+    <>
+      <div className={classes.activityCopy}>
+        <h2 id="activity-title">アクティビティ</h2>
+        <strong>{activeDays}</strong>
+        <span>累計アクティブ日数 · 過去1年</span>
+      </div>
+      <div className={classes.heatmapScroller} ref={scroller}>
+        <div className={classes.heatmapFrame} style={{ gridTemplateColumns: `auto repeat(${weeks}, var(--cell))` }}>
+          <span className={classes.heatmapCorner} />
+          {monthLabels.map(({ date, week }) => (
+            <span key={date.toISOString()} className={classes.monthLabel} style={{ gridColumn: week + 2 }}>{date.getMonth() + 1}月</span>
+          ))}
+          {Array.from({ length: 7 }, (_, weekday) => (
+            <span key={weekday} className={classes.weekdayLabel} style={{ gridRow: weekday + 2 }}>{WEEKDAY_LABELS[weekday] ?? ''}</span>
+          ))}
+          <div className={classes.heatmap} role="img" aria-label={`過去1年の固定サンプルアクティビティ。アクティブ ${activeDays} 日`} style={{ gridTemplateRows: 'repeat(7, var(--cell))' }}>
+            {cells.map((cell) => <span key={cell.date.toISOString()} data-level={cell.level} title={`${formatDate(cell.date)} · アクティビティ ${cell.level}/4`} />)}
+          </div>
+        </div>
+      </div>
+      <div className={classes.heatLegend}>少 <span data-level={1} /><span data-level={2} /><span data-level={3} /><span data-level={4} /> 多</div>
+    </>
+  );
 }
 
 function formatTokens(value: number) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+}
+function formatUsd(value: number) {
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function formatPercent(value: number) {
+  return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value)}%`;
+}
+function formatTime(timestamp: number) {
+  return new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(timestamp));
+}
+function formatDate(date: Date) {
+  return new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short' }).format(date);
 }

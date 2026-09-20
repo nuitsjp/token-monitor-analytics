@@ -8,7 +8,7 @@ React・TypeScript・Vite、TanStack Router/Query、Mantine・CSS ModulesのSPA�
 
 | 配置 | 現在の責務 |
 | --- | --- |
-| frontend/src/app/, routes/ | Provider・Router・起動用画面 |
+| frontend/src/app/, routes/ | Provider・Router・起動用画面。`app/theme.ts` が色・余白・文字・データ系列色の正本で、CSS Modules は `var(--tm-*)`・`var(--mantine-*)` だけを参照する |
 | frontend/src/features/ | tRPCクライアントとQueryキャッシュ |
 | backend/app.ts | SQLite接続、Hub登録・受信の起動終了、空tRPCルーター、health、静的UI配信の組み立て |
 | backend/db/ | ファイルDB接続、スキーマ移行、Hub登録と最新状態の保存 |
