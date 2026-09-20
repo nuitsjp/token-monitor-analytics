@@ -1,6 +1,6 @@
 # React / Node.js基盤
 
-現在の構成を [アーキテクチャ](architecture.md) に補足します。UC-1の仕様とUCP-1は合意済みですが、受信・保存は未実装です。
+現在の構成を [アーキテクチャ](architecture.md) に補足します。UC-1の仕様とUCP-1は合意済みですが、受信・保存を単一Node.jsプロセスへ組み込みます。
 
 ## 1. 構成と責務
 
@@ -10,15 +10,16 @@ React・TypeScript・Vite、TanStack Router/Query、Mantine・CSS ModulesのSPA�
 | --- | --- |
 | frontend/src/app/, routes/ | Provider・Router・起動用画面 |
 | frontend/src/features/ | tRPCクライアントとQueryキャッシュ |
-| backend/app.ts | SQLite接続、空tRPCルーター、health、静的UI配信の組み立て |
-| backend/db/ | ファイルDB接続とPRAGMA設定、未対応スキーマの拒否 |
+| backend/app.ts | SQLite接続、Hub登録・受信の起動終了、空tRPCルーター、health、静的UI配信の組み立て |
+| backend/db/ | ファイルDB接続、スキーマ移行、Hub登録と最新状態の保存 |
+| backend/hub/ | Hub通知の境界検証、SSE受信と逐次保存 |
 | tests/e2e/fixtures.ts | 1テストごとの本番Nodeプロセス・ポート・一時DBの分離 |
 
-製品の対話制御、業務処理、公開契約、認証、SSEは未実装です。利用時に対象系列の仕様へ沿って追加します。
+UC-1は画面やtRPCを経由しません。Hub認証はサーバー側の接続設定を使います。利用者向けWeb認証は未実装です。
 
 ## 2. 起動と永続化
 
-DBの初期化に成功してからlistenを開始し、終了時にDB接続を閉じます。DBの接続はアプリケーションインスタンスが所有します。Node標準の `node:sqlite` を使用し、業務テーブルは作成しません。
+DBの初期化とHub登録に成功してからlistenを開始し、listen後にSSEを開始します。終了時は受信を中止・完了待ちしてからDB接続を閉じます。DBの接続はアプリケーションインスタンスが所有します。Node標準の `node:sqlite` を使用し、テーブル定義は [設計書](architecture.md#tables) を正本とします。
 
 開発時はVite（5173番）からNode（3000番）へAPIを転送します。本番形式ではNodeがビルド済みUIも配信します。現在はループバック専用で、共有環境への配備は未設計です。
 
