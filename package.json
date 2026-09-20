@@ -9,6 +9,7 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "dev": "node --env-file-if-exists=.env scripts/dev.mjs",
+    "dev:mock": "vite --config frontend/vite.config.ts --mode mock",
     "routes": "tsr generate",
     "typecheck": "npm run routes && tsc -p tsconfig.json && tsc -p tsconfig.backend.json --noEmit",
     "lint": "eslint backend frontend/src tests scripts --ignore-pattern frontend/src/routeTree.gen.ts",

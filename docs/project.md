@@ -31,6 +31,7 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 | 操作 | コマンド・確認 |
 | --- | --- |
 | 開発起動 | `npm run dev`、http://127.0.0.1:5173/ |
+| UC-2モック確認 | `npm run dev:mock`、http://127.0.0.1:5173/ |
 | 本番形式での起動 | `npm run build` 後に `npm start`、http://127.0.0.1:3000/ |
 | サーバー確認 | `GET /health` が `{"status":"ok"}` を返す |
 | 終了 | Ctrl+C |

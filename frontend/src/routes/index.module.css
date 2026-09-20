@@ -1,0 +1,31 @@
+.eyebrow {
+  color: var(--mantine-color-teal-7);
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.card {
+  min-height: 240px;
+  border-color: var(--mantine-color-gray-3);
+  box-shadow: 0 14px 35px rgb(24 45 59 / 7%);
+}
+
+.hubName {
+  font-size: var(--mantine-font-size-lg);
+}
+
+.primaryValue {
+  font-size: clamp(1.8rem, 5vw, 2.5rem);
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+
+.pending {
+  display: grid;
+  min-height: 140px;
+  place-items: center;
+  text-align: center;
+}
