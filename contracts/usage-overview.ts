@@ -5,12 +5,19 @@ export interface UsageOverview {
 export interface HubUsageOverview {
   hubId: string;
   name: string;
-  usage: AvailableHubUsage | null;
+  state: HubDeviceState | null;
 }
 
-export interface AvailableHubUsage {
-  todayTokens: number;
-  todayCostUsd: number;
-  deviceCount: number;
+export interface HubDeviceState {
   updatedAt: string;
+  receivedAt: string;
+  devices: HubDeviceOverview[];
+}
+
+export interface HubDeviceOverview {
+  deviceId: string;
+  hostname: string;
+  platform: string;
+  updatedAt: string;
+  stale: boolean;
 }

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { HubUsageOverview } from '../../contracts/usage-overview.ts';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -10,6 +11,29 @@ export function registerHub(db: DatabaseSync, hubId: string, name: string): void
         VALUES (?, ?)
         ON CONFLICT (hub_id) DO UPDATE SET name = excluded.name
     `).run(hubId, name);
+}
+
+export function readHubDeviceOverview(
+    db: DatabaseSync,
+    configuredHubs: readonly { id: string; name: string }[],
+): HubUsageOverview[] {
+    const rows = db.prepare(`
+        SELECT h.hub_id, h.name, s.stats_json, s.received_at
+        FROM hubs h
+        LEFT JOIN hub_states s ON s.hub_id = h.hub_id
+    `).all() as Array<{ hub_id: string; name: string; stats_json: string | null; received_at: string | null }>;
+    const byId = new Map(rows.map(row => [row.hub_id, row]));
+
+    return configuredHubs.map(hub => {
+        const row = byId.get(hub.id);
+        if (!row || row.stats_json === null || row.received_at === null)
+            return { hubId: hub.id, name: hub.name, state: null };
+        return {
+            hubId: hub.id,
+            name: row.name,
+            state: parseHubDeviceState(row.stats_json, row.received_at),
+        };
+    });
 }
 
 export function saveHubState(
@@ -70,6 +94,28 @@ function withTransaction<T>(db: DatabaseSync, operation: () => T): T {
         }
         throw error;
     }
+}
+
+function parseHubDeviceState(statsJson: string, receivedAt: string) {
+    const stats = JSON.parse(statsJson) as JsonRecord;
+    if (typeof stats.updatedAt !== 'string' || !Array.isArray(stats.devices))
+        throw new Error('Hubの保存済み状態が不正です。');
+    const devices = stats.devices.map(value => {
+        const device = value as JsonRecord;
+        if (typeof device.deviceId !== 'string' || typeof device.hostname !== 'string'
+            || typeof device.platform !== 'string' || typeof device.updatedAt !== 'string'
+            || typeof device.stale !== 'boolean') {
+            throw new Error('Hubの保存済みデバイスが不正です。');
+        }
+        return {
+            deviceId: device.deviceId,
+            hostname: device.hostname,
+            platform: device.platform,
+            updatedAt: device.updatedAt,
+            stale: device.stale,
+        };
+    });
+    return { updatedAt: stats.updatedAt, receivedAt, devices };
 }
 
 function applyFreshness(stats: JsonRecord, freshness: JsonRecord): JsonRecord {

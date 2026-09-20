@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import staticFiles from '@fastify/static';
 import { fastifyTRPCPlugin, type FastifyTRPCPluginOptions, } from '@trpc/server/adapters/fastify';
 import { openDatabase } from './db/database.ts';
-import { appRouter, type AppRouter } from './http/router.ts';
+import { createAppRouter, type AppRouter } from './http/router.ts';
 import type { AppConfig } from './config.ts';
 import { registerHub } from './db/hub-state.ts';
 import { readHubConfigFile } from './hub/config-file.ts';
@@ -29,6 +29,7 @@ export async function createApp(config: AppConfig) {
     try {
         for (const hub of hubs)
             registerHub(db, hub.id, hub.name);
+        const router = createAppRouter(db, hubs);
         app.addHook('onListen', async () => {
             receivers.push(...hubs.map(hub => startHubReceiver(hub, db, app.log)));
         });
@@ -58,7 +59,7 @@ export async function createApp(config: AppConfig) {
         await app.register(fastifyTRPCPlugin, {
             prefix: '/api/trpc',
             trpcOptions: {
-                router: appRouter,
+                router,
                 onError: ({ error, path }) => {
                     if (error.code === 'INTERNAL_SERVER_ERROR') {
                         app.log.error({ err: error.cause, operation: path }, '処理に失敗しました');
