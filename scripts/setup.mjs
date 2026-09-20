@@ -8,4 +8,4 @@ await npm(existsSync(join(root, 'package-lock.json')) ? 'ci' : 'install');
 if (!existsSync(join(root, '.env')))
     copyFileSync(join(root, '.env.example'), join(root, '.env'));
 await npm('run', 'routes');
-console.log('起動: npm run dev ／ ブラウザ導入: npx playwright install chromium');
+console.log('config/hubs.example.json を data/hubs.local.json へコピーして接続情報を設定後、npm run dev で起動します。');

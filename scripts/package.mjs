@@ -14,4 +14,6 @@ writeFileSync(join(target, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
 if (existsSync(join(root, 'package-lock.json')))
     cpSync(join(root, 'package-lock.json'), join(target, 'package-lock.json'));
 cpSync(join(root, '.env.example'), join(target, '.env.example'));
-console.log('release/app を配備し、npm ci --omit=dev（lockがなければnpm install --omit=dev）、.env設定、npm start を実行してください。dataは配備領域の外へ置いてください。');
+mkdirSync(join(target, 'config'), { recursive: true });
+cpSync(join(root, 'config/hubs.example.json'), join(target, 'config/hubs.example.json'));
+console.log('release/app を配備し、npm ci --omit=dev（lockがなければnpm install --omit=dev）、.envとHub接続設定、npm start の順に実行してください。dataは配備領域の外へ置いてください。');

@@ -29,7 +29,7 @@ jobs:
           python-version: '3.13'
       - name: Install dependencies and generate routes
         run: npm run setup
-      - name: Verify foundation (product E2E not yet defined)
+      - name: Verify foundation and product E2E
         run: npm run verify
       - name: Upload failed-test diagnostics
         if: failure()
