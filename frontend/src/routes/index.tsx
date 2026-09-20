@@ -167,16 +167,37 @@ function HubLoading() {
 }
 
 function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey }) {
-  const maxTokens = hubs.reduce((max, hub) => Math.max(max, hub.state?.periods[period].totalTokens ?? 0), 0);
+  const totalTokens = hubs.reduce((total, hub) => total + (hub.state?.periods[period].totalTokens ?? 0), 0);
+  const totalCost = hubs.reduce((total, hub) => total + (hub.state?.periods[period].costUsd ?? 0), 0);
+  let offset = 0;
+  const segments = hubs.map((hub, index) => {
+    const share = totalTokens > 0 ? (hub.state?.periods[period].totalTokens ?? 0) / totalTokens * 100 : 0;
+    const segment = { hub, share, offset, color: index === 0 ? '#14866e' : index === 1 ? '#648fed' : `hsl(${(index * 137.5 + 160) % 360} 48% 48%)` };
+    offset += share;
+    return segment;
+  });
 
-  return <div className={classes.hubList}>{hubs.map((hub) => {
+  return <>
+    <div className={classes.toolBody}>
+      <div className={classes.hubDonut}>
+        <svg viewBox="0 0 120 120" aria-label="Hub別トークン使用量の内訳">
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#e5ece9" strokeWidth="16" />
+          {segments.filter(({ share }) => share > 0).map(({ hub, share, offset: start, color }) => <circle key={hub.hubId} cx="60" cy="60" r="50" pathLength="100" fill="none" stroke={color} strokeWidth="16" strokeDasharray={`${share} ${100 - share}`} strokeDashoffset={-start} transform="rotate(-90 60 60)" tabIndex={0}>
+            <title>{hub.name}: {share.toFixed(1)}%</title>
+          </circle>)}
+        </svg>
+        <div><strong title={`${totalTokens.toLocaleString('en-US')} tokens`}>{formatTokens(totalTokens)}</strong><small>tokens</small></div>
+      </div>
+      <div className={classes.toolLead}><small>推定コスト</small><strong>${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong><span>Hub別の使用量</span></div>
+    </div>
+    <div className={classes.hubList}>{segments.map(({ hub, share, color }) => {
     const usage = hub.state?.periods[period];
     const hostnames = hub.state?.devices.map((device) => device.hostname).join(', ');
-    const ratio = usage && maxTokens > 0 ? usage.totalTokens / maxTokens * 100 : 0;
 
     return <article key={hub.hubId} className={classes.hub} aria-label={hub.name}>
       <div className={classes.hubHeading}>
         <div className={classes.hubIdentity}>
+          <i className={classes.hubDot} style={{ background: color }} title={usage ? `${share.toFixed(1)}%` : '未受信'} />
           <span className={classes.hubName} title={hub.name}>{hub.name}</span>
           {hostnames ? <Tooltip label={hostnames} multiline maw={360} events={{ hover: true, focus: true, touch: true }}>
             <span className={classes.hostnames} tabIndex={0}>{hostnames}</span>
@@ -188,11 +209,9 @@ function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey
           <small>${usage.costUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</small>
         </div> : <span className={classes.hubWaiting}>未受信</span>}
       </div>
-      {hub.state && usage ? <>
-        <div className={classes.hubBar} role="img" aria-label={`${hub.name}: ${usage.totalTokens.toLocaleString('en-US')} tokens（最大Hub比 ${Math.round(ratio)}%）`}><i style={{ width: `${ratio}%` }} /></div>
-      </> : <p className={classes.emptyHub}>まだ情報を受信していません</p>}
+      {!usage ? <p className={classes.emptyHub}>まだ情報を受信していません</p> : null}
     </article>;
-  })}</div>;
+  })}</div></>;
 }
 
 function formatTokens(value: number) {
