@@ -98,9 +98,9 @@
 .hubName { flex-shrink: 0; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #163b32; font-size: 14px; font-weight: 700; }
 .hostnames { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #70877f; font-size: 12px; }
 .hostnames:focus-visible { outline: 2px solid #14866e; outline-offset: 2px; }
-.hubUsage { display: grid; justify-items: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hubUsage { display: flex; align-items: baseline; justify-content: flex-end; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .hubUsage strong { color: #0b725b; font-size: 13px; }
-.hubUsage small, .hubWaiting { color: #70877f; font-size: 12px; }
+.hubUsage span, .hubUsage small, .hubWaiting { color: #70877f; font-size: 12px; }
 .hubBar { height: 4px; margin: 8px 0 6px; overflow: hidden; border-radius: 99px; background: #e5ece9; }
 .hubBar i { display: block; height: 100%; background: #369a80; border-radius: inherit; }
 .hubMeta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; color: #849791; font-size: 12px; }

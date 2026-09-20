@@ -98,7 +98,7 @@ function Dashboard() {
           </section>
 
           <section className={classes.panel} id="limits">
-            <PanelHeader title="利用枠" caption="現在の保存値" />
+            <PanelHeader title="利用枠" />
             <div className={classes.limitList}>
               <Limit name="Codex" value={95} detail="Weekly" reset="リセットまで 6日14時間" />
               <Limit name="Cursor" value={97} detail="Models" reset="リセットまで 22時間" />
@@ -123,7 +123,7 @@ function Dashboard() {
           </section>
 
           <section className={`${classes.panel} ${classes.hubPanel}`} id="hubs">
-            <PanelHeader title="Hub・デバイス" caption="SQLiteから取得" live />
+            <PanelHeader title="Hub・デバイス" live />
             {overview.isPending ? <HubLoading /> : overview.isError ? <div className={classes.hubError}>Hub・デバイスを取得できませんでした</div> : <HubList hubs={overview.data.hubs} period={period} />}
           </section>
         </div>
@@ -172,6 +172,7 @@ function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey
         </div>
         {usage ? <div className={classes.hubUsage}>
           <strong title={`${usage.totalTokens.toLocaleString('en-US')} tokens`}>{formatTokens(usage.totalTokens)}</strong>
+          <span>/</span>
           <small>${usage.costUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</small>
         </div> : <span className={classes.hubWaiting}>未受信</span>}
       </div>
