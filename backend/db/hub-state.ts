@@ -2,6 +2,11 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { HubUsageOverview } from '../../contracts/usage-overview.ts';
 
 type JsonRecord = Record<string, unknown>;
+type StoredPeriods = {
+    today: { totalTokens: number; costUsd: number };
+    month: { totalTokens: number; costUsd: number };
+    allTime: { totalTokens: number; costUsd: number };
+};
 
 const FRESHNESS_DEVICE_FIELDS = ['updatedAt', 'receivedAt', 'ageMs', 'stale'] as const;
 
@@ -100,6 +105,7 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
     const stats = JSON.parse(statsJson) as JsonRecord;
     if (typeof stats.updatedAt !== 'string' || !Array.isArray(stats.devices))
         throw new Error('Hubの保存済み状態が不正です。');
+    const periods = stats.periods as StoredPeriods;
     const devices = stats.devices.map(value => {
         const device = value as JsonRecord;
         if (typeof device.deviceId !== 'string' || typeof device.hostname !== 'string'
@@ -115,7 +121,16 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
             stale: device.stale,
         };
     });
-    return { updatedAt: stats.updatedAt, receivedAt, devices };
+    return {
+        updatedAt: stats.updatedAt,
+        receivedAt,
+        periods: {
+            today: { totalTokens: periods.today.totalTokens, costUsd: periods.today.costUsd },
+            month: { totalTokens: periods.month.totalTokens, costUsd: periods.month.costUsd },
+            total: { totalTokens: periods.allTime.totalTokens, costUsd: periods.allTime.costUsd },
+        },
+        devices,
+    };
 }
 
 function applyFreshness(stats: JsonRecord, freshness: JsonRecord): JsonRecord {

@@ -1,7 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import type { HubDeviceOverview, HubUsageOverview } from '../../../contracts/usage-overview.ts';
+import { Tooltip } from '@mantine/core';
+import type { HubUsageOverview } from '../../../contracts/usage-overview.ts';
 import { getUsageOverview } from '../features/usage-overview.ts';
 import classes from './index.module.css';
 
@@ -123,7 +124,7 @@ function Dashboard() {
 
           <section className={`${classes.panel} ${classes.hubPanel}`} id="hubs">
             <PanelHeader title="Hub・デバイス" caption="SQLiteから取得" live />
-            {overview.isPending ? <HubLoading /> : overview.isError ? <div className={classes.hubError}>Hub・デバイスを取得できませんでした</div> : <HubList hubs={overview.data.hubs} />}
+            {overview.isPending ? <HubLoading /> : overview.isError ? <div className={classes.hubError}>Hub・デバイスを取得できませんでした</div> : <HubList hubs={overview.data.hubs} period={period} />}
           </section>
         </div>
 
@@ -153,22 +154,37 @@ function HubLoading() {
   return <div className={classes.hubLoading} aria-label="Hub・デバイスを読み込み中"><i /><i /><i /></div>;
 }
 
-function HubList({ hubs }: { hubs: HubUsageOverview[] }) {
-  return <div className={classes.hubList}>{hubs.map((hub) => <article key={hub.hubId} className={classes.hub}>
-    <div className={classes.hubHeading}><span><i data-status={hub.state ? 'received' : 'waiting'} />{hub.name}</span><strong>{hub.state ? `${hub.state.devices.length}台` : '未受信'}</strong></div>
-    {hub.state ? <><div className={classes.deviceList}>{hub.state.devices.map((device) => <Device key={device.deviceId} device={device} />)}</div><time dateTime={hub.state.updatedAt}>更新 {formatDateTime(hub.state.updatedAt)}</time></> : <p className={classes.emptyHub}>まだ情報を受信していません</p>}
-  </article>)}</div>;
+function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey }) {
+  const maxTokens = hubs.reduce((max, hub) => Math.max(max, hub.state?.periods[period].totalTokens ?? 0), 0);
+
+  return <div className={classes.hubList}>{hubs.map((hub) => {
+    const usage = hub.state?.periods[period];
+    const hostnames = hub.state?.devices.map((device) => device.hostname).join(', ');
+    const ratio = usage && maxTokens > 0 ? usage.totalTokens / maxTokens * 100 : 0;
+
+    return <article key={hub.hubId} className={classes.hub} aria-label={hub.name}>
+      <div className={classes.hubHeading}>
+        <div className={classes.hubIdentity}>
+          <span className={classes.hubName} title={hub.name}>{hub.name}</span>
+          {hostnames ? <Tooltip label={hostnames} multiline maw={360} events={{ hover: true, focus: true, touch: true }}>
+            <span className={classes.hostnames} tabIndex={0}>{hostnames}</span>
+          </Tooltip> : null}
+        </div>
+        {usage ? <div className={classes.hubUsage}>
+          <strong title={`${usage.totalTokens.toLocaleString('en-US')} tokens`}>{formatTokens(usage.totalTokens)}</strong>
+          <small>${usage.costUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</small>
+        </div> : <span className={classes.hubWaiting}>未受信</span>}
+      </div>
+      {hub.state && usage ? <>
+        <div className={classes.hubBar} role="img" aria-label={`${hub.name}: ${usage.totalTokens.toLocaleString('en-US')} tokens（最大Hub比 ${Math.round(ratio)}%）`}><i style={{ width: `${ratio}%` }} /></div>
+        <div className={classes.hubMeta}><span>{hub.state.devices.length}台</span><time dateTime={hub.state.updatedAt}>更新 {formatDateTime(hub.state.updatedAt)}</time></div>
+      </> : <p className={classes.emptyHub}>まだ情報を受信していません</p>}
+    </article>;
+  })}</div>;
 }
 
-function Device({ device }: { device: HubDeviceOverview }) {
-  return <div className={classes.device}><span>{device.hostname}</span><small>{platformLabel(device.platform)}</small><i data-stale={device.stale}>{device.stale ? '要確認' : '受信中'}</i></div>;
-}
-
-function platformLabel(platform: string) {
-  if (platform.startsWith('darwin')) return 'macOS';
-  if (platform.startsWith('win32')) return 'Windows';
-  if (platform.startsWith('linux')) return 'Linux';
-  return platform;
+function formatTokens(value: number) {
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
 }
 
 function formatDateTime(value: string) {

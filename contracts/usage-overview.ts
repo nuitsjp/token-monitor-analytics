@@ -11,6 +11,7 @@ export interface HubUsageOverview {
 export interface HubDeviceState {
   updatedAt: string;
   receivedAt: string;
+  periods: Record<'today' | 'month' | 'total', { totalTokens: number; costUsd: number }>;
   devices: HubDeviceOverview[];
 }
 
