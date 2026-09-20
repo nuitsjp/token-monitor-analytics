@@ -53,12 +53,12 @@ function Dashboard() {
         </a>
         <p className={classes.navLabel}>WORKSPACE</p>
         <nav className={classes.navigation} aria-label="ダッシュボード内ナビゲーション">
-          <a href="#top" aria-current="page"><span>▦</span>ダッシュボード</a>
-          <a href="#trend"><span>⌁</span>トレンド</a>
-          <a href="#tools"><span>▣</span>ツール</a>
-          <a href="#models"><span>♧</span>モデル</a>
-          <a href="#hubs"><span>▭</span>Hub・デバイス</a>
-          <a href="#limits"><span>◔</span>利用枠</a>
+          <a href="#top" aria-current="page"><NavigationIcon name="dashboard" />ダッシュボード</a>
+          <a href="#trend"><NavigationIcon name="trend" />トレンド</a>
+          <a href="#tools"><NavigationIcon name="tools" />ツール</a>
+          <a href="#models"><NavigationIcon name="models" />モデル</a>
+          <a href="#hubs"><NavigationIcon name="devices" />Hub・デバイス</a>
+          <a href="#limits"><NavigationIcon name="limits" />利用枠</a>
         </nav>
         <div className={classes.sidebarStatus}>
           <p><i className={classes.liveDot} />受信済み {receivedHubs} / 登録 {registeredHubs} Hub</p>
@@ -138,6 +138,18 @@ function Dashboard() {
   );
 }
 
+function NavigationIcon({ name }: { name: 'dashboard' | 'trend' | 'tools' | 'models' | 'devices' | 'limits' }) {
+  const paths = {
+    dashboard: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
+    trend: 'M3 3v18h18 M6 15l5-5 4 3 6-8',
+    tools: 'M8 7V4h8v3 M3 7h18v14H3z M3 12h18 M10 12v3h4v-3',
+    models: 'M9 3h6v6H9z M2 16h6v5H2z M16 16h6v5h-6z M12 9v4 M5 16v-3h14v3',
+    devices: 'M2 3h20v14H2z M12 17v4 M7 21h10',
+    limits: 'M4 19a10 10 0 1 1 16 0 M12 13l5-6 M5 13H3 M12 5V3 M19 13h2',
+  };
+  return <svg className={classes.navIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;
+}
+
 function Kpi({ label, value, suffix, note, live = false }: { label: string; value: string; suffix?: string; note: string; live?: boolean }) {
   return <div className={classes.kpi}><div className={classes.kpiLabel}>{label}{live ? <span className={classes.realBadge}>LIVE</span> : null}</div><strong>{value}</strong>{suffix ? <span className={classes.kpiSuffix}>{suffix}</span> : null}<small>{note}</small></div>;
 }
@@ -178,7 +190,6 @@ function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey
       </div>
       {hub.state && usage ? <>
         <div className={classes.hubBar} role="img" aria-label={`${hub.name}: ${usage.totalTokens.toLocaleString('en-US')} tokens（最大Hub比 ${Math.round(ratio)}%）`}><i style={{ width: `${ratio}%` }} /></div>
-        <div className={classes.hubMeta}><span>{hub.state.devices.length}台</span><time dateTime={hub.state.updatedAt}>更新 {formatDateTime(hub.state.updatedAt)}</time></div>
       </> : <p className={classes.emptyHub}>まだ情報を受信していません</p>}
     </article>;
   })}</div>;
@@ -186,8 +197,4 @@ function HubList({ hubs, period }: { hubs: HubUsageOverview[]; period: PeriodKey
 
 function formatTokens(value: number) {
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
-}
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
