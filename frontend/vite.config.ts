@@ -4,7 +4,7 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import { fileURLToPath } from 'node:url';
 
 const local = (path: string) => fileURLToPath(new URL(path, import.meta.url));
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: local('.'),
   plugins: [
     tanstackRouter({
@@ -15,6 +15,9 @@ export default defineConfig({
     }),
     react(),
   ],
+  define: {
+    __MOCK__: JSON.stringify(mode === 'mock'),
+  },
   server: {
     host: '127.0.0.1',
     port: 5173,
@@ -22,4 +25,4 @@ export default defineConfig({
     proxy: { '/api': { target: 'http://127.0.0.1:3000', changeOrigin: true } },
   },
   build: { outDir: 'dist', target: 'es2022', sourcemap: false, emptyOutDir: true },
-});
+}));
