@@ -20,6 +20,7 @@ export interface ControlledHub {
     activeConnections: number;
     send: (event: string, payload: unknown) => void;
     sendRaw: (frame: string) => void;
+    writeBytes: (bytes: Uint8Array) => void;
     endConnections: () => void;
     dropConnections: () => void;
     rejectNewConnections: () => void;
@@ -72,6 +73,10 @@ export const test = base.extend<{
                     sendRaw: (frame) => {
                         for (const response of connected)
                             response.write(frame);
+                    },
+                    writeBytes: (bytes) => {
+                        for (const response of connected)
+                            response.write(bytes);
                     },
                     endConnections: () => {
                         for (const response of [...connected])

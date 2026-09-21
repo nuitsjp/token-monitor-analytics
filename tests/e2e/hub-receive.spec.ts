@@ -58,7 +58,6 @@ test('通信断後に当該Hubへ再接続し、切断中は保存値と他Hub�
     expect(health.ok()).toBe(true);
 
     await waitForConnections(hubs, [1, 1]);
-    expect(hubs.map(hub => hub.activeConnections)).toEqual([1, 1]);
     const restoredA = statsAt('2026-09-21T14:03:00.000Z');
     sendStats(hubs[0], 'snapshot', restoredA);
     await expect.poll(() => readState(app.databasePath, 'hub-a').updatedAt).toBe(restoredA.updatedAt);
@@ -79,6 +78,26 @@ test('通信断後に当該Hubへ再接続し、切断中は保存値と他Hub�
     expect(app.output).toContain('"cause":"invalid-notification"');
     expect(app.output).not.toContain(hubs[0].token);
     expect(app.output).not.toContain(hubs[1].token);
+});
+
+test('不正なバイト列では当該Hubを再接続せず停止する', async ({ app, hubs, request }) => {
+    await waitForConnections(hubs, [1, 1]);
+    const statsA = statsAt('2026-09-21T16:00:00.000Z');
+    const statsB = statsAt('2026-09-21T16:01:00.000Z');
+    sendStats(hubs[0], 'snapshot', statsA);
+    sendStats(hubs[1], 'snapshot', statsB);
+    await expect.poll(() => readStates(app.databasePath).length).toBe(2);
+
+    hubs[0].writeBytes(Uint8Array.from([0xff, 0xfe, 0xfd]));
+    await waitForConnections(hubs, [0, 1]);
+    await expect.poll(() => app.output).toContain('"cause":"invalid-notification"');
+    const continuedB = statsAt('2026-09-21T16:02:00.000Z');
+    ((continuedB.periods as JsonRecord).today as JsonRecord).totalTokens = 888;
+    sendStats(hubs[1], 'stats', continuedB);
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-b')).toBe(888);
+    expect(readState(app.databasePath, 'hub-a').updatedAt).toBe(statsA.updatedAt);
+    const health = await request.get('/health');
+    expect(health.ok()).toBe(true);
 });
 
 test('HTTP 401では当該Hubを再接続しない', async ({ app, hubs, request }) => {

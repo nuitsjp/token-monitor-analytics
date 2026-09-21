@@ -23,11 +23,11 @@ async function receive(config: HubConnectionConfig, db: DatabaseSync, log: Fasti
             const retry = await receiveOnce(config, db, log, signal, notifySaved);
             if (signal.aborted || !retry)
                 return;
-            log.error({ hubId: config.id, cause: 'disconnected' }, 'Hub受信が切断されました');
+            log.warn({ hubId: config.id, cause: 'disconnected' }, 'Hub受信が切断されました');
         } catch {
             if (signal.aborted)
                 return;
-            log.error({ hubId: config.id, cause: 'connection' }, 'Hub受信が切断されました');
+            log.warn({ hubId: config.id, cause: 'connection' }, 'Hub受信が切断されました');
         }
         await sleep(RECONNECT_INTERVAL_MS, signal);
     }
@@ -54,7 +54,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 async function receiveOnce(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger, signal: AbortSignal, notifySaved: () => void): Promise<boolean> {
     const response = await fetch(new URL('/api/stats/stream', config.url), {
         headers: { Authorization: `Bearer ${config.token}`, Accept: 'text/event-stream', 'x-token-monitor-stream': '2' },
-        redirect: 'error', signal,
+        redirect: 'manual', signal,
     });
     if (!response.ok || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream') || !response.body) {
         await response.body?.cancel();
@@ -109,7 +109,13 @@ async function receiveOnce(config: HubConnectionConfig, db: DatabaseSync, log: F
     };
     // CR/LF/CRLFとUTF-8の分割はネットワークchunk境界に依存させない。
     for await (const chunk of response.body) {
-        const text = decoder.decode(chunk, { stream: true });
+        let text: string;
+        try {
+            text = decoder.decode(chunk, { stream: true });
+        } catch {
+            log.error({ hubId: config.id, cause: 'invalid-notification' }, 'Hub受信を停止しました');
+            return false;
+        }
         for (const character of text) {
             if (skipLF) { skipLF = false; if (character === '\n') continue; }
             if (character === '\r' || character === '\n') {
@@ -119,6 +125,11 @@ async function receiveOnce(config: HubConnectionConfig, db: DatabaseSync, log: F
             } else buffer += character;
         }
     }
-    decoder.decode();
+    try {
+        decoder.decode();
+    } catch {
+        log.error({ hubId: config.id, cause: 'invalid-notification' }, 'Hub受信を停止しました');
+        return false;
+    }
     return !signal.aborted;
 }
