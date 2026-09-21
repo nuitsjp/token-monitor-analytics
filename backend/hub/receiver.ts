@@ -5,9 +5,9 @@ import { saveHubState, updateHubFreshness } from '../db/hub-state.ts';
 import { parseHubNotification } from './protocol.ts';
 
 // 接続は1回のみ。失敗後の再開はアプリケーションの再起動で行う。
-export function startHubReceiver(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger): { stop: () => Promise<void> } {
+export function startHubReceiver(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger, notifySaved: () => void): { stop: () => Promise<void> } {
     const controller = new AbortController();
-    const done = receive(config, db, log, controller.signal).catch(() => {
+    const done = receive(config, db, log, controller.signal, notifySaved).catch(() => {
         // 外部由来の例外・URL・応答本文には秘密情報が含まれ得るため出力しない。
         if (!controller.signal.aborted)
             log.error({ hubId: config.id, cause: 'connection' }, 'Hub受信を停止しました');
@@ -15,7 +15,7 @@ export function startHubReceiver(config: HubConnectionConfig, db: DatabaseSync, 
     return { stop: async () => { controller.abort(); await done; } };
 }
 
-async function receive(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger, signal: AbortSignal): Promise<void> {
+async function receive(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger, signal: AbortSignal, notifySaved: () => void): Promise<void> {
     const response = await fetch(new URL('/api/stats/stream', config.url), {
         headers: { Authorization: `Bearer ${config.token}`, Accept: 'text/event-stream', 'x-token-monitor-stream': '2' },
         redirect: 'error', signal,
@@ -54,6 +54,8 @@ async function receive(config: HubConnectionConfig, db: DatabaseSync, log: Fasti
         }
         initialReceived = true;
         log.info({ hubId: config.id, event: notification.kind, receivedAt }, 'Hubの最新状態を保存しました');
+        // COMMIT済みの保存結果だけを配信する。配信側が失敗を処理し、保存へ戻さない。
+        notifySaved();
         eventName = '';
         data = [];
         return true;
