@@ -121,6 +121,10 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
             stale: device.stale,
         };
     });
+    const historyPreview = stats.historyPreview as { summary?: { activeDays?: number } } | undefined;
+    const activeDays = typeof historyPreview?.summary?.activeDays === 'number'
+        ? historyPreview.summary.activeDays
+        : 0;
     return {
         updatedAt: stats.updatedAt,
         receivedAt,
@@ -130,6 +134,7 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
             total: { totalTokens: periods.allTime.totalTokens, costUsd: periods.allTime.costUsd },
         },
         devices,
+        activeDays,
     };
 }
 

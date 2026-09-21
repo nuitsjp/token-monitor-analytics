@@ -18,11 +18,12 @@
 
 /* 本文 */
 .main { max-width: 1500px; margin-left: 220px; padding: var(--tm-space-5) var(--tm-space-5) var(--tm-space-6); }
-.pageHeader { display: flex; min-height: 62px; align-items: flex-start; justify-content: space-between; gap: var(--tm-space-5); }
+.pageHeader { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: var(--tm-space-5); }
 .headingLine { display: flex; align-items: center; gap: var(--tm-space-2); }
 .headingLine h1 { margin: 0; color: var(--tm-text-1); font-size: 28px; letter-spacing: -.03em; line-height: 1.2; }
 .headingLine span { border: 1px solid var(--tm-border-1); border-radius: var(--mantine-radius-sm); padding: 2px var(--tm-space-2); color: var(--tm-text-3); background: var(--tm-surface-panel); font-size: var(--mantine-font-size-xs); font-weight: 600; }
-.pageHeader p { margin: var(--tm-space-2) 0 0; color: var(--tm-text-3); font-size: var(--mantine-font-size-sm); }
+.headerControls { display: flex; align-items: center; gap: var(--tm-space-3); }
+.headerMeta { color: var(--tm-text-3); font-size: var(--mantine-font-size-xs); white-space: nowrap; }
 .periodSwitch { display: flex; border-radius: var(--mantine-radius-md); background: var(--tm-surface-sunken); padding: 3px; }
 .periodSwitch button { min-width: 68px; border: 0; border-radius: var(--mantine-radius-sm); padding: var(--tm-space-2) var(--tm-space-3); background: transparent; color: var(--tm-text-2); cursor: pointer; font-size: var(--mantine-font-size-xs); font-weight: 700; letter-spacing: .05em; }
 .periodSwitch button[aria-pressed='true'] { background: var(--tm-surface-panel); color: var(--mantine-color-brand-8); box-shadow: 0 1px 3px rgb(21 53 46 / 12%); }

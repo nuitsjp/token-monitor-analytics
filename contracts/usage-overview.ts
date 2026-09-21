@@ -13,6 +13,7 @@ export interface HubDeviceState {
   receivedAt: string;
   periods: Record<'today' | 'month' | 'total', { totalTokens: number; costUsd: number }>;
   devices: HubDeviceOverview[];
+  activeDays?: number;
 }
 
 export interface HubDeviceOverview {
