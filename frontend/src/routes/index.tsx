@@ -64,9 +64,14 @@ function Dashboard() {
   const connectionStatus = useUsageConnectionStatus();
   const hubs = overview.data?.hubs ?? [];
   const receivedHubs = hubs.filter((hub) => hub.state !== null).length;
+  const activeHubs = hubs.flatMap((hub) => (hub.state ? [hub.state] : []));
   const deviceCount = hubs.reduce((sum, hub) => sum + (hub.state?.devices.length ?? 0), 0);
   const fetchedAt = overview.dataUpdatedAt ? formatTime(overview.dataUpdatedAt) : null;
   const activeSection = useActiveSection(SECTION_IDS);
+
+  const totalTokens = activeHubs.reduce((sum, state) => sum + state.periods[period].totalTokens, 0);
+  const totalCostUsd = activeHubs.reduce((sum, state) => sum + state.periods[period].costUsd, 0);
+  const maxActiveDays = activeHubs.length > 0 ? Math.max(...activeHubs.map((state) => state.activeDays ?? 0)) : 0;
 
   return (
     <div className={classes.workspace}>
@@ -85,37 +90,41 @@ function Dashboard() {
         <div className={classes.sidebarStatus}>
           <p>受信済み {receivedHubs} / 登録 {hubs.length} Hub</p>
           <p>デバイス {deviceCount} 台</p>
-          {fetchedAt ? <p>取得 {fetchedAt}</p> : null}
         </div>
       </aside>
 
       <main className={classes.main}>
         <div id="top" className={classes.overview}>
           <header className={classes.pageHeader}>
-            <div><div className={classes.headingLine}><h1>ダッシュボード</h1><span>固定データを含む</span></div><p>{selected.range}</p></div>
-            <div className={classes.periodSwitch} role="group" aria-label="集計期間">
-              {(Object.keys(PERIODS) as PeriodKey[]).map((key) => (
-                <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{key.toUpperCase()}</button>
-              ))}
+            <div className={classes.headingLine}><h1>ダッシュボード</h1><span>固定データを含む</span></div>
+            <div className={classes.headerControls}>
+              <span className={classes.headerMeta}>
+                {[selected.shortRange, fetchedAt ? `取得 ${fetchedAt}` : null].filter(Boolean).join(' · ')}
+              </span>
+              <div className={classes.periodSwitch} role="group" aria-label="集計期間">
+                {(Object.keys(PERIODS) as PeriodKey[]).map((key) => (
+                  <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{key.toUpperCase()}</button>
+                ))}
+              </div>
             </div>
           </header>
 
           <section className={classes.kpis} aria-label="主要指標">
-            <Kpi label="トークン" value={formatTokens(selected.tokens)} note="選択期間の合計" />
-            <Kpi label="推定コスト" value={selected.cost} note="USD 換算" />
-            <Kpi label="アクティブ日数" value={selected.activeDays} suffix="日" note="3日 連続利用" />
+            <Kpi label="トークン" value={overview.isPending ? '—' : formatTokens(totalTokens)} note="全Hub合計" saved />
+            <Kpi label="推定コスト" value={overview.isPending ? '—' : formatUsd(totalCostUsd)} note="USD 換算" saved />
+            <Kpi label="アクティブ日数" value={overview.isPending ? '—' : String(maxActiveDays)} suffix="日" note="受信Hubの最大値" saved />
             <Kpi label="デバイス" value={overview.isPending ? '—' : String(deviceCount)} suffix="台" note={`受信済み ${receivedHubs} Hub`} saved />
           </section>
         </div>
 
         <div className={classes.primaryGrid}>
           <section className={`${classes.panel} ${classes.trendPanel}`} id="trend" aria-labelledby="trend-title">
-            <PanelHeader id="trend-title" title="利用トレンド" caption={`トークン / 日 · ${period.toUpperCase()}`} />
+            <PanelHeader id="trend-title" title="利用トレンド" caption="トークン / 日" />
             <TrendChart period={period} hubs={hubs} />
           </section>
 
           <section className={`${classes.panel} ${classes.hubPanel}`} id="hubs" aria-labelledby="hubs-title">
-            <PanelHeader id="hubs-title" title="Hub・デバイス" caption={[selected.shortRange, fetchedAt ? `取得 ${fetchedAt}` : null].filter(Boolean).join(' · ')} saved />
+            <PanelHeader id="hubs-title" title="Hub・デバイス" saved />
             {connectionStatus === 'reconnecting' ? <p role="status" className={classes.hubError}>再接続中</p> : null}
             {overview.isPending ? <HubLoading /> : overview.isError ? <div className={classes.hubError}>Hub・デバイスを取得できませんでした</div> : <HubList hubs={hubs} period={period} />}
           </section>
@@ -188,15 +197,14 @@ function NavigationIcon({ name }: { name: IconName }) {
 const BADGE_STYLES = { label: { fontSize: '12px' } };
 
 function SourceBadge({ saved }: { saved: boolean }) {
-  return saved
-    ? <Badge variant="light" color="brand" size="md" radius="sm" tt="none" fw={600} styles={BADGE_STYLES}>保存値</Badge>
-    : <Badge variant="outline" color="gray" size="md" radius="sm" tt="none" fw={600} styles={BADGE_STYLES}>固定サンプル</Badge>;
+  if (saved) return null;
+  return <Badge variant="outline" color="gray" size="md" radius="sm" tt="none" fw={600} styles={BADGE_STYLES}>固定サンプル</Badge>;
 }
 
 function Kpi({ label, value, suffix, note, saved = false }: { label: string; value: string; suffix?: string; note: string; saved?: boolean }) {
   return (
     <div className={classes.kpi}>
-      <div className={classes.kpiLabel}>{label}{saved ? <SourceBadge saved /> : null}</div>
+      <div className={classes.kpiLabel}>{label}<SourceBadge saved={saved} /></div>
       <div className={classes.kpiValue}><strong>{value}</strong>{suffix ? <span>{suffix}</span> : null}</div>
       <small>{note}</small>
     </div>
