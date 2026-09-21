@@ -2,7 +2,7 @@
 
 ## 1. 目的と範囲
 
-UC-1の受信・保存・保存後通知と切断時再接続、UC-2-Mの初回取得ダッシュボードは完了しています。自動更新のUC-2-X1、全Hub統合情報表示のUC-2-X2、モデルトークン構成比のUC-2-X3、利用枠表示のUC-2-X4も完成系承認、段階6のE2E検証まで完了しています。他のパーツは固定サンプルから段階的に実装します。旧製品の機能を暗黙に復元しません。
+UC-1の受信・保存・保存後通知と切断時再接続、UC-2-Mの初回取得ダッシュボードは完了しています。自動更新のUC-2-X1、全Hub統合情報表示のUC-2-X2、ツール別トークン構成比のUC-2-X3、モデルトークン構成比のUC-2-X4、利用枠表示のUC-2-X5も完成系承認、段階6のE2E検証まで完了しています。他のパーツは固定サンプルから段階的に実装します。旧製品の機能を暗黙に復元しません。
 
 ## 2. 基盤の制約
 
@@ -59,8 +59,8 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
-| UC-2-X4 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全23件、Lint・型・ビルド・文書成功） | 合格 | 本行を含む完了コミット |
-| UC-2-X4 | 6 | Windows / Chrome / 実Hub Private・Work・検証専用SQLite・本番ビルド | 2026-09-21 | 現行Hub設定で本番entryを起動。利用枠はアカウント見出し、Codex Pro 5x は Weekly のみ、リセットは未来時刻、メール非公開、固定サンプルなしを確認 | 合格 | 本行を含む完了コミット |
+| UC-2-X5 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全23件、Lint・型・ビルド・文書成功） | 合格 | 本行を含む完了コミット |
+| UC-2-X5 | 6 | Windows / Chrome / 実Hub Private・Work・検証専用SQLite・本番ビルド | 2026-09-21 | 現行Hub設定で本番entryを起動。利用枠はアカウント見出し、Codex Pro 5x は Weekly のみ、リセットは未来時刻、メール非公開、固定サンプルなしを確認 | 合格 | 本行を含む完了コミット |
 | UC-2-X3 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全21件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（33件成功）。承認済み本番コードは変更なし | 合格 | 本行を含む完了コミット |
 | UC-2-X3 | 4 | Windows / Edge 140 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIでモデル構成比（MONTH上位9件＋その他、TODAY4件のみ、TOTAL上位9件＋その他）、期間切替、固定サンプルバッジ削除、console error 0件を確認。テストコードは未変更 | 合格 | `02d949f` |
 | UC-2-X3 | 2 | Windows / Edge 140 / 固定サンプルモック | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）、Playwright CLIで全Hub合算・上位9件＋その他・期間切替連動・固定サンプルバッジ削除・データなし表示・console error 0件を確認 | 合格 | `6ad171e` |
