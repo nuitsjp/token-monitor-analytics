@@ -485,23 +485,29 @@ function readOverview(path: string): UsageOverview {
     });
 }
 
-function periodOf(value: unknown): { totalTokens: number; costUsd: number; models?: Record<string, number> } {
+function periodOf(value: unknown): { totalTokens: number; costUsd: number; clients?: Record<string, number>; models?: Record<string, number> } {
     const period = value as JsonRecord;
+    const clients = parseNumericMap(period.clients);
     const models = parseModels(period.models);
     return {
         totalTokens: period.totalTokens as number,
         costUsd: period.costUsd as number,
+        ...(clients !== undefined ? { clients } : {}),
         ...(models !== undefined ? { models } : {}),
     };
 }
 
 function parseModels(models: unknown): Record<string, number> | undefined {
-    if (!models || typeof models !== 'object')
+    return parseNumericMap(models);
+}
+
+function parseNumericMap(value: unknown): Record<string, number> | undefined {
+    if (!value || typeof value !== 'object')
         return undefined;
     const result: Record<string, number> = {};
-    for (const [key, value] of Object.entries(models)) {
-        if (typeof value === 'number' && Number.isFinite(value))
-            result[key] = value;
+    for (const [key, item] of Object.entries(value)) {
+        if (typeof item === 'number' && Number.isFinite(item))
+            result[key] = item;
     }
     return result;
 }

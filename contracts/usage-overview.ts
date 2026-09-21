@@ -11,8 +11,11 @@ export interface HubUsageOverview {
 export interface PeriodUsage {
   totalTokens: number;
   costUsd: number;
+  clients?: Record<string, number>;
   models?: Record<string, number>;
 }
+
+export type UsagePeriod = PeriodUsage;
 
 export interface HubDeviceState {
   updatedAt: string;

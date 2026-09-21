@@ -5,6 +5,7 @@ type JsonRecord = Record<string, unknown>;
 type StoredPeriod = {
     totalTokens: number;
     costUsd: number;
+    clients?: unknown;
     models?: Record<string, number>;
 };
 type StoredPeriods = {
@@ -137,16 +138,19 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
             today: {
                 totalTokens: periods.today.totalTokens,
                 costUsd: periods.today.costUsd,
+                clients: parseNumericMap(periods.today.clients),
                 models: parseModels(periods.today.models),
             },
             month: {
                 totalTokens: periods.month.totalTokens,
                 costUsd: periods.month.costUsd,
+                clients: parseNumericMap(periods.month.clients),
                 models: parseModels(periods.month.models),
             },
             total: {
                 totalTokens: periods.allTime.totalTokens,
                 costUsd: periods.allTime.costUsd,
+                clients: parseNumericMap(periods.allTime.clients),
                 models: parseModels(periods.allTime.models),
             },
         },
@@ -162,6 +166,17 @@ function parseModels(models: unknown): Record<string, number> | undefined {
     for (const [key, value] of Object.entries(models)) {
         if (typeof value === 'number' && Number.isFinite(value))
             result[key] = value;
+    }
+    return result;
+}
+
+function parseNumericMap(value: unknown): Record<string, number> | undefined {
+    if (!value || typeof value !== 'object')
+        return undefined;
+    const result: Record<string, number> = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (typeof item === 'number' && Number.isFinite(item))
+            result[key] = item;
     }
     return result;
 }
