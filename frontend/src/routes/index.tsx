@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Progress, Tooltip } from '@mantine/core';
-import type { HubDeviceState, HubUsageOverview } from '../../../contracts/usage-overview.ts';
+import type { HubDeviceState, HubLimitWindow, HubUsageOverview } from '../../../contracts/usage-overview.ts';
 import { useUsageConnectionStatus, useUsageOverview } from '../features/usage-updates.tsx';
 import { seriesColor, tokens } from '../app/theme.ts';
 import classes from './index.module.css';
@@ -31,12 +31,6 @@ const TREND_AXIS_MAX = 1590000000;
 const TREND_SPLIT = 0.82;
 
 type ToolRow = { name: string; value: number; share: number; neutral?: boolean };
-
-const LIMITS = [
-  { name: 'Codex', value: 95, detail: 'Weekly', reset: 'リセットまで 6日14時間' },
-  { name: 'Cursor', value: 97, detail: 'Models', reset: 'リセットまで 22時間' },
-  { name: 'Grok', value: 98, detail: 'Weekly', reset: 'リセットまで 4日10時間' },
-];
 
 const SECTIONS = [
   { id: 'top', label: 'ダッシュボード', icon: 'dashboard' },
@@ -180,10 +174,12 @@ function Dashboard() {
           </section>
 
           <section className={classes.panel} id="limits" aria-labelledby="limits-title">
-            <PanelHeader id="limits-title" title="利用枠" caption="残量" />
-            <div className={classes.limitList}>
-              {LIMITS.map((limit) => <Limit key={limit.name} {...limit} />)}
-            </div>
+            <PanelHeader id="limits-title" title="利用枠" caption="残量" saved />
+            {overview.isPending
+              ? <div className={classes.hubLoading} aria-label="利用枠を読み込み中"><span /><span /><span /></div>
+              : overview.isError
+                ? <div className={classes.hubError}>利用枠を取得できませんでした</div>
+                : <LimitList hubs={hubs} />}
           </section>
         </div>
 
@@ -319,6 +315,93 @@ function RankList({ rows }: { rows: ToolRow[] }) {
   );
 }
 
+function limitWindowKey(window: HubLimitWindow) {
+  return [window.provider, window.accountKey, window.kind, window.limitId ?? window.label].join('\0');
+}
+
+const KIND_WINDOW_MINUTES = { session: 300, daily: 1440, weekly: 10080, billing: 43200 } as const;
+
+function limitAccountKey(window: HubLimitWindow) {
+  return `${window.provider}\0${window.accountKey}`;
+}
+
+function collectLimitRows(hubs: HubUsageOverview[]) {
+  const byKey = new Map<string, HubLimitWindow>();
+  for (const hub of hubs) {
+    for (const window of hub.state?.limits ?? []) {
+      const key = limitWindowKey(window);
+      const current = byKey.get(key);
+      if (!current || (window.meterUpdatedAt ?? '') > (current.meterUpdatedAt ?? ''))
+        byKey.set(key, window);
+    }
+  }
+  const rows = [...byKey.values()];
+  const accountMeterUpdated = new Map<string, string>();
+  for (const row of rows) {
+    const at = row.meterUpdatedAt ?? '';
+    const account = limitAccountKey(row);
+    if (at > (accountMeterUpdated.get(account) ?? ''))
+      accountMeterUpdated.set(account, at);
+  }
+  return rows.sort((left, right) => {
+    const leftAccount = limitAccountKey(left);
+    const rightAccount = limitAccountKey(right);
+    const accountTime = (accountMeterUpdated.get(rightAccount) ?? '').localeCompare(accountMeterUpdated.get(leftAccount) ?? '');
+    if (accountTime !== 0) return accountTime;
+    const account = leftAccount.localeCompare(rightAccount);
+    if (account !== 0) return account;
+    const width = windowWidthMinutes(left) - windowWidthMinutes(right);
+    if (width !== 0) return width;
+    return (right.meterUpdatedAt ?? '').localeCompare(left.meterUpdatedAt ?? '');
+  });
+}
+
+function windowWidthMinutes(window: HubLimitWindow) {
+  if (window.windowMinutes != null) return window.windowMinutes;
+  return KIND_WINDOW_MINUTES[window.kind];
+}
+
+function providersWithMultipleAccounts(rows: HubLimitWindow[]) {
+  const accounts = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const set = accounts.get(row.provider) ?? new Set<string>();
+    set.add(row.accountKey);
+    accounts.set(row.provider, set);
+  }
+  return new Set([...accounts].filter(([, set]) => set.size > 1).map(([provider]) => provider));
+}
+
+function limitDisplayName(window: HubLimitWindow, multipleAccounts: boolean) {
+  const provider = capitalize(window.provider);
+  if (!multipleAccounts) return provider;
+  const account = window.accountLabel || window.planLabel;
+  return account ? `${provider} ${account}` : provider;
+}
+
+function limitDetail(window: HubLimitWindow) {
+  return window.label || capitalize(window.kind);
+}
+
+function capitalize(value: string) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+function remainingPercent(value: number) {
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function formatResetUntil(resetsAt: string | null, now = Date.now()) {
+  if (resetsAt === null) return null;
+  const delta = new Date(resetsAt).getTime() - now;
+  if (delta < 0) return 'リセット予定を過ぎています';
+  const minutes = Math.floor(delta / 60000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days >= 1) return `リセットまで ${days}日${hours % 24}時間`;
+  if (hours >= 1) return `リセットまで ${hours}時間`;
+  return `リセットまで ${minutes}分`;
+}
+
 function aggregateToolRows(states: HubDeviceState[], period: PeriodKey): ToolRow[] {
   const tokensByTool = new Map<string, number>();
   for (const state of states) {
@@ -338,12 +421,54 @@ function limitColor(remaining: number) {
   return 'brand';
 }
 
-function Limit({ name, value, detail, reset }: { name: string; value: number; detail: string; reset: string }) {
+function groupLimitAccounts(rows: HubLimitWindow[], multiAccount: Set<string>) {
+  const groups: { key: string; name: string; windows: HubLimitWindow[] }[] = [];
+  for (const window of rows) {
+    const key = limitAccountKey(window);
+    const last = groups.at(-1);
+    if (last?.key === key) {
+      last.windows.push(window);
+      continue;
+    }
+    groups.push({
+      key,
+      name: limitDisplayName(window, multiAccount.has(window.provider)),
+      windows: [window],
+    });
+  }
+  return groups;
+}
+
+function LimitList({ hubs }: { hubs: HubUsageOverview[] }) {
+  const received = hubs.some((hub) => hub.state !== null);
+  if (!received) return <p className={classes.emptyHub} role="status">まだ情報を受信していません</p>;
+  const rows = collectLimitRows(hubs);
+  if (rows.length === 0) return <p className={classes.emptyHub} role="status">表示できる利用枠はありません</p>;
+  const groups = groupLimitAccounts(rows, providersWithMultipleAccounts(rows));
+  return (
+    <div className={classes.limitList}>
+      {groups.map((group) => (
+        <div key={group.key} className={classes.limitAccount} aria-label={group.name}>
+          <strong className={classes.limitAccountName}>{group.name}</strong>
+          {group.windows.map((window) => <Limit key={limitWindowKey(window)} accountName={group.name} window={window} />)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Limit({ accountName, window }: { accountName: string; window: HubLimitWindow }) {
+  const remaining = remainingPercent(window.remainingPercent);
+  const reset = formatResetUntil(window.resetsAt);
+  const detail = limitDetail(window);
   return (
     <div className={classes.limit}>
-      <div className={classes.limitLabel}><strong>{name}</strong><span style={{ color: value < 20 ? limitColor(value) : undefined }}>{value}% <small>残り</small></span></div>
-      <Progress value={value} size={4} radius="xl" color={limitColor(value)} aria-label={`${name}の残量`} />
-      <p><span>{detail}</span><span>{reset}</span></p>
+      <div className={classes.limitLabel}>
+        <strong>{detail}</strong>
+        {reset ? <span className={classes.limitReset}>{reset}</span> : null}
+        <span className={classes.limitRemaining} style={{ color: remaining < 20 ? limitColor(remaining) : undefined }}>{remaining}% <small>残り</small></span>
+      </div>
+      <Progress value={remaining} size={4} radius="xl" color={limitColor(remaining)} aria-label={`${accountName}、${detail}の残量`} />
     </div>
   );
 }

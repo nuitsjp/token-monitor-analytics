@@ -23,6 +23,21 @@ export interface HubDeviceState {
   periods: Record<'today' | 'month' | 'total', PeriodUsage>;
   devices: HubDeviceOverview[];
   activeDays?: number;
+  limits?: HubLimitWindow[];
+}
+
+export interface HubLimitWindow {
+  provider: string;
+  accountKey: string;
+  accountLabel: string;
+  planLabel: string;
+  kind: 'session' | 'daily' | 'weekly' | 'billing';
+  label: string;
+  remainingPercent: number;
+  resetsAt: string | null;
+  meterUpdatedAt: string | null;
+  windowMinutes: number | null;
+  limitId?: string;
 }
 
 export interface HubDeviceOverview {
