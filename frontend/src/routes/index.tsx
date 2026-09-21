@@ -271,31 +271,38 @@ function limitWindowKey(window: HubLimitWindow) {
 
 const KIND_WINDOW_MINUTES = { session: 300, daily: 1440, weekly: 10080, billing: 43200 } as const;
 
+function limitAccountKey(window: HubLimitWindow) {
+  return `${window.provider}\0${window.accountKey}`;
+}
+
 function collectLimitRows(hubs: HubUsageOverview[]) {
   const byKey = new Map<string, HubLimitWindow>();
   for (const hub of hubs) {
     for (const window of hub.state?.limits ?? []) {
       const key = limitWindowKey(window);
       const current = byKey.get(key);
-      if (!current || (window.updatedAt ?? '') > (current.updatedAt ?? ''))
+      if (!current || (window.meterUpdatedAt ?? '') > (current.meterUpdatedAt ?? ''))
         byKey.set(key, window);
     }
   }
   const rows = [...byKey.values()];
-  const providerUpdated = new Map<string, string>();
+  const accountMeterUpdated = new Map<string, string>();
   for (const row of rows) {
-    const at = row.updatedAt ?? '';
-    if (at > (providerUpdated.get(row.provider) ?? ''))
-      providerUpdated.set(row.provider, at);
+    const at = row.meterUpdatedAt ?? '';
+    const account = limitAccountKey(row);
+    if (at > (accountMeterUpdated.get(account) ?? ''))
+      accountMeterUpdated.set(account, at);
   }
   return rows.sort((left, right) => {
-    const providerTime = (providerUpdated.get(right.provider) ?? '').localeCompare(providerUpdated.get(left.provider) ?? '');
-    if (providerTime !== 0) return providerTime;
-    const provider = left.provider.localeCompare(right.provider);
-    if (provider !== 0) return provider;
+    const leftAccount = limitAccountKey(left);
+    const rightAccount = limitAccountKey(right);
+    const accountTime = (accountMeterUpdated.get(rightAccount) ?? '').localeCompare(accountMeterUpdated.get(leftAccount) ?? '');
+    if (accountTime !== 0) return accountTime;
+    const account = leftAccount.localeCompare(rightAccount);
+    if (account !== 0) return account;
     const width = windowWidthMinutes(left) - windowWidthMinutes(right);
     if (width !== 0) return width;
-    return (right.updatedAt ?? '').localeCompare(left.updatedAt ?? '');
+    return (right.meterUpdatedAt ?? '').localeCompare(left.meterUpdatedAt ?? '');
   });
 }
 
