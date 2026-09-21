@@ -402,10 +402,10 @@ function Limit({ accountName, window }: { accountName: string; window: HubLimitW
     <div className={classes.limit}>
       <div className={classes.limitLabel}>
         <strong>{detail}</strong>
-        <span style={{ color: remaining < 20 ? limitColor(remaining) : undefined }}>{remaining}% <small>残り</small></span>
+        {reset ? <span className={classes.limitReset}>{reset}</span> : null}
+        <span className={classes.limitRemaining} style={{ color: remaining < 20 ? limitColor(remaining) : undefined }}>{remaining}% <small>残り</small></span>
       </div>
       <Progress value={remaining} size={4} radius="xl" color={limitColor(remaining)} aria-label={`${accountName}、${detail}の残量`} />
-      {reset ? <p><span>{reset}</span></p> : null}
     </div>
   );
 }
