@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.backend.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "tests/core",
+    "scripts/*.ts"
+  ],
+  "exclude": []
+}
