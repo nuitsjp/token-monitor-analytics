@@ -6,7 +6,7 @@
 
 ## 2. 基盤の制約
 
-Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループバックで起動します。UC-1ではGit管理外の接続設定ファイルから2つのHubへ接続します。利用者向けWeb認証は未実装です。
+Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループバックで起動します。開発とCIのNode.js 24.21.0とPython 3.13は [mise.toml](../mise.toml) と [mise.lock](../mise.lock) が正本です。UC-1ではGit管理外の接続設定ファイルから2つのHubへ接続します。利用者向けWeb認証は未実装です。
 
 <a id="usecases"></a>
 
@@ -28,15 +28,15 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 
 ## 5. 実行・検証手順
 
-リポジトリルートで `npm run setup` を実行します。依存関係は `package-lock.json` で固定し、セットアップはlockfileがある場合に `npm ci` を使います。
+リポジトリルートで `mise run setup` を実行します。依存関係は `package-lock.json` で固定し、セットアップはlockfileがある場合に `npm ci` を使います。Node.js と Python の実体は `mise.lock` で固定します。
 
 | 操作 | コマンド・確認 |
 | --- | --- |
-| 開発起動 | `npm run dev`、http://127.0.0.1:5173/ |
+| 開発起動 | `mise run hub`、http://127.0.0.1:5173/ |
 | 本番形式での起動 | `npm run build` 後に `npm start`、http://127.0.0.1:3000/ |
 | 終了 | Ctrl+C |
 | サーバー確認 | `GET /health` が `{"status":"ok"}` を返す |
-| 基盤・製品検証 | `npm run verify` |
+| 基盤・製品検証 | `mise run verify` |
 | 文書検査 | `python scripts/doc_check.py .` |
 | DB整合性 | `npm run db:check` |
 | 保存後通知の確認 | 起動中に `curl.exe -N http://127.0.0.1:3000/api/usage/stream` を実行し、接続時とHubの保存成功後に `event: update` が届くことを確認する |
@@ -70,7 +70,7 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 | UC-2-X5 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全24件、Lint・型・ビルド・文書成功） | 合格 | `7e9137d` |
 | UC-2-X5 | 6 | Windows / 実Hub Private・Work・検証専用SQLite・本番ビルド / Chrome | 2026-09-21 | アカウント見出し、Weeklyのみを持つCodex Pro 5x、未来時刻のリセット、メール非公開、固定サンプルなしを確認 | 合格 | `7e9137d` |
 
-`npm run verify` はLint、文書検査、設定の基盤テスト、型検査、本番ビルド、UC-1・UC-2の製品E2Eを実行します。CIも同じコマンドを使用します。
+`mise run verify` はLint、文書検査、設定の基盤テスト、型検査、本番ビルド、UC-1・UC-2の製品E2Eを実行します。CIは同じ内容を `npm run verify` で実行します。
 
 基盤の検証（Windows、Node.js 24.19.0、2026-09-20、対象 `da3125f`）は `npm run setup`、`npm run verify`、`npm audit`（脆弱性0件）、`npm run dev`、`npm run db:check`、本番entryの起動とブラウザー描画の確認まで合格しています。
 
