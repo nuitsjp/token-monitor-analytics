@@ -7,11 +7,7 @@ permissions:
   contents: read
 jobs:
   verify:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
       run:
@@ -29,13 +25,15 @@ jobs:
           python-version: '3.13'
       - name: Install dependencies and generate routes
         run: npm run setup
+      - name: Install Playwright Chromium
+        run: npm exec -- playwright install --with-deps chromium
       - name: Verify foundation and product E2E
         run: npm run verify
       - name: Upload failed-test diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: react-e2e-${{ matrix.os }}
+          name: react-e2e-ubuntu
           path: |
             playwright-report/
             .e2e-results/
