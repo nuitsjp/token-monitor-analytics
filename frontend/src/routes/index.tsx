@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Progress, Tooltip } from '@mantine/core';
-import type { HubUsageOverview } from '../../../contracts/usage-overview.ts';
+import type { HubLimitWindow, HubUsageOverview } from '../../../contracts/usage-overview.ts';
 import { useUsageConnectionStatus, useUsageOverview } from '../features/usage-updates.tsx';
 import { seriesColor, tokens } from '../app/theme.ts';
 import classes from './index.module.css';
@@ -39,12 +39,6 @@ const MODEL_ROWS = [
   { name: 'gpt-6-astra', value: 651430000, share: 14 }, { name: 'gemini-3.8-flash', value: 418780000, share: 9 },
   { name: 'その他', value: 139590000, share: 3, neutral: true },
 ];
-const LIMITS = [
-  { name: 'Codex', value: 95, detail: 'Weekly', reset: 'リセットまで 6日14時間' },
-  { name: 'Cursor', value: 97, detail: 'Models', reset: 'リセットまで 22時間' },
-  { name: 'Grok', value: 98, detail: 'Weekly', reset: 'リセットまで 4日10時間' },
-];
-
 const SECTIONS = [
   { id: 'top', label: 'ダッシュボード', icon: 'dashboard' },
   { id: 'trend', label: 'トレンド', icon: 'trend' },
@@ -143,10 +137,12 @@ function Dashboard() {
           </section>
 
           <section className={classes.panel} id="limits" aria-labelledby="limits-title">
-            <PanelHeader id="limits-title" title="利用枠" caption="残量" />
-            <div className={classes.limitList}>
-              {LIMITS.map((limit) => <Limit key={limit.name} {...limit} />)}
-            </div>
+            <PanelHeader id="limits-title" title="利用枠" caption="残量" saved />
+            {overview.isPending
+              ? <div className={classes.hubLoading} aria-label="利用枠を読み込み中"><span /><span /><span /></div>
+              : overview.isError
+                ? <div className={classes.hubError}>利用枠を取得できませんでした</div>
+                : <LimitList hubs={hubs} />}
           </section>
         </div>
 
@@ -269,18 +265,110 @@ function RankList({ rows }: { rows: { name: string; value: number; share: number
   );
 }
 
+function limitWindowKey(window: HubLimitWindow) {
+  return [window.provider, window.accountKey, window.kind, window.limitId ?? window.label].join('\0');
+}
+
+function collectLimitRows(hubs: HubUsageOverview[]) {
+  const byKey = new Map<string, HubLimitWindow>();
+  for (const hub of hubs) {
+    for (const window of hub.state?.limits ?? []) {
+      const key = limitWindowKey(window);
+      const current = byKey.get(key);
+      if (!current || (window.updatedAt ?? '') > (current.updatedAt ?? ''))
+        byKey.set(key, window);
+    }
+  }
+  return [...byKey.values()].sort((left, right) => {
+    if (left.remainingPercent !== right.remainingPercent)
+      return left.remainingPercent - right.remainingPercent;
+    const provider = left.provider.localeCompare(right.provider);
+    if (provider !== 0) return provider;
+    const account = limitAccountId(left).localeCompare(limitAccountId(right));
+    if (account !== 0) return account;
+    return left.kind.localeCompare(right.kind);
+  });
+}
+
+function limitAccountId(window: HubLimitWindow) {
+  return window.accountLabel || window.planLabel || window.accountKey;
+}
+
+function providersWithMultipleAccounts(rows: HubLimitWindow[]) {
+  const accounts = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const set = accounts.get(row.provider) ?? new Set<string>();
+    set.add(row.accountKey);
+    accounts.set(row.provider, set);
+  }
+  return new Set([...accounts].filter(([, set]) => set.size > 1).map(([provider]) => provider));
+}
+
+function limitDisplayName(window: HubLimitWindow, multipleAccounts: boolean) {
+  const provider = capitalize(window.provider);
+  if (!multipleAccounts) return provider;
+  const account = window.accountLabel || window.planLabel;
+  return account ? `${provider} ${account}` : provider;
+}
+
+function limitDetail(window: HubLimitWindow) {
+  return window.label || capitalize(window.kind);
+}
+
+function capitalize(value: string) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+function remainingPercent(value: number) {
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function formatResetUntil(resetsAt: string | null, now = Date.now()) {
+  if (resetsAt === null) return null;
+  const delta = new Date(resetsAt).getTime() - now;
+  if (delta < 0) return 'リセット予定を過ぎています';
+  const minutes = Math.floor(delta / 60000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days >= 1) return `リセットまで ${days}日${hours % 24}時間`;
+  if (hours >= 1) return `リセットまで ${hours}時間`;
+  return `リセットまで ${minutes}分`;
+}
+
 function limitColor(remaining: number) {
   if (remaining < 10) return tokens.status.danger;
   if (remaining < 20) return tokens.status.warn;
   return 'brand';
 }
 
-function Limit({ name, value, detail, reset }: { name: string; value: number; detail: string; reset: string }) {
+function LimitList({ hubs }: { hubs: HubUsageOverview[] }) {
+  const received = hubs.some((hub) => hub.state !== null);
+  if (!received) return <p className={classes.emptyHub} role="status">まだ情報を受信していません</p>;
+  const rows = collectLimitRows(hubs);
+  if (rows.length === 0) return <p className={classes.emptyHub} role="status">表示できる利用枠はありません</p>;
+  const multiAccount = providersWithMultipleAccounts(rows);
+  return (
+    <div className={classes.limitList}>
+      {rows.map((window) => {
+        const name = limitDisplayName(window, multiAccount.has(window.provider));
+        return <Limit key={limitWindowKey(window)} name={name} window={window} />;
+      })}
+    </div>
+  );
+}
+
+function Limit({ name, window }: { name: string; window: HubLimitWindow }) {
+  const remaining = remainingPercent(window.remainingPercent);
+  const reset = formatResetUntil(window.resetsAt);
+  const detail = limitDetail(window);
   return (
     <div className={classes.limit}>
-      <div className={classes.limitLabel}><strong>{name}</strong><span style={{ color: value < 20 ? limitColor(value) : undefined }}>{value}% <small>残り</small></span></div>
-      <Progress value={value} size={4} radius="xl" color={limitColor(value)} aria-label={`${name}の残量`} />
-      <p><span>{detail}</span><span>{reset}</span></p>
+      <div className={classes.limitLabel}>
+        <strong>{name}</strong>
+        <span style={{ color: remaining < 20 ? limitColor(remaining) : undefined }}>{remaining}% <small>残り</small></span>
+      </div>
+      <Progress value={remaining} size={4} radius="xl" color={limitColor(remaining)} aria-label={`${name}の残量`} />
+      <p><span>{detail}</span>{reset ? <span>{reset}</span> : null}</p>
     </div>
   );
 }

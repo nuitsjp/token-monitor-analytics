@@ -10,6 +10,10 @@ export const usageOverviewQuery = {
 };
 
 export async function getUsageOverview(): Promise<UsageOverview> {
+  if (__MOCK__) {
+    const { mockUsageOverview } = await import('../../../mock/usage-overview.ts');
+    return mockUsageOverview;
+  }
   return rpc.usageOverview.query();
 }
 
@@ -17,6 +21,10 @@ export function subscribeUsageUpdates(
   onUpdate: (overview: UsageOverview) => void,
   onStatus: (status: UsageConnectionStatus) => void,
 ): () => void {
+  if (__MOCK__) {
+    onStatus('connected');
+    return () => {};
+  }
   let disposed = false;
   let source: EventSource | null = null;
   let retryTimer: number | null = null;

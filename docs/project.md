@@ -31,6 +31,7 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 | 操作 | コマンド・確認 |
 | --- | --- |
 | 開発起動 | `npm run dev`、http://127.0.0.1:5173/ |
+| 仕様合意用モック | `npx vite --config frontend/vite.config.ts --mode mock`、http://127.0.0.1:5173/ |
 | 本番形式での起動 | `npm run build` 後に `npm start`、http://127.0.0.1:3000/ |
 | サーバー確認 | `GET /health` が `{"status":"ok"}` を返す |
 | 終了 | Ctrl+C |
@@ -38,7 +39,7 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 | 文書検査 | `python scripts/doc_check.py .` |
 | DB整合性 | `npm run db:check` |
 
-設定は `.env`、DBは既定で `data/app.sqlite` です。DB・秘密設定は追跡しません。旧DBは接続しません。`.env` の `HUB_CONFIG_PATH` で、Git管理外の接続設定JSONを指定します。本番経路に仕様合意用モックはありません。
+設定は `.env`、DBは既定で `data/app.sqlite` です。DB・秘密設定は追跡しません。旧DBは接続しません。`.env` の `HUB_CONFIG_PATH` で、Git管理外の接続設定JSONを指定します。本番経路と `npm run dev` ではモックを使いません。UC-2-X3の確認だけ Vite の `mock` モードを使います。
 
 UC-2-X1の実接続確認では、画面を開いてTODAY・MONTH・TOTALのいずれかを選び、Hubの保存後通知で数値・構成比・受信済み数が自動更新されることを確認します。切断中は最後の値と「再接続中」を表示し、再接続後に最新保存値へ追いつきます。仕様合意用モックは削除済みで、通常起動だけを使用します。固定サンプルの他パーツは実データ化の対象外です。
 
