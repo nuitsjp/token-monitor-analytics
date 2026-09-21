@@ -269,6 +269,8 @@ function limitWindowKey(window: HubLimitWindow) {
   return [window.provider, window.accountKey, window.kind, window.limitId ?? window.label].join('\0');
 }
 
+const KIND_WINDOW_MINUTES = { session: 300, daily: 1440, weekly: 10080, billing: 43200 } as const;
+
 function collectLimitRows(hubs: HubUsageOverview[]) {
   const byKey = new Map<string, HubLimitWindow>();
   for (const hub of hubs) {
@@ -279,19 +281,27 @@ function collectLimitRows(hubs: HubUsageOverview[]) {
         byKey.set(key, window);
     }
   }
-  return [...byKey.values()].sort((left, right) => {
-    if (left.remainingPercent !== right.remainingPercent)
-      return left.remainingPercent - right.remainingPercent;
+  const rows = [...byKey.values()];
+  const providerUpdated = new Map<string, string>();
+  for (const row of rows) {
+    const at = row.updatedAt ?? '';
+    if (at > (providerUpdated.get(row.provider) ?? ''))
+      providerUpdated.set(row.provider, at);
+  }
+  return rows.sort((left, right) => {
+    const providerTime = (providerUpdated.get(right.provider) ?? '').localeCompare(providerUpdated.get(left.provider) ?? '');
+    if (providerTime !== 0) return providerTime;
     const provider = left.provider.localeCompare(right.provider);
     if (provider !== 0) return provider;
-    const account = limitAccountId(left).localeCompare(limitAccountId(right));
-    if (account !== 0) return account;
-    return left.kind.localeCompare(right.kind);
+    const width = windowWidthMinutes(left) - windowWidthMinutes(right);
+    if (width !== 0) return width;
+    return (right.updatedAt ?? '').localeCompare(left.updatedAt ?? '');
   });
 }
 
-function limitAccountId(window: HubLimitWindow) {
-  return window.accountLabel || window.planLabel || window.accountKey;
+function windowWidthMinutes(window: HubLimitWindow) {
+  if (window.windowMinutes != null) return window.windowMinutes;
+  return KIND_WINDOW_MINUTES[window.kind];
 }
 
 function providersWithMultipleAccounts(rows: HubLimitWindow[]) {

@@ -27,6 +27,7 @@ export interface HubLimitWindow {
   remainingPercent: number;
   resetsAt: string | null;
   updatedAt: string | null;
+  windowMinutes: number | null;
   limitId?: string;
 }
 

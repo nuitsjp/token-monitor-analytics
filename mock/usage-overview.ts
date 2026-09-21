@@ -10,7 +10,8 @@ const TOKYO_CODEX_PRO: HubLimitWindow[] = [
     label: '',
     remainingPercent: 8,
     resetsAt: '2026-09-28T08:00:00.000Z',
-    updatedAt: '2026-09-21T11:36:14.718Z',
+    updatedAt: '2026-09-21T12:00:00.000Z',
+    windowMinutes: 10080,
     limitId: 'codex',
   },
   {
@@ -22,7 +23,8 @@ const TOKYO_CODEX_PRO: HubLimitWindow[] = [
     label: 'GPT-5.3-Codex-Spark',
     remainingPercent: 100,
     resetsAt: '2026-09-21T16:36:14.718Z',
-    updatedAt: '2026-09-21T11:36:14.718Z',
+    updatedAt: '2026-09-21T12:00:00.000Z',
+    windowMinutes: 300,
     limitId: 'codex_bengalfox',
   },
 ];
@@ -37,7 +39,8 @@ const TOKYO_CODEX_PLUS: HubLimitWindow[] = [
     label: '',
     remainingPercent: 24,
     resetsAt: '2026-09-27T09:00:00.000Z',
-    updatedAt: '2026-09-21T11:35:52.004Z',
+    updatedAt: '2026-09-21T11:50:00.000Z',
+    windowMinutes: 10080,
     limitId: 'codex',
   },
   {
@@ -49,7 +52,8 @@ const TOKYO_CODEX_PLUS: HubLimitWindow[] = [
     label: '',
     remainingPercent: 99,
     resetsAt: '2026-09-21T16:35:52.004Z',
-    updatedAt: '2026-09-21T11:35:52.004Z',
+    updatedAt: '2026-09-21T11:50:00.000Z',
+    windowMinutes: 300,
     limitId: 'codex',
   },
 ];
@@ -64,7 +68,8 @@ const TOKYO_CURSOR: HubLimitWindow[] = [
     label: 'Cursor Models',
     remainingPercent: 15.4,
     resetsAt: '2026-09-22T10:00:00.000Z',
-    updatedAt: '2026-09-21T11:36:14.718Z',
+    updatedAt: '2026-09-21T11:00:00.000Z',
+    windowMinutes: null,
   },
   {
     provider: 'cursor',
@@ -75,7 +80,8 @@ const TOKYO_CURSOR: HubLimitWindow[] = [
     label: 'Other Models',
     remainingPercent: 0,
     resetsAt: '2026-09-20T10:00:00.000Z',
-    updatedAt: '2026-09-21T11:36:14.718Z',
+    updatedAt: '2026-09-21T11:00:00.000Z',
+    windowMinutes: null,
   },
   {
     provider: 'cursor',
@@ -86,7 +92,8 @@ const TOKYO_CURSOR: HubLimitWindow[] = [
     label: 'Grok Bot',
     remainingPercent: 100,
     resetsAt: null,
-    updatedAt: '2026-09-21T11:36:14.718Z',
+    updatedAt: '2026-09-21T11:00:00.000Z',
+    windowMinutes: null,
   },
 ];
 
@@ -100,7 +107,8 @@ const TOKYO_GROK: HubLimitWindow[] = [
     label: 'Weekly',
     remainingPercent: 98,
     resetsAt: '2026-09-25T06:00:00.000Z',
-    updatedAt: '2026-09-21T11:36:14.718Z',
+    updatedAt: '2026-09-21T10:00:00.000Z',
+    windowMinutes: 10080,
   },
 ];
 
@@ -152,7 +160,8 @@ export const mockUsageOverview = {
             label: '',
             remainingPercent: 40,
             resetsAt: '2026-09-28T08:00:00.000Z',
-            updatedAt: '2026-09-21T10:00:00.000Z',
+            updatedAt: '2026-09-21T09:00:00.000Z',
+            windowMinutes: 10080,
             limitId: 'codex',
           },
         ],
