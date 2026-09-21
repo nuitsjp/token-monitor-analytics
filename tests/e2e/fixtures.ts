@@ -19,6 +19,7 @@ export interface ControlledHub {
     token: string;
     activeConnections: number;
     send: (event: string, payload: unknown) => void;
+    sendRaw: (frame: string) => void;
 }
 export const test = base.extend<{
     hubs: ControlledHub[];
@@ -61,6 +62,10 @@ export const test = base.extend<{
                     get activeConnections() { return connected.size; },
                     send: (event, payload) => {
                         const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+                        for (const response of connected)
+                            response.write(frame);
+                    },
+                    sendRaw: (frame) => {
                         for (const response of connected)
                             response.write(frame);
                     },
