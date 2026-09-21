@@ -2,7 +2,7 @@
 
 ## 1. 目的と範囲
 
-UC-1の受信・保存・保存後通知と切断時再接続、UC-2-Mの初回取得ダッシュボードは完了しています。自動更新のUC-2-X1も完成系承認、段階6のE2E・実Hub検証まで完了しています。他のパーツは固定サンプルから段階的に実装します。旧製品の機能を暗黙に復元しません。
+UC-1の受信・保存・保存後通知と切断時再接続、UC-2-Mの初回取得ダッシュボードは完了しています。自動更新のUC-2-X1および全Hub統合情報表示のUC-2-X2も完成系承認、段階6のE2E検証まで完了しています。他のパーツは固定サンプルから段階的に実装します。旧製品の機能を暗黙に復元しません。
 
 ## 2. 基盤の制約
 
@@ -59,6 +59,9 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
+| UC-2-X2 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全20件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（30件成功）。承認済み本番コードは変更なし | 合格 | 本行を含む完了コミット |
+| UC-2-X2 | 4 | Windows / Chrome 153 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIで主要指標の全Hub合計・最大日数、TODAY/MONTH/TOTAL切替、最上段ヘッダーへの期間・更新時刻集約、保存値ラベル全廃と固定サンプル限定表示、console error 0件を確認。テストコードは未変更 | 合格 | `ac3b79c` |
+| UC-2-X2 | 2 | Windows / Chrome 153 / 固定サンプルモック | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）、Playwright CLIで主要指標・ヘッダー配置・バッジ表示・期間切替・console error 0件を確認 | 合格 | `c6f1872` |
 | UC-1-X1 | 6 | Windows / 本番entry・制御可能な2 Hub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全18件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/hub-receive.spec.ts tests/e2e/usage-stream.spec.ts --workers=4 --repeat-each=3`（27件成功） | 合格 | 本行を含む完了コミット |
 | UC-1-X1 | 6 | Windows / Node.js 24.19.0 / 実Hub Private・Work・本番entry・検証専用SQLite | 2026-09-21 | 本番ビルドを実Hub設定で起動。閲覧SSEで8秒間に4通知、再起動後に両Hubのsnapshot再保存と継続更新、秘密非露出、integrity_check=okを確認 | 合格 | 本行を含む完了コミット |
 | UC-1-X1 | 4 | Windows / Node.js 24.19.0 / 制御可能な2 Hub・本番entry・一時SQLite・HTTP SSE | 2026-09-21 | 本番ビルドを起動し、ストリーム終了と接続リセットからの3秒後再接続、切断中の保存値維持と他Hub継続、再接続後snapshotの保存と閲覧通知、不正通知とHTTP 401での停止（再接続なし）、秘密非露出、通常終了を確認。既存E2E 15件成功。テストコードは未変更 | 合格 | 本行を含む提示コミット |

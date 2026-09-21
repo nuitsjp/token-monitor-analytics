@@ -432,6 +432,78 @@ test('受信済みの使用量とコストが0なら数値0と空の構成比を
     await expect(panel.getByText('まだ情報を受信していません')).toHaveCount(0);
 });
 
+test('全Hub統合情報を画面上部の主要指標に反映し、期間切替・通知更新・ヘッダー日時・バッジ整理を検証する', async ({ app, hubs, page }) => {
+    // 1. 未受信状態の確認
+    await page.goto('/');
+    const mainStats = page.getByRole('region', { name: '主要指標' });
+    const kpiCards = mainStats.locator('> div');
+
+    await expect(kpiCards.nth(0).locator('strong')).toHaveText('0');
+    await expect(kpiCards.nth(0).locator('small')).toHaveText('全Hub合計');
+    await expect(kpiCards.nth(1).locator('strong')).toHaveText('$0.00');
+    await expect(kpiCards.nth(1).locator('small')).toHaveText('USD 換算');
+    await expect(kpiCards.nth(2).locator('strong')).toHaveText('0');
+    await expect(kpiCards.nth(2).locator('small')).toHaveText('受信Hubの最大値');
+    await expect(kpiCards.nth(3).locator('strong')).toHaveText('0');
+    await expect(kpiCards.nth(3).locator('small')).toHaveText('受信済み 0 Hub');
+
+    // ラベル確認: 保存値ラベルは0件、固定サンプルラベルは未更新パーツ4箇所のみ
+    const badges = page.locator('.mantine-Badge-root');
+    await expect(badges).toHaveText(['固定サンプル', '固定サンプル', '固定サンプル', '固定サンプル']);
+
+    // 2. Hub-A と Hub-B からデータ受信
+    await waitForConnections(hubs, [1, 1]);
+    const statsA = dashboardStats('2026-09-21T01:00:00.000Z');
+    const statsB = dashboardStats('2026-09-21T01:01:00.000Z');
+    setPeriod(statsA, 'today', 42_621_015, 29.89);
+    setPeriod(statsB, 'today', 8_729_605, 6.12);
+    setPeriod(statsA, 'month', 3_862_063_575, 1561.13);
+    setPeriod(statsB, 'month', 791_025_069, 319.75);
+    setPeriod(statsA, 'allTime', 24_419_264_000, 9869.05);
+    setPeriod(statsB, 'allTime', 5_001_536_000, 2021.37);
+    setActiveDays(statsA, 15);
+    setActiveDays(statsB, 28);
+    sendStats(hubs[0], 'snapshot', statsA);
+    sendStats(hubs[1], 'snapshot', statsB);
+
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-a', 'month')).toBe(3_862_063_575);
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-b', 'month')).toBe(791_025_069);
+
+    // 3. 自動更新により主要指標が反映される（初期表示 MONTH）
+    await expect(kpiCards.nth(0).locator('strong')).toHaveText('4,653,088,644');
+    await expect(kpiCards.nth(1).locator('strong')).toHaveText('$1,880.88');
+    await expect(kpiCards.nth(2).locator('strong')).toHaveText('28');
+    await expect(kpiCards.nth(3).locator('strong')).toHaveText('4');
+    await expect(kpiCards.nth(3).locator('small')).toHaveText('受信済み 2 Hub');
+
+    // 最上段ヘッダーに期間と更新時刻が表示されている（TODAY の左側）
+    const headerControls = page.locator('[class*="headerControls"]');
+    await expect(headerControls).toContainText('取得');
+    await expect(headerControls).toContainText('TODAY');
+
+    // 4. 期間切替 (TODAY)
+    await page.getByRole('button', { name: 'TODAY' }).click();
+    await expect(kpiCards.nth(0).locator('strong')).toHaveText('51,350,620');
+    await expect(kpiCards.nth(1).locator('strong')).toHaveText('$36.01');
+    await expect(kpiCards.nth(2).locator('strong')).toHaveText('28');
+
+    // 5. 期間切替 (TOTAL)
+    await page.getByRole('button', { name: 'TOTAL' }).click();
+    await expect(kpiCards.nth(0).locator('strong')).toHaveText('29,420,800,000');
+    await expect(kpiCards.nth(1).locator('strong')).toHaveText('$11,890.42');
+    await expect(kpiCards.nth(2).locator('strong')).toHaveText('28');
+
+    // 6. 単一Hub更新通知で再読み込みなしに主要指標が即時更新される
+    const updatedA = dashboardStats('2026-09-21T01:05:00.000Z');
+    setPeriod(updatedA, 'allTime', 25_000_000_000, 10000.00);
+    setActiveDays(updatedA, 35);
+    sendStats(hubs[0], 'stats', updatedA);
+
+    await expect(kpiCards.nth(0).locator('strong')).toHaveText('30,001,536,000');
+    await expect(kpiCards.nth(1).locator('strong')).toHaveText('$12,021.37');
+    await expect(kpiCards.nth(2).locator('strong')).toHaveText('35');
+});
+
 async function expectPeriod(
     page: Page,
     panel: Locator,
@@ -475,6 +547,12 @@ function dashboardStats(updatedAt: string): JsonRecord {
     const stats = structuredClone(sourceStats);
     stats.updatedAt = updatedAt;
     return stats;
+}
+
+function setActiveDays(stats: JsonRecord, activeDays: number): void {
+    const historyPreview = stats.historyPreview as JsonRecord;
+    const summary = historyPreview.summary as JsonRecord;
+    summary.activeDays = activeDays;
 }
 
 function setPeriod(stats: JsonRecord, period: DashboardPeriod, totalTokens: number, costUsd: number): void {

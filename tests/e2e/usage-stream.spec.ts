@@ -457,12 +457,16 @@ function readOverview(path: string): UsageOverview {
                 return { hubId: row.hub_id, name: row.name, state: null };
             const stats = JSON.parse(row.stats_json) as JsonRecord;
             const periods = stats.periods as JsonRecord;
+            const historyPreview = stats.historyPreview as JsonRecord | undefined;
+            const historySummary = historyPreview?.summary as JsonRecord | undefined;
+            const activeDays = typeof historySummary?.activeDays === 'number' ? historySummary.activeDays : undefined;
             return {
                 hubId: row.hub_id,
                 name: row.name,
                 state: {
                     updatedAt: stats.updatedAt as string,
                     receivedAt: row.received_at,
+                    ...(activeDays !== undefined ? { activeDays } : {}),
                     periods: {
                         today: periodOf(periods.today),
                         month: periodOf(periods.month),
