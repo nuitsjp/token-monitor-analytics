@@ -1,0 +1,954 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Token Monitor Analytics — グラフ中心の固定データ・ダッシュボードデザインサンプル">
+  <title>Token Monitor Analytics — insight</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --paper: #f3efe8;
+      --paper-deep: #ebe4d9;
+      --surface: #fbfaf7;
+      --surface-warm: #f7f2ea;
+      --ink: #1e2030;
+      --ink-soft: #5f6170;
+      --ink-faint: #92919a;
+      --line: #ddd7cd;
+      --line-dark: #c7c0b5;
+      --indigo: #25245a;
+      --indigo-mid: #5654a5;
+      --indigo-soft: #d9d8f2;
+      --orange: #e87f49;
+      --orange-soft: #f7d9c9;
+      --mint: #658f7e;
+      --shadow: 0 12px 30px rgba(47, 41, 52, .055);
+      --radius: 16px;
+      --radius-sm: 10px;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, a { font: inherit; }
+
+    button { color: inherit; }
+
+    button:focus-visible,
+    a:focus-visible {
+      outline: 3px solid rgba(232, 127, 73, .55);
+      outline-offset: 3px;
+    }
+
+    a { color: inherit; }
+
+    .site-header {
+      width: min(1360px, calc(100% - 48px));
+      min-height: 70px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 11px;
+      text-decoration: none;
+      color: var(--indigo);
+      letter-spacing: .04em;
+    }
+
+    .brand-mark {
+      position: relative;
+      width: 25px;
+      height: 25px;
+      border: 1px solid var(--indigo);
+      border-radius: 8px;
+      transform: rotate(-10deg);
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      background: var(--orange);
+      border-radius: 10px;
+    }
+
+    .brand-mark::before { width: 10px; height: 3px; left: 6px; top: 7px; transform: rotate(22deg); }
+    .brand-mark::after { width: 7px; height: 3px; left: 8px; top: 14px; transform: rotate(-28deg); }
+
+    .brand-name { font-weight: 760; font-size: 13px; }
+    .brand-name span { color: var(--ink-soft); font-weight: 500; }
+
+    .primary-nav {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      margin-left: auto;
+    }
+
+    .primary-nav a {
+      color: var(--ink-soft);
+      text-decoration: none;
+      font-size: 12px;
+      letter-spacing: .03em;
+    }
+
+    .primary-nav a:hover { color: var(--indigo); }
+
+    .header-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding-left: 20px;
+      border-left: 1px solid var(--line);
+      color: var(--ink-faint);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .pulse {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 0 4px rgba(101, 143, 126, .11);
+    }
+
+    .shell {
+      width: min(1360px, calc(100% - 48px));
+      margin: 0 auto;
+    }
+
+    .intro {
+      min-height: 76px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 30px;
+      padding: 10px 0 8px;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--orange);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      margin-bottom: 4px;
+      color: var(--indigo);
+      font-size: 28px;
+      font-weight: 650;
+      letter-spacing: -.055em;
+      line-height: 1;
+    }
+
+    .intro-copy { margin: 0; color: var(--ink-soft); font-size: 10px; }
+
+    .intro-side {
+      display: flex;
+      align-items: flex-end;
+      gap: 18px;
+    }
+
+    .fixed-note {
+      color: var(--ink-faint);
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: right;
+    }
+
+    .fixed-note strong { display: block; color: var(--ink-soft); font-weight: 650; }
+
+    .period-switch {
+      display: inline-flex;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid var(--line-dark);
+      border-radius: 11px;
+      background: rgba(251, 250, 247, .72);
+    }
+
+    .period-switch button {
+      min-width: 67px;
+      padding: 8px 11px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--ink-soft);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: .04em;
+      transition: background .18s ease, color .18s ease, transform .18s ease;
+    }
+
+    .period-switch button:hover { color: var(--indigo); }
+    .period-switch button:active { transform: translateY(1px); }
+    .period-switch button[aria-pressed="true"] { background: var(--indigo); color: #fff; box-shadow: 0 3px 8px rgba(37, 36, 90, .18); }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 308px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px 0;
+    }
+
+    .panel-kicker {
+      margin: 0 0 5px;
+      color: var(--ink-faint);
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin-bottom: 0;
+      color: var(--indigo);
+      font-size: 17px;
+      font-weight: 680;
+      letter-spacing: -.025em;
+    }
+
+    .panel-action {
+      padding: 2px 0;
+      border: 0;
+      background: transparent;
+      color: var(--ink-faint);
+      cursor: pointer;
+      font-size: 11px;
+      text-decoration: underline;
+      text-decoration-color: var(--line-dark);
+      text-underline-offset: 3px;
+    }
+
+    .panel-action:hover { color: var(--indigo); }
+
+    .trend-panel { min-height: 0; }
+
+    .trend-stats {
+      display: flex;
+      align-items: flex-end;
+      gap: 34px;
+      padding: 16px 16px 3px;
+    }
+
+    .big-stat { min-width: 190px; }
+
+    .big-stat .label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--ink-soft);
+      font-size: 11px;
+    }
+
+    .big-stat strong {
+      display: block;
+      color: var(--indigo);
+      font-family: var(--mono);
+      font-size: clamp(24px, 2.8vw, 37px);
+      font-weight: 650;
+      letter-spacing: -.07em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .big-stat strong small {
+      margin-left: 5px;
+      color: var(--ink-soft);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+
+    .big-stat .change {
+      display: inline-block;
+      margin-top: 8px;
+      color: var(--mint);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .big-stat.cost strong { color: var(--orange); }
+    .big-stat.cost .change { color: var(--ink-faint); }
+
+    .trend-figure {
+      position: relative;
+      margin: 0;
+      padding: 2px 12px 12px;
+    }
+
+    .trend-figure svg { display: block; width: 100%; height: 170px; overflow: visible; }
+
+    .chart-grid { stroke: #e8e2da; stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .chart-axis { fill: var(--ink-faint); font-family: var(--mono); font-size: 10px; }
+    .trend-area { fill: url(#areaGradient); }
+    .trend-line { fill: none; stroke: var(--indigo); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .trend-dot { fill: var(--surface); stroke: var(--orange); stroke-width: 2; vector-effect: non-scaling-stroke; }
+    .trend-guide { stroke: var(--orange); stroke-dasharray: 3 4; stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .65; }
+    .chart-caption { display: flex; justify-content: space-between; gap: 15px; padding: 0 4px; color: var(--ink-faint); font-size: 10px; }
+
+    .rail {
+      display: grid;
+      gap: 16px;
+    }
+
+    .quota-panel { padding-bottom: 17px; }
+
+    .quota-panel .panel-header { padding-bottom: 2px; }
+
+    .quota-body {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 13px 20px 2px;
+    }
+
+    .quota-ring { display: block; width: 116px; height: 116px; }
+    .quota-track { fill: none; stroke: var(--paper-deep); stroke-width: 9; }
+    .quota-progress { fill: none; stroke: var(--indigo); stroke-width: 9; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 58px 58px; stroke-dasharray: 250.7 264; }
+    .quota-ring text { fill: var(--indigo); font-family: var(--mono); text-anchor: middle; }
+    .quota-ring .quota-number { font-size: 19px; font-weight: 650; }
+    .quota-ring .quota-unit { fill: var(--ink-faint); font-size: 8px; }
+
+    .quota-copy strong { display: block; margin-bottom: 4px; color: var(--indigo); font-size: 12px; }
+    .quota-copy p { margin-bottom: 9px; color: var(--ink-soft); font-size: 11px; }
+    .quota-copy .quota-foot { margin: 0; color: var(--ink-faint); font-family: var(--mono); font-size: 10px; }
+
+    .status-panel { padding-bottom: 13px; }
+    .status-panel .panel-header { padding-bottom: 8px; }
+    .status-list { margin: 0; padding: 0 20px; list-style: none; }
+    .status-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+    .status-list li:first-child { border-top: 0; }
+    .status-name { min-width: 0; color: var(--ink-soft); font-family: var(--mono); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status-value { display: inline-flex; align-items: center; gap: 7px; color: var(--ink); font-size: 11px; white-space: nowrap; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mint); }
+    .status-dot.wait { background: var(--orange); }
+    .status-foot { display: flex; justify-content: space-between; gap: 10px; margin: 7px 20px 0; padding-top: 11px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 10px; }
+    .status-foot strong { color: var(--ink-soft); font-family: var(--mono); font-weight: 600; }
+
+    .lower-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(300px, .85fr);
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .contribution-panel { min-height: 0; padding-bottom: 14px; }
+    .contribution-panel .panel-header { padding-bottom: 16px; }
+    .stack-wrap { padding: 0 22px; }
+    .stacked-bar { display: flex; height: 19px; overflow: hidden; border-radius: 6px; background: var(--paper-deep); }
+    .stacked-bar button { min-width: 4px; border: 0; border-right: 2px solid var(--surface); cursor: pointer; transition: filter .18s ease; }
+    .stacked-bar button:hover { filter: brightness(.93); }
+    .seg-codex { flex: 87.7; background: var(--indigo); }
+    .seg-antigravity { flex: 9.1; background: var(--orange); }
+    .seg-cursor { flex: 2.1; background: #b7a2d4; }
+    .seg-other { flex: 1.1; background: #bbb9b1; border-right: 0; }
+    .legend-swatch.seg-codex,
+    .legend-swatch.seg-antigravity,
+    .legend-swatch.seg-cursor,
+    .legend-swatch.seg-other { flex: 0 0 auto; width: 7px; height: 7px; }
+    .contribution-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 17px; }
+    .legend-item { min-width: 0; }
+    .legend-label { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: 10px; }
+    .legend-swatch { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 2px; }
+    .legend-item strong { display: block; margin: 5px 0 0 13px; color: var(--indigo); font-family: var(--mono); font-size: 14px; font-weight: 600; }
+    .legend-item button { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+    .legend-item button:hover .legend-label { color: var(--indigo); }
+    .contribution-foot { display: flex; justify-content: space-between; gap: 14px; margin-top: 19px; color: var(--ink-faint); font-size: 10px; }
+
+    .heatmap-panel { min-height: 0; padding-bottom: 14px; }
+    .heatmap-panel .panel-header { padding-bottom: 14px; }
+    .heatmap-body { padding: 0 22px; }
+    .heatmap-head { display: grid; grid-template-columns: 42px repeat(7, 1fr); gap: 5px; color: var(--ink-faint); font-family: var(--mono); font-size: 9px; text-align: center; }
+    .heatmap-head span:first-child { text-align: left; }
+    .heatmap-row { display: grid; grid-template-columns: 42px repeat(7, 1fr); gap: 5px; align-items: center; margin-top: 5px; }
+    .heatmap-row > span:first-child { color: var(--ink-faint); font-family: var(--mono); font-size: 9px; }
+    .heat-cell { height: 20px; border-radius: 4px; background: color-mix(in srgb, var(--indigo) calc(var(--level) * 100%), var(--paper-deep)); }
+    .heat-cell:hover { outline: 2px solid var(--orange); outline-offset: 1px; }
+    .heatmap-key { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 14px; color: var(--ink-faint); font-size: 9px; }
+    .heatmap-key i { display: inline-block; width: 11px; height: 8px; border-radius: 2px; background: var(--paper-deep); }
+    .heatmap-key i:nth-of-type(2) { background: #c8c8e7; }
+    .heatmap-key i:nth-of-type(3) { background: #7e7dbb; }
+    .heatmap-key i:nth-of-type(4) { background: var(--indigo); }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+    .summary-panel { overflow: hidden; }
+    .summary-panel .panel-header { padding-bottom: 10px; }
+    .summary-list { margin: 0; padding: 0 21px 14px; list-style: none; }
+    .summary-list li + li { border-top: 1px solid var(--line); }
+    .summary-button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto 12px; align-items: center; gap: 11px; padding: 9px 0; border: 0; background: transparent; cursor: pointer; text-align: left; }
+    .summary-button:hover .summary-name { color: var(--indigo-mid); }
+    .summary-name { display: block; overflow: hidden; color: var(--ink-soft); font-family: var(--mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .summary-meta { display: block; margin-top: 2px; color: var(--ink-faint); font-size: 9px; }
+    .summary-score { color: var(--indigo); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+    .summary-arrow { color: var(--ink-faint); font-size: 13px; }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 26px 0 34px;
+      color: var(--ink-faint);
+      font-size: 10px;
+    }
+
+    .footer p { margin: 0; }
+    .sample-links { display: flex; flex-wrap: wrap; gap: 14px; }
+    .sample-links a { text-decoration: none; }
+    .sample-links a:hover { color: var(--indigo); text-decoration: underline; text-underline-offset: 3px; }
+    .sample-links a[aria-current="page"] { color: var(--indigo); font-weight: 650; }
+
+    dialog {
+      width: min(430px, calc(100% - 32px));
+      padding: 0;
+      border: 1px solid var(--line-dark);
+      border-radius: 16px;
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: 0 24px 80px rgba(37, 36, 90, .18);
+    }
+
+    dialog::backdrop { background: rgba(30, 32, 48, .22); backdrop-filter: blur(2px); }
+    .dialog-inner { padding: 22px; }
+    .dialog-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+    .dialog-head h2 { font-size: 18px; }
+    .dialog-close { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--ink-soft); cursor: pointer; line-height: 1; }
+    .dialog-close:hover { border-color: var(--indigo); color: var(--indigo); }
+    .dialog-content { padding-top: 16px; color: var(--ink-soft); font-size: 12px; }
+    .dialog-content p { margin-bottom: 14px; }
+    .detail-table { width: 100%; border-collapse: collapse; }
+    .detail-table th, .detail-table td { padding: 8px 0; border-top: 1px solid var(--line); text-align: left; }
+    .detail-table th { color: var(--ink-faint); font-size: 10px; font-weight: 500; }
+    .detail-table td:last-child { color: var(--indigo); font-family: var(--mono); font-size: 11px; text-align: right; }
+
+    .site-header { min-height: 54px; }
+    .intro { min-height: 70px; padding: 12px 0; }
+    .eyebrow { margin-bottom: 5px; }
+    .panel-header { padding: 12px 16px 0; }
+    .panel-kicker { font-size: 9px; margin-bottom: 3px; }
+    .trend-panel { min-height: 0; }
+    .trend-stats { padding: 14px 16px 3px; }
+    .trend-figure { padding: 4px 16px 12px; }
+    .trend-figure svg { height: 172px; }
+    .quota-panel { padding-bottom: 10px; }
+    .quota-body { grid-template-columns: 78px 1fr; padding: 8px 16px 0; }
+    .quota-ring { width: 76px; height: 76px; }
+    .rail { gap: 12px; }
+    .status-list { padding: 0 16px; }
+    .status-list li { padding: 5px 0; }
+    .status-foot { margin: 5px 16px 0; padding-top: 6px; }
+    .status-panel .panel-header { padding-bottom: 4px; }
+    .contribution-panel, .heatmap-panel { min-height: 0; padding-bottom: 12px; }
+    .contribution-panel .panel-header, .heatmap-panel .panel-header { padding-bottom: 10px; }
+    .contribution-legend { margin-top: 10px; }
+    .contribution-foot { margin-top: 10px; }
+    .stack-wrap, .heatmap-body { padding: 0 16px; }
+    .heat-cell { height: 12px; border-radius: 2px; }
+    .heatmap-key { margin-top: 8px; }
+    .summary-panel .panel-header { padding-bottom: 6px; }
+    .summary-list { padding: 0 16px 10px; }
+    .summary-button { padding: 6px 0; }
+    .summary-meta { display: none; }
+    .summary-name { font-size: 11px; }
+    .footer { padding: 15px 0; }
+    .trend-stats { padding-top: 10px; }
+    .big-stat strong { font-size: 31px; }
+    .trend-figure svg { height: 146px; }
+    .heat-cell { height: 9px; }
+    .heatmap-key { margin-top: 5px; }
+    .summary-button { padding: 4px 0; }
+    @media (max-width: 980px) {
+      .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+      .rail { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+      .lower-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    @media (max-width: 680px) {
+      .site-header, .shell { width: min(100% - 32px, 1360px); }
+      .site-header { min-height: 61px; gap: 11px; }
+      .primary-nav { display: none; }
+      .header-meta { margin-left: auto; padding-left: 0; border-left: 0; }
+      .intro { display: block; min-height: auto; padding: 18px 0 16px; }
+      h1 { font-size: 28px; }
+      .intro-side { align-items: center; justify-content: space-between; margin-top: 14px; }
+      .fixed-note { text-align: left; }
+      .period-switch { flex-shrink: 0; }
+      .period-switch button { min-width: 55px; padding: 8px 8px; }
+      .trend-panel { min-height: 0; }
+      .panel-header { padding: 14px 16px 0; }
+      .trend-stats { gap: 20px; padding: 16px 16px 3px; }
+      .big-stat { min-width: 0; }
+      .big-stat strong { font-size: 25px; }
+      .trend-figure { padding: 4px 10px 15px; }
+      .trend-figure svg { height: 160px; }
+      .chart-caption { padding: 0 7px; }
+      .rail { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+      .quota-body { grid-template-columns: 106px minmax(0, 1fr); padding: 12px 16px 2px; }
+      .quota-ring { width: 102px; height: 102px; }
+      .quota-progress { transform: rotate(-90deg) scale(.88); transform-origin: 58px 58px; }
+      .quota-track { transform: scale(.88); transform-origin: 58px 58px; }
+      .quota-ring text { transform: scale(.88); transform-origin: 58px 58px; }
+      .status-list { padding: 0 16px; }
+      .status-foot { margin-left: 16px; margin-right: 16px; }
+      .stack-wrap, .heatmap-body { padding-left: 16px; padding-right: 16px; }
+      .contribution-legend { gap: 8px; }
+      .legend-label { gap: 4px; font-size: 9px; }
+      .legend-item strong { margin-left: 11px; font-size: 12px; }
+      .summary-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+      .summary-list { padding-left: 16px; padding-right: 16px; }
+      .footer { display: block; padding-top: 22px; }
+      .sample-links { margin-top: 12px; gap: 10px 15px; }
+    }
+
+    @media (max-width: 390px) {
+      .header-meta { font-size: 10px; }
+      .intro-side { display: block; }
+      .period-switch { width: 100%; margin-top: 15px; }
+      .period-switch button { flex: 1; }
+      .trend-stats { gap: 14px; }
+      .big-stat strong { font-size: 22px; }
+      .big-stat strong small { display: block; margin: 5px 0 0; }
+      .contribution-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header" aria-label="Token Monitor ナビゲーション">
+    <a class="brand" href="#overview" aria-label="Token Monitor Analytics overview">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">TOKEN MONITOR <span>/ ANALYTICS</span></span>
+    </a>
+    <nav class="primary-nav" aria-label="主要メニュー">
+      <a href="#overview">概要</a>
+      <a href="#contribution">利用内訳</a>
+      <a href="#devices">デバイス</a>
+    </nav>
+    <div class="header-meta"><span class="pulse" aria-hidden="true"></span><span>SYNCED 2m ago</span></div>
+  </header>
+
+  <main class="shell" id="overview">
+    <section class="intro" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">Design sample / fixed data</p>
+        <h1 id="page-title">ダッシュボード</h1>
+        <p class="intro-copy" id="period-copy">01 Sep — 21 Sep 2026</p>
+      </div>
+      <div class="intro-side">
+        <p class="fixed-note"><strong>SEP 2026</strong><span>匿名化済みのサンプル値</span></p>
+        <div class="period-switch" role="group" aria-label="集計期間">
+          <button type="button" data-period="today" aria-pressed="false">TODAY</button>
+          <button type="button" data-period="month" aria-pressed="true">MONTH</button>
+          <button type="button" data-period="total" aria-pressed="false">TOTAL</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="dashboard-grid">
+      <section class="panel trend-panel" aria-labelledby="trend-title">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">Flow / cumulative</p>
+            <h2 id="trend-title">トークン推移</h2>
+          </div>
+          <button class="panel-action" type="button" data-detail="trend">内訳を見る</button>
+        </div>
+        <div class="trend-stats" aria-live="polite">
+          <div class="big-stat">
+            <span class="label">トークン</span>
+            <strong id="token-total">4,653,088,644<small>tokens</small></strong>
+            <span class="change" id="token-change">+18.4% vs 前期間</span>
+          </div>
+          <div class="big-stat cost">
+            <span class="label">コスト</span>
+            <strong id="cost-total">$1,880.88</strong>
+            <span class="change" id="cost-change">平均 $0.40 / 1M</span>
+          </div>
+        </div>
+        <figure class="trend-figure" aria-labelledby="trend-title trend-caption">
+          <svg viewBox="0 0 760 238" preserveAspectRatio="none" role="img" aria-label="期間内のトークン推移エリアチャート">
+            <defs>
+              <linearGradient id="areaGradient" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0" stop-color="#5654a5" stop-opacity=".25"></stop>
+                <stop offset="1" stop-color="#5654a5" stop-opacity=".015"></stop>
+              </linearGradient>
+            </defs>
+            <line class="chart-grid" x1="54" x2="744" y1="26" y2="26"></line>
+            <line class="chart-grid" x1="54" x2="744" y1="71" y2="71"></line>
+            <line class="chart-grid" x1="54" x2="744" y1="116" y2="116"></line>
+            <line class="chart-grid" x1="54" x2="744" y1="161" y2="161"></line>
+            <line class="chart-grid" x1="54" x2="744" y1="206" y2="206"></line>
+            <text class="chart-axis" x="4" y="30" id="axis-4">4.7B</text>
+            <text class="chart-axis" x="4" y="75" id="axis-3">3.6B</text>
+            <text class="chart-axis" x="4" y="120" id="axis-2">2.4B</text>
+            <text class="chart-axis" x="4" y="165" id="axis-1">1.2B</text>
+            <text class="chart-axis" x="18" y="210" id="axis-0">0</text>
+            <path class="trend-area" id="trend-area" d="M54 206 L116 188 L178 176 L240 163 L302 146 L364 126 L426 106 L488 88 L550 67 L612 50 L674 38 L744 28 L744 206 L54 206 Z"></path>
+            <line class="trend-guide" id="trend-guide" x1="744" x2="744" y1="26" y2="206"></line>
+            <path class="trend-line" id="trend-line" d="M54 206 L116 188 L178 176 L240 163 L302 146 L364 126 L426 106 L488 88 L550 67 L612 50 L674 38 L744 28"></path>
+            <circle class="trend-dot" id="trend-dot" cx="744" cy="28" r="4.5"></circle>
+            <text class="chart-axis" x="54" y="229" id="x-0">01 Sep</text>
+            <text class="chart-axis" x="267" y="229" id="x-1">07</text>
+            <text class="chart-axis" x="489" y="229" id="x-2">14</text>
+            <text class="chart-axis" x="718" y="229" id="x-3">21</text>
+          </svg>
+          <figcaption class="chart-caption" id="trend-caption"><span id="trend-range">01 Sep — 21 Sep 2026</span><span>最終受信 18:42 JST</span></figcaption>
+        </figure>
+      </section>
+
+      <aside class="rail" aria-label="クォータと接続状態">
+        <section class="panel quota-panel" aria-labelledby="quota-title">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Allowance</p>
+              <h2 id="quota-title">利用枠</h2>
+            </div>
+            <button class="panel-action" type="button" data-detail="quota">詳細</button>
+          </div>
+          <div class="quota-body">
+              <svg class="quota-ring" viewBox="0 0 116 116" role="img" aria-label="Codex Weekly の残り95パーセント">
+                <circle class="quota-track" cx="58" cy="58" r="42"></circle>
+                <circle class="quota-progress" cx="58" cy="58" r="42"></circle>
+              <text class="quota-number" x="58" y="61">95%</text>
+              <text class="quota-unit" x="58" y="75">LEFT</text>
+            </svg>
+            <div class="quota-copy">
+              <strong>Codex Weekly</strong>
+              <p>残り 95%<br>リセットまで 6日14時間</p>
+              <p class="quota-foot">現在の保存値 / weekly</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel status-panel" aria-labelledby="status-title">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Transport</p>
+              <h2 id="status-title">受信ステータス</h2>
+            </div>
+            <button class="panel-action" type="button" data-detail="connections">全件</button>
+          </div>
+          <ul class="status-list">
+            <li><span class="status-name">atlas-hub / acct_7f2a</span><span class="status-value"><i class="status-dot"></i>受信</span></li>
+            <li><span class="status-name">north-hub / acct_3c91</span><span class="status-value"><i class="status-dot"></i>受信</span></li>
+            <li><span class="status-name">relay-hub / acct_0bd4</span><span class="status-value"><i class="status-dot wait"></i>待機</span></li>
+          </ul>
+          <div class="status-foot"><span>登録 Hub <strong>3</strong></span><span>Device <strong>7</strong> 受信</span></div>
+        </section>
+      </aside>
+    </div>
+
+    <div class="lower-grid">
+      <section class="panel contribution-panel" id="contribution" aria-labelledby="contribution-title">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">Share / by tool</p>
+            <h2 id="contribution-title">ツール別の寄与</h2>
+          </div>
+          <button class="panel-action" type="button" data-detail="tools">一覧</button>
+        </div>
+        <div class="stack-wrap">
+          <div class="stacked-bar" role="img" aria-label="ツール別トークン寄与。Codex 87.7パーセント、Antigravity 9.1パーセント、Cursor 2.1パーセント、Other 1.1パーセント">
+            <button class="seg-codex" type="button" aria-label="Codex 87.7パーセント" data-detail="codex"></button>
+            <button class="seg-antigravity" type="button" aria-label="Antigravity 9.1パーセント" data-detail="antigravity"></button>
+            <button class="seg-cursor" type="button" aria-label="Cursor 2.1パーセント" data-detail="cursor"></button>
+            <button class="seg-other" type="button" aria-label="Other 1.1パーセント" data-detail="other"></button>
+          </div>
+          <div class="contribution-legend">
+            <div class="legend-item"><button type="button" data-detail="codex"><span class="legend-label"><i class="legend-swatch seg-codex"></i>Codex</span><strong>87.7%</strong></button></div>
+            <div class="legend-item"><button type="button" data-detail="antigravity"><span class="legend-label"><i class="legend-swatch seg-antigravity"></i>Antigravity</span><strong>9.1%</strong></button></div>
+            <div class="legend-item"><button type="button" data-detail="cursor"><span class="legend-label"><i class="legend-swatch seg-cursor"></i>Cursor</span><strong>2.1%</strong></button></div>
+            <div class="legend-item"><button type="button" data-detail="other"><span class="legend-label"><i class="legend-swatch seg-other"></i>Other</span><strong>1.1%</strong></button></div>
+          </div>
+          <div class="contribution-foot"><span>期間内のトークン比率</span><span>合計 100.0%</span></div>
+        </div>
+      </section>
+
+      <section class="panel heatmap-panel" aria-labelledby="heatmap-title">
+        <div class="panel-header">
+          <div>
+            <p class="panel-kicker">Activity / last 28 days</p>
+            <h2 id="heatmap-title">受信ヒートマップ</h2>
+          </div>
+          <button class="panel-action" type="button" data-detail="heatmap">説明</button>
+        </div>
+        <div class="heatmap-body" role="img" aria-label="直近4週間の曜日別受信量ヒートマップ">
+          <div class="heatmap-head"><span></span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span><span>日</span></div>
+          <div class="heatmap-row"><span>W-3</span><i class="heat-cell" style="--level:.20"></i><i class="heat-cell" style="--level:.42"></i><i class="heat-cell" style="--level:.68"></i><i class="heat-cell" style="--level:.38"></i><i class="heat-cell" style="--level:.82"></i><i class="heat-cell" style="--level:.17"></i><i class="heat-cell" style="--level:.08"></i></div>
+          <div class="heatmap-row"><span>W-2</span><i class="heat-cell" style="--level:.55"></i><i class="heat-cell" style="--level:.76"></i><i class="heat-cell" style="--level:.89"></i><i class="heat-cell" style="--level:.66"></i><i class="heat-cell" style="--level:.96"></i><i class="heat-cell" style="--level:.23"></i><i class="heat-cell" style="--level:.12"></i></div>
+          <div class="heatmap-row"><span>W-1</span><i class="heat-cell" style="--level:.34"></i><i class="heat-cell" style="--level:.51"></i><i class="heat-cell" style="--level:.74"></i><i class="heat-cell" style="--level:.78"></i><i class="heat-cell" style="--level:.68"></i><i class="heat-cell" style="--level:.27"></i><i class="heat-cell" style="--level:.19"></i></div>
+          <div class="heatmap-row"><span>今週</span><i class="heat-cell" style="--level:.63"></i><i class="heat-cell" style="--level:.84"></i><i class="heat-cell" style="--level:.92"></i><i class="heat-cell" style="--level:.72"></i><i class="heat-cell" style="--level:1"></i><i class="heat-cell" style="--level:.26"></i><i class="heat-cell" style="--level:.11"></i></div>
+          <div class="heatmap-key"><span>少</span><i></i><i></i><i></i><i></i><span>多</span></div>
+        </div>
+      </section>
+    </div>
+
+    <section class="summary-grid" id="summaries" aria-label="モデル、ツール、デバイスのサマリー">
+      <section class="panel summary-panel" id="models" aria-labelledby="models-title">
+        <div class="panel-header"><div><p class="panel-kicker">Inventory / model</p><h2 id="models-title">モデル</h2></div><button class="panel-action" type="button" data-detail="models">全 5</button></div>
+        <ul class="summary-list">
+          <li><button class="summary-button" type="button" data-detail="gpt-56-luna"><span><span class="summary-name">gpt-5.6-luna</span><span class="summary-meta">推論 / 受信 18.4k</span></span><span class="summary-score">42.8%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="gpt-56-sol"><span><span class="summary-name">gpt-5.6-sol</span><span class="summary-meta">推論 / 受信 12.7k</span></span><span class="summary-score">25.4%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="gpt-6-astra"><span><span class="summary-name">gpt-6-astra</span><span class="summary-meta">推論 / 受信 9.2k</span></span><span class="summary-score">18.1%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="gemini"><span><span class="summary-name">gemini-3.8-flash</span><span class="summary-meta">補助 / 受信 3.4k</span></span><span class="summary-score">8.6%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="other-model"><span><span class="summary-name">Other</span><span class="summary-meta">補助 / 受信 1.1k</span></span><span class="summary-score">5.1%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+        </ul>
+      </section>
+
+      <section class="panel summary-panel" aria-labelledby="tools-title">
+        <div class="panel-header"><div><p class="panel-kicker">Inventory / tool</p><h2 id="tools-title">ツール</h2></div><button class="panel-action" type="button" data-detail="tools">内訳</button></div>
+        <ul class="summary-list">
+          <li><button class="summary-button" type="button" data-detail="codex"><span><span class="summary-name">Codex</span><span class="summary-meta">メイン / 使用量</span></span><span class="summary-score">87.7%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="antigravity"><span><span class="summary-name">Antigravity</span><span class="summary-meta">補助 / 使用量</span></span><span class="summary-score">9.1%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="cursor"><span><span class="summary-name">Cursor</span><span class="summary-meta">補助 / 使用量</span></span><span class="summary-score">2.1%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="other"><span><span class="summary-name">Other</span><span class="summary-meta">分類外 / 使用量</span></span><span class="summary-score">1.1%</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+        </ul>
+      </section>
+
+      <section class="panel summary-panel" id="devices" aria-labelledby="devices-title">
+        <div class="panel-header"><div><p class="panel-kicker">Inventory / endpoints</p><h2 id="devices-title">デバイス</h2></div><button class="panel-action" type="button" data-detail="devices">全 7</button></div>
+        <ul class="summary-list">
+          <li><button class="summary-button" type="button" data-detail="device-mac"><span><span class="summary-name">mac-studio / lab</span><span class="summary-meta">最終受信 18:42</span></span><span class="summary-score" id="device-mac-score">3.20B</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="device-win"><span><span class="summary-name">win-pro / desk</span><span class="summary-meta">最終受信 18:39</span></span><span class="summary-score" id="device-win-score">898.05M</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="device-cloud"><span><span class="summary-name">cloud-runner / eu</span><span class="summary-meta">最終受信 18:31</span></span><span class="summary-score" id="device-cloud-score">497.88M</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+          <li><button class="summary-button" type="button" data-detail="devices"><span><span class="summary-name">+4 devices</span><span class="summary-meta">受信済み / 7 endpoints</span></span><span class="summary-score" id="device-other-score">55.84M</span><span class="summary-arrow" aria-hidden="true">↗</span></button></li>
+        </ul>
+      </section>
+    </section>
+
+    <footer class="footer">
+      <p>Token Monitor Analytics · fixed data / design sample</p>
+      <nav class="sample-links" aria-label="デザインサンプル">
+        <a href="01-workspace.html">01 / workspace</a>
+        <a href="02-dense.html">02 / dense</a>
+        <a href="03-insight.html" aria-current="page">03 / insight</a>
+      </nav>
+    </footer>
+  </main>
+
+  <dialog id="detail-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-inner">
+      <div class="dialog-head">
+        <div><p class="panel-kicker">Local detail</p><h2 id="dialog-title">詳細</h2></div>
+        <button class="dialog-close" type="button" id="dialog-close" aria-label="閉じる">×</button>
+      </div>
+      <div class="dialog-content" id="dialog-content"></div>
+    </div>
+  </dialog>
+
+  <script>
+    (() => {
+      const periods = {
+        today: {
+          token: "51,350,620",
+          cost: "$36.01",
+          change: "+6.2% vs 前日",
+          costNote: "平均 $0.70 / 1M",
+          range: "21 Sep 2026 / 24h",
+          axis: ["51M", "39M", "26M", "13M", "0"],
+          labels: ["00:00", "06:00", "12:00", "18:00"],
+          values: [0.06, 0.14, 0.23, 0.31, 0.43, 0.55, 0.64, 0.72, 0.79, 0.88, 0.95, 1],
+          deviceShares: [0.688, 0.193, 0.107, 0.012]
+        },
+        month: {
+          token: "4,653,088,644",
+          cost: "$1,880.88",
+          change: "+18.4% vs 前期間",
+          costNote: "平均 $0.40 / 1M",
+          range: "01 Sep — 21 Sep 2026",
+          axis: ["4.7B", "3.6B", "2.4B", "1.2B", "0"],
+          labels: ["01 Sep", "07", "14", "21"],
+          values: [0.04, 0.12, 0.17, 0.24, 0.36, 0.46, 0.55, 0.65, 0.75, 0.85, 0.93, 1],
+          deviceShares: [0.688, 0.193, 0.107, 0.012]
+        },
+        total: {
+          token: "29,420,800,000",
+          cost: "$11,890.42",
+          change: "+42.1% since Jul 01",
+          costNote: "平均 $0.40 / 1M",
+          range: "01 Jul — 21 Sep 2026",
+          axis: ["29.4B", "22.1B", "14.7B", "7.4B", "0"],
+          labels: ["01 Jul", "01 Aug", "01 Sep", "21 Sep"],
+          values: [0.06, 0.18, 0.27, 0.36, 0.45, 0.55, 0.64, 0.72, 0.80, 0.88, 0.95, 1],
+          deviceShares: [0.688, 0.193, 0.107, 0.012]
+        }
+      };
+
+      const details = {
+        trend: { title: "トークン推移", body: "期間内の受信イベントを累積表示しています。点線は選択期間の最終受信位置です。", rows: [["期間", "選択中"], ["最終受信", "18:42 JST"], ["集計", "固定データ"]] },
+        quota: { title: "クォータ詳細", body: "Codex Weekly の残量とリセット日を確認できます。", rows: [["種別", "Codex Weekly"], ["残量", "95%"], ["リセットまで", "6日14時間"]] },
+        connections: { title: "受信ステータス", body: "匿名化された Hub と Device の受信状態です。", rows: [["登録 Hub", "3"], ["受信済み", "2 Hub / 7 Device"], ["待機", "1 Hub"]] },
+        tools: { title: "ツール別の寄与", body: "選択期間のトークンを送信元ツールごとに配分しています。", rows: [["Codex", "87.7%"], ["Antigravity", "9.1%"], ["Cursor", "2.1%"], ["Other", "1.1%"]] },
+        codex: { title: "Codex", body: "主なツール利用の寄与です。", rows: [["寄与", "87.7%"], ["状態", "安定"], ["アカウント", "acct_7f2a"]] },
+        antigravity: { title: "Antigravity", body: "補助ツール利用の寄与です。", rows: [["寄与", "9.1%"], ["状態", "安定"], ["アカウント", "acct_3c91"]] },
+        cursor: { title: "Cursor", body: "補助ツール利用の寄与です。", rows: [["寄与", "2.1%"], ["状態", "安定"], ["アカウント", "acct_0bd4"]] },
+        other: { title: "Other", body: "分類外のツール利用です。確認対象として残しています。", rows: [["寄与", "1.1%"], ["状態", "確認中"], ["処理", "分類待ち"]] },
+        heatmap: { title: "受信ヒートマップ", body: "曜日ごとの受信量を濃淡で表示しています。濃いセルほど受信量が多い日です。", rows: [["対象", "直近28日"], ["ピーク", "金曜日"], ["最大", "今週 金"]] },
+        models: { title: "モデル一覧", body: "期間内に受信したモデルのトークン構成です。", rows: [["登録", "5 models"], ["最多", "gpt-5.6-luna"], ["受信", "44.8k events"]] },
+        "gpt-56-luna": { title: "gpt-5.6-luna", body: "推論ワークロードの主モデルです。", rows: [["寄与", "42.8%"], ["イベント", "18.4k"], ["状態", "受信中"]] },
+        "gpt-56-sol": { title: "gpt-5.6-sol", body: "日常タスク向けのモデルです。", rows: [["寄与", "25.4%"], ["イベント", "12.7k"], ["状態", "受信中"]] },
+        "gpt-6-astra": { title: "gpt-6-astra", body: "高負荷タスク向けのモデルです。", rows: [["寄与", "18.1%"], ["イベント", "9.2k"], ["状態", "受信中"]] },
+        gemini: { title: "gemini-3.8-flash", body: "補助ワークロードのモデルです。", rows: [["寄与", "8.6%"], ["イベント", "3.4k"], ["状態", "受信中"]] },
+        "other-model": { title: "Other models", body: "一覧にないモデルからの受信です。", rows: [["寄与", "5.1%"], ["イベント", "1.1k"], ["状態", "確認中"]] },
+        devices: { title: "デバイス一覧", body: "現在受信できている匿名化デバイスです。", periodTotal: true, rows: [["受信済み", "7 devices"], ["期間内トークン", ""], ["最終受信", "18:42 JST"]] },
+        "device-mac": { title: "mac-studio / lab", body: "匿名化された endpoint の受信詳細です。", deviceIndex: 0, rows: [["期間内受信", ""], ["最終受信", "18:42 JST"], ["状態", "online"]] },
+        "device-win": { title: "win-pro / desk", body: "匿名化された endpoint の受信詳細です。", deviceIndex: 1, rows: [["期間内受信", ""], ["最終受信", "18:39 JST"], ["状態", "online"]] },
+        "device-cloud": { title: "cloud-runner / eu", body: "匿名化された endpoint の受信詳細です。", deviceIndex: 2, rows: [["期間内受信", ""], ["最終受信", "18:31 JST"], ["状態", "online"]] }
+      };
+
+      const tokenTotal = document.getElementById("token-total");
+      const costTotal = document.getElementById("cost-total");
+      const tokenChange = document.getElementById("token-change");
+      const costChange = document.getElementById("cost-change");
+      const periodCopy = document.getElementById("period-copy");
+      const trendRange = document.getElementById("trend-range");
+      const trendArea = document.getElementById("trend-area");
+      const trendLine = document.getElementById("trend-line");
+      const trendDot = document.getElementById("trend-dot");
+      const trendGuide = document.getElementById("trend-guide");
+      const axisIds = ["axis-4", "axis-3", "axis-2", "axis-1", "axis-0"];
+      const xIds = ["x-0", "x-1", "x-2", "x-3"];
+      const dialog = document.getElementById("detail-dialog");
+      const dialogTitle = document.getElementById("dialog-title");
+      const dialogContent = document.getElementById("dialog-content");
+      const deviceScoreIds = ["device-mac-score", "device-win-score", "device-cloud-score", "device-other-score"];
+      let activeDeviceValues = [];
+      let activePeriodTotal = "";
+      let selectedPeriod = "month";
+
+      function compactTokens(value) {
+        if (value >= 1000000000) return (value / 1000000000).toFixed(2) + "B";
+        if (value >= 1000000) return (value / 1000000).toFixed(2) + "M";
+        if (value >= 1000) return (value / 1000).toFixed(2) + "K";
+        return String(value);
+      }
+
+      function chartPoints(values) {
+        const svg = document.querySelector('.trend-figure svg');
+        const width = svg.getBoundingClientRect().width;
+        const height = svg.getBoundingClientRect().height;
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        const left = 42, right = width - 18, baseline = height - 22, top = 14;
+        document.querySelectorAll('.chart-grid').forEach((line, i) => {
+          const y = top + i * (baseline - top) / 4;
+          line.setAttribute('x1', left); line.setAttribute('x2', right);
+          line.setAttribute('y1', y); line.setAttribute('y2', y);
+          const label = document.getElementById(axisIds[i]);
+          label.setAttribute('x', 2); label.setAttribute('y', y + 3);
+        });
+        xIds.forEach((id, i) => {
+          const el = document.getElementById(id);
+          el.setAttribute('x', left + i * (right - left) / 3);
+          el.setAttribute('y', height - 3);
+          el.setAttribute('text-anchor', i === 3 ? 'end' : i === 0 ? 'start' : 'middle');
+        });
+        trendGuide.setAttribute('y1', top); trendGuide.setAttribute('y2', baseline);
+        return values.map((value, index) => {
+          const x = left + (right - left) * (index / (values.length - 1));
+          const y = baseline - (baseline - top) * value;
+          return [x, y];
+        });
+      }
+
+      function updatePeriod(period) {
+        selectedPeriod = period;
+        const data = periods[period];
+        tokenTotal.innerHTML = data.token + "<small>tokens</small>";
+        costTotal.textContent = data.cost;
+        tokenChange.textContent = data.change;
+        costChange.textContent = data.costNote;
+        periodCopy.textContent = data.range;
+        trendRange.textContent = data.range;
+        axisIds.forEach((id, index) => { document.getElementById(id).textContent = data.axis[index]; });
+        xIds.forEach((id, index) => { document.getElementById(id).textContent = data.labels[index]; });
+        activePeriodTotal = data.token;
+        activeDeviceValues = data.deviceShares.map(share => Math.round(Number(data.token.replace(/,/g, "")) * share));
+        deviceScoreIds.forEach((id, index) => { document.getElementById(id).textContent = compactTokens(activeDeviceValues[index]); });
+
+        const points = chartPoints(data.values);
+        const lineD = points.map(([x, y], index) => (index === 0 ? "M" : "L") + x + " " + y).join(" ");
+        const baseline = document.querySelector('.trend-figure svg').getBoundingClientRect().height - 22;
+        const areaD = lineD + ` L${points[points.length - 1][0]} ${baseline} L${points[0][0]} ${baseline} Z`;
+        const [lastX, lastY] = points[points.length - 1];
+        trendLine.setAttribute("d", lineD);
+        trendArea.setAttribute("d", areaD);
+        trendDot.setAttribute("cx", lastX);
+        trendDot.setAttribute("cy", lastY);
+        trendGuide.setAttribute("x1", lastX);
+        trendGuide.setAttribute("x2", lastX);
+        document.querySelectorAll("[data-period]").forEach(button => {
+          button.setAttribute("aria-pressed", button.dataset.period === period ? "true" : "false");
+        });
+      }
+
+      function openDetail(key) {
+        const detail = details[key];
+        dialogTitle.textContent = detail.title;
+        const rows = detail.rows.map((row, index) => {
+          let value = row[1];
+          if (detail.deviceIndex !== undefined && index === 0) value = compactTokens(activeDeviceValues[detail.deviceIndex]) + " tokens";
+          if (detail.periodTotal && index === 1) value = activePeriodTotal + " tokens";
+          return "<tr><th>" + row[0] + "</th><td>" + value + "</td></tr>";
+        }).join("");
+        dialogContent.innerHTML = "<p>" + detail.body + "</p><table class=\"detail-table\"><tbody>" + rows + "</tbody></table>";
+        dialog.showModal();
+      }
+
+      document.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => updatePeriod(button.dataset.period)));
+      document.querySelectorAll("[data-detail]").forEach(button => button.addEventListener("click", () => openDetail(button.dataset.detail)));
+      document.getElementById("dialog-close").addEventListener("click", () => dialog.close());
+      dialog.addEventListener("click", event => { if (event.target === dialog) dialog.close(); });
+      window.addEventListener("resize", () => updatePeriod(selectedPeriod));
+      updatePeriod("month");
+    })();
+  </script>
+</body>
+</html>

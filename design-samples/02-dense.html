@@ -1,0 +1,946 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Token Monitor Analytics の高密度ライトテーマデザインサンプル">
+  <link rel="icon" href="data:,">
+  <title>Token Monitor Analytics — Dense</title>
+  <style>
+    :root {
+      --navy-950: #061d30;
+      --navy-900: #092a43;
+      --navy-800: #0f3b59;
+      --ink: #123047;
+      --ink-soft: #5e7484;
+      --ink-faint: #8ca0ae;
+      --line: #d8e4ea;
+      --line-strong: #bfd1dc;
+      --canvas: #edf4f7;
+      --surface: #ffffff;
+      --surface-alt: #f5fafc;
+      --cyan: #08b8c9;
+      --cyan-strong: #008da7;
+      --blue: #2f72e9;
+      --blue-soft: #dce9ff;
+      --mint: #24bd98;
+      --amber: #e9a52c;
+      --rose: #e86776;
+      --shadow: 0 8px 22px rgba(22, 59, 84, 0.07);
+      --radius: 13px;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--canvas); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 0%, rgba(8, 184, 201, 0.08), transparent 26rem),
+        var(--canvas);
+      font: 13px/1.45 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+      overflow-x: hidden;
+    }
+    button, a { font: inherit; }
+    button { cursor: pointer; }
+    a { color: inherit; text-decoration: none; }
+    :focus-visible {
+      outline: 3px solid rgba(8, 184, 201, 0.45);
+      outline-offset: 2px;
+    }
+
+    .topbar {
+      min-height: 49px;
+      color: var(--navy-900);
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+    }
+    .topbar-inner {
+      width: min(1500px, 100%);
+      min-height: 49px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 22px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: max-content;
+      color: var(--navy-900);
+      letter-spacing: 0.02em;
+    }
+    .brand-mark {
+      width: 27px;
+      height: 27px;
+      padding: 4px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #a9dfe1;
+      border-radius: 8px;
+      background: #e8f8f7;
+      color: var(--cyan-strong);
+    }
+    .brand-copy { display: grid; line-height: 1.1; }
+    .brand-name { font-size: 12px; font-weight: 800; letter-spacing: 0.1em; }
+    .brand-sub { margin-top: 3px; color: var(--ink-faint); font-size: 10px; letter-spacing: 0.06em; }
+    .topnav {
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .top-link {
+      position: relative;
+      height: 49px;
+      padding: 3px 13px 0;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 0;
+      font-size: 12px;
+      letter-spacing: 0.03em;
+      transition: color 160ms ease, background 160ms ease;
+    }
+    .top-link::after {
+      content: "";
+      position: absolute;
+      right: 13px;
+      bottom: 0;
+      left: 13px;
+      height: 2px;
+      border-radius: 2px 2px 0 0;
+      background: transparent;
+    }
+    .top-link:hover, .top-link[aria-current="page"] { color: var(--navy-900); background: #f2fafb; }
+    .top-link[aria-current="page"]::after { background: var(--cyan); }
+    .topbar-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    .icon-button {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      color: #b8d5df;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(181, 226, 233, 0.2);
+      border-radius: 8px;
+    }
+    .icon-button:hover { color: #fff; background: rgba(8, 184, 201, 0.18); }
+    .profile-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 7px 4px 4px;
+      color: #d6ebf0;
+      border: 1px solid rgba(181, 226, 233, 0.17);
+      border-radius: 99px;
+      font-size: 11px;
+    }
+    .profile-dot {
+      width: 21px;
+      height: 21px;
+      display: grid;
+      place-items: center;
+      color: #04304c;
+      background: #b4f2eb;
+      border-radius: 50%;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .page {
+      width: min(1500px, 100%);
+      margin: 0 auto;
+      padding: 14px 24px 20px;
+    }
+    .context-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .eyebrow, .kicker {
+      margin: 0 0 4px;
+      color: var(--cyan-strong);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      margin-bottom: 3px;
+      color: var(--navy-900);
+      font-size: 24px;
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+    }
+    .title-accent { color: var(--blue); }
+    .subtitle { display: none; }
+    .sample-stamp {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 0;
+      padding: 6px 9px;
+      color: #547181;
+      background: rgba(255, 255, 255, 0.65);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    .sample-stamp span {
+      padding: 2px 5px;
+      color: var(--cyan-strong);
+      background: #def8f6;
+      border-radius: 4px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+
+    .control-row {
+      min-height: 43px;
+      margin-top: 17px;
+      padding: 6px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    .context-tools {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .period-switch {
+      display: inline-grid;
+      grid-template-columns: repeat(3, 1fr);
+      min-width: 254px;
+      padding: 3px;
+      background: #e3edf2;
+      border-radius: 7px;
+    }
+    .period-button {
+      min-height: 27px;
+      padding: 3px 12px;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 0;
+      border-radius: 5px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+    }
+    .period-button:hover { color: var(--navy-900); }
+    .period-button[aria-pressed="true"] {
+      color: var(--navy-900);
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(28, 73, 94, 0.12);
+    }
+    .control-meta {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--ink-soft);
+      font-size: 11px;
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      display: inline-block;
+      background: var(--mint);
+      border-radius: 50%;
+      box-shadow: 0 0 0 3px rgba(36, 189, 152, 0.13);
+    }
+
+    .kpi-strip {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .kpi-card, .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .kpi-card {
+      min-height: 78px;
+      padding: 10px 13px;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 3px;
+      background: var(--cyan);
+    }
+    .kpi-card:nth-child(2)::before { background: var(--blue); }
+    .kpi-card:nth-child(3)::before { background: var(--mint); }
+    .kpi-card:nth-child(4)::before { background: var(--amber); }
+    .kpi-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 7px;
+      color: var(--ink-soft);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .kpi-label em { color: var(--ink-faint); font-size: 9px; font-style: normal; font-weight: 500; }
+    .kpi-value {
+      display: block;
+      margin-top: 4px;
+      color: var(--navy-900);
+      font-size: clamp(19px, 2.1vw, 25px);
+      font-weight: 780;
+      letter-spacing: -0.035em;
+      line-height: 1.1;
+    }
+    .kpi-value small { margin-left: 3px; color: var(--ink-soft); font-size: 11px; font-weight: 650; letter-spacing: 0; }
+    .kpi-foot {
+      margin-top: 5px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--ink-faint);
+      font-size: 10px;
+    }
+    .delta-up { color: var(--mint); font-weight: 800; }
+    .delta-down { color: var(--rose); font-weight: 800; }
+
+    .workspace-grid {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(350px, 0.9fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .column-stack { display: grid; gap: 10px; min-width: 0; }
+    .panel { min-width: 0; padding: 11px 13px; }
+    .panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 13px;
+    }
+    .panel-head h2 {
+      margin: 0;
+      color: var(--navy-900);
+      font-size: 16px;
+      letter-spacing: -0.025em;
+      line-height: 1.2;
+    }
+    .panel-head h2 span { color: var(--ink-faint); font-size: 10px; font-weight: 500; letter-spacing: 0; }
+    .panel-action {
+      flex: 0 0 auto;
+      padding: 3px 0;
+      color: var(--cyan-strong);
+      background: none;
+      border: 0;
+      font-size: 10px;
+      font-weight: 750;
+    }
+    .panel-action:hover { color: var(--navy-900); text-decoration: underline; text-underline-offset: 3px; }
+    .usage-panel { min-height: 0; }
+    .usage-summary {
+      margin-top: 15px;
+      display: grid;
+      grid-template-columns: minmax(210px, 1fr) minmax(180px, 0.9fr);
+      align-items: end;
+      gap: 24px;
+    }
+    .usage-total strong {
+      display: block;
+      color: var(--navy-900);
+      font-size: clamp(27px, 4vw, 40px);
+      line-height: 0.98;
+      letter-spacing: -0.06em;
+    }
+    .usage-total strong small { margin-left: 5px; color: var(--ink-soft); font-size: 12px; font-weight: 600; letter-spacing: 0; }
+    .usage-total p { margin: 8px 0 0; color: var(--ink-soft); font-size: 11px; }
+    .usage-total p b { color: var(--navy-900); font-size: 12px; }
+    .progress-card { padding: 10px 11px; background: var(--surface-alt); border: 1px solid #dcecf1; border-radius: 9px; }
+    .progress-top { display: flex; justify-content: space-between; align-items: baseline; color: var(--ink-soft); font-size: 10px; }
+    .progress-top strong { color: var(--blue); font-size: 14px; }
+    .progress-track, .limit-track, .tool-track {
+      position: relative;
+      overflow: hidden;
+      background: #e6eef2;
+      border-radius: 99px;
+    }
+    .progress-track { height: 7px; margin-top: 6px; }
+    .progress-track i, .limit-track i, .tool-track i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--cyan), var(--blue));
+    }
+    .progress-card p { margin: 6px 0 0; color: var(--ink-faint); font-size: 10px; }
+    .chart-wrap {
+      height: 112px;
+      margin-top: 11px;
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr);
+      gap: 8px;
+      border-top: 1px solid #edf2f4;
+      border-bottom: 1px solid #edf2f4;
+    }
+    .y-axis {
+      padding: 9px 0 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      color: var(--ink-faint);
+      font-size: 9px;
+      text-align: right;
+    }
+    .bar-chart {
+      min-width: 0;
+      padding: 10px 2px 0;
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      align-items: end;
+      gap: clamp(5px, 1vw, 14px);
+      background-image: linear-gradient(to bottom, rgba(139, 171, 184, 0.13) 1px, transparent 1px);
+      background-size: 100% 33.33%;
+    }
+    .usage-column { min-width: 0; height: 100%; display: grid; grid-template-rows: 1fr 18px; align-items: end; gap: 4px; }
+    .usage-bar-holder { height: 100%; display: flex; align-items: end; justify-content: center; }
+    .usage-bar {
+      width: min(27px, 68%);
+      min-height: 5px;
+      height: 50%;
+      background: linear-gradient(180deg, #38cfd3, #1781d1);
+      border-radius: 5px 5px 2px 2px;
+      box-shadow: 0 4px 9px rgba(27, 140, 191, 0.16);
+      transition: height 220ms ease;
+    }
+    .usage-column:nth-child(6) .usage-bar { background: linear-gradient(180deg, #75e4d0, #18a5a8); }
+    .usage-column:last-child .usage-bar { background: linear-gradient(180deg, #6d9bf5, #3467d4); }
+    .usage-label { color: var(--ink-faint); font-size: 9px; text-align: center; white-space: nowrap; }
+    .chart-caption { margin-top: 8px; display: flex; justify-content: space-between; gap: 8px; color: var(--ink-faint); font-size: 10px; }
+    .chart-caption strong { color: var(--mint); }
+
+    .contribution-panel { min-height: 0; }
+    .contribution-layout {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(175px, 0.9fr);
+      gap: 16px;
+    }
+    .subhead {
+      margin-bottom: 9px;
+      display: flex;
+      justify-content: space-between;
+      color: var(--ink-soft);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.03em;
+    }
+    .subhead span { color: var(--ink-faint); font-weight: 500; }
+    .tool-row { display: grid; grid-template-columns: 67px minmax(0, 1fr) 43px; align-items: center; gap: 8px; margin-top: 7px; }
+    .tool-name { color: var(--ink); font-size: 11px; font-weight: 700; }
+    .tool-track { height: 7px; }
+    .tool-track i { background: var(--blue); }
+    .tool-row:nth-child(3) .tool-track i { background: var(--cyan); }
+    .tool-row:nth-child(4) .tool-track i { background: #8c79df; }
+    .tool-row:nth-child(5) .tool-track i { background: #afbdc6; }
+    .tool-share { color: var(--ink-soft); font-size: 10px; text-align: right; }
+    .model-list { margin: 0; padding: 0; list-style: none; }
+    .model-item { min-height: 25px; padding: 4px 0; display: grid; grid-template-columns: 19px minmax(0, 1fr) auto; align-items: center; gap: 7px; border-bottom: 1px solid #edf2f4; }
+    .model-item:last-child { border-bottom: 0; }
+    .model-rank { color: var(--ink-faint); font-size: 10px; font-weight: 750; }
+    .model-name { overflow: hidden; color: var(--navy-900); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .model-volume { color: var(--ink-soft); font-size: 10px; }
+
+    .limits-panel { min-height: 0; }
+    .limit-list { margin-top: 10px; display: grid; gap: 8px; }
+    .limit-row { display: grid; grid-template-columns: 106px minmax(0, 1fr) 70px; align-items: center; gap: 9px; }
+    .limit-name { color: var(--ink-soft); font-size: 10px; }
+    .limit-track { height: 7px; }
+    .limit-track i { background: var(--mint); }
+    .limit-row:nth-child(2) .limit-track i { background: var(--blue); }
+    .limit-row:nth-child(3) .limit-track i { background: var(--amber); }
+    .limit-value { color: var(--navy-900); font-size: 10px; font-weight: 800; text-align: right; white-space: nowrap; }
+    .limit-value small { color: var(--ink-faint); font-size: 8px; font-weight: 600; }
+    .limit-note { margin: 8px 0 0; color: var(--ink-faint); font-size: 10px; }
+
+    .hub-panel { min-height: 0; }
+    .hub-summary {
+      margin-top: 9px;
+      padding: 7px 9px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--ink-soft);
+      background: var(--surface-alt);
+      border: 1px solid #e0edf1;
+      border-radius: 9px;
+      font-size: 10px;
+    }
+    .hub-counts { display: flex; align-items: baseline; gap: 9px; white-space: nowrap; }
+    .hub-counts b { color: var(--navy-900); font-size: 18px; letter-spacing: -0.05em; }
+    .hub-counts span { color: var(--ink-faint); }
+    .hub-counts .received { color: var(--mint); font-weight: 800; }
+    .hub-counts .waiting { color: var(--amber); font-weight: 800; }
+    .device-total { text-align: right; }
+    .device-total strong { display: block; color: var(--blue); font-size: 15px; }
+    .hub-table, .event-table { width: 100%; border-collapse: collapse; }
+    .hub-table { margin-top: 10px; table-layout: fixed; }
+    .hub-table th, .hub-table td, .event-table th, .event-table td { padding: 6px 5px; border-bottom: 1px solid #edf2f4; text-align: left; }
+    .hub-table th, .event-table th { color: var(--ink-faint); font-size: 9px; font-weight: 700; letter-spacing: 0.04em; }
+    .hub-table td { color: var(--ink-soft); font-size: 10px; vertical-align: middle; }
+    .hub-table td:first-child { color: var(--navy-900); font-weight: 750; }
+    .status-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 99px; font-size: 9px; font-weight: 750; white-space: nowrap; }
+    .status-chip::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .status-chip.ok { color: #079a77; background: #e4f8f1; }
+    .status-chip.wait { color: #b57608; background: #fff4dd; }
+    .hub-foot { margin: 7px 0 0; display: flex; justify-content: space-between; color: var(--ink-faint); font-size: 10px; }
+
+    .bottom-grid {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+      gap: 12px;
+    }
+    .activity-panel, .events-panel { min-height: 0; }
+    .heatmap-wrap { margin-top: 9px; display: grid; grid-template-columns: 25px minmax(0, 1fr); gap: 8px; }
+    .weekday-labels { padding-top: 2px; display: grid; grid-template-rows: repeat(7, 1fr); color: var(--ink-faint); font-size: 9px; }
+    .weekday-labels span:nth-child(odd) { visibility: hidden; }
+    .heatmap-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: repeat(7, 10px); grid-auto-flow: column; gap: 3px; }
+    .heat-cell { border-radius: 3px; background: #e9f0f2; }
+    .heat-cell[data-level="1"] { background: #c9eff0; }
+    .heat-cell[data-level="2"] { background: #7ddcdd; }
+    .heat-cell[data-level="3"] { background: #2abdc5; }
+    .heat-cell[data-level="4"] { background: #196ba7; }
+    .heatmap-footer { margin: 8px 0 0 33px; display: flex; align-items: center; justify-content: space-between; color: var(--ink-faint); font-size: 10px; }
+    .heat-legend { display: inline-flex; align-items: center; gap: 3px; }
+    .heat-legend i { width: 10px; height: 10px; display: inline-block; border-radius: 2px; background: #e9f0f2; }
+    .heat-legend i:nth-child(2) { background: #7ddcdd; }
+    .heat-legend i:nth-child(3) { background: #2abdc5; }
+    .heat-legend i:nth-child(4) { background: #196ba7; }
+    .event-table { margin-top: 7px; table-layout: fixed; }
+    .event-table th, .event-table td { padding: 5px 5px; }
+    .event-table td { color: var(--ink-soft); font-size: 10px; }
+    .event-table td:first-child { color: var(--ink-faint); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .event-table td:nth-child(2) { color: var(--navy-900); font-weight: 700; }
+    .event-status { color: #079a77; font-size: 9px; font-weight: 800; }
+    .events-foot { margin-top: 7px; display: flex; justify-content: flex-end; }
+
+    .proposal-switcher {
+      margin-top: 10px;
+      padding: 9px 2px 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: var(--ink-faint);
+      font-size: 10px;
+    }
+    .proposal-switcher > span { margin-right: 4px; letter-spacing: 0.05em; }
+    .proposal-link { padding: 4px 8px; color: var(--ink-soft); border: 1px solid transparent; border-radius: 5px; }
+    .proposal-link:hover { color: var(--blue); border-color: var(--line-strong); background: #fff; }
+    .proposal-link[aria-current="page"] { color: var(--navy-900); background: #fff; border-color: var(--line); font-weight: 800; }
+
+    dialog {
+      width: min(510px, calc(100% - 24px));
+      padding: 0;
+      color: var(--ink);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      box-shadow: 0 24px 70px rgba(4, 35, 55, 0.24);
+    }
+    dialog::backdrop { background: rgba(5, 30, 47, 0.42); backdrop-filter: blur(2px); }
+    .dialog-inner { padding: 20px 21px 21px; }
+    .dialog-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .dialog-head h2 { margin: 0; color: var(--navy-900); font-size: 20px; letter-spacing: -0.03em; }
+    .dialog-kicker { margin: 0 0 4px; color: var(--cyan-strong); font-size: 9px; font-weight: 800; letter-spacing: 0.13em; text-transform: uppercase; }
+    .dialog-close { width: 27px; height: 27px; display: grid; place-items: center; color: var(--ink-soft); background: var(--surface-alt); border: 1px solid var(--line); border-radius: 7px; font-size: 17px; line-height: 1; }
+    .dialog-close:hover { color: var(--navy-900); background: var(--blue-soft); }
+    .dialog-body { margin-top: 17px; color: var(--ink-soft); font-size: 12px; }
+    .dialog-body p { margin-bottom: 11px; }
+    .dialog-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 13px 0; }
+    .dialog-metric { padding: 10px; background: var(--surface-alt); border: 1px solid #e2edf1; border-radius: 8px; }
+    .dialog-metric small { display: block; color: var(--ink-faint); font-size: 9px; }
+    .dialog-metric strong { display: block; margin-top: 3px; color: var(--navy-900); font-size: 16px; }
+    .dialog-list { margin: 0; padding-left: 18px; }
+    .dialog-list li { margin: 6px 0; }
+    .dialog-foot { margin-top: 17px; color: var(--ink-faint); font-size: 10px; }
+
+    @media (max-width: 980px) {
+      .topbar-inner { gap: 13px; padding-inline: 16px; }
+      .top-link { padding-inline: 9px; }
+      .top-link::after { right: 9px; left: 9px; }
+      .page { padding-inline: 16px; }
+      .workspace-grid { grid-template-columns: minmax(0, 1fr); }
+      .column-stack:last-child { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+      .hub-panel { min-height: 100%; }
+    }
+    @media (max-width: 700px) {
+      .topbar-inner { min-height: 0; padding-top: 10px; flex-wrap: wrap; gap: 9px; }
+      .topbar { padding-bottom: 0; }
+      .brand-sub, .profile-chip span { display: none; }
+      .topbar-actions { gap: 6px; }
+      .topnav { order: 3; width: 100%; min-height: 38px; margin-inline: -6px; padding-inline: 6px; overflow-x: auto; }
+      .top-link { height: 36px; padding: 0 13px; }
+      .top-link::after { right: 13px; left: 13px; }
+      .page { padding: 16px 12px 24px; }
+      .context-row { display: block; }
+      .context-tools { margin-top: 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+      .context-tools .period-switch { grid-column: 1 / -1; width: 100%; }
+      .context-tools .sample-stamp { margin-top: 0; }
+      .context-tools .control-meta { justify-content: flex-end; min-width: 0; white-space: nowrap; font-size: 10px; }
+      .sample-stamp { margin-top: 12px; }
+      .control-row { margin-top: 14px; padding: 7px; display: block; }
+      .period-switch { width: 100%; min-width: 0; }
+      .control-meta { margin: 8px 2px 1px; justify-content: center; }
+      .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .kpi-card { min-height: 91px; padding: 11px 12px; }
+      .kpi-value { font-size: 20px; }
+      .workspace-grid { gap: 9px; margin-top: 9px; }
+      .column-stack { gap: 9px; }
+      .column-stack:last-child { grid-template-columns: 1fr; gap: 9px; }
+      .panel { padding: 13px 13px; border-radius: 11px; }
+      .usage-summary { grid-template-columns: 1fr; gap: 13px; margin-top: 13px; }
+      .usage-total strong { font-size: 30px; }
+      .chart-wrap { height: 127px; margin-top: 13px; }
+      .contribution-layout { grid-template-columns: 1fr; gap: 17px; }
+      .contribution-panel { min-height: 0; }
+      .limits-panel { min-height: 0; }
+      .hub-summary { align-items: flex-start; }
+      .hub-counts { flex-wrap: wrap; gap: 5px 8px; white-space: normal; }
+      .hub-table th, .hub-table td { padding: 7px 3px; }
+      .hub-table th:nth-child(4), .hub-table td:nth-child(4) { display: none; }
+      .bottom-grid { grid-template-columns: 1fr; gap: 9px; margin-top: 9px; }
+      .activity-panel, .events-panel { min-height: 0; }
+      .heatmap-grid { gap: 3px; }
+      .heatmap-footer { margin-left: 33px; }
+      .proposal-switcher { flex-wrap: wrap; gap: 4px; }
+      .proposal-switcher > span { width: 100%; margin: 0 0 2px; text-align: center; }
+      .dialog-inner { padding: 17px 16px 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar" id="overview">
+    <div class="topbar-inner">
+      <a class="brand" href="#overview" aria-label="Token Monitor Analytics Overview">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="none">
+            <path d="M2 13.2h3.2l2-6.3 2.6 9 2.1-6.1H18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <span class="brand-copy"><span class="brand-name">TOKEN MONITOR</span><span class="brand-sub">ANALYTICS CONSOLE</span></span>
+      </a>
+      <nav class="topnav" aria-label="メインナビゲーション">
+        <button class="top-link" type="button" data-panel="overview" aria-current="page">Overview</button>
+        <button class="top-link" type="button" data-panel="usage-detail">Usage</button>
+        <button class="top-link" type="button" data-panel="connections">Connections</button>
+        <button class="top-link" type="button" data-panel="insights">Insights</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page" aria-label="Token Monitor Analytics dashboard">
+    <div class="context-row">
+      <div>
+        <h1>ダッシュボード</h1>
+      </div>
+      <div class="context-tools">
+        <div class="period-switch" role="group" aria-label="集計期間">
+          <button class="period-button" type="button" data-period="today" aria-pressed="false">TODAY</button>
+          <button class="period-button" type="button" data-period="month" aria-pressed="true">MONTH</button>
+          <button class="period-button" type="button" data-period="total" aria-pressed="false">TOTAL</button>
+        </div>
+        <div class="sample-stamp">デザインサンプル <span>固定データ</span></div>
+        <div class="control-meta"><span class="live-dot" aria-hidden="true"></span><span data-bind="periodMeta">9月 2026 · 12:50 JST</span></div>
+      </div>
+    </div>
+
+    <section class="kpi-strip" aria-label="主要指標">
+      <article class="kpi-card">
+        <div class="kpi-label"><span>トークン</span><em data-bind="periodName">MONTH</em></div>
+        <strong class="kpi-value"><span data-bind="tokens">4,653,088,644</span><small>tokens</small></strong>
+        <div class="kpi-foot"><span class="delta-up" data-bind="delta">↗ 12.8%</span><span>前期間比</span></div>
+      </article>
+      <article class="kpi-card">
+        <div class="kpi-label"><span>推定コスト</span><em>USD</em></div>
+        <strong class="kpi-value"><span data-bind="cost">$1,880.88</span></strong>
+        <div class="kpi-foot"><span>平均単価</span><span data-bind="unitCost">$0.40 / 1M</span></div>
+      </article>
+      <article class="kpi-card">
+        <div class="kpi-label"><span>日平均</span><em data-bind="periodName">MONTH</em></div>
+        <strong class="kpi-value"><span data-bind="average">221.6M</span><small>tokens</small></strong>
+        <div class="kpi-foot"><span class="delta-up">安定</span><span>直近7日レンジ内</span></div>
+      </article>
+      <article class="kpi-card">
+        <div class="kpi-label"><span>受信ハブ</span><em>固定</em></div>
+        <strong class="kpi-value">2 / 3<small>hubs</small></strong>
+        <div class="kpi-foot"><span>端末受信</span><span>7台</span></div>
+      </article>
+    </section>
+
+    <section class="workspace-grid" aria-label="分析ワークスペース">
+      <div class="column-stack">
+        <section class="panel usage-panel" id="usage" aria-labelledby="usage-title">
+          <div class="panel-head">
+            <div><p class="kicker">Usage pulse</p><h2 id="usage-title">使用量の推移 <span>7点トレンド</span></h2></div>
+            <button class="panel-action" type="button" data-panel="usage-detail">詳細 ↗</button>
+          </div>
+          <div class="chart-wrap" aria-label="使用量の7点トレンド棒グラフ">
+            <div class="y-axis" aria-hidden="true"><span data-bind="axisTop">800M</span><span data-bind="axisMid">400M</span><span>0</span></div>
+            <div class="bar-chart" id="usageChart">
+              <div class="usage-column"><div class="usage-bar-holder"><i class="usage-bar" style="height: 53%"></i></div><span class="usage-label">09/15</span></div>
+              <div class="usage-column"><div class="usage-bar-holder"><i class="usage-bar" style="height: 66%"></i></div><span class="usage-label">09/16</span></div>
+              <div class="usage-column"><div class="usage-bar-holder"><i class="usage-bar" style="height: 59%"></i></div><span class="usage-label">09/17</span></div>
+              <div class="usage-column"><div class="usage-bar-holder"><i class="usage-bar" style="height: 76%"></i></div><span class="usage-label">09/18</span></div>
+              <div class="usage-column"><div class="usage-bar-holder"><i class="usage-bar" style="height: 69%"></i></div><span class="usage-label">09/19</span></div>
+              <div class="usage-column"><div class="usage-bar-holder"><i class="usage-bar" style="height: 88%"></i></div><span class="usage-label">09/20</span></div>
+              <div class="usage-column"><div class="usage-bar-holder"><i class="usage-bar" style="height: 63%"></i></div><span class="usage-label">09/21</span></div>
+            </div>
+          </div>
+          <div class="chart-caption"><span>固定サンプル · <strong data-bind="trend">+12.8%</strong></span><span data-bind="trendNote">直近7点ピーク · 704M</span></div>
+        </section>
+
+        <section class="panel contribution-panel" id="contribution" aria-labelledby="contribution-title">
+          <div class="panel-head">
+            <div><p class="kicker">Contribution mix</p><h2 id="contribution-title">ツール / モデル構成</h2></div>
+            <button class="panel-action" type="button" data-panel="contribution-detail">内訳を開く ↗</button>
+          </div>
+          <div class="contribution-layout">
+            <div>
+              <div class="subhead"><span>ツール別シェア</span><span>tokens</span></div>
+              <div class="tool-row"><span class="tool-name">Codex</span><div class="tool-track"><i style="width: 87.7%"></i></div><span class="tool-share">87.7%</span></div>
+              <div class="tool-row"><span class="tool-name">Antigravity</span><div class="tool-track"><i style="width: 9.1%"></i></div><span class="tool-share">9.1%</span></div>
+              <div class="tool-row"><span class="tool-name">Cursor</span><div class="tool-track"><i style="width: 2.1%"></i></div><span class="tool-share">2.1%</span></div>
+              <div class="tool-row"><span class="tool-name">Other</span><div class="tool-track"><i style="width: 1.1%"></i></div><span class="tool-share">1.1%</span></div>
+              <div class="subhead" style="margin-top: 15px; margin-bottom: 0"><span>期間合計</span><span data-bind="toolTotal">4.65B tokens</span></div>
+            </div>
+            <div>
+              <div class="subhead"><span>上位モデル</span><span>share</span></div>
+              <ol class="model-list" aria-label="上位モデル">
+                <li class="model-item"><span class="model-rank">01</span><span class="model-name">gpt-5.6-luna</span><span class="model-volume">43.2%</span></li>
+                <li class="model-item"><span class="model-rank">02</span><span class="model-name">gpt-5.6-sol</span><span class="model-volume">28.7%</span></li>
+                <li class="model-item"><span class="model-rank">03</span><span class="model-name">gpt-6-astra</span><span class="model-volume">16.4%</span></li>
+                <li class="model-item"><span class="model-rank">04</span><span class="model-name">gemini-3.8-flash</span><span class="model-volume">8.9%</span></li>
+                <li class="model-item"><span class="model-rank">05</span><span class="model-name">other</span><span class="model-volume">2.8%</span></li>
+              </ol>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="column-stack">
+        <section class="panel limits-panel" id="limits" aria-labelledby="limits-title">
+          <div class="panel-head">
+            <div><p class="kicker">Service limits</p><h2 id="limits-title">サービス残量</h2></div>
+            <button class="panel-action" type="button" data-panel="limits">詳細 ↗</button>
+          </div>
+          <div class="limit-list">
+            <div class="limit-row"><span class="limit-name">Codex Weekly</span><div class="limit-track"><i style="width: 95%"></i></div><span class="limit-value">95% <small>残り</small></span></div>
+            <div class="limit-row"><span class="limit-name">Cursor Models</span><div class="limit-track"><i style="width: 97%"></i></div><span class="limit-value">97% <small>残り</small></span></div>
+            <div class="limit-row"><span class="limit-name">Grok Weekly</span><div class="limit-track"><i style="width: 98%"></i></div><span class="limit-value">98% <small>残り</small></span></div>
+          </div>
+          <p class="limit-note">各サービスの残り枠 · 期間を切り替えても固定</p>
+        </section>
+
+        <section class="panel hub-panel" id="connections" aria-labelledby="hub-title">
+          <div class="panel-head">
+            <div><p class="kicker">Fleet / Intake</p><h2 id="hub-title">接続ハブと端末</h2></div>
+            <button class="panel-action" type="button" data-panel="connections-detail">詳細 ↗</button>
+          </div>
+          <div class="hub-summary">
+            <div class="hub-counts"><b>3</b><span>登録ハブ</span><span class="received">2 受信済み</span><span class="waiting">1 未受信</span></div>
+            <div class="device-total"><strong>7台</strong><span>端末受信</span></div>
+          </div>
+          <table class="hub-table">
+            <thead><tr><th>Hub / account</th><th>状態</th><th>devices</th><th>最終受信</th></tr></thead>
+            <tbody>
+              <tr><td>Tokyo · acct-01</td><td><span class="status-chip ok">受信済み</span></td><td>2</td><td>12:48</td></tr>
+              <tr><td>Osaka · acct-02</td><td><span class="status-chip ok">受信済み</span></td><td>5</td><td>12:41</td></tr>
+              <tr><td>Home · acct-03</td><td><span class="status-chip wait">未受信</span></td><td>—</td><td>—</td></tr>
+            </tbody>
+          </table>
+          <div class="hub-foot"><span>匿名化ラベル · account ID は表示用</span><span>3 hubs / 7 devices 受信</span></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="bottom-grid" aria-label="補助情報">
+      <section class="panel activity-panel" id="activity" aria-labelledby="activity-title">
+        <div class="panel-head">
+          <div><p class="kicker">Activity density</p><h2 id="activity-title">アクティビティ <span>9月 2026</span></h2></div>
+          <button class="panel-action" type="button" data-panel="activity-detail">日別詳細 ↗</button>
+        </div>
+        <div class="heatmap-wrap">
+          <div class="weekday-labels" aria-hidden="true"><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span><span>日</span></div>
+          <div class="heatmap-grid" id="heatmap" role="img" aria-label="9月の活動密度ヒートマップ"></div>
+        </div>
+        <div class="heatmap-footer"><span>19 active days · 704M peak</span><span class="heat-legend"><span>少</span><i></i><i></i><i></i><span>多</span></span></div>
+      </section>
+      <section class="panel events-panel" id="events" aria-labelledby="events-title">
+        <div class="panel-head">
+          <div><p class="kicker">Intake log</p><h2 id="events-title">最近の受信</h2></div>
+          <button class="panel-action" type="button" data-panel="events-detail">全件を見る ↗</button>
+        </div>
+        <table class="event-table">
+          <thead><tr><th>time</th><th>source</th><th>volume</th><th>status</th></tr></thead>
+          <tbody>
+            <tr><td>12:48</td><td>acct-01 / Mac</td><td>82.2M</td><td><span class="event-status">OK</span></td></tr>
+            <tr><td>12:41</td><td>acct-02 / Linux</td><td>64.8M</td><td><span class="event-status">OK</span></td></tr>
+            <tr><td>12:37</td><td>acct-01 / API</td><td>41.6M</td><td><span class="event-status">OK</span></td></tr>
+            <tr><td>11:55</td><td>acct-02 / IDE</td><td>29.4M</td><td><span class="event-status">OK</span></td></tr>
+          </tbody>
+        </table>
+        <div class="events-foot"><button class="panel-action" type="button" data-panel="events-detail">受信ストリームを確認 ↗</button></div>
+      </section>
+    </section>
+
+    <footer class="proposal-switcher" aria-label="デザインサンプル切替">
+      <span>DESIGN PROPOSALS</span>
+      <a class="proposal-link" href="01-workspace.html">01 Workspace</a>
+      <a class="proposal-link" href="02-dense.html" aria-current="page">02 Dense</a>
+      <a class="proposal-link" href="03-insight.html">03 Insight</a>
+    </footer>
+  </main>
+
+  <dialog id="detailDialog" aria-labelledby="dialogTitle">
+    <div class="dialog-inner">
+      <div class="dialog-head">
+        <div><p class="dialog-kicker" id="dialogKicker">Token Monitor / Detail</p><h2 id="dialogTitle">詳細</h2></div>
+        <button class="dialog-close" type="button" id="dialogClose" aria-label="詳細を閉じる">×</button>
+      </div>
+      <div class="dialog-body" id="dialogBody"></div>
+    </div>
+  </dialog>
+
+  <script>
+    (() => {
+      const periodData = {
+        today: {
+          name: 'TODAY', label: '9月21日', meta: '9月21日 · 12:50 JST', tokens: '51,350,620', cost: '$36.01', average: '51.4M', delta: '↘ 4.2%', deltaClass: 'delta-down', trend: '-4.2%', trendClass: 'delta-down', trendNote: '直近7点ピーク · 13.3M', axisTop: '16M', axisMid: '8M', toolTotal: '0.05B tokens', bars: [32, 47, 39, 67, 51, 83, 61], labels: ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00']
+        },
+        month: {
+          name: 'MONTH', label: '9月 2026', meta: '9月 2026 · 12:50 JST', tokens: '4,653,088,644', cost: '$1,880.88', average: '221.6M', delta: '↗ 12.8%', deltaClass: 'delta-up', trend: '+12.8%', trendClass: 'delta-up', trendNote: '直近7点ピーク · 704M', axisTop: '800M', axisMid: '400M', toolTotal: '4.65B tokens', bars: [53, 66, 59, 76, 69, 88, 63], labels: ['09/15', '09/16', '09/17', '09/18', '09/19', '09/20', '09/21']
+        },
+        total: {
+          name: 'TOTAL', label: '累積 · 2026', meta: '累積 · 2026/01—09/21', tokens: '29,420,800,000', cost: '$11,890.42', average: '111.4M', delta: '↗ 18.6%', deltaClass: 'delta-up', trend: '+18.6%', trendClass: 'delta-up', trendNote: '直近7点ピーク · 4.55B', axisTop: '5B', axisMid: '2.5B', toolTotal: '29.42B tokens', bars: [43, 54, 48, 69, 74, 82, 91], labels: ['03月', '04月', '05月', '06月', '07月', '08月', '09月']
+        }
+      };
+
+      const panelContent = {
+        overview: { kicker: 'Token Monitor / Overview', title: 'Overview', body: '<p>この画面は、受信したトークン量・コスト・接続ハブを一度に確認するためのダッシュボードです。</p><div class="dialog-metrics"><div class="dialog-metric"><small>登録 hubs</small><strong>3</strong></div><div class="dialog-metric"><small>受信 devices</small><strong>7</strong></div><div class="dialog-metric"><small>現在の期間</small><strong data-dialog-period>MONTH</strong></div></div><p class="dialog-foot">表示はレビュー用の固定サンプルです。期間を切り替えるとサンプル値とトレンドが変わります。</p>' },
+        'usage-detail': { kicker: 'Usage pulse / Detail', title: '使用量の見方', body: '<p>棒グラフは選択した期間の7点サンプルです。集計値は左上のトータルと同じ期間に紐づき、密度の変化を素早く比較できます。</p><ul class="dialog-list"><li>MONTH: 4,653,088,644 tokens / $1,880.88</li><li>TODAY: 51,350,620 tokens / $36.01</li><li>TOTAL: 29,420,800,000 tokens / $11,890.42</li></ul><p class="dialog-foot">このプロポーザルでは、詳細ビューを同じファイル内のダイアログで確認できます。</p>' },
+        'contribution-detail': { kicker: 'Contribution mix / Detail', title: 'ツールとモデルの内訳', body: '<p>ツールのシェアは固定データで、Codex を中心にした利用構成を表します。</p><div class="dialog-metrics"><div class="dialog-metric"><small>Codex</small><strong>87.7%</strong></div><div class="dialog-metric"><small>Antigravity</small><strong>9.1%</strong></div><div class="dialog-metric"><small>Cursor + Other</small><strong>3.2%</strong></div></div><p class="dialog-foot">モデル名は anonymized account から受信したサンプルです。</p>' },
+        limits: { kicker: 'Service limits / Detail', title: 'サービス残量の詳細', body: '<p>サービスごとの残り枠を同じ基準で確認できます。期間切替に左右されない固定サンプルです。</p><ul class="dialog-list"><li>Codex Weekly: 95% 残り</li><li>Cursor Models: 97% 残り</li><li>Grok Weekly: 98% 残り</li></ul><p class="dialog-foot">残量はレビュー用の固定値です。</p>' },
+        connections: { kicker: 'Fleet / Connections', title: '接続状態', body: '<p>3 hubs のうち 2 hubs が受信済み、1 hub が未受信です。端末は 7 台を受信済みです。</p><ul class="dialog-list"><li>Tokyo · acct-01 — 2 devices / 受信済み</li><li>Osaka · acct-02 — 5 devices / 受信済み</li><li>Home · acct-03 — 未受信 / devices —</li></ul><p class="dialog-foot">account ID は画面上の匿名ラベルです。</p>' },
+        'connections-detail': { kicker: 'Fleet / Hub detail', title: '接続ハブの詳細', body: '<p>受信経路ごとの状態と最終受信時刻を確認するビューです。現在は 2 hubs / 7 devices が受信済みです。</p><div class="dialog-metrics"><div class="dialog-metric"><small>受信ハブ</small><strong>2 / 3</strong></div><div class="dialog-metric"><small>端末受信</small><strong>7台</strong></div><div class="dialog-metric"><small>未受信</small><strong>1 hub</strong></div></div>' },
+        insights: { kicker: 'Analytics / Insights', title: 'Insights', body: '<p>今月は Codex が 87.7% を占め、09/20 に 704M tokens のピークがあります。受信量とサービス残量を同じ視線上に配置することで、次の確認箇所をすぐに判断できます。</p><p class="dialog-foot">Insight は固定サンプルから生成したレビュー用の説明です。</p>' },
+        'activity-detail': { kicker: 'Activity / Daily view', title: '日別アクティビティ', body: '<p>ヒートマップは 9月 2026 の活動密度を 5段階で表した固定配列です。濃いセルほど受信量が多い日を示します。</p><p class="dialog-foot">active days: 19 · peak: 704M tokens</p>' },
+        'events-detail': { kicker: 'Intake log / All events', title: '受信ストリーム', body: '<p>直近の受信イベントを anonymized account と端末種別で確認するビューです。</p><ul class="dialog-list"><li>12:48 — acct-01 / Mac — 82.2M — OK</li><li>12:41 — acct-02 / Linux — 64.8M — OK</li><li>12:37 — acct-01 / API — 41.6M — OK</li><li>11:55 — acct-02 / IDE — 29.4M — OK</li></ul>' }
+      };
+
+      const dialog = document.getElementById('detailDialog');
+      const dialogTitle = document.getElementById('dialogTitle');
+      const dialogKicker = document.getElementById('dialogKicker');
+      const dialogBody = document.getElementById('dialogBody');
+      const closeDialog = () => dialog.close();
+
+      function openPanel(name) {
+        const content = panelContent[name];
+        dialogKicker.textContent = content.kicker;
+        dialogTitle.textContent = content.title;
+        dialogBody.innerHTML = content.body;
+        const selected = document.querySelector('[data-period][aria-pressed="true"]').textContent;
+        const dialogPeriod = dialogBody.querySelector('[data-dialog-period]');
+        if (dialogPeriod) dialogPeriod.textContent = selected;
+        dialog.showModal();
+      }
+
+      document.querySelectorAll('[data-panel]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const name = button.dataset.panel;
+          if (button.classList.contains('top-link')) {
+            document.querySelectorAll('.top-link').forEach((link) => {
+              link.removeAttribute('aria-current');
+            });
+            button.setAttribute('aria-current', 'page');
+          }
+          openPanel(name);
+        });
+      });
+      document.getElementById('dialogClose').addEventListener('click', closeDialog);
+      dialog.addEventListener('click', (event) => {
+        if (event.target === dialog) closeDialog();
+      });
+
+      function formatToolTotal(tokens) {
+        const value = Number(tokens.replace(/,/g, '')) / 1e9;
+        return `${value.toFixed(2)}B tokens`;
+      }
+
+      function updatePeriod(key) {
+        const data = periodData[key];
+        document.querySelectorAll('[data-period]').forEach((button) => {
+          button.setAttribute('aria-pressed', button.dataset.period === key ? 'true' : 'false');
+        });
+        document.querySelectorAll('[data-bind="periodName"]').forEach((node) => { node.textContent = data.name; });
+        document.querySelectorAll('[data-bind="periodMeta"]').forEach((node) => { node.textContent = data.meta; });
+        document.querySelectorAll('[data-bind="periodLabel"]').forEach((node) => { node.textContent = data.label; });
+        document.querySelectorAll('[data-bind="tokens"]').forEach((node) => { node.textContent = data.tokens; });
+        document.querySelectorAll('[data-bind="cost"]').forEach((node) => { node.textContent = data.cost; });
+        document.querySelectorAll('[data-bind="average"]').forEach((node) => { node.textContent = data.average; });
+        document.querySelectorAll('[data-bind="axisTop"]').forEach((node) => { node.textContent = data.axisTop; });
+        document.querySelectorAll('[data-bind="axisMid"]').forEach((node) => { node.textContent = data.axisMid; });
+        document.querySelectorAll('[data-bind="toolTotal"]').forEach((node) => { node.textContent = formatToolTotal(data.tokens); });
+        document.querySelectorAll('[data-bind="trendNote"]').forEach((node) => { node.textContent = data.trendNote; });
+        document.querySelectorAll('[data-bind="trend"]').forEach((node) => { node.textContent = data.trend; node.className = data.trendClass; });
+        document.querySelectorAll('[data-bind="delta"]').forEach((node) => { node.textContent = data.delta; node.className = data.deltaClass; });
+        document.querySelectorAll('.usage-column').forEach((column, index) => {
+          const bar = column.querySelector('.usage-bar');
+          const label = column.querySelector('.usage-label');
+          if (bar) bar.style.height = `${data.bars[index]}%`;
+          if (label) label.textContent = data.labels[index];
+        });
+      }
+
+      document.querySelectorAll('[data-period]').forEach((button) => {
+        button.addEventListener('click', () => updatePeriod(button.dataset.period));
+      });
+
+      const heatmap = document.getElementById('heatmap');
+      const levels = [0, 1, 2, 0, 3, 2, 1, 0, 2, 4, 3, 1, 0, 2, 3, 4, 2, 1, 0, 1, 3, 2, 4, 3, 1, 0, 2, 3, 2, 1, 0, 2, 4, 3, 2];
+      levels.forEach((level, index) => {
+        const cell = document.createElement('span');
+        cell.className = 'heat-cell';
+        cell.dataset.level = String(level);
+        cell.setAttribute('aria-hidden', 'true');
+        cell.title = `${index + 1}日 · 活動レベル ${level}/4`;
+        heatmap.appendChild(cell);
+      });
+
+      updatePeriod('month');
+    })();
+  </script>
+</body>
+</html>

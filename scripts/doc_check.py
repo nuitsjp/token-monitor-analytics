@@ -7,11 +7,6 @@ import re
 import sys
 from pathlib import Path
 
-# 状態語の正本: docs/standards/mock-driven-development.md §2
-STATUSES = ("未着手", "仕様作成中", "モック作成中", "合意待ち", "実装中", "検証中", "完了")
-WIP_SPEC = {"仕様作成中", "モック作成中", "合意待ち"}
-WIP_IMPL = {"実装中", "検証中"}
-AGREED_REQUIRED = {"実装中", "検証中", "完了"}
 EMPTY_CELLS = {"", "-", "--", "---", "—"}
 EXCLUDE_DIRS = {".git", "node_modules", "bin", "obj", "dist", "build", ".venv", "venv",
                 "vendor", "upstream", "old", "poc", ".playwright-cli"}
@@ -19,24 +14,23 @@ EXCLUDE_RELPATHS = {"docs/reference"}
 EVIDENCE_EXTRA_EXCLUDE = {"public", "static", "assets", "src", "frontend", "test", "tests"}
 EVIDENCE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".log", ".sha256"}
 # 行数上限の正本: docs/standards/design-and-documentation.md §3
-LINE_LIMITS = {"PLAN.md": 100, "docs/project.md": 300,
-               "docs/architecture.md": 200, "docs/document-policy.md": 100}
+LINE_LIMITS = {"docs/project.md": 300, "docs/architecture.md": 200,
+               "docs/document-policy.md": 100}
 PLACEHOLDER_HASH = "sha256:" + "0" * 64
 # 配布元が `--print-hashes` の出力で更新する。
 EXPECTED_HASHES = {
-    "docs/standards/design-and-documentation.md": "sha256:7c517c12bce2d97edd08e2e1da54cbe3184144dacf6b5b490b7fdd37b674657b",
-    "docs/standards/mock-driven-development.md": "sha256:400a06b45634f6e122f9c57067daf2e67988f040d560cd16637cd4a34fb9584f",
+    "docs/standards/design-and-documentation.md": "sha256:26747160169c6f7ec30c9774342fd6010e0f1be6cc51104565d81ad17dabb0c3",
+    "docs/standards/mock-driven-development.md": "sha256:0f189c865adb71131b77f79a4ef1089532bba4f95841b664cbb45069d7bdcb6b",
 }
 
 HEX_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{7,40}(?![0-9A-Za-z])")
 QUOTE_RE = re.compile(r"^\s*>\s*\S")
-UC_HEAD_RE = re.compile(r"^###\s+UC-(\d+)\.")
-P_HEAD_RE = re.compile(r"^###\s+P-(\d+)\.")
+UC_HEAD_RE = re.compile(r"^#\s+UC-(\d+)\.")
+P_HEAD_RE = re.compile(r"^###\s+UCP-(\d+)\.")
 UC_ID_RE = re.compile(r"UC-\d+")
 SERIES_RE = re.compile(r"UC-(\d+)-(?:M|X\d+)")
 EXT_RE = re.compile(r"UC-\d+-X\d+")
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^()\s]+)(?:\s+\"[^\"]*\")?\)")
-CHECKED_RE = re.compile(r"^\s*[-*]\s+\[[xX]\]")
 ABSPATH_RE = re.compile(r"(?<![0-9A-Za-z])[A-Za-z]:[\\/]|/Users/|/home/")
 ANCHOR_ID_RE = re.compile(r"<a\s+id=\"([^\"]+)\"")
 SLUG_STRIP_RE = re.compile(r"[^\w\-一-龠ぁ-んァ-ヶー]")
@@ -139,21 +133,15 @@ def uc_of(text):
     return found.group(0) if found else ""
 
 
-def uc_bodies(text):
-    """`### UC-n.` の本文を UC ID ごとに返す（次の `###` または `##` まで）。"""
-    bodies, current, buf = {}, None, []
-    for line in text.split("\n"):
-        matched = UC_HEAD_RE.match(line)
-        if matched:
-            if current:
-                bodies[current] = "\n".join(buf)
-            current, buf = "UC-" + matched.group(1), []
-        elif current and line.startswith("##"):
-            bodies[current], current, buf = "\n".join(buf), None, []
-        elif current is not None:
-            buf.append(line)
-    if current:
-        bodies[current] = "\n".join(buf)
+def uc_bodies(uc_docs):
+    """各 UC ファイルの `# UC-n.` と本文を返す。見出しの不備は判定4で報告する。"""
+    bodies = []
+    for path, text in sorted(uc_docs.items()):
+        heads = [(i, m) for i, line in enumerate(text.splitlines())
+                 if (m := UC_HEAD_RE.match(line))]
+        if len(heads) == 1:
+            i, matched = heads[0]
+            bodies.append(("UC-" + matched.group(1), "\n".join(text.splitlines()[i + 1:])))
     return bodies
 
 
@@ -188,20 +176,8 @@ def check_links(root, docs):
         emit("OK", "リンク: 未解決のリンクとアンカーはない")
 
 
-def check_checkboxes(plan_text):
-    """判定 2: PLAN.md に済みのチェックボックスが残っていないか。"""
-    if plan_text is None:
-        emit("対象なし", "済みチェックボックス: PLAN.md がない")
-        return
-    hits = [i for i, line in enumerate(plan_text.split("\n"), 1) if CHECKED_RE.match(line)]
-    for lineno in hits:
-        emit("NG", "済みチェックボックス: PLAN.md:%d に済みのチェックボックスがある" % lineno)
-    if not hits:
-        emit("OK", "済みチェックボックス: PLAN.md に済みのチェックボックスはない")
-
-
 def check_abs_paths(root, docs):
-    """判定 3: ローカル絶対パスを含む行がないか。"""
+    """判定 2: ローカル絶対パスを含む行がないか。"""
     hits = ["%s:%d" % (rel(root, path), lineno)
             for path, text in sorted(docs.items())
             for lineno, line in enumerate(text.split("\n"), 1) if ABSPATH_RE.search(line)]
@@ -212,7 +188,7 @@ def check_abs_paths(root, docs):
 
 
 def check_overall_agreement(arch_text):
-    """判定 4(d): 全体設計の合意欄に提示コミットと引用があるか。"""
+    """判定 3(d): 全体設計の合意欄に提示コミットと引用があるか。"""
     body = section_body(arch_text, "## 全体設計の合意") if arch_text else None
     if body is None:
         emit("NG", "仕掛かり: docs/architecture.md に `## 全体設計の合意` の節がない")
@@ -226,100 +202,158 @@ def check_overall_agreement(arch_text):
         emit("NG", "仕掛かり: `## 全体設計の合意` に %s がない" % "・".join(missing))
 
 
-def check_progress(table, project_text, arch_text):
-    """判定 4: 仕掛かりの本数と、合意記録の有無。"""
+def filled(value):
+    return value.strip() not in EMPTY_CELLS and "{{" not in value
+
+
+def agreement_records(body):
+    """合意記録と完成系監査記録を分け、系列 ID・提示コミット・引用の有無を返す。"""
+    records = {"合意記録": [], "完成系監査記録": []}
+    kind, current = None, None
+    for line in body.splitlines():
+        if line.startswith(("- ", "#")):
+            heading = re.match(r"^- (合意記録|完成系監査記録)(?:[（(:：]|$)", line)
+            kind, current = heading.group(1) if heading else None, None
+        if kind is None:
+            continue
+        series = SERIES_RE.search(line)
+        if series and "提示コミット:" in line:
+            commit = line.split("提示コミット:", 1)[1].split("/", 1)[0].strip().strip("`")
+            current = [series.group(0), commit, False]
+            records[kind].append(current)
+        elif current is not None and QUOTE_RE.match(line) and filled(line.split(">", 1)[1]):
+            current[2] = True
+    return records
+
+
+def verification_results(project_text):
+    """合否表を系列ごとの [(段階, 合否)] にする。表がなければ None。"""
+    body = section_body(project_text, "## 6. 検証結果")
+    table = parse_table(body) if body else None
     if table is None:
-        emit("対象なし", "仕掛かり: PLAN.md の `## 3. ユースケース進捗` に表がない")
-        return
+        return None
     header, rows = table
-    bodies = uc_bodies(project_text) if project_text else {}
-    spec_rows, impl_rows, agreed_rows = [], [], []
+    if "段階" not in header:
+        emit("NG", "仕掛かり: 検証結果の表に `段階` 列がない")
+    results = {}
     for lineno, cells in rows:
-        uc_id = uc_of(cell(header, cells, "UC ID"))
-        status = cell(header, cells, "状態")
-        where = "PLAN.md:%d %s" % (lineno, uc_id or "(UC ID なし)")
-        if status not in STATUSES:
-            emit("NG", "仕掛かり: %s の状態が定義語でない: %s" % (where, status or "(空欄)"))
-            continue
-        if status in WIP_SPEC or cell(header, cells, "保留理由") not in EMPTY_CELLS:
-            spec_rows.append(where)
-        if status in WIP_IMPL:
-            impl_rows.append(where)
-        if status not in AGREED_REQUIRED:
-            continue
-        agreed_rows.append(where)
-        found = HEX_RE.search(cell(header, cells, "合意版"))
-        body = bodies.get(uc_id)
-        if not found:
-            emit("NG", "仕掛かり: %s の合意版に提示コミットのハッシュがない" % where)
-        elif body is None:
-            emit("NG", "仕掛かり: docs/project.md に %s の本文がない" % uc_id)
-        else:
-            missing = []
-            if found.group(0) not in body:
-                missing.append("提示コミット %s" % found.group(0))
-            if not any(m.group(1) == uc_id[3:] for m in SERIES_RE.finditer(body)):
-                missing.append("系列 ID")
-            if not any(QUOTE_RE.match(line) for line in body.split("\n")):
-                missing.append("引用行")
-            if missing:
-                emit("NG", "仕掛かり: docs/project.md の %s 本文に %s がない" % (uc_id, "・".join(missing)))
-    if len(spec_rows) > 1:
-        emit("NG", "仕掛かり: 仕様合意前の行が %d 件ある: %s" % (len(spec_rows), "、".join(spec_rows)))
-    if len(impl_rows) > 1:
-        emit("NG", "仕掛かり: 実装中・検証中の行が %d 件ある: %s" % (len(impl_rows), "、".join(impl_rows)))
-    if agreed_rows:
-        check_overall_agreement(arch_text)
-    emit("報告", "仕掛かり: 進捗表 %d 行、仕様合意前 %d 行、実装中・検証中 %d 行、合意版が必要 %d 行"
-         % (len(rows), len(spec_rows), len(impl_rows), len(agreed_rows)))
+        series_ids = {m.group(0) for m in SERIES_RE.finditer(cell(header, cells, "UC・系列 ID"))}
+        phase = cell(header, cells, "段階")
+        result = cell(header, cells, "合否")
+        if series_ids and filled(result) and result != "未検証" and phase not in {"1", "2", "3", "4", "5", "6"}:
+            emit("NG", "仕掛かり: docs/project.md:%d の記入済み検証結果には段階番号（1〜6）が必要" % lineno)
+        for series in series_ids:
+            results.setdefault(series, []).append((phase, result))
+    return results
 
 
-def check_uc_ids(table, project_text):
-    """判定 5: PLAN の進捗表、本文見出し、カタログ表で UC ID が一致するか。"""
-    plan_ids = [uc_of(cell(table[0], c, "UC ID")) for _, c in table[1]] if table else []
-    heads = [UC_HEAD_RE.match(line) for line in (project_text or "").split("\n")]
-    head_ids = ["UC-" + m.group(1) for m in heads if m]
-    body = section_body(project_text, "## 3. ユースケースと合意") if project_text else None
-    catalog = parse_table(body) if body else None
-    catalog_ids = [uc_of(cell(catalog[0], c, "UC ID")) for _, c in catalog[1]] if catalog else []
-    sources = [("PLAN.md 進捗表", [i for i in plan_ids if i], table is not None),
-               ("docs/project.md 見出し", head_ids, project_text is not None),
-               ("docs/project.md カタログ表", [i for i in catalog_ids if i], catalog is not None)]
-    present = [s for s in sources if s[2]]
-    if len(present) < 2:
-        emit("対象なし", "UC ID: 比較できる UC ID の一覧が 2 つ揃わない")
+def check_progress(project_text, arch_text, uc_docs):
+    """判定 3: 合意記録の完全性と、同時に進める系列が1本を超えていないか。"""
+    if project_text is None:
+        emit("対象なし", "仕掛かり: docs/project.md がない")
         return
-    ng = False
-    for name, ids, _ in present:
+    bodies = uc_bodies(uc_docs)
+    if not bodies:
+        emit("対象なし", "仕掛かり: docs/usecases/ に `# UC-n.` の本文がない")
+        return
+    described, agreed, audited = set(), set(), set()
+    for uc_id, body in sorted(bodies, key=lambda kv: int(kv[0][3:])):
+        described |= {m.group(0) for m in SERIES_RE.finditer(body)}
+        for kind, records in agreement_records(body).items():
+            for series, commit, quoted in records:
+                if not filled(commit) and not quoted:
+                    continue
+                if not series.startswith(uc_id + "-"):
+                    emit("NG", "仕掛かり: %s の本文に他のユースケースの%sがある: %s" % (uc_id, kind, series))
+                    continue
+                missing = []
+                if not HEX_RE.fullmatch(commit):
+                    missing.append("提示コミットのハッシュ")
+                if not quoted:
+                    missing.append("利用者の応答の引用行")
+                if missing:
+                    emit("NG", "仕掛かり: %s の%sに %s がない" % (series, kind, "・".join(missing)))
+                else:
+                    (agreed if kind == "合意記録" else audited).add(series)
+    results = verification_results(project_text)
+    required, passed = set(), set()
+    if results is None:
+        emit("対象なし", "仕掛かり: docs/project.md の `## 6. 検証結果` に表がない")
+    else:
+        for series, rows in results.items():
+            final_results = [result for phase, result in rows if phase == "6"]
+            if any(filled(result) and result != "未検証" for result in final_results):
+                required.add(series)
+            if final_results and all(result == "合格" for result in final_results):
+                passed.add(series)
+        for series in sorted(required - audited):
+            emit("NG", "仕掛かり: %s の段階6の検証結果に対応する完成系監査記録がない" % series)
+    for series in sorted((required | audited) - agreed):
+        emit("NG", "仕掛かり: %s の完成系監査・段階6の検証に先立つ合意記録がない" % series)
+    done = agreed & audited & passed
+    wip = sorted((agreed | audited | required) - done)
+    if len(wip) > 1:
+        emit("NG", "仕掛かり: 合意・監査・段階6の全構成合格が揃っていない着手済み系列が %d 本ある: %s"
+             % (len(wip), "、".join(wip)))
+    if agreed or audited or required:
+        check_overall_agreement(arch_text)
+    emit("報告", "仕掛かり: 記述済みの系列 %d 本、合意済み %d 本、完成系監査記録あり %d 本、段階6の全構成合格 %d 本"
+         % (len(described), len(agreed), len(audited), len(passed)))
+
+
+def check_uc_ids(project_text, uc_docs):
+    """判定 4: UC ファイル名・本文見出しと project.md のカタログ表が整合するか。"""
+    if project_text is None:
+        emit("対象なし", "UC ID: docs/project.md がない")
+        return
+    head_ids, ng = [], False
+    for path, text in sorted(uc_docs.items()):
+        ids = ["UC-" + m.group(1) for line in text.splitlines()
+               if (m := UC_HEAD_RE.match(line))]
+        head_ids.extend(ids)
+        if len(ids) != 1:
+            ng = True
+            emit("NG", "UC ID: docs/usecases/%s の `# UC-n.` 見出しは1件必要（実測 %d 件）"
+                 % (path.name, len(ids)))
+        elif path.stem != ids[0]:
+            ng = True
+            emit("NG", "UC ID: docs/usecases/%s のファイル名と本文 ID %s が一致しない"
+                 % (path.name, ids[0]))
+    body = section_body(project_text, "## 3. ユースケース一覧")
+    catalog = parse_table(body) if body else None
+    if catalog is None:
+        emit("対象なし", "UC ID: docs/project.md にカタログ表がない")
+        return
+    catalog_ids = []
+    for lineno, cells in catalog[1]:
+        value = cell(catalog[0], cells, "UC ID")
+        uc_id = uc_of(value)
+        if not uc_id:
+            continue
+        catalog_ids.append(uc_id)
+        targets = LINK_RE.findall(value)
+        if targets and targets != ["usecases/%s.md" % uc_id]:
+            ng = True
+            emit("NG", "UC ID: docs/project.md:%d の %s のリンク先は usecases/%s.md が必要"
+                 % (lineno, uc_id, uc_id))
+    for name, ids in (("docs/usecases/ 見出し", head_ids),
+                      ("docs/project.md カタログ表", catalog_ids)):
         dups = sorted({i for i in ids if ids.count(i) > 1})
         if dups:
             ng = True
             emit("NG", "UC ID: %s に重複 ID がある: %s" % (name, "、".join(dups)))
-    # 進捗表とカタログ表は一致。本文見出しはカタログの部分集合でよく（未着手の UC は本文がなくてよい）、
-    # 未着手でない UC には本文が要る。
-    plan_set, catalog_set, head_set = set(sources[0][1]), set(sources[2][1]), set(head_ids)
-    if table is not None and catalog is not None:
-        for uc_id in sorted(plan_set ^ catalog_set, key=lambda x: int(x[3:])):
-            ng = True
-            where = "docs/project.md カタログ表" if uc_id in plan_set else "PLAN.md 進捗表"
-            emit("NG", "UC ID: %s が %s にない" % (uc_id, where))
-    if project_text is not None and catalog is not None:
-        for uc_id in sorted(head_set - catalog_set, key=lambda x: int(x[3:])):
-            ng = True
-            emit("NG", "UC ID: %s の本文があるが docs/project.md カタログ表にない" % uc_id)
-    if table is not None and project_text is not None:
-        for _, cells in table[1]:
-            uc_id, status = uc_of(cell(table[0], cells, "UC ID")), cell(table[0], cells, "状態")
-            if uc_id and status != "未着手" and uc_id not in head_set:
-                ng = True
-                emit("NG", "UC ID: %s は %s だが docs/project.md に `### %s.` の本文がない" % (uc_id, status, uc_id))
+    # 本文はカタログ表の部分集合でよい（着手していない UC は本文がなくてよい）。
+    head_set, catalog_set = set(head_ids), set(catalog_ids)
+    for uc_id in sorted(head_set - catalog_set, key=lambda x: int(x[3:])):
+        ng = True
+        emit("NG", "UC ID: %s の本文があるが docs/project.md カタログ表にない" % uc_id)
     if not ng:
-        known = sorted(plan_set | catalog_set | head_set, key=lambda x: int(x[3:]))
+        known = sorted(head_set | catalog_set, key=lambda x: int(x[3:]))
         emit("OK", "UC ID: %d 件の UC ID が一致している（本文あり %d 件）" % (len(known), len(head_set)))
 
 
 def check_hashes(root):
-    """判定 6: 輸入した標準の正規化ハッシュが期待値と一致するか。"""
+    """判定 5: 輸入した標準の正規化ハッシュが期待値と一致するか。"""
     for relpath, expected in EXPECTED_HASHES.items():
         path = root / relpath
         if not path.is_file():
@@ -333,8 +367,8 @@ def check_hashes(root):
     emit("報告", "標準のハッシュ: このスクリプト自身の正規化ハッシュは %s" % norm_hash(Path(__file__)))
 
 
-def check_reports(root, project_text, arch_text):
-    """判定 7: 証跡ファイル、行数、ユースケースと実現パターンの数の報告。"""
+def check_reports(root, project_text, arch_text, uc_docs):
+    """判定 6: 証跡ファイル、行数、ユースケースと実現パターンの数の報告。"""
     count, total, verification = 0, 0, []
     for here, dirnames, filenames in walk(root, EVIDENCE_EXTRA_EXCLUDE):
         verification += [rel(root, here / d) for d in dirnames if d == "verification"]
@@ -355,7 +389,7 @@ def check_reports(root, project_text, arch_text):
         else:
             emit("報告", "行数: %s は %d 行（上限 %d 行）" % (relpath, lines, limit))
     if project_text is not None:
-        bodies = sorted(uc_bodies(project_text).items(), key=lambda kv: int(kv[0][3:]))
+        bodies = sorted(uc_bodies(uc_docs), key=lambda kv: int(kv[0][3:]))
         detail = "、".join("%s 拡張 %d 本" % (uc, len(set(EXT_RE.findall(body)))) for uc, body in bodies)
         emit("報告", "ユースケース: %d 件%s" % (len(bodies), "（%s）" % detail if bodies else ""))
     if arch_text is not None:
@@ -386,18 +420,16 @@ def main():
         for name in filenames:
             if name.lower().endswith(".md"):
                 docs[(here / name).resolve()] = read_text(here / name)
-    plan_text = docs.get((root / "PLAN.md").resolve())
     project_text = docs.get((root / "docs" / "project.md").resolve())
     arch_text = docs.get((root / "docs" / "architecture.md").resolve())
-    progress = section_body(plan_text, "## 3. ユースケース進捗") if plan_text else None
-    table = parse_table(progress) if progress else None
+    uc_docs = {path: text for path, text in docs.items()
+               if path.parent == root / "docs" / "usecases"}
     check_links(root, docs)
-    check_checkboxes(plan_text)
     check_abs_paths(root, docs)
-    check_progress(table, project_text, arch_text)
-    check_uc_ids(table, project_text)
+    check_progress(project_text, arch_text, uc_docs)
+    check_uc_ids(project_text, uc_docs)
     check_hashes(root)
-    check_reports(root, project_text, arch_text)
+    check_reports(root, project_text, arch_text, uc_docs)
     print("NG %d 件" % NG_COUNT)
     return 1 if NG_COUNT else 0
 

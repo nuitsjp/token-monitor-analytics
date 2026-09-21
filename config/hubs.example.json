@@ -1,0 +1,16 @@
+{
+  "hubs": [
+    {
+      "id": "hub-primary",
+      "name": "Primary Hub",
+      "url": "https://primary.example.com",
+      "token": "replace-with-token"
+    },
+    {
+      "id": "hub-secondary",
+      "name": "Secondary Hub",
+      "url": "https://secondary.example.com",
+      "token": "replace-with-token"
+    }
+  ]
+}
