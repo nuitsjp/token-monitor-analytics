@@ -2,7 +2,7 @@
 
 ## 1. 目的と範囲
 
-UC-1の受信・保存・保存後通知と、UC-2の保存済みHub・デバイスを一度読み取るダッシュボードは完了しています。画面の自動更新は未実装で、他のパーツは固定サンプルから段階的に実装します。旧製品の機能を暗黙に復元しません。
+UC-1の受信・保存・保存後通知と、UC-2-Mの初回取得ダッシュボードは完了しています。自動更新のUC-2-X1は段階2のモックを作成し、段階3の動作合意は未取得です。実SSE接続は未実装です。他のパーツは固定サンプルから段階的に実装します。旧製品の機能を暗黙に復元しません。
 
 ## 2. 基盤の制約
 
@@ -41,6 +41,8 @@ Node.js 24、React、TypeScript、SQLiteを使用し、ローカルのループ�
 
 設定は `.env`、DBは既定で `data/app.sqlite` です。DB・秘密設定は追跡しません。旧DBは接続しません。`.env` の `HUB_CONFIG_PATH` で、Git管理外の接続設定JSONを指定します。本番経路に仕様合意用モックはありません。
 
+UC-2-X1のモックは `npm run dev:mock` で起動します。開いた直後は2 Hub・5デバイスを受信済みで、5秒後にTokyoの使用量が増え、Sapporoを含む3 Hub・6デバイスへ変わります。10秒後は数値を保持したまま「再接続中」を表示し、15秒後に最新の固定値へ更新して表示を解除します。期間を切り替えても選択を維持し、再読み込みで同じ手順を再現できます。通常構成への切り替えはモックを終了して `npm run dev` を使います。モックは実Hubへ接続せず、通常構成の自動更新はまだ接続していません。
+
 設定JSONは `{ "hubs": [...] }` の形式で、Hubを正確に2件指定します。各要素の `id`、`name`、`url`、`token` は必須です。IDは重複不可、URLはパス・認証情報・クエリを含まないHTTP(S) originです。形式は [設定例](../config/hubs.example.json) を参照します。アプリケーションは設定ファイルを更新しません。
 
 Hubへの接続先は `/api/stats/stream` です。接続先URL・認証情報はDBへ保存しません。設定ファイルが存在しない、JSONや項目が不正、2件でない、またはIDが重複する場合は起動しません。起動後に一方の受信が停止しても、もう一方とWebサーバーは継続します。停止したHubはログのcause（response、connection、disconnected、invalid-notification、database）を確認し、原因を解消してアプリケーションを再起動します。自動再接続はありません。Webの `/health` はWebサーバーの稼働確認であり、Hub受信の正常性を示しません。
@@ -58,6 +60,7 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
+| UC-2-X1 | 2 | Windows / Chrome 153 / 固定通知・共有Queryキャッシュ | 2026-09-21 | `npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）、Playwright CLIで0・5・10・15秒のTODAY表示と期間維持、受信済み数・デバイス数、切断中の保持と再接続表示解除、MONTH・TOTAL切替、390px表示、console error 0件を確認。テストコードは未変更 | 合格 | 本行を含む提示コミット |
 | UC-1-M（保存後通知） | 6 | Windows / 本番entry・制御可能な2 Hub・独立SQLite・HTTP SSE | 2026-09-21 | `npm run verify`（基盤3件、通知4件を含むE2E全12件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-stream.spec.ts --workers=4 --repeat-each=3`（12件成功） | 合格 | `dd1a782` |
 | UC-1-M（保存後通知） | 6 | Windows / Node.js 24.19.0 / 実Hub Private・Work・本番entry・検証専用SQLite | 2026-09-21 | Node REPLでSSEを購読し46通知を観測。両Hubの複数回更新、全期間のトークン数・コスト・両日時と独立DBの一致、秘密非露出、integrity_check、再接続後23通知、購読中の通常終了code 0を確認 | 合格 | `35c94f2` |
 | UC-1-M（保存後通知） | 4 | Windows / Node.js 24.19.0 / 制御可能な2 Hub・本番entry・一時SQLite・複数HTTP購読 | 2026-09-21 | Node REPLで手動送信し別DB接続と照合。初回・全体置換・鮮度・heartbeat抑止、複数配信、切断と再接続、不正入力・保存失敗の通知抑止、配信読出失敗中の保存継続と復旧、秘密非露出、通常終了・再起動を確認 | 合格 | `a1cf846` |

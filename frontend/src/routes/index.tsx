@@ -1,9 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Progress, Tooltip } from '@mantine/core';
 import type { HubUsageOverview } from '../../../contracts/usage-overview.ts';
-import { getUsageOverview } from '../features/usage-overview.ts';
+import { useUsageConnectionStatus, useUsageOverview } from '../features/usage-updates.tsx';
 import { seriesColor, tokens } from '../app/theme.ts';
 import classes from './index.module.css';
 
@@ -61,7 +60,8 @@ const SECTION_IDS = SECTIONS.map((section) => section.id);
 function Dashboard() {
   const [period, setPeriod] = useState<PeriodKey>('month');
   const selected = PERIODS[period];
-  const overview = useQuery({ queryKey: ['usage-overview'], queryFn: getUsageOverview, staleTime: Infinity });
+  const overview = useUsageOverview();
+  const connectionStatus = useUsageConnectionStatus();
   const hubs = overview.data?.hubs ?? [];
   const receivedHubs = hubs.filter((hub) => hub.state !== null).length;
   const deviceCount = hubs.reduce((sum, hub) => sum + (hub.state?.devices.length ?? 0), 0);
@@ -116,6 +116,7 @@ function Dashboard() {
 
           <section className={`${classes.panel} ${classes.hubPanel}`} id="hubs" aria-labelledby="hubs-title">
             <PanelHeader id="hubs-title" title="Hub・デバイス" caption={[selected.shortRange, fetchedAt ? `取得 ${fetchedAt}` : null].filter(Boolean).join(' · ')} saved />
+            {connectionStatus === 'reconnecting' ? <p role="status" className={classes.hubError}>再接続中</p> : null}
             {overview.isPending ? <HubLoading /> : overview.isError ? <div className={classes.hubError}>Hub・デバイスを取得できませんでした</div> : <HubList hubs={hubs} period={period} />}
           </section>
         </div>
