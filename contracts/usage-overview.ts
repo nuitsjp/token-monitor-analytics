@@ -8,18 +8,21 @@ export interface HubUsageOverview {
   state: HubDeviceState | null;
 }
 
-export interface HubDeviceState {
-  updatedAt: string;
-  receivedAt: string;
-  periods: Record<'today' | 'month' | 'total', UsagePeriod>;
-  devices: HubDeviceOverview[];
-  activeDays?: number;
-}
-
-export interface UsagePeriod {
+export interface PeriodUsage {
   totalTokens: number;
   costUsd: number;
   clients?: Record<string, number>;
+  models?: Record<string, number>;
+}
+
+export type UsagePeriod = PeriodUsage;
+
+export interface HubDeviceState {
+  updatedAt: string;
+  receivedAt: string;
+  periods: Record<'today' | 'month' | 'total', PeriodUsage>;
+  devices: HubDeviceOverview[];
+  activeDays?: number;
 }
 
 export interface HubDeviceOverview {

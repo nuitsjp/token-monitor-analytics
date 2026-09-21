@@ -59,9 +59,14 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 UC-2-X3も完成系承認、段階6 E2Eまで完了しました。Hubが保存した期間別 `clients` を全Hubで合算し、ツール別トークン数と構成比を画面へ表示します。制御可能な2 Hub・本番entry・独立SQLiteで、未受信・全Hub集計・期間切替・保存通知による再集計・取得失敗・合計0を確認しました。外部実Hubの追加検証は未実施です。
 
+UC-2-X4も完成系承認、段階6 E2Eまで完了しました。Hubが保存した期間別 `models` を全Hubで合算し、モデル別トークン数と構成比を画面へ表示します。上位9モデルと「その他」への集約、期間切替、保存通知による再集計、データなし表示を確認しました。
+
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
 | UC-2-X3 | 6 | Windows / 本番entry・制御可能な2 Hub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全21件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（33件成功）。ツール別 `clients` の全Hub集計、TODAY/MONTH/TOTAL切替、保存通知による再集計、未受信・合計0・取得失敗、「最も利用したツール」非表示を検証 | 合格 | 本行を含む完了コミット |
+| UC-2-X4 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全21件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（33件成功）。モデル別 `models` の全Hub集計、上位9件＋その他、TODAY/MONTH/TOTAL切替、保存通知による再集計、データなし表示を検証 | 合格 | 本行を含む完了コミット |
+| UC-2-X4 | 4 | Windows / Edge 140 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIでモデル構成比（MONTH上位9件＋その他、TODAY4件のみ、TOTAL上位9件＋その他）、期間切替、固定サンプルバッジ削除、console error 0件を確認。テストコードは未変更 | 合格 | `02d949f` |
+| UC-2-X4 | 2 | Windows / Edge 140 / 固定サンプルモック | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）、Playwright CLIで全Hub合算・上位9件＋その他・期間切替連動・固定サンプルバッジ削除・データなし表示・console error 0件を確認 | 合格 | `6ad171e` |
 | UC-2-X2 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全20件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（30件成功）。承認済み本番コードは変更なし | 合格 | 本行を含む完了コミット |
 | UC-2-X2 | 4 | Windows / Chrome 153 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIで主要指標の全Hub合計・最大日数、TODAY/MONTH/TOTAL切替、最上段ヘッダーへの期間・更新時刻集約、保存値ラベル全廃と固定サンプル限定表示、console error 0件を確認。テストコードは未変更 | 合格 | `ac3b79c` |
 | UC-2-X2 | 2 | Windows / Chrome 153 / 固定サンプルモック | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）、Playwright CLIで主要指標・ヘッダー配置・バッジ表示・期間切替・console error 0件を確認 | 合格 | `c6f1872` |
@@ -97,4 +102,4 @@ UC-2-X3も完成系承認、段階6 E2Eまで完了しました。Hubが保存�
 
 `verify` は設定の基盤テスト、Lint、文書、型、本番ビルド、UC-1・UC-2の製品E2Eを実行します。通知E2Eは複数購読と保存値の一致、数値更新と鮮度更新、再接続、heartbeat・不正通知・保存失敗の通知抑止、保存値維持と他Hub継続、読出失敗時の503・接続終了と復旧、購読中の再起動、Hub切断中の通知抑止と再接続後配信を検証します。受信E2Eは通信断からの再接続とHTTP 401での停止を含みます。CIも同じコマンドを使用しますが、この変更のCI実行結果は未検証です。
 
-UC-2のE2Eは旧仕様の「自動更新なし」を改訂し、初回取得と自動反映、全期間の値・構成比・台数と選択維持、単一GET・SSE、同額の再受信で加算しないこと、初回APIと通知の競合、初回取得失敗時のSSE未開始、通知読出失敗・503反復・復旧後の最新値反映を検証します。UC-2-X3ではツール別 `clients` の全Hub集計、期間切替、保存通知による再集計、未受信・合計0・取得失敗を追加検証しました。UC-2-Mの実Hub検証は既存DBと別の検証用DBで実施しました。モデル・利用枠・トレンド等は固定サンプルで、ツール別トークン構成比は保存データを受け入れ範囲に含めます。
+UC-2のE2Eは旧仕様の「自動更新なし」を改訂し、初回取得と自動反映、全期間の値・構成比・台数と選択維持、単一GET・SSE、同額の再受信で加算しないこと、初回APIと通知の競合、初回取得失敗時のSSE未開始、通知読出失敗・503反復・復旧後の最新値反映を検証します。UC-2-X3ではツール別 `clients`、UC-2-X4ではモデル別 `models` の全Hub集計、期間切替、保存通知による再集計、空状態を追加検証しました。UC-2-Mの実Hub検証は既存DBと別の検証用DBで実施しました。利用枠・トレンド等は固定サンプルで、ツール別・モデル別トークン構成比は保存データを受け入れ範囲に含めます。

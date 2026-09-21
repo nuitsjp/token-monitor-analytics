@@ -2,10 +2,16 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { HubUsageOverview } from '../../contracts/usage-overview.ts';
 
 type JsonRecord = Record<string, unknown>;
+type StoredPeriod = {
+    totalTokens: number;
+    costUsd: number;
+    clients?: unknown;
+    models?: Record<string, number>;
+};
 type StoredPeriods = {
-    today: { totalTokens: number; costUsd: number; clients: Record<string, number> };
-    month: { totalTokens: number; costUsd: number; clients: Record<string, number> };
-    allTime: { totalTokens: number; costUsd: number; clients: Record<string, number> };
+    today: StoredPeriod;
+    month: StoredPeriod;
+    allTime: StoredPeriod;
 };
 
 const FRESHNESS_DEVICE_FIELDS = ['updatedAt', 'receivedAt', 'ageMs', 'stale'] as const;
@@ -129,13 +135,50 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
         updatedAt: stats.updatedAt,
         receivedAt,
         periods: {
-            today: { totalTokens: periods.today.totalTokens, costUsd: periods.today.costUsd, clients: periods.today.clients },
-            month: { totalTokens: periods.month.totalTokens, costUsd: periods.month.costUsd, clients: periods.month.clients },
-            total: { totalTokens: periods.allTime.totalTokens, costUsd: periods.allTime.costUsd, clients: periods.allTime.clients },
+            today: {
+                totalTokens: periods.today.totalTokens,
+                costUsd: periods.today.costUsd,
+                clients: parseNumericMap(periods.today.clients),
+                models: parseModels(periods.today.models),
+            },
+            month: {
+                totalTokens: periods.month.totalTokens,
+                costUsd: periods.month.costUsd,
+                clients: parseNumericMap(periods.month.clients),
+                models: parseModels(periods.month.models),
+            },
+            total: {
+                totalTokens: periods.allTime.totalTokens,
+                costUsd: periods.allTime.costUsd,
+                clients: parseNumericMap(periods.allTime.clients),
+                models: parseModels(periods.allTime.models),
+            },
         },
         devices,
         activeDays,
     };
+}
+
+function parseModels(models: unknown): Record<string, number> | undefined {
+    if (!models || typeof models !== 'object')
+        return undefined;
+    const result: Record<string, number> = {};
+    for (const [key, value] of Object.entries(models)) {
+        if (typeof value === 'number' && Number.isFinite(value))
+            result[key] = value;
+    }
+    return result;
+}
+
+function parseNumericMap(value: unknown): Record<string, number> | undefined {
+    if (!value || typeof value !== 'object')
+        return undefined;
+    const result: Record<string, number> = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (typeof item === 'number' && Number.isFinite(item))
+            result[key] = item;
+    }
+    return result;
 }
 
 function applyFreshness(stats: JsonRecord, freshness: JsonRecord): JsonRecord {
