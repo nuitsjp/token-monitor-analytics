@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Progress, Tooltip } from '@mantine/core';
-import type { HubLimitWindow, HubUsageOverview } from '../../../contracts/usage-overview.ts';
+import type { HubDeviceState, HubLimitWindow, HubUsageOverview } from '../../../contracts/usage-overview.ts';
 import { useUsageConnectionStatus, useUsageOverview } from '../features/usage-updates.tsx';
 import { seriesColor, tokens } from '../app/theme.ts';
 import classes from './index.module.css';
@@ -30,10 +30,8 @@ const PERIODS = {
 const TREND_AXIS_MAX = 1590000000;
 const TREND_SPLIT = 0.82;
 
-const TOOL_ROWS = [
-  { name: 'Codex', value: 4080000000, share: 87.7 }, { name: 'Antigravity', value: 423430000, share: 9.1 },
-  { name: 'Cursor', value: 97710000, share: 2.1 }, { name: 'その他', value: 51180000, share: 1.1, neutral: true },
-];
+type ToolRow = { name: string; value: number; share: number; neutral?: boolean };
+
 const SECTIONS = [
   { id: 'top', label: 'ダッシュボード', icon: 'dashboard' },
   { id: 'trend', label: 'トレンド', icon: 'trend' },
@@ -61,6 +59,7 @@ function Dashboard() {
   const totalTokens = activeHubs.reduce((sum, state) => sum + state.periods[period].totalTokens, 0);
   const totalCostUsd = activeHubs.reduce((sum, state) => sum + state.periods[period].costUsd, 0);
   const maxActiveDays = activeHubs.length > 0 ? Math.max(...activeHubs.map((state) => state.activeDays ?? 0)) : 0;
+  const toolRows = aggregateToolRows(activeHubs, period);
 
   const aggregatedModels = new Map<string, number>();
   for (const state of activeHubs) {
@@ -161,11 +160,7 @@ function Dashboard() {
         </div>
 
         <div className={classes.secondaryGrid}>
-          <section className={classes.panel} id="tools" aria-labelledby="tools-title">
-            <PanelHeader id="tools-title" title="ツール" caption="トークン構成比" />
-            <p className={classes.lead}><small>最も利用したツール</small><strong>{TOOL_ROWS[0].name}</strong><span>{formatTokens(TOOL_ROWS[0].value)} tokens</span></p>
-            <RankList rows={TOOL_ROWS} />
-          </section>
+          <ToolPanel rows={toolRows} isPending={overview.isPending} isError={overview.isError} hasReceivedHubs={receivedHubs > 0} />
 
           <section className={classes.panel} id="models" aria-labelledby="models-title">
             <PanelHeader id="models-title" title="モデル" caption="トークン構成比" saved />
@@ -258,6 +253,19 @@ function PanelHeader({ id, title, caption, saved = false }: { id: string; title:
   );
 }
 
+function ToolPanel({ rows, isPending, isError, hasReceivedHubs }: { rows: ToolRow[]; isPending: boolean; isError: boolean; hasReceivedHubs: boolean }) {
+  return (
+    <section className={classes.panel} id="tools" aria-labelledby="tools-title">
+      <PanelHeader id="tools-title" title="ツール" caption="トークン構成比" saved />
+      {isPending ? <p className={classes.hubLoading} aria-label="ツール別トークン構成比を読み込み中">読み込み中</p>
+        : isError ? <p className={classes.hubError}>ツール別トークン構成比を取得できませんでした</p>
+          : !hasReceivedHubs ? <p className={classes.hubError}>まだ情報を受信していません</p>
+            : rows.length === 0 ? <p className={classes.hubError}>この期間のトークン使用量はありません</p>
+              : <RankList rows={rows} />}
+    </section>
+  );
+}
+
 function TrendChart({ period, hubs }: { period: PeriodKey; hubs: HubUsageOverview[] }) {
   const selected = PERIODS[period];
   const legend = [0, 1].map((index) => hubs[index]?.name ?? `Hub ${index + 1}`);
@@ -294,7 +302,7 @@ function TrendChart({ period, hubs }: { period: PeriodKey; hubs: HubUsageOvervie
   );
 }
 
-function RankList({ rows }: { rows: { name: string; value: number; share: number; neutral?: boolean }[] }) {
+function RankList({ rows }: { rows: ToolRow[] }) {
   return (
     <div className={classes.rankList}>
       {rows.map((row) => (
@@ -392,6 +400,19 @@ function formatResetUntil(resetsAt: string | null, now = Date.now()) {
   if (days >= 1) return `リセットまで ${days}日${hours % 24}時間`;
   if (hours >= 1) return `リセットまで ${hours}時間`;
   return `リセットまで ${minutes}分`;
+}
+
+function aggregateToolRows(states: HubDeviceState[], period: PeriodKey): ToolRow[] {
+  const tokensByTool = new Map<string, number>();
+  for (const state of states) {
+    for (const [name, value] of Object.entries(state.periods[period].clients ?? {}))
+      tokensByTool.set(name, (tokensByTool.get(name) ?? 0) + value);
+  }
+  const rows = [...tokensByTool.entries()]
+    .map(([name, value]) => ({ name, value }))
+    .sort((left, right) => right.value - left.value || left.name.localeCompare(right.name));
+  const total = rows.reduce((sum, row) => sum + row.value, 0);
+  return rows.map((row) => ({ ...row, share: total > 0 ? (row.value / total) * 100 : 0 }));
 }
 
 function limitColor(remaining: number) {
