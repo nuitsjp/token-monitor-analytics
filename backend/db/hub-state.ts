@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { HubUsageOverview } from '../../contracts/usage-overview.ts';
+import type { HubLimitWindow, HubUsageOverview } from '../../contracts/usage-overview.ts';
 
 type JsonRecord = Record<string, unknown>;
 type StoredPeriods = {
@@ -9,6 +9,7 @@ type StoredPeriods = {
 };
 
 const FRESHNESS_DEVICE_FIELDS = ['updatedAt', 'receivedAt', 'ageMs', 'stale'] as const;
+const LIMIT_KINDS = ['session', 'daily', 'weekly', 'billing'] as const;
 
 export function registerHub(db: DatabaseSync, hubId: string, name: string): void {
     db.prepare(`
@@ -47,15 +48,19 @@ export function saveHubState(
     stats: Record<string, unknown>,
     receivedAt: string,
 ): void {
-    const statsJson = JSON.stringify(stats);
     withTransaction(db, () => {
+        const row = db.prepare('SELECT stats_json FROM hub_states WHERE hub_id = ?').get(hubId) as
+            | { stats_json: string }
+            | undefined;
+        const previous = row ? JSON.parse(row.stats_json) as JsonRecord : null;
+        stampLimitMeters(previous, stats, receivedAt);
         db.prepare(`
             INSERT INTO hub_states (hub_id, stats_json, received_at)
             VALUES (?, ?, ?)
             ON CONFLICT (hub_id) DO UPDATE SET
                 stats_json = excluded.stats_json,
                 received_at = excluded.received_at
-        `).run(hubId, statsJson, receivedAt);
+        `).run(hubId, JSON.stringify(stats), receivedAt);
     });
 }
 
@@ -135,7 +140,102 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
         },
         devices,
         activeDays,
+        limits: parseLimits(stats),
     };
+}
+
+function parseLimits(stats: JsonRecord): HubLimitWindow[] {
+    const limits = stats.limits as JsonRecord | undefined;
+    if (!limits || !Array.isArray(limits.providers))
+        return [];
+    const rows: HubLimitWindow[] = [];
+    for (const value of limits.providers) {
+        const provider = value as JsonRecord;
+        if (typeof provider.provider !== 'string' || typeof provider.accountKey !== 'string' || !Array.isArray(provider.windows))
+            continue;
+        const providerUpdated = typeof provider.updatedAt === 'string' ? provider.updatedAt : null;
+        for (const item of provider.windows) {
+            const window = item as JsonRecord;
+            if (window.showMeter !== true || !isLimitKind(window.kind)
+                || typeof window.remainingPercent !== 'number' || !Number.isFinite(window.remainingPercent))
+                continue;
+            const parsed: HubLimitWindow = {
+                provider: provider.provider,
+                accountKey: provider.accountKey,
+                accountLabel: typeof provider.accountLabel === 'string' ? provider.accountLabel : '',
+                planLabel: typeof provider.planLabel === 'string' ? provider.planLabel : '',
+                kind: window.kind,
+                label: typeof window.label === 'string' ? window.label : '',
+                remainingPercent: window.remainingPercent,
+                resetsAt: typeof window.resetsAt === 'string' ? window.resetsAt : null,
+                meterUpdatedAt: typeof window.meterUpdatedAt === 'string' ? window.meterUpdatedAt : providerUpdated,
+                windowMinutes: typeof window.windowMinutes === 'number' && Number.isFinite(window.windowMinutes)
+                    ? window.windowMinutes
+                    : null,
+            };
+            if (typeof window.limitId === 'string')
+                parsed.limitId = window.limitId;
+            rows.push(parsed);
+        }
+    }
+    return rows;
+}
+
+function stampLimitMeters(previous: JsonRecord | null, stats: JsonRecord, receivedAt: string): void {
+    const previousMeters = previous ? collectWindowMeters(previous) : new Map<string, { remainingPercent: unknown; usedPercent: unknown; meterUpdatedAt: unknown }>();
+    const limits = stats.limits as JsonRecord | undefined;
+    if (!limits || !Array.isArray(limits.providers))
+        return;
+    for (const value of limits.providers) {
+        const provider = value as JsonRecord;
+        if (!Array.isArray(provider.windows))
+            continue;
+        const providerUpdated = typeof provider.updatedAt === 'string' ? provider.updatedAt : receivedAt;
+        for (const item of provider.windows) {
+            const window = item as JsonRecord;
+            const previousMeter = previousMeters.get(windowIdentity(provider, window));
+            const changed = !previousMeter
+                || previousMeter.remainingPercent !== window.remainingPercent
+                || previousMeter.usedPercent !== window.usedPercent;
+            if (changed)
+                window.meterUpdatedAt = providerUpdated;
+            else if (typeof previousMeter.meterUpdatedAt === 'string')
+                window.meterUpdatedAt = previousMeter.meterUpdatedAt;
+            else
+                window.meterUpdatedAt = providerUpdated;
+        }
+    }
+}
+
+function collectWindowMeters(stats: JsonRecord) {
+    const meters = new Map<string, { remainingPercent: unknown; usedPercent: unknown; meterUpdatedAt: unknown }>();
+    const limits = stats.limits as JsonRecord | undefined;
+    if (!limits || !Array.isArray(limits.providers))
+        return meters;
+    for (const value of limits.providers) {
+        const provider = value as JsonRecord;
+        if (!Array.isArray(provider.windows))
+            continue;
+        for (const item of provider.windows) {
+            const window = item as JsonRecord;
+            meters.set(windowIdentity(provider, window), {
+                remainingPercent: window.remainingPercent,
+                usedPercent: window.usedPercent,
+                meterUpdatedAt: window.meterUpdatedAt,
+            });
+        }
+    }
+    return meters;
+}
+
+function windowIdentity(provider: JsonRecord, window: JsonRecord) {
+    const limitId = typeof window.limitId === 'string' ? window.limitId : '';
+    const label = typeof window.label === 'string' ? window.label : '';
+    return [provider.provider, provider.accountKey, window.kind, limitId || label].join('\0');
+}
+
+function isLimitKind(value: unknown): value is HubLimitWindow['kind'] {
+    return typeof value === 'string' && LIMIT_KINDS.includes(value as HubLimitWindow['kind']);
 }
 
 function applyFreshness(stats: JsonRecord, freshness: JsonRecord): JsonRecord {

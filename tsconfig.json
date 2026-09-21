@@ -25,7 +25,6 @@
   "include": [
     "frontend",
     "contracts",
-    "mock",
     "tests/e2e",
     "tests/unit",
     "playwright.config.ts",
