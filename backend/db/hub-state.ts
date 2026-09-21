@@ -2,10 +2,15 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { HubUsageOverview } from '../../contracts/usage-overview.ts';
 
 type JsonRecord = Record<string, unknown>;
+type StoredPeriod = {
+    totalTokens: number;
+    costUsd: number;
+    models?: Record<string, number>;
+};
 type StoredPeriods = {
-    today: { totalTokens: number; costUsd: number };
-    month: { totalTokens: number; costUsd: number };
-    allTime: { totalTokens: number; costUsd: number };
+    today: StoredPeriod;
+    month: StoredPeriod;
+    allTime: StoredPeriod;
 };
 
 const FRESHNESS_DEVICE_FIELDS = ['updatedAt', 'receivedAt', 'ageMs', 'stale'] as const;
@@ -129,13 +134,36 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
         updatedAt: stats.updatedAt,
         receivedAt,
         periods: {
-            today: { totalTokens: periods.today.totalTokens, costUsd: periods.today.costUsd },
-            month: { totalTokens: periods.month.totalTokens, costUsd: periods.month.costUsd },
-            total: { totalTokens: periods.allTime.totalTokens, costUsd: periods.allTime.costUsd },
+            today: {
+                totalTokens: periods.today.totalTokens,
+                costUsd: periods.today.costUsd,
+                models: parseModels(periods.today.models),
+            },
+            month: {
+                totalTokens: periods.month.totalTokens,
+                costUsd: periods.month.costUsd,
+                models: parseModels(periods.month.models),
+            },
+            total: {
+                totalTokens: periods.allTime.totalTokens,
+                costUsd: periods.allTime.costUsd,
+                models: parseModels(periods.allTime.models),
+            },
         },
         devices,
         activeDays,
     };
+}
+
+function parseModels(models: unknown): Record<string, number> | undefined {
+    if (!models || typeof models !== 'object')
+        return undefined;
+    const result: Record<string, number> = {};
+    for (const [key, value] of Object.entries(models)) {
+        if (typeof value === 'number' && Number.isFinite(value))
+            result[key] = value;
+    }
+    return result;
 }
 
 function applyFreshness(stats: JsonRecord, freshness: JsonRecord): JsonRecord {

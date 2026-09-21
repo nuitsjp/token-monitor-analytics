@@ -447,9 +447,9 @@ test('全Hub統合情報を画面上部の主要指標に反映し、期間切�
     await expect(kpiCards.nth(3).locator('strong')).toHaveText('0');
     await expect(kpiCards.nth(3).locator('small')).toHaveText('受信済み 0 Hub');
 
-    // ラベル確認: 保存値ラベルは0件、固定サンプルラベルは未更新パーツ4箇所のみ
+    // ラベル確認: 保存値ラベルは0件、固定サンプルラベルは未更新パーツ3箇所のみ（モデルはUC-2-X3で実データ化）
     const badges = page.locator('.mantine-Badge-root');
-    await expect(badges).toHaveText(['固定サンプル', '固定サンプル', '固定サンプル', '固定サンプル']);
+    await expect(badges).toHaveText(['固定サンプル', '固定サンプル', '固定サンプル']);
 
     // 2. Hub-A と Hub-B からデータ受信
     await waitForConnections(hubs, [1, 1]);
@@ -502,6 +502,103 @@ test('全Hub統合情報を画面上部の主要指標に反映し、期間切�
     await expect(kpiCards.nth(0).locator('strong')).toHaveText('30,001,536,000');
     await expect(kpiCards.nth(1).locator('strong')).toHaveText('$12,021.37');
     await expect(kpiCards.nth(2).locator('strong')).toHaveText('35');
+});
+
+test('全Hub合算のモデル別トークン構成比を表示し、上位9件＋その他・期間切替・自動更新に連動する', async ({ app, hubs, page }) => {
+    // 1. 未受信状態: 「固定サンプル」バッジはなく、「利用データがありません」が表示される
+    await page.goto('/');
+    const modelsPanel = page.getByRole('region', { name: 'モデル' });
+    await expect(modelsPanel).toBeVisible();
+    await expect(modelsPanel.getByText('固定サンプル')).toHaveCount(0);
+    await expect(modelsPanel.getByText('利用データがありません')).toBeVisible();
+
+    await waitForConnections(hubs, [1, 1]);
+
+    // 2. Hub A, Hub B から snapshot 受信 (MONTH は合算11種、TODAY は合算4種)
+    const statsA = dashboardStats('2026-09-21T01:00:00.000Z');
+    const statsB = dashboardStats('2026-09-21T01:00:00.000Z');
+
+    setPeriod(statsA, 'today', 37_000_000, 37.0);
+    setPeriodModels(statsA, 'today', {
+        'gpt-5.6-luna': 25_000_000,
+        'gpt-5.6-sol': 12_000_000,
+    });
+    setPeriod(statsB, 'today', 13_000_000, 13.0);
+    setPeriodModels(statsB, 'today', {
+        'gemini-3.8-flash': 8_000_000,
+        'gpt-6-astra': 5_000_000,
+    });
+
+    // MONTH: 合算 11 種類のモデル
+    setPeriod(statsA, 'month', 3_600_000_000, 3600.0);
+    setPeriodModels(statsA, 'month', {
+        'gpt-5.6-luna': 1_800_000_000,
+        'gpt-5.6-sol': 900_000_000,
+        'gpt-6-astra': 500_000_000,
+        'gemini-3.8-flash': 350_000_000,
+        'claude-4-sonnet': 50_000_000,
+    });
+    setPeriod(statsB, 'month', 900_000_000, 900.0);
+    setPeriodModels(statsB, 'month', {
+        'gpt-5.6-luna': 200_000_000,
+        'gpt-5.6-sol': 370_000_000,
+        'claude-4-sonnet': 100_000_000,
+        'claude-4-haiku': 80_000_000,
+        'gpt-5.2': 50_000_000,
+        'mistral-large': 40_000_000,
+        'qwen-2.5-coder': 35_000_000,
+        'deepseek-r1': 15_000_000,
+        'llama-3.3-70b': 10_000_000,
+    });
+
+    sendStats(hubs[0], 'snapshot', statsA);
+    sendStats(hubs[1], 'snapshot', statsB);
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-a', 'month')).toBe(3_600_000_000);
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-b', 'month')).toBe(900_000_000);
+
+    // 初期選択期間は MONTH (合計 4,500,000,000)
+    // 上位9件:
+    // 1. gpt-5.6-luna: 2,000,000,000 (44.4%)
+    // 2. gpt-5.6-sol: 1,270,000,000 (28.2%)
+    // 3. gpt-6-astra: 500,000,000 (11.1%)
+    // 4. gemini-3.8-flash: 350,000,000 (7.8%)
+    // 5. claude-4-sonnet: 150,000,000 (3.3%)
+    // 6. claude-4-haiku: 80,000,000 (1.8%)
+    // 7. gpt-5.2: 50,000,000 (1.1%)
+    // 8. mistral-large: 40,000,000 (0.9%)
+    // 9. qwen-2.5-coder: 35,000,000 (0.8%)
+    // 10. その他: deepseek-r1(15M) + llama-3.3-70b(10M) = 25,000,000 (0.6%)
+    await expect(modelsPanel.getByText('利用データがありません')).toHaveCount(0);
+    await expect(modelsPanel.getByText('gpt-5.6-luna')).toBeVisible();
+    await expect(modelsPanel.getByText('2,000,000,000')).toBeVisible();
+    await expect(modelsPanel.getByText('44.4%')).toBeVisible();
+    await expect(modelsPanel.getByText('その他')).toBeVisible();
+    await expect(modelsPanel.getByText('25,000,000')).toBeVisible();
+    await expect(modelsPanel.getByText('0.6%')).toBeVisible();
+    await expect(modelsPanel.getByRole('progressbar', { name: 'その他の構成比' })).toBeVisible();
+
+    // 3. TODAY に切り替え (全4種 <= 9種のため「その他」非表示)
+    await page.getByRole('button', { name: 'TODAY' }).click();
+    await expect(page.getByRole('button', { name: 'TODAY' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(modelsPanel.getByText('gpt-5.6-luna')).toBeVisible();
+    await expect(modelsPanel.getByText('25,000,000')).toBeVisible();
+    await expect(modelsPanel.getByText('50%')).toBeVisible();
+    await expect(modelsPanel.getByText('その他')).toHaveCount(0);
+    await expect(modelsPanel.getByRole('progressbar', { name: 'その他の構成比' })).toHaveCount(0);
+
+    // 4. 自動更新通知で TODAY のモデル値が即座に更新される
+    const updatedA = dashboardStats('2026-09-21T01:10:00.000Z');
+    setPeriod(updatedA, 'today', 50_000_000, 50.0);
+    setPeriodModels(updatedA, 'today', {
+        'gpt-5.6-luna': 35_000_000,
+        'gpt-5.6-sol': 15_000_000,
+    });
+    sendStats(hubs[0], 'stats', updatedA);
+
+    // Hub A: luna 35M, sol 15M / Hub B: gemini 8M, astra 5M -> 合計 63M
+    // luna: 35M / 63M = 55.6%
+    await expect(modelsPanel.getByText('35,000,000')).toBeVisible();
+    await expect(modelsPanel.getByText('55.6%')).toBeVisible();
 });
 
 async function expectPeriod(
@@ -560,6 +657,12 @@ function setPeriod(stats: JsonRecord, period: DashboardPeriod, totalTokens: numb
     const value = periods[period] as JsonRecord;
     value.totalTokens = totalTokens;
     value.costUsd = costUsd;
+}
+
+function setPeriodModels(stats: JsonRecord, period: DashboardPeriod, models: Record<string, number>): void {
+    const periods = stats.periods as JsonRecord;
+    const value = periods[period] as JsonRecord;
+    value.models = models;
 }
 
 function setDashboardValues(stats: JsonRecord, values: DashboardValues, deviceCount: number): void {

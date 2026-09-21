@@ -59,6 +59,9 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
+| UC-2-X3 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全21件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（33件成功）。承認済み本番コードは変更なし | 合格 | 本行を含む完了コミット |
+| UC-2-X3 | 4 | Windows / Edge 140 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIでモデル構成比（MONTH上位9件＋その他、TODAY4件のみ、TOTAL上位9件＋その他）、期間切替、固定サンプルバッジ削除、console error 0件を確認。テストコードは未変更 | 合格 | `02d949f` |
+| UC-2-X3 | 2 | Windows / Edge 140 / 固定サンプルモック | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）、Playwright CLIで全Hub合算・上位9件＋その他・期間切替連動・固定サンプルバッジ削除・データなし表示・console error 0件を確認 | 合格 | `6ad171e` |
 | UC-2-X2 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全20件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（30件成功）。承認済み本番コードは変更なし | 合格 | 本行を含む完了コミット |
 | UC-2-X2 | 4 | Windows / Chrome 153 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIで主要指標の全Hub合計・最大日数、TODAY/MONTH/TOTAL切替、最上段ヘッダーへの期間・更新時刻集約、保存値ラベル全廃と固定サンプル限定表示、console error 0件を確認。テストコードは未変更 | 合格 | `ac3b79c` |
 | UC-2-X2 | 2 | Windows / Chrome 153 / 固定サンプルモック | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）、Playwright CLIで主要指標・ヘッダー配置・バッジ表示・期間切替・console error 0件を確認 | 合格 | `c6f1872` |
