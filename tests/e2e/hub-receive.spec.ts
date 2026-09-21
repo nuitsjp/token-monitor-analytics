@@ -39,6 +39,60 @@ test('2つのHubの最新状態を保存し、再起動後も維持する', asyn
     ]);
 });
 
+test('通信断後に当該Hubへ再接続し、切断中は保存値と他Hubを維持する', async ({ app, hubs, request }) => {
+    await waitForConnections(hubs, [1, 1]);
+    const statsA = statsAt('2026-09-21T14:00:00.000Z');
+    const statsB = statsAt('2026-09-21T14:01:00.000Z');
+    sendStats(hubs[0], 'snapshot', statsA);
+    sendStats(hubs[1], 'snapshot', statsB);
+    await expect.poll(() => readStates(app.databasePath).length).toBe(2);
+
+    hubs[0].endConnections();
+    await waitForConnections(hubs, [0, 1]);
+    expect(readState(app.databasePath, 'hub-a').updatedAt).toBe(statsA.updatedAt);
+    const continuedB = statsAt('2026-09-21T14:02:00.000Z');
+    ((continuedB.periods as JsonRecord).today as JsonRecord).totalTokens = 777;
+    sendStats(hubs[1], 'stats', continuedB);
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-b')).toBe(777);
+    const health = await request.get('/health');
+    expect(health.ok()).toBe(true);
+
+    await waitForConnections(hubs, [1, 1]);
+    expect(hubs.map(hub => hub.activeConnections)).toEqual([1, 1]);
+    const restoredA = statsAt('2026-09-21T14:03:00.000Z');
+    sendStats(hubs[0], 'snapshot', restoredA);
+    await expect.poll(() => readState(app.databasePath, 'hub-a').updatedAt).toBe(restoredA.updatedAt);
+
+    hubs[0].dropConnections();
+    await waitForConnections(hubs, [0, 1]);
+    await waitForConnections(hubs, [1, 1]);
+    const restoredA2 = statsAt('2026-09-21T14:04:00.000Z');
+    sendStats(hubs[0], 'snapshot', restoredA2);
+    await expect.poll(() => readState(app.databasePath, 'hub-a').updatedAt).toBe(restoredA2.updatedAt);
+
+    hubs[0].send('stats', { type: 'stats', stats: {} });
+    await waitForConnections(hubs, [0, 1]);
+    await new Promise(resolve => setTimeout(resolve, 4000));
+    expect(hubs.map(hub => hub.activeConnections)).toEqual([0, 1]);
+    expect(readState(app.databasePath, 'hub-a').updatedAt).toBe(restoredA2.updatedAt);
+    expect(app.output).toMatch(/"cause":"(disconnected|connection)"/);
+    expect(app.output).toContain('"cause":"invalid-notification"');
+    expect(app.output).not.toContain(hubs[0].token);
+    expect(app.output).not.toContain(hubs[1].token);
+});
+
+test('HTTP 401では当該Hubを再接続しない', async ({ app, hubs, request }) => {
+    await waitForConnections(hubs, [1, 1]);
+    hubs[0].rejectNewConnections();
+    hubs[0].dropConnections();
+    await expect.poll(() => app.output).toContain('"cause":"response"');
+    await new Promise(resolve => setTimeout(resolve, 4000));
+    expect(hubs.map(hub => hub.activeConnections)).toEqual([0, 1]);
+    const health = await request.get('/health');
+    expect(health.ok()).toBe(true);
+    expect(await health.json()).toEqual({ status: 'ok' });
+});
+
 test('一方の不正通知で他方の受信とWebを停止しない', async ({ app, hubs, request }) => {
     await waitForConnections(hubs, [1, 1]);
     const statsA = statsAt('2026-09-20T13:00:00.000Z');
