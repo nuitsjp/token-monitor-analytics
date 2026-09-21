@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { resolve } from 'node:path';
-import type { HubUsageOverview, UsageOverview } from '../../contracts/usage-overview.ts';
+import type { UsageOverview } from '../../contracts/usage-overview.ts';
+import { readHubDeviceOverview } from '../../backend/db/hub-state.ts';
 import { test, expect, type ControlledHub } from './fixtures.ts';
 
 type JsonRecord = Record<string, unknown>;
@@ -446,48 +447,12 @@ function streamUrl(baseUrl: string): string {
 }
 
 function readOverview(path: string): UsageOverview {
-    return withDatabase(path, db => {
-        const rows = db.prepare(`
-            SELECT h.hub_id, h.name, s.stats_json, s.received_at
-            FROM hubs h LEFT JOIN hub_states s ON s.hub_id = h.hub_id
-            ORDER BY h.hub_id
-        `).all() as Array<{ hub_id: string; name: string; stats_json: string | null; received_at: string | null }>;
-        return { hubs: rows.map(row => {
-            if (row.stats_json === null || row.received_at === null)
-                return { hubId: row.hub_id, name: row.name, state: null };
-            const stats = JSON.parse(row.stats_json) as JsonRecord;
-            const periods = stats.periods as JsonRecord;
-            const historyPreview = stats.historyPreview as JsonRecord | undefined;
-            const historySummary = historyPreview?.summary as JsonRecord | undefined;
-            const activeDays = typeof historySummary?.activeDays === 'number' ? historySummary.activeDays : undefined;
-            return {
-                hubId: row.hub_id,
-                name: row.name,
-                state: {
-                    updatedAt: stats.updatedAt as string,
-                    receivedAt: row.received_at,
-                    ...(activeDays !== undefined ? { activeDays } : {}),
-                    periods: {
-                        today: periodOf(periods.today),
-                        month: periodOf(periods.month),
-                        total: periodOf(periods.allTime),
-                    },
-                    devices: (stats.devices as JsonRecord[]).map(device => ({
-                        deviceId: device.deviceId as string,
-                        hostname: device.hostname as string,
-                        platform: device.platform as string,
-                        updatedAt: device.updatedAt as string,
-                        stale: device.stale as boolean,
-                    })),
-                },
-            } satisfies HubUsageOverview;
-        }) };
-    });
-}
-
-function periodOf(value: unknown): { totalTokens: number; costUsd: number } {
-    const period = value as JsonRecord;
-    return { totalTokens: period.totalTokens as number, costUsd: period.costUsd as number };
+    return withDatabase(path, db => ({
+        hubs: readHubDeviceOverview(db, [
+            { id: 'hub-a', name: 'Hub A' },
+            { id: 'hub-b', name: 'Hub B' },
+        ]),
+    }));
 }
 
 function readRawStats(path: string, hubId: string): JsonRecord | undefined {

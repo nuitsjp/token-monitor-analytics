@@ -59,6 +59,8 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
+| UC-2-X3 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全22件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（36件成功） | 合格 | 本行を含む完了コミット |
+| UC-2-X3 | 6 | Windows / Chrome / 実Hub Private・Work・検証専用SQLite・本番ビルド | 2026-09-21 | 現行Hub設定で本番entryを起動。利用枠はアカウント見出し、Codex Pro 5x は Weekly のみ、リセットは未来時刻、メール非公開、固定サンプルなしを確認 | 合格 | 本行を含む完了コミット |
 | UC-2-X2 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全20件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（30件成功）。承認済み本番コードは変更なし | 合格 | 本行を含む完了コミット |
 | UC-2-X2 | 4 | Windows / Chrome 153 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIで主要指標の全Hub合計・最大日数、TODAY/MONTH/TOTAL切替、最上段ヘッダーへの期間・更新時刻集約、保存値ラベル全廃と固定サンプル限定表示、console error 0件を確認。テストコードは未変更 | 合格 | `ac3b79c` |
 | UC-2-X2 | 2 | Windows / Chrome 153 / 固定サンプルモック | 2026-09-21 | `npm run build`、`npm run typecheck`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）、Playwright CLIで主要指標・ヘッダー配置・バッジ表示・期間切替・console error 0件を確認 | 合格 | `c6f1872` |
@@ -94,4 +96,4 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 `verify` は設定の基盤テスト、Lint、文書、型、本番ビルド、UC-1・UC-2の製品E2Eを実行します。通知E2Eは複数購読と保存値の一致、数値更新と鮮度更新、再接続、heartbeat・不正通知・保存失敗の通知抑止、保存値維持と他Hub継続、読出失敗時の503・接続終了と復旧、購読中の再起動、Hub切断中の通知抑止と再接続後配信を検証します。受信E2Eは通信断からの再接続とHTTP 401での停止を含みます。CIも同じコマンドを使用しますが、この変更のCI実行結果は未検証です。
 
-UC-2のE2Eは旧仕様の「自動更新なし」を改訂し、9件で初回取得と自動反映、全期間の値・構成比・台数と選択維持、単一GET・SSE、同額の再受信で加算しないこと、初回APIと通知の競合、初回取得失敗時のSSE未開始、通知読出失敗・503反復・復旧後の最新値反映を検証します。UC-2-Mの実Hub検証は既存DBと別の検証用DBで実施しました。ツール・モデル・利用枠・トレンド等は固定サンプルで、受け入れ範囲はHub・デバイスです。
+UC-2のE2Eは12件で初回取得と自動反映、全期間の値・構成比・台数と選択維持、単一GET・SSE、同額の再受信で加算しないこと、初回APIと通知の競合、初回取得失敗時のSSE未開始、通知読出失敗・503反復・復旧後の最新値反映、全Hub集計、利用枠のアカウント表示・並び・複数Hubの同一枠まとめを検証します。ツール・モデル・トレンドは固定サンプルです。利用枠は保存値です。

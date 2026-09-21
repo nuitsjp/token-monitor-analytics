@@ -16,7 +16,8 @@ test('登録Hubだけを表示し、未受信状態から保存値を自動反�
     await page.goto('/');
 
     await expect(page.getByRole('heading', { name: 'Hub・デバイス' })).toBeVisible();
-    await expect(page.getByText('まだ情報を受信していません')).toHaveCount(2);
+    await expect(page.getByRole('region', { name: 'Hub・デバイス' }).getByText('まだ情報を受信していません')).toHaveCount(2);
+    await expect(page.getByRole('region', { name: '利用枠' }).getByText('まだ情報を受信していません')).toBeVisible();
     await expect(page.getByRole('article', { name: 'Hub A' })).toBeVisible();
     await expect(page.getByRole('article', { name: 'Hub B' })).toBeVisible();
     await expect(page.getByText('Removed Hub')).toHaveCount(0);
@@ -32,7 +33,7 @@ test('登録Hubだけを表示し、未受信状態から保存値を自動反�
     // 保存後通知を受けた時点で、再読込なしに画面を更新する。
     await expect(page.getByRole('article', { name: 'Hub A' })).toContainText('1,234,567');
     await expect(page.getByRole('article', { name: 'Hub A' })).toContainText('$12.34');
-    await expect(page.getByText('まだ情報を受信していません')).toHaveCount(1);
+    await expect(page.getByRole('region', { name: 'Hub・デバイス' }).getByText('まだ情報を受信していません')).toHaveCount(1);
     await expect(page.getByText('受信済み 1 / 登録 2 Hub')).toBeVisible();
     await expect(page.getByText('デバイス 2 台')).toBeVisible();
     await expect(page.getByText('Removed Hub')).toHaveCount(0);
@@ -332,6 +333,7 @@ test('利用状況APIの失敗時はHub欄へエラーを表示し保存済み�
     await page.route('**/api/trpc/usageOverview*', (route) => route.abort());
     await page.goto('/');
     await expect(page.getByText('Hub・デバイスを取得できませんでした')).toBeVisible();
+    await expect(page.getByText('利用枠を取得できませんでした')).toBeVisible();
     expect(databaseText(app.databasePath)).toBe(before);
     await expect.poll(() => requests.apiGets).toBe(1);
     expect(requests.streamGets).toBe(0);
@@ -447,9 +449,9 @@ test('全Hub統合情報を画面上部の主要指標に反映し、期間切�
     await expect(kpiCards.nth(3).locator('strong')).toHaveText('0');
     await expect(kpiCards.nth(3).locator('small')).toHaveText('受信済み 0 Hub');
 
-    // ラベル確認: 保存値ラベルは0件、固定サンプルラベルは未更新パーツ4箇所のみ
+    // ラベル確認: 保存値ラベルは0件、固定サンプルラベルは未更新パーツ（トレンド・ツール・モデル）のみ
     const badges = page.locator('.mantine-Badge-root');
-    await expect(badges).toHaveText(['固定サンプル', '固定サンプル', '固定サンプル', '固定サンプル']);
+    await expect(badges).toHaveText(['固定サンプル', '固定サンプル', '固定サンプル']);
 
     // 2. Hub-A と Hub-B からデータ受信
     await waitForConnections(hubs, [1, 1]);
@@ -504,6 +506,175 @@ test('全Hub統合情報を画面上部の主要指標に反映し、期間切�
     await expect(kpiCards.nth(2).locator('strong')).toHaveText('35');
 });
 
+test('保存済み利用枠をアカウント単位で表示し、期間切替と残量変化の並びを反映する', async ({ app, hubs, page }) => {
+    await waitForConnections(hubs, [1, 1]);
+    const stats = dashboardStats('2026-09-21T08:00:00.000Z');
+    setHubLimits(stats, [
+        limitProvider({
+            provider: 'codex',
+            accountKey: 'codex-plus',
+            accountLabel: 'Plus',
+            accountEmail: 'plus@example.test',
+            updatedAt: '2026-09-21T08:00:00.000Z',
+            windows: [
+                limitWindow({ kind: 'weekly', remainingPercent: 24, windowMinutes: 10080, resetsAt: '2026-12-01T00:00:00.000Z' }),
+                limitWindow({ kind: 'session', remainingPercent: 99, windowMinutes: 300, resetsAt: '2026-12-01T00:00:00.000Z' }),
+            ],
+        }),
+        limitProvider({
+            provider: 'cursor',
+            accountKey: 'cursor-pro',
+            planLabel: 'Pro',
+            updatedAt: '2026-09-21T09:00:00.000Z',
+            windows: [
+                limitWindow({ kind: 'billing', label: 'Cursor Models', remainingPercent: 15.4, windowMinutes: null, resetsAt: '2026-01-01T00:00:00.000Z' }),
+                limitWindow({ kind: 'weekly', label: 'Grok Bot', remainingPercent: 100, windowMinutes: null, resetsAt: null, showMeter: true }),
+                limitWindow({ kind: 'billing', label: 'Hidden', remainingPercent: 50, showMeter: false }),
+            ],
+        }),
+        limitProvider({
+            provider: 'codex',
+            accountKey: 'codex-pro',
+            accountLabel: 'Pro 5x',
+            updatedAt: '2026-09-21T07:00:00.000Z',
+            windows: [
+                limitWindow({ kind: 'weekly', remainingPercent: 8, windowMinutes: 10080, resetsAt: '2026-12-01T00:00:00.000Z' }),
+            ],
+        }),
+        limitProvider({
+            provider: 'claude',
+            accountKey: '',
+            status: 'notConfigured',
+            updatedAt: '2026-09-21T10:00:00.000Z',
+            windows: [],
+        }),
+    ]);
+    sendStats(hubs[0], 'snapshot', stats);
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-a')).toBe(
+        ((stats.periods as JsonRecord).today as JsonRecord).totalTokens,
+    );
+
+    await page.goto('/');
+    const limits = page.getByRole('region', { name: '利用枠' });
+    await expect(limits.getByText('固定サンプル')).toHaveCount(0);
+    await expect(limits.getByText('Hidden')).toHaveCount(0);
+    await expect(limits.getByText('Claude')).toHaveCount(0);
+    await expect(page.getByText('plus@example.test')).toHaveCount(0);
+
+    await expect(limits.locator('[class*="limitAccountName"]')).toHaveText(['Cursor', 'Codex Plus', 'Codex Pro 5x']);
+    await expect(limits.getByLabel('Codex Plus', { exact: true }).locator('[class*="limitLabel"] strong')).toHaveText(['Session', 'Weekly']);
+    await expect(limits.getByLabel('Cursor', { exact: true }).locator('[class*="limitLabel"] strong')).toHaveText(['Grok Bot', 'Cursor Models']);
+    await expect(limits.getByLabel('Codex Plus、Sessionの残量')).toBeVisible();
+    await expect(limits.getByText('99% 残り')).toBeVisible();
+    await expect(limits.getByText('15% 残り')).toBeVisible();
+    await expect(limits.getByText('8% 残り')).toBeVisible();
+    await expect(limits.getByText('リセット予定を過ぎています')).toBeVisible();
+    await expect(limits.getByLabel('Cursor', { exact: true }).getByText('リセットまで')).toHaveCount(0);
+
+    const remainingBefore = await limits.locator('[class*="limitRemaining"]').allTextContents();
+    await page.getByRole('button', { name: 'TODAY' }).click();
+    await expect(limits.locator('[class*="limitRemaining"]')).toHaveText(remainingBefore);
+
+    const updated = dashboardStats('2026-09-21T08:10:00.000Z');
+    setHubLimits(updated, [
+        limitProvider({
+            provider: 'codex',
+            accountKey: 'codex-plus',
+            accountLabel: 'Plus',
+            updatedAt: '2026-09-21T08:00:00.000Z',
+            windows: [
+                limitWindow({ kind: 'weekly', remainingPercent: 24, windowMinutes: 10080, resetsAt: '2026-12-01T00:00:00.000Z' }),
+                limitWindow({ kind: 'session', remainingPercent: 99, windowMinutes: 300, resetsAt: '2026-12-01T00:00:00.000Z' }),
+            ],
+        }),
+        limitProvider({
+            provider: 'cursor',
+            accountKey: 'cursor-pro',
+            planLabel: 'Pro',
+            updatedAt: '2026-09-21T09:00:00.000Z',
+            windows: [
+                limitWindow({ kind: 'billing', label: 'Cursor Models', remainingPercent: 15.4, windowMinutes: null, resetsAt: '2026-01-01T00:00:00.000Z' }),
+                limitWindow({ kind: 'weekly', label: 'Grok Bot', remainingPercent: 100, windowMinutes: null, resetsAt: null }),
+            ],
+        }),
+        limitProvider({
+            provider: 'codex',
+            accountKey: 'codex-pro',
+            accountLabel: 'Pro 5x',
+            updatedAt: '2026-09-21T10:00:00.000Z',
+            windows: [
+                limitWindow({ kind: 'weekly', remainingPercent: 7, windowMinutes: 10080, resetsAt: '2026-12-01T00:00:00.000Z' }),
+            ],
+        }),
+    ]);
+    sendStats(hubs[0], 'stats', updated);
+    await expect(limits.getByText('7% 残り')).toBeVisible();
+    await expect(limits.locator('[class*="limitAccountName"]')).toHaveText(['Codex Pro 5x', 'Cursor', 'Codex Plus']);
+});
+
+test('同一利用枠は複数Hubで1行にまとめ、表示対象が無い場合と秘密非公開を守る', async ({ app, hubs, page }) => {
+    await waitForConnections(hubs, [1, 1]);
+    const statsA = dashboardStats('2026-09-21T08:20:00.000Z');
+    const statsB = dashboardStats('2026-09-21T08:21:00.000Z');
+    setHubLimits(statsA, [
+        limitProvider({
+            provider: 'codex',
+            accountKey: 'codex-plus',
+            accountLabel: 'Plus',
+            accountEmail: 'plus@example.test',
+            updatedAt: '2026-09-21T08:00:00.000Z',
+            windows: [
+                limitWindow({ kind: 'weekly', remainingPercent: 40, windowMinutes: 10080, resetsAt: '2026-12-01T00:00:00.000Z' }),
+            ],
+        }),
+    ]);
+    setHubLimits(statsB, [
+        limitProvider({
+            provider: 'codex',
+            accountKey: 'codex-plus',
+            accountLabel: 'Plus',
+            accountEmail: 'plus@example.test',
+            updatedAt: '2026-09-21T09:00:00.000Z',
+            windows: [
+                limitWindow({ kind: 'weekly', remainingPercent: 24, windowMinutes: 10080, resetsAt: '2026-12-01T00:00:00.000Z' }),
+            ],
+        }),
+    ]);
+    sendStats(hubs[0], 'snapshot', statsA);
+    sendStats(hubs[1], 'snapshot', statsB);
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-b')).toBe(
+        ((statsB.periods as JsonRecord).today as JsonRecord).totalTokens,
+    );
+
+    const responsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'GET'
+        && response.url().includes('/api/trpc/usageOverview')
+    ));
+    await page.goto('/');
+    const body = await (await responsePromise).text();
+    expect(body).not.toContain('plus@example.test');
+    expect(body).not.toContain('accountEmail');
+    const limits = page.getByRole('region', { name: '利用枠' });
+    await expect(limits.getByLabel('Codex', { exact: true })).toHaveCount(1);
+    await expect(limits.getByText('24% 残り')).toBeVisible();
+    await expect(limits.getByText('40% 残り')).toHaveCount(0);
+    await expect(page.getByText('plus@example.test')).toHaveCount(0);
+
+    const empty = dashboardStats('2026-09-21T08:30:00.000Z');
+    setHubLimits(empty, [
+        limitProvider({
+            provider: 'claude',
+            accountKey: '',
+            status: 'notConfigured',
+            updatedAt: '2026-09-21T08:30:00.000Z',
+            windows: [],
+        }),
+    ]);
+    sendStats(hubs[0], 'stats', empty);
+    sendStats(hubs[1], 'stats', empty);
+    await expect(limits.getByText('表示できる利用枠はありません')).toBeVisible();
+});
+
 async function expectPeriod(
     page: Page,
     panel: Locator,
@@ -547,6 +718,53 @@ function dashboardStats(updatedAt: string): JsonRecord {
     const stats = structuredClone(sourceStats);
     stats.updatedAt = updatedAt;
     return stats;
+}
+
+function setHubLimits(stats: JsonRecord, providers: JsonRecord[]): void {
+    stats.limits = { updatedAt: stats.updatedAt, providers };
+}
+
+function limitProvider(value: JsonRecord): JsonRecord {
+    return {
+        provider: 'codex',
+        accountKey: '',
+        accountLabel: '',
+        planLabel: '',
+        accountName: '',
+        accountEmail: '',
+        workspaceKind: '',
+        status: 'ok',
+        source: 'oauth',
+        sourceDetail: '',
+        updatedAt: '2026-09-21T08:00:00.000Z',
+        windows: [],
+        balanceUsd: null,
+        balance: null,
+        resetCredits: null,
+        region: '',
+        sourceDeviceId: 'device',
+        stale: false,
+        ...value,
+    };
+}
+
+function limitWindow(value: JsonRecord): JsonRecord {
+    return {
+        kind: 'weekly',
+        label: '',
+        used: null,
+        limit: null,
+        remaining: null,
+        usedPercent: 0,
+        remainingPercent: 100,
+        resetsAt: null,
+        windowMinutes: 10080,
+        resetDescription: '',
+        detail: '',
+        currency: null,
+        showMeter: true,
+        ...value,
+    };
 }
 
 function setActiveDays(stats: JsonRecord, activeDays: number): void {
