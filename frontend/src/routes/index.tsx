@@ -30,10 +30,28 @@ const PERIODS = {
 const TREND_AXIS_MAX = 1590000000;
 const TREND_SPLIT = 0.82;
 
-const TOOL_ROWS = [
-  { name: 'Codex', value: 4080000000, share: 87.7 }, { name: 'Antigravity', value: 423430000, share: 9.1 },
-  { name: 'Cursor', value: 97710000, share: 2.1 }, { name: 'その他', value: 51180000, share: 1.1, neutral: true },
-];
+type ToolRow = { name: string; value: number; share: number; neutral?: boolean };
+
+function createToolRows(values: readonly { name: string; value: number; neutral?: boolean }[]): ToolRow[] {
+  const total = values.reduce((sum, row) => sum + row.value, 0);
+  return values.map((row) => ({ ...row, share: total > 0 ? (row.value / total) * 100 : 0 }));
+}
+
+// 段階2の固定データ。実処理接続時にUsageOverviewの期間別clientsへ置き換える。
+const TOOL_ROWS_BY_PERIOD: Record<PeriodKey, ToolRow[]> = {
+  today: createToolRows([
+    { name: 'Codex', value: 38400000 }, { name: 'Antigravity', value: 8120000 },
+    { name: 'Cursor', value: 2840000 }, { name: 'Copilot', value: 740000 },
+  ]),
+  month: createToolRows([
+    { name: 'Codex', value: 4080000000 }, { name: 'Antigravity', value: 423430000 },
+    { name: 'Cursor', value: 97710000 }, { name: 'Copilot', value: 51180000 },
+  ]),
+  total: createToolRows([
+    { name: 'Codex', value: 24100000000 }, { name: 'Antigravity', value: 3120000000 },
+    { name: 'Cursor', value: 684000000 }, { name: 'Copilot', value: 394000000 },
+  ]),
+};
 const MODEL_ROWS = [
   { name: 'gpt-5.6-luna', value: 2330000000, share: 50 }, { name: 'gpt-5.6-sol', value: 1120000000, share: 24 },
   { name: 'gpt-6-astra', value: 651430000, share: 14 }, { name: 'gemini-3.8-flash', value: 418780000, share: 9 },
@@ -60,6 +78,7 @@ const SECTION_IDS = SECTIONS.map((section) => section.id);
 function Dashboard() {
   const [period, setPeriod] = useState<PeriodKey>('month');
   const selected = PERIODS[period];
+  const toolRows = TOOL_ROWS_BY_PERIOD[period];
   const overview = useUsageOverview();
   const connectionStatus = useUsageConnectionStatus();
   const hubs = overview.data?.hubs ?? [];
@@ -133,8 +152,8 @@ function Dashboard() {
         <div className={classes.secondaryGrid}>
           <section className={classes.panel} id="tools" aria-labelledby="tools-title">
             <PanelHeader id="tools-title" title="ツール" caption="トークン構成比" />
-            <p className={classes.lead}><small>最も利用したツール</small><strong>{TOOL_ROWS[0].name}</strong><span>{formatTokens(TOOL_ROWS[0].value)} tokens</span></p>
-            <RankList rows={TOOL_ROWS} />
+            <p className={classes.lead}><small>最も利用したツール</small><strong>{toolRows[0].name}</strong><span>{formatTokens(toolRows[0].value)} tokens</span></p>
+            <RankList rows={toolRows} />
           </section>
 
           <section className={classes.panel} id="models" aria-labelledby="models-title">
@@ -256,7 +275,7 @@ function TrendChart({ period, hubs }: { period: PeriodKey; hubs: HubUsageOvervie
   );
 }
 
-function RankList({ rows }: { rows: { name: string; value: number; share: number; neutral?: boolean }[] }) {
+function RankList({ rows }: { rows: ToolRow[] }) {
   return (
     <div className={classes.rankList}>
       {rows.map((row) => (
