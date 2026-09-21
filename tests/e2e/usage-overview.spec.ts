@@ -16,7 +16,8 @@ test('登録Hubだけを表示し、未受信状態から保存値を自動反�
     await page.goto('/');
 
     await expect(page.getByRole('heading', { name: 'Hub・デバイス' })).toBeVisible();
-    await expect(page.getByText('まだ情報を受信していません')).toHaveCount(2);
+    const hubPanel = page.getByRole('region', { name: 'Hub・デバイス' });
+    await expect(hubPanel.getByText('まだ情報を受信していません')).toHaveCount(2);
     await expect(page.getByRole('article', { name: 'Hub A' })).toBeVisible();
     await expect(page.getByRole('article', { name: 'Hub B' })).toBeVisible();
     await expect(page.getByText('Removed Hub')).toHaveCount(0);
@@ -32,7 +33,7 @@ test('登録Hubだけを表示し、未受信状態から保存値を自動反�
     // 保存後通知を受けた時点で、再読込なしに画面を更新する。
     await expect(page.getByRole('article', { name: 'Hub A' })).toContainText('1,234,567');
     await expect(page.getByRole('article', { name: 'Hub A' })).toContainText('$12.34');
-    await expect(page.getByText('まだ情報を受信していません')).toHaveCount(1);
+    await expect(hubPanel.getByText('まだ情報を受信していません')).toHaveCount(1);
     await expect(page.getByText('受信済み 1 / 登録 2 Hub')).toBeVisible();
     await expect(page.getByText('デバイス 2 台')).toBeVisible();
     await expect(page.getByText('Removed Hub')).toHaveCount(0);
@@ -447,9 +448,9 @@ test('全Hub統合情報を画面上部の主要指標に反映し、期間切�
     await expect(kpiCards.nth(3).locator('strong')).toHaveText('0');
     await expect(kpiCards.nth(3).locator('small')).toHaveText('受信済み 0 Hub');
 
-    // ラベル確認: 保存値ラベルは0件、固定サンプルラベルは未更新パーツ4箇所のみ
+    // ラベル確認: 保存値ラベルは0件、固定サンプルラベルは未更新パーツ3箇所のみ
     const badges = page.locator('.mantine-Badge-root');
-    await expect(badges).toHaveText(['固定サンプル', '固定サンプル', '固定サンプル', '固定サンプル']);
+    await expect(badges).toHaveText(['固定サンプル', '固定サンプル', '固定サンプル']);
 
     // 2. Hub-A と Hub-B からデータ受信
     await waitForConnections(hubs, [1, 1]);
@@ -502,6 +503,60 @@ test('全Hub統合情報を画面上部の主要指標に反映し、期間切�
     await expect(kpiCards.nth(0).locator('strong')).toHaveText('30,001,536,000');
     await expect(kpiCards.nth(1).locator('strong')).toHaveText('$12,021.37');
     await expect(kpiCards.nth(2).locator('strong')).toHaveText('35');
+});
+
+test('ツール別トークン構成比を全Hubで集計し、期間切替と通知更新へ追従する', async ({ app, hubs, page }) => {
+    await page.goto('/');
+    const panel = page.getByRole('region', { name: 'ツール' });
+    await expect(panel.getByText('まだ情報を受信していません')).toBeVisible();
+    await expect(panel.getByText('最も利用したツール')).toHaveCount(0);
+    await expect(panel.getByText('固定サンプル')).toHaveCount(0);
+
+    await waitForConnections(hubs, [1, 1]);
+    const statsA = dashboardStats('2026-09-21T07:00:00.000Z');
+    const statsB = dashboardStats('2026-09-21T07:01:00.000Z');
+    setPeriod(statsA, 'today', 1_000, 1);
+    setPeriod(statsB, 'today', 1_000, 1);
+    setPeriod(statsA, 'month', 1_000, 1);
+    setPeriod(statsB, 'month', 1_000, 1);
+    setPeriod(statsA, 'allTime', 1_000, 1);
+    setPeriod(statsB, 'allTime', 1_000, 1);
+    setToolClients(statsA, 'today', { codex: 100, antigravity: 20, cursor: 5 });
+    setToolClients(statsB, 'today', { codex: 200, antigravity: 30, cursor: 45 });
+    setToolClients(statsA, 'month', { codex: 400, antigravity: 100, cursor: 50 });
+    setToolClients(statsB, 'month', { codex: 100, antigravity: 300, cursor: 50 });
+    setToolClients(statsA, 'allTime', { codex: 600, antigravity: 100 });
+    setToolClients(statsB, 'allTime', { codex: 300, antigravity: 100, copilot: 200 });
+    sendStats(hubs[0], 'snapshot', statsA);
+    sendStats(hubs[1], 'snapshot', statsB);
+
+    await expect.poll(() => readTotalTokens(app.databasePath, 'hub-a', 'month')).toBe(1_000);
+    await expect(panel.locator('[class*="rankRow"]').nth(0)).toContainText('codex');
+    await expect(panel.locator('[class*="rankRow"]').nth(0)).toContainText('500');
+    await expect(panel.getByText('50%', { exact: true })).toHaveCount(1);
+    await expect(panel.getByText('40%', { exact: true })).toHaveCount(1);
+    await expect(panel.getByText('10%', { exact: true })).toHaveCount(1);
+
+    await page.getByRole('button', { name: 'TODAY' }).click();
+    await expect(panel.locator('[class*="rankRow"]').nth(0)).toContainText('codex');
+    await expect(panel.locator('[class*="rankRow"]').nth(0)).toContainText('300');
+    await expect(panel.getByText('75%', { exact: true })).toHaveCount(1);
+    await expect(panel.getByText('12.5%', { exact: true })).toHaveCount(2);
+
+    await page.getByRole('button', { name: 'TOTAL' }).click();
+    await expect(panel.locator('[class*="rankRow"]').nth(0)).toContainText('codex');
+    await expect(panel.locator('[class*="rankRow"]').nth(0)).toContainText('900');
+    await expect(panel.locator('[class*="rankRow"]').nth(1)).toContainText('antigravity');
+    await expect(panel.getByText('69.2%', { exact: true })).toHaveCount(1);
+    await expect(panel.getByText('15.4%', { exact: true })).toHaveCount(2);
+
+    // 選択中のTOTALを維持したまま、片方のHubの保存通知で再集計する。
+    setToolClients(statsA, 'allTime', { codex: 100, cursor: 900 });
+    sendStats(hubs[0], 'stats', statsA);
+    await expect(panel.locator('[class*="rankRow"]').nth(0)).toContainText('cursor');
+    await expect(panel.locator('[class*="rankRow"]').nth(0)).toContainText('900');
+    await expect(panel.getByText('56.3%', { exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'TOTAL' })).toHaveAttribute('aria-pressed', 'true');
 });
 
 async function expectPeriod(
@@ -560,6 +615,12 @@ function setPeriod(stats: JsonRecord, period: DashboardPeriod, totalTokens: numb
     const value = periods[period] as JsonRecord;
     value.totalTokens = totalTokens;
     value.costUsd = costUsd;
+}
+
+function setToolClients(stats: JsonRecord, period: DashboardPeriod, clients: Record<string, number>): void {
+    const periods = stats.periods as JsonRecord;
+    const value = periods[period] as JsonRecord;
+    value.clients = clients;
 }
 
 function setDashboardValues(stats: JsonRecord, values: DashboardValues, deviceCount: number): void {

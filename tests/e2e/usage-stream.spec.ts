@@ -49,7 +49,7 @@ test('初回・保存後のsnapshot/stats/freshnessを複数購読へ配信し�
         sendFreshness(hubs[0], freshA);
         const freshnessUpdate = await expectBothUpdates(first, second, app.databasePath);
         const freshnessState = freshnessUpdate.hubs.find(hub => hub.hubId === 'hub-a')?.state;
-        expect(freshnessState?.periods.today).toEqual({ totalTokens: 4_321_000, costUsd: 43.21 });
+        expect(freshnessState?.periods.today).toMatchObject({ totalTokens: 4_321_000, costUsd: 43.21 });
 
         await second.close();
         const updatedB = statsAt('2026-09-21T06:04:00.000Z');
@@ -485,9 +485,13 @@ function readOverview(path: string): UsageOverview {
     });
 }
 
-function periodOf(value: unknown): { totalTokens: number; costUsd: number } {
+function periodOf(value: unknown): { totalTokens: number; costUsd: number; clients?: Record<string, number> } {
     const period = value as JsonRecord;
-    return { totalTokens: period.totalTokens as number, costUsd: period.costUsd as number };
+    return {
+        totalTokens: period.totalTokens as number,
+        costUsd: period.costUsd as number,
+        ...(period.clients ? { clients: period.clients as Record<string, number> } : {}),
+    };
 }
 
 function readRawStats(path: string, hubId: string): JsonRecord | undefined {
