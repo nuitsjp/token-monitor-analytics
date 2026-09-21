@@ -1,0 +1,15 @@
+[tools]
+node = "24.21.0"
+python = "3.13"
+
+[tasks.setup]
+description = "依存関係を入れ、.env が無ければ作る"
+run = "npm run setup"
+
+[tasks.hub]
+description = "本番のHubへ接続し、開発サーバーを起動する"
+run = "npm run dev"
+
+[tasks.verify]
+description = "Lint、文書検査、基盤テスト、ビルド、製品E2Eを実行する"
+run = "npm run verify"

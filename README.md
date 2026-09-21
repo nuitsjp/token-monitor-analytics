@@ -4,11 +4,11 @@ Reactテンプレートを基盤とするローカルアプリです。設定さ
 
 ## 起動
 
-Node.js 24とPython 3を使用します。リポジトリのルートで実行してください。
+Node.js 24.21.0 と Python 3.13 は mise で入れます。版の正本は `mise.toml` と `mise.lock` です。mise を導入したうえで、リポジトリのルートで実行してください。
 
 ```sh
-npm run setup
-npm run dev
+mise run setup
+mise run hub
 ```
 
 開発画面は http://127.0.0.1:5173/ です。終了は Ctrl+C。設定はセットアップで生成する `.env`、DBは既定で `data/app.sqlite` です。旧DBは使用しません。
@@ -27,7 +27,7 @@ http://127.0.0.1:3000/ を開きます。バックエンドはループバック
 ## 検証
 
 ```sh
-npm run verify
+mise run verify
 ```
 
 Lint、文書検査、設定の基盤テスト、型検査、本番ビルド、UC-1・UC-2の製品E2Eを実行します。E2Eはテストごとに2つのSSE Hub、本番Nodeプロセス、OS自動割当ポート、一時SQLiteを分離します。

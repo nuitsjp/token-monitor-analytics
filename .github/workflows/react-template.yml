@@ -17,12 +17,9 @@ jobs:
       E2E_WORKERS: '4'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: jdx/mise-action@v4
         with:
-          node-version-file: .nvmrc
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
+          install_args: --locked
       - name: Install dependencies and generate routes
         run: npm run setup
       - name: Install Playwright Chromium
