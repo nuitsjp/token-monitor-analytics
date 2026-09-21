@@ -3,9 +3,9 @@ import type { HubUsageOverview } from '../../contracts/usage-overview.ts';
 
 type JsonRecord = Record<string, unknown>;
 type StoredPeriods = {
-    today: { totalTokens: number; costUsd: number };
-    month: { totalTokens: number; costUsd: number };
-    allTime: { totalTokens: number; costUsd: number };
+    today: { totalTokens: number; costUsd: number; clients: Record<string, number> };
+    month: { totalTokens: number; costUsd: number; clients: Record<string, number> };
+    allTime: { totalTokens: number; costUsd: number; clients: Record<string, number> };
 };
 
 const FRESHNESS_DEVICE_FIELDS = ['updatedAt', 'receivedAt', 'ageMs', 'stale'] as const;
@@ -129,9 +129,9 @@ function parseHubDeviceState(statsJson: string, receivedAt: string) {
         updatedAt: stats.updatedAt,
         receivedAt,
         periods: {
-            today: { totalTokens: periods.today.totalTokens, costUsd: periods.today.costUsd },
-            month: { totalTokens: periods.month.totalTokens, costUsd: periods.month.costUsd },
-            total: { totalTokens: periods.allTime.totalTokens, costUsd: periods.allTime.costUsd },
+            today: { totalTokens: periods.today.totalTokens, costUsd: periods.today.costUsd, clients: periods.today.clients },
+            month: { totalTokens: periods.month.totalTokens, costUsd: periods.month.costUsd, clients: periods.month.clients },
+            total: { totalTokens: periods.allTime.totalTokens, costUsd: periods.allTime.costUsd, clients: periods.allTime.clients },
         },
         devices,
         activeDays,

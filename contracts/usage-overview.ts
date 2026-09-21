@@ -11,9 +11,15 @@ export interface HubUsageOverview {
 export interface HubDeviceState {
   updatedAt: string;
   receivedAt: string;
-  periods: Record<'today' | 'month' | 'total', { totalTokens: number; costUsd: number }>;
+  periods: Record<'today' | 'month' | 'total', UsagePeriod>;
   devices: HubDeviceOverview[];
   activeDays?: number;
+}
+
+export interface UsagePeriod {
+  totalTokens: number;
+  costUsd: number;
+  clients?: Record<string, number>;
 }
 
 export interface HubDeviceOverview {
