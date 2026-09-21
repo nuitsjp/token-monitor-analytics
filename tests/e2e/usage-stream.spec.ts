@@ -78,6 +78,41 @@ test('初回・保存後のsnapshot/stats/freshnessを複数購読へ配信し�
     }
 });
 
+test('Hub切断中は閲覧へ更新せず、再接続後の保存で最新値を配信する', async ({ app, hubs }) => {
+    await waitForConnections(hubs, [1, 1]);
+    const snapshotA = statsAt('2026-09-21T15:00:00.000Z');
+    const snapshotB = statsAt('2026-09-21T15:01:00.000Z');
+    sendStats(hubs[0], 'snapshot', snapshotA);
+    sendStats(hubs[1], 'snapshot', snapshotB);
+    await expect.poll(() => readRawStats(app.databasePath, 'hub-a')?.updatedAt).toBe(snapshotA.updatedAt);
+    await expect.poll(() => readRawStats(app.databasePath, 'hub-b')?.updatedAt).toBe(snapshotB.updatedAt);
+
+    const stream = await openUsageStream(app.url);
+    try {
+        expect(await stream.nextUpdate()).toEqual(readOverview(app.databasePath));
+        hubs[0].endConnections();
+        await waitForConnections(hubs, [0, 1]);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        expect(readRawStats(app.databasePath, 'hub-a')?.updatedAt).toBe(snapshotA.updatedAt);
+
+        const continuedB = statsAt('2026-09-21T15:02:00.000Z');
+        sendStats(hubs[1], 'stats', continuedB);
+        const otherUpdate = await stream.nextUpdate();
+        expect(otherUpdate).toEqual(readOverview(app.databasePath));
+        expect(otherUpdate.hubs.find(hub => hub.hubId === 'hub-b')?.state?.updatedAt).toBe(continuedB.updatedAt);
+
+        await waitForConnections(hubs, [1, 1]);
+        const restoredA = statsAt('2026-09-21T15:03:00.000Z');
+        sendStats(hubs[0], 'snapshot', restoredA);
+        const restored = await stream.nextUpdate();
+        expect(restored).toEqual(readOverview(app.databasePath));
+        expect(restored.hubs.find(hub => hub.hubId === 'hub-a')?.state?.updatedAt).toBe(restoredA.updatedAt);
+    }
+    finally {
+        await stream.close();
+    }
+});
+
 test('heartbeat・不正通知・保存失敗は配信せず、保存値と他Hubの受信を維持する', async ({ app, hubs }) => {
     await waitForConnections(hubs, [1, 1]);
     const streams: UsageStream[] = [];

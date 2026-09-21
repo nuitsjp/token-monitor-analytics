@@ -4,7 +4,9 @@ import type { HubConnectionConfig } from './config-file.ts';
 import { saveHubState, updateHubFreshness } from '../db/hub-state.ts';
 import { parseHubNotification } from './protocol.ts';
 
-// 接続は1回のみ。失敗後の再開はアプリケーションの再起動で行う。
+const RECONNECT_INTERVAL_MS = 3000;
+
+// 通信断は同じHubへ3秒間隔で再接続する。HTTP応答不正・不正通知・保存失敗では停止する。
 export function startHubReceiver(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger, notifySaved: () => void): { stop: () => Promise<void> } {
     const controller = new AbortController();
     const done = receive(config, db, log, controller.signal, notifySaved).catch(() => {
@@ -16,14 +18,48 @@ export function startHubReceiver(config: HubConnectionConfig, db: DatabaseSync, 
 }
 
 async function receive(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger, signal: AbortSignal, notifySaved: () => void): Promise<void> {
+    while (!signal.aborted) {
+        try {
+            const retry = await receiveOnce(config, db, log, signal, notifySaved);
+            if (signal.aborted || !retry)
+                return;
+            log.warn({ hubId: config.id, cause: 'disconnected' }, 'Hub受信が切断されました');
+        } catch {
+            if (signal.aborted)
+                return;
+            log.warn({ hubId: config.id, cause: 'connection' }, 'Hub受信が切断されました');
+        }
+        await sleep(RECONNECT_INTERVAL_MS, signal);
+    }
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise(resolve => {
+        if (signal.aborted) {
+            resolve();
+            return;
+        }
+        const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+        };
+        const timer = setTimeout(() => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        signal.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+async function receiveOnce(config: HubConnectionConfig, db: DatabaseSync, log: FastifyBaseLogger, signal: AbortSignal, notifySaved: () => void): Promise<boolean> {
     const response = await fetch(new URL('/api/stats/stream', config.url), {
         headers: { Authorization: `Bearer ${config.token}`, Accept: 'text/event-stream', 'x-token-monitor-stream': '2' },
-        redirect: 'error', signal,
+        redirect: 'manual', signal,
     });
     if (!response.ok || !response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream') || !response.body) {
         await response.body?.cancel();
         log.error({ hubId: config.id, cause: 'response', status: response.status }, 'Hub受信を停止しました');
-        return;
+        return false;
     }
     let initialReceived = false;
     let eventName = '';
@@ -73,17 +109,27 @@ async function receive(config: HubConnectionConfig, db: DatabaseSync, log: Fasti
     };
     // CR/LF/CRLFとUTF-8の分割はネットワークchunk境界に依存させない。
     for await (const chunk of response.body) {
-        const text = decoder.decode(chunk, { stream: true });
+        let text: string;
+        try {
+            text = decoder.decode(chunk, { stream: true });
+        } catch {
+            log.error({ hubId: config.id, cause: 'invalid-notification' }, 'Hub受信を停止しました');
+            return false;
+        }
         for (const character of text) {
             if (skipLF) { skipLF = false; if (character === '\n') continue; }
             if (character === '\r' || character === '\n') {
-                if (!line(buffer)) return;
+                if (!line(buffer)) return false;
                 buffer = '';
                 skipLF = character === '\r';
             } else buffer += character;
         }
     }
-    decoder.decode();
-    if (!signal.aborted)
-        log.error({ hubId: config.id, cause: 'disconnected' }, 'Hub受信を停止しました');
+    try {
+        decoder.decode();
+    } catch {
+        log.error({ hubId: config.id, cause: 'invalid-notification' }, 'Hub受信を停止しました');
+        return false;
+    }
+    return !signal.aborted;
 }

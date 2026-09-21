@@ -2,7 +2,7 @@
 
 ## 1. 目的と範囲
 
-UC-1の受信・保存・保存後通知と、UC-2-Mの初回取得ダッシュボードは完了しています。自動更新のUC-2-X1も完成系承認、段階6のE2E・実Hub検証まで完了しています。他のパーツは固定サンプルから段階的に実装します。旧製品の機能を暗黙に復元しません。
+UC-1の受信・保存・保存後通知と切断時再接続、UC-2-Mの初回取得ダッシュボードは完了しています。自動更新のUC-2-X1も完成系承認、段階6のE2E・実Hub検証まで完了しています。他のパーツは固定サンプルから段階的に実装します。旧製品の機能を暗黙に復元しません。
 
 ## 2. 基盤の制約
 
@@ -44,7 +44,7 @@ UC-2-X1の実接続確認では、画面を開いてTODAY・MONTH・TOTALのい�
 
 設定JSONは `{ "hubs": [...] }` の形式で、Hubを正確に2件指定します。各要素の `id`、`name`、`url`、`token` は必須です。IDは重複不可、URLはパス・認証情報・クエリを含まないHTTP(S) originです。形式は [設定例](../config/hubs.example.json) を参照します。アプリケーションは設定ファイルを更新しません。
 
-Hubへの接続先は `/api/stats/stream` です。接続先URL・認証情報はDBへ保存しません。設定ファイルが存在しない、JSONや項目が不正、2件でない、またはIDが重複する場合は起動しません。起動後に一方の受信が停止しても、もう一方とWebサーバーは継続します。停止したHubはログのcause（response、connection、disconnected、invalid-notification、database）を確認し、原因を解消してアプリケーションを再起動します。自動再接続はありません。Webの `/health` はWebサーバーの稼働確認であり、Hub受信の正常性を示しません。
+Hubへの接続先は `/api/stats/stream` です。接続先URL・認証情報はDBへ保存しません。設定ファイルが存在しない、JSONや項目が不正、2件でない、またはIDが重複する場合は起動しません。起動後に一方の受信が停止しても、もう一方とWebサーバーは継続します。通信断（cause が connection または disconnected）では当該Hubを3秒間隔で再接続します。HTTP応答不正・不正通知・保存失敗（cause が response、invalid-notification、database）で停止したHubは、原因を解消してアプリケーションを再起動します。Webの `/health` はWebサーバーの稼働確認であり、Hub受信の正常性を示しません。
 
 DB確認には別の読み取り専用SQLite接続を使い、`SELECT h.hub_id,h.name,s.received_at,s.stats_json FROM hubs h LEFT JOIN hub_states s ON s.hub_id=h.hub_id` を実行します。初回受信前の状態・受信時刻はNULLです。DBの整合性検査は `npm run db:check` で行います。
 
@@ -59,6 +59,9 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
+| UC-1-X1 | 6 | Windows / 本番entry・制御可能な2 Hub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全18件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/hub-receive.spec.ts tests/e2e/usage-stream.spec.ts --workers=4 --repeat-each=3`（27件成功） | 合格 | 本行を含む完了コミット |
+| UC-1-X1 | 6 | Windows / Node.js 24.19.0 / 実Hub Private・Work・本番entry・検証専用SQLite | 2026-09-21 | 本番ビルドを実Hub設定で起動。閲覧SSEで8秒間に4通知、再起動後に両Hubのsnapshot再保存と継続更新、秘密非露出、integrity_check=okを確認 | 合格 | 本行を含む完了コミット |
+| UC-1-X1 | 4 | Windows / Node.js 24.19.0 / 制御可能な2 Hub・本番entry・一時SQLite・HTTP SSE | 2026-09-21 | 本番ビルドを起動し、ストリーム終了と接続リセットからの3秒後再接続、切断中の保存値維持と他Hub継続、再接続後snapshotの保存と閲覧通知、不正通知とHTTP 401での停止（再接続なし）、秘密非露出、通常終了を確認。既存E2E 15件成功。テストコードは未変更 | 合格 | 本行を含む提示コミット |
 | UC-2-X1 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全15件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（27件成功）。承認済み本番コードは変更なし | 合格 | 本行を含む完了コミット |
 | UC-2-X1 | 6 | Windows / Chrome 153 / 実Hub Private・Work・既存SQLite・本番ビルド | 2026-09-21 | Playwright CLIで受信停止後のアプリ再起動時の値保持・再接続表示・再読込なしの数値更新を確認。復旧後12秒で12通知、3期間の通知・画面・独立DBの一致、integrity_check=okを確認 | 合格 | `0f9c99a` |
 | UC-2-X1 | 4 | Windows / Chrome 153 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIとNode REPLで未受信からの反映、複数Hubの合計・台数更新、TODAY維持、同時SSE最大1本、切断と503中の値保持・復旧後の最新値反映、初回API応答遅延中の保存反映、初回取得失敗時のSSE未開始、DB整合性を確認。意図した障害中のみ通信エラーを観測 | 合格 | 本行を含む提示コミット |
@@ -86,6 +89,6 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 - `npm run dev`・HTTP取得・`npm run db:check`: 合格。終了後に3000/5173番の停止を確認。
 - ブラウザー描画確認: 合格。利用者の「Chromeを利用してください」に従い、`playwright-cli -s=analytics-chrome open http://127.0.0.1:3000/ --browser=chrome` でChrome 153の一時セッションを起動。タイトル・見出し・準備中の文面と再読み込み後の描画を確認。初回にfavicon未配置の404が1件あり、アプリのJavaScriptエラーはなし。LinuxおよびCIは未検証。
 
-`verify` は設定の基盤テスト、Lint、文書、型、本番ビルド、UC-1・UC-2の製品E2Eを実行します。通知E2Eは複数購読と保存値の一致、数値更新と鮮度更新、再接続、heartbeat・不正通知・保存失敗の通知抑止、保存値維持と他Hub継続、読出失敗時の503・接続終了と復旧、購読中の再起動を検証します。CIも同じコマンドを使用しますが、この変更のCI実行結果は未検証です。
+`verify` は設定の基盤テスト、Lint、文書、型、本番ビルド、UC-1・UC-2の製品E2Eを実行します。通知E2Eは複数購読と保存値の一致、数値更新と鮮度更新、再接続、heartbeat・不正通知・保存失敗の通知抑止、保存値維持と他Hub継続、読出失敗時の503・接続終了と復旧、購読中の再起動、Hub切断中の通知抑止と再接続後配信を検証します。受信E2Eは通信断からの再接続とHTTP 401での停止を含みます。CIも同じコマンドを使用しますが、この変更のCI実行結果は未検証です。
 
 UC-2のE2Eは旧仕様の「自動更新なし」を改訂し、9件で初回取得と自動反映、全期間の値・構成比・台数と選択維持、単一GET・SSE、同額の再受信で加算しないこと、初回APIと通知の競合、初回取得失敗時のSSE未開始、通知読出失敗・503反復・復旧後の最新値反映を検証します。UC-2-Mの実Hub検証は既存DBと別の検証用DBで実施しました。ツール・モデル・利用枠・トレンド等は固定サンプルで、受け入れ範囲はHub・デバイスです。

@@ -20,6 +20,10 @@ export interface ControlledHub {
     activeConnections: number;
     send: (event: string, payload: unknown) => void;
     sendRaw: (frame: string) => void;
+    writeBytes: (bytes: Uint8Array) => void;
+    endConnections: () => void;
+    dropConnections: () => void;
+    rejectNewConnections: () => void;
 }
 export const test = base.extend<{
     hubs: ControlledHub[];
@@ -37,8 +41,9 @@ export const test = base.extend<{
         try {
             for (const definition of definitions) {
                 const connected = new Set<ServerResponse>();
+                let rejectNew = false;
                 const server = createServer((req, res) => {
-                    if (req.url !== '/api/stats/stream'
+                    if (rejectNew || req.url !== '/api/stats/stream'
                         || req.headers.authorization !== `Bearer ${definition.token}`
                         || req.headers['x-token-monitor-stream'] !== '2') {
                         res.writeHead(401).end();
@@ -69,6 +74,19 @@ export const test = base.extend<{
                         for (const response of connected)
                             response.write(frame);
                     },
+                    writeBytes: (bytes) => {
+                        for (const response of connected)
+                            response.write(bytes);
+                    },
+                    endConnections: () => {
+                        for (const response of [...connected])
+                            response.end();
+                    },
+                    dropConnections: () => {
+                        for (const response of [...connected])
+                            response.destroy();
+                    },
+                    rejectNewConnections: () => { rejectNew = true; },
                 });
             }
             await use(hubs);
