@@ -44,7 +44,7 @@ UC-2-X1の実接続確認では、画面を開いてTODAY・MONTH・TOTALのい�
 
 設定JSONは `{ "hubs": [...] }` の形式で、Hubを正確に2件指定します。各要素の `id`、`name`、`url`、`token` は必須です。IDは重複不可、URLはパス・認証情報・クエリを含まないHTTP(S) originです。形式は [設定例](../config/hubs.example.json) を参照します。アプリケーションは設定ファイルを更新しません。
 
-Hubへの接続先は `/api/stats/stream` です。接続先URL・認証情報はDBへ保存しません。設定ファイルが存在しない、JSONや項目が不正、2件でない、またはIDが重複する場合は起動しません。起動後に一方の受信が停止しても、もう一方とWebサーバーは継続します。停止したHubはログのcause（response、connection、disconnected、invalid-notification、database）を確認し、原因を解消してアプリケーションを再起動します。自動再接続はありません。Webの `/health` はWebサーバーの稼働確認であり、Hub受信の正常性を示しません。
+Hubへの接続先は `/api/stats/stream` です。接続先URL・認証情報はDBへ保存しません。設定ファイルが存在しない、JSONや項目が不正、2件でない、またはIDが重複する場合は起動しません。起動後に一方の受信が停止しても、もう一方とWebサーバーは継続します。通信断（cause が connection または disconnected）では当該Hubを3秒間隔で再接続します。HTTP応答不正・不正通知・保存失敗（cause が response、invalid-notification、database）で停止したHubは、原因を解消してアプリケーションを再起動します。Webの `/health` はWebサーバーの稼働確認であり、Hub受信の正常性を示しません。
 
 DB確認には別の読み取り専用SQLite接続を使い、`SELECT h.hub_id,h.name,s.received_at,s.stats_json FROM hubs h LEFT JOIN hub_states s ON s.hub_id=h.hub_id` を実行します。初回受信前の状態・受信時刻はNULLです。DBの整合性検査は `npm run db:check` で行います。
 
@@ -59,6 +59,7 @@ UC-2-Mも完成系承認、段階6 E2E、実Hubの保存値をChromeで閲覧す
 
 | UC・系列 ID | 段階 | 構成 | 実行日 | コマンド | 合否 | 対象コミットまたは CI 参照 |
 | --- | --- | --- | --- | --- | --- | --- |
+| UC-1-X1 | 4 | Windows / Node.js 24.19.0 / 制御可能な2 Hub・本番entry・一時SQLite・HTTP SSE | 2026-09-21 | 本番ビルドを起動し、ストリーム終了と接続リセットからの3秒後再接続、切断中の保存値維持と他Hub継続、再接続後snapshotの保存と閲覧通知、不正通知とHTTP 401での停止（再接続なし）、秘密非露出、通常終了を確認。既存E2E 15件成功。テストコードは未変更 | 合格 | 本行を含む提示コミット |
 | UC-2-X1 | 6 | Windows / 本番entry・制御可能なHub・独立SQLite / Chromium | 2026-09-21 | `npm run verify`（基盤3件・E2E全15件、Lint・型・ビルド・文書成功）、`npm exec -- playwright test tests/e2e/usage-overview.spec.ts --workers=4 --repeat-each=3`（27件成功）。承認済み本番コードは変更なし | 合格 | 本行を含む完了コミット |
 | UC-2-X1 | 6 | Windows / Chrome 153 / 実Hub Private・Work・既存SQLite・本番ビルド | 2026-09-21 | Playwright CLIで受信停止後のアプリ再起動時の値保持・再接続表示・再読込なしの数値更新を確認。復旧後12秒で12通知、3期間の通知・画面・独立DBの一致、integrity_check=okを確認 | 合格 | `0f9c99a` |
 | UC-2-X1 | 4 | Windows / Chrome 153 / 本番ビルド・制御可能な2 Hub・独立SQLite | 2026-09-21 | `npm run build`、`npm run lint`、`python scripts/doc_check.py .`（NG 0件）。Playwright CLIとNode REPLで未受信からの反映、複数Hubの合計・台数更新、TODAY維持、同時SSE最大1本、切断と503中の値保持・復旧後の最新値反映、初回API応答遅延中の保存反映、初回取得失敗時のSSE未開始、DB整合性を確認。意図した障害中のみ通信エラーを観測 | 合格 | 本行を含む提示コミット |
