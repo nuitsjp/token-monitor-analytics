@@ -100,7 +100,7 @@ UC-2-M / UI確認: 必要。A案（Workspace）をトップ画面に採用し、
 - 表示対象は、受信済みHubの Hub 集約 `limits.providers` のうち、`showMeter` が真で `remainingPercent` が数値の window です。未設定・未認証などで window が空の provider は出しません。デバイス個別の `limits` は使いません。
 - 複数Hubに同じ枠がある場合は、`provider`・`accountKey`・`kind`・`limitId`（無い場合は `label`）が一致する行を1つにまとめ、メーター残量が後から変わった方を残します。Hub名は行に出しません。
 - 表示はアカウント単位（`provider` + `accountKey`）でまとめます。例: Codex Plus の 5時間枠と週次枠は連続して出します。アカウントの並びは、そのアカウントの表示対象 window のうちメーター（`remainingPercent` / `usedPercent`）が最後に変わった時刻が新しい順です。鮮度通知の `limits.updatedAt` と受信時刻は使いません。同一アカウント内は時間幅の狭い window を先にします。時間幅は `windowMinutes` があればその値、無ければ kind（session → daily → weekly → billing）に対応する幅です。
-- 名称は provider を先頭大文字にした表示名です。同一 provider にアカウントが複数ある場合のみ、`accountLabel` または `planLabel` を名称へ足します。補助行の左は `label` が空でなければその値、空なら kind（`session` / `daily` / `weekly` / `billing` を先頭大文字）です。
+- アカウント名はアカウントごとに1回だけ出します。名称は provider を先頭大文字にした表示名で、同一 provider にアカウントが複数ある場合のみ `accountLabel` または `planLabel` を足します。各 window 行の左は `label` が空でなければその値、空なら kind（`session` / `daily` / `weekly` / `billing` を先頭大文字）です。
 - 残量は `remainingPercent` を四捨五入した整数パーセントで表示し、バーの長さも残量に合わせます。残量20%未満は注意色、10%未満は危険色です（既存の利用枠デザイン合意を維持します）。
 - `resetsAt` がある行は、画面表示時点のローカル時刻からの差分を「リセットまで X日Y時間」「リセットまで Y時間」「リセットまで Z分」のいずれかで出します。差分が負の場合は「リセット予定を過ぎています」とします。`resetsAt` が無い行はリセット文言を出しません。
 - 受信済みHubが0件の場合は「まだ情報を受信していません」と表示します。受信済みでも表示対象の枠が0件の場合は「表示できる利用枠はありません」と表示します。

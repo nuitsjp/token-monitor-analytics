@@ -358,34 +358,54 @@ function limitColor(remaining: number) {
   return 'brand';
 }
 
+function groupLimitAccounts(rows: HubLimitWindow[], multiAccount: Set<string>) {
+  const groups: { key: string; name: string; windows: HubLimitWindow[] }[] = [];
+  for (const window of rows) {
+    const key = limitAccountKey(window);
+    const last = groups.at(-1);
+    if (last?.key === key) {
+      last.windows.push(window);
+      continue;
+    }
+    groups.push({
+      key,
+      name: limitDisplayName(window, multiAccount.has(window.provider)),
+      windows: [window],
+    });
+  }
+  return groups;
+}
+
 function LimitList({ hubs }: { hubs: HubUsageOverview[] }) {
   const received = hubs.some((hub) => hub.state !== null);
   if (!received) return <p className={classes.emptyHub} role="status">まだ情報を受信していません</p>;
   const rows = collectLimitRows(hubs);
   if (rows.length === 0) return <p className={classes.emptyHub} role="status">表示できる利用枠はありません</p>;
-  const multiAccount = providersWithMultipleAccounts(rows);
+  const groups = groupLimitAccounts(rows, providersWithMultipleAccounts(rows));
   return (
     <div className={classes.limitList}>
-      {rows.map((window) => {
-        const name = limitDisplayName(window, multiAccount.has(window.provider));
-        return <Limit key={limitWindowKey(window)} name={name} window={window} />;
-      })}
+      {groups.map((group) => (
+        <div key={group.key} className={classes.limitAccount} aria-label={group.name}>
+          <strong className={classes.limitAccountName}>{group.name}</strong>
+          {group.windows.map((window) => <Limit key={limitWindowKey(window)} accountName={group.name} window={window} />)}
+        </div>
+      ))}
     </div>
   );
 }
 
-function Limit({ name, window }: { name: string; window: HubLimitWindow }) {
+function Limit({ accountName, window }: { accountName: string; window: HubLimitWindow }) {
   const remaining = remainingPercent(window.remainingPercent);
   const reset = formatResetUntil(window.resetsAt);
   const detail = limitDetail(window);
   return (
     <div className={classes.limit}>
       <div className={classes.limitLabel}>
-        <strong>{name}</strong>
+        <strong>{detail}</strong>
         <span style={{ color: remaining < 20 ? limitColor(remaining) : undefined }}>{remaining}% <small>残り</small></span>
       </div>
-      <Progress value={remaining} size={4} radius="xl" color={limitColor(remaining)} aria-label={`${name}の残量`} />
-      <p><span>{detail}</span>{reset ? <span>{reset}</span> : null}</p>
+      <Progress value={remaining} size={4} radius="xl" color={limitColor(remaining)} aria-label={`${accountName}、${detail}の残量`} />
+      {reset ? <p><span>{reset}</span></p> : null}
     </div>
   );
 }
