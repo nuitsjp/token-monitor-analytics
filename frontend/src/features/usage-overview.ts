@@ -10,25 +10,61 @@ export const usageOverviewQuery = {
 };
 
 export async function getUsageOverview(): Promise<UsageOverview> {
-  if (__MOCK__) {
-    const { mockUsageOverview } = await import('../../../mock/usage-overview.ts');
-    return mockUsageOverview;
-  }
   return rpc.usageOverview.query();
 }
 
-export async function subscribeUsageUpdates(
+export function subscribeUsageUpdates(
   onUpdate: (overview: UsageOverview) => void,
   onStatus: (status: UsageConnectionStatus) => void,
-): Promise<() => void> {
-  if (__MOCK__) {
-    const { mockUsageUpdates } = await import('../../../mock/usage-overview.ts');
-    const timers = mockUsageUpdates.map((frame) => window.setTimeout(() => {
-      if (frame.overview) onUpdate(frame.overview);
-      onStatus(frame.status);
-    }, frame.afterMs));
-    return () => timers.forEach(window.clearTimeout);
-  }
-  // UC-2-X1 段階2: 実SSEへの接続はモックの動作合意後に行う。
-  return () => {};
+): () => void {
+  let disposed = false;
+  let source: EventSource | null = null;
+  let retryTimer: number | null = null;
+
+  const clearRetryTimer = () => {
+    if (retryTimer === null) return;
+    window.clearTimeout(retryTimer);
+    retryTimer = null;
+  };
+
+  const closeSource = () => {
+    const current = source;
+    source = null;
+    current?.close();
+  };
+
+  const connect = () => {
+    if (disposed || source !== null) return;
+    const current = new EventSource('/api/usage/stream');
+    source = current;
+    current.addEventListener('update', (event) => {
+      if (disposed || source !== current) return;
+      const overview = JSON.parse((event as MessageEvent<string>).data) as UsageOverview;
+      onUpdate(overview);
+      if (disposed || source !== current) return;
+      onStatus('connected');
+    });
+    current.onerror = () => {
+      if (disposed || source !== current) return;
+      onStatus('reconnecting');
+      if (disposed || source !== current) return;
+      closeSource();
+      if (!disposed && retryTimer === null) {
+        retryTimer = window.setTimeout(() => {
+          retryTimer = null;
+          connect();
+        }, 3000);
+      }
+    };
+  };
+
+  onStatus('connecting');
+  connect();
+
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    clearRetryTimer();
+    closeSource();
+  };
 }

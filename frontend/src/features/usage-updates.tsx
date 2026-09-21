@@ -19,23 +19,12 @@ export function UsageUpdatesProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isSuccess) return;
-    let disposed = false;
-    let unsubscribe: (() => void) | undefined;
-    void subscribeUsageUpdates(
+    return subscribeUsageUpdates(
       (overview) => {
-        if (!disposed) client.setQueryData(usageOverviewQuery.queryKey, overview);
+        client.setQueryData(usageOverviewQuery.queryKey, overview);
       },
-      (nextStatus) => {
-        if (!disposed) setStatus(nextStatus);
-      },
-    ).then((stop) => {
-      if (disposed) stop();
-      else unsubscribe = stop;
-    });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
+      setStatus,
+    );
   }, [client, isSuccess]);
 
   return <ConnectionContext.Provider value={status}>{children}</ConnectionContext.Provider>;
