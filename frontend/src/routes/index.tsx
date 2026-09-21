@@ -34,11 +34,6 @@ const TOOL_ROWS = [
   { name: 'Codex', value: 4080000000, share: 87.7 }, { name: 'Antigravity', value: 423430000, share: 9.1 },
   { name: 'Cursor', value: 97710000, share: 2.1 }, { name: 'その他', value: 51180000, share: 1.1, neutral: true },
 ];
-const MODEL_ROWS = [
-  { name: 'gpt-5.6-luna', value: 2330000000, share: 50 }, { name: 'gpt-5.6-sol', value: 1120000000, share: 24 },
-  { name: 'gpt-6-astra', value: 651430000, share: 14 }, { name: 'gemini-3.8-flash', value: 418780000, share: 9 },
-  { name: 'その他', value: 139590000, share: 3, neutral: true },
-];
 const SECTIONS = [
   { id: 'top', label: 'ダッシュボード', icon: 'dashboard' },
   { id: 'trend', label: 'トレンド', icon: 'trend' },
@@ -66,6 +61,47 @@ function Dashboard() {
   const totalTokens = activeHubs.reduce((sum, state) => sum + state.periods[period].totalTokens, 0);
   const totalCostUsd = activeHubs.reduce((sum, state) => sum + state.periods[period].costUsd, 0);
   const maxActiveDays = activeHubs.length > 0 ? Math.max(...activeHubs.map((state) => state.activeDays ?? 0)) : 0;
+
+  const aggregatedModels = new Map<string, number>();
+  for (const state of activeHubs) {
+    const models = state.periods[period].models;
+    if (!models) continue;
+    for (const [model, tokens] of Object.entries(models)) {
+      aggregatedModels.set(model, (aggregatedModels.get(model) ?? 0) + tokens);
+    }
+  }
+  const totalModelTokens = Array.from(aggregatedModels.values()).reduce((sum, v) => sum + v, 0);
+  const sortedModels = Array.from(aggregatedModels.entries())
+    .filter(([_, tokens]) => tokens > 0)
+    .sort((a, b) => b[1] - a[1]);
+
+  let modelRows: { name: string; value: number; share: number; neutral?: boolean }[] = [];
+  if (totalModelTokens > 0) {
+    if (sortedModels.length <= 9) {
+      modelRows = sortedModels.map(([name, value]) => ({
+        name,
+        value,
+        share: (value / totalModelTokens) * 100,
+      }));
+    } else {
+      const top9 = sortedModels.slice(0, 9);
+      const rest = sortedModels.slice(9);
+      const restTokens = rest.reduce((sum, [_, v]) => sum + v, 0);
+      modelRows = top9.map(([name, value]) => ({
+        name,
+        value,
+        share: (value / totalModelTokens) * 100,
+      }));
+      if (restTokens > 0) {
+        modelRows.push({
+          name: 'その他',
+          value: restTokens,
+          share: (restTokens / totalModelTokens) * 100,
+          neutral: true,
+        });
+      }
+    }
+  }
 
   return (
     <div className={classes.workspace}>
@@ -132,8 +168,14 @@ function Dashboard() {
           </section>
 
           <section className={classes.panel} id="models" aria-labelledby="models-title">
-            <PanelHeader id="models-title" title="モデル" caption="トークン構成比" />
-            <RankList rows={MODEL_ROWS} />
+            <PanelHeader id="models-title" title="モデル" caption="トークン構成比" saved />
+            {overview.isPending ? (
+              <HubLoading />
+            ) : modelRows.length === 0 ? (
+              <p className={classes.emptyHub}>利用データがありません</p>
+            ) : (
+              <RankList rows={modelRows} />
+            )}
           </section>
 
           <section className={classes.panel} id="limits" aria-labelledby="limits-title">
