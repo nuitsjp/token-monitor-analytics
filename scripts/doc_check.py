@@ -6,10 +6,11 @@ import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 EXCLUDE_DIRS = {".git", "node_modules", "bin", "obj", "dist", "build", ".venv", "venv",
                 "vendor", "upstream", "old", "poc", ".playwright-cli"}
-EXCLUDE_RELPATHS = {"docs/reference"}
+EXCLUDE_RELPATHS = {"docs/reference", ".agents/skills/usecase-docs/assets"}
 EVIDENCE_EXTRA_EXCLUDE = {"public", "static", "assets", "src", "frontend", "test", "tests"}
 EVIDENCE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".log", ".sha256"}
 # 行数上限の正本: docs/standards/design-and-documentation.md §3
@@ -18,15 +19,12 @@ LINE_LIMITS = {"docs/project.md": 300, "docs/architecture.md": 200,
 PLACEHOLDER_HASH = "sha256:" + "0" * 64
 # 配布元が `--print-hashes` の出力で更新する。
 EXPECTED_HASHES = {
-    "docs/standards/design-and-documentation.md": "sha256:548affce5207701b1e82df5e5f5bb27b48c4370d6c4135b3bc9d011bef11699e",
-    "docs/standards/mock-driven-development.md": "sha256:3fb773669cebb4eaaee937bb9b1ae32663c070abf36dfad1c6c2d39bb8d00d70",
+    "docs/standards/design-and-documentation.md": "sha256:b76ea7a0ccdef2f16b9bc4648b40074344975a09097171be2edbf92bc2173f79",
+    "docs/standards/mock-driven-development.md": "sha256:02cfd3ab3cec13b2f1112d69dbc57f27bb549bb48151f5f196630af94c5325cb",
 }
 
-UC_HEAD_RE = re.compile(r"^#\s+UC-(\d+)\.")
 DESIGN_UCP_HEAD_RE = re.compile(r"^#\s+UCP-(\d+)\.")
 DESIGN_UCP_FILE_RE = re.compile(r"^UCP-\d+\.md$")
-UC_ID_RE = re.compile(r"UC-\d+")
-EXT_RE = re.compile(r"UC-\d+-X\d+")
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^()\s]+)(?:\s+\"[^\"]*\")?\)")
 ABSPATH_RE = re.compile(r"(?<![0-9A-Za-z])[A-Za-z]:[\\/]|/Users/|/home/")
 ANCHOR_ID_RE = re.compile(r"<a\s+id=\"([^\"]+)\"")
@@ -127,23 +125,6 @@ def cell(header, cells, name):
     return cells[index] if index < len(cells) else ""
 
 
-def uc_of(text):
-    found = UC_ID_RE.search(text)
-    return found.group(0) if found else ""
-
-
-def uc_bodies(uc_docs):
-    """各 UC ファイルの `# UC-n.` と本文を返す。見出しの不備は判定4で報告する。"""
-    bodies = []
-    for path, text in sorted(uc_docs.items()):
-        heads = [(i, m) for i, line in enumerate(text.splitlines())
-                 if (m := UC_HEAD_RE.match(line))]
-        if len(heads) == 1:
-            i, matched = heads[0]
-            bodies.append(("UC-" + matched.group(1), "\n".join(text.splitlines()[i + 1:])))
-    return bodies
-
-
 def check_links(root, docs):
     """判定 1: リンク先のファイルとアンカーが解決できるか。"""
     if not docs:
@@ -158,6 +139,7 @@ def check_links(root, docs):
                     continue
                 where = "%s:%d" % (rel(root, path), lineno)
                 filepart, _, anchor = target.partition("#")
+                filepart, anchor = unquote(filepart), unquote(anchor)
                 dest = path
                 if filepart:
                     dest = (path.parent / filepart).resolve()
@@ -179,7 +161,7 @@ def check_abs_paths(root, docs):
     """判定 2: ローカル絶対パスを含む行がないか。"""
     hits = ["%s:%d" % (rel(root, path), lineno)
             for path, text in sorted(docs.items())
-            for lineno, line in enumerate(text.split("\n"), 1) if ABSPATH_RE.search(line)]
+            for lineno, line in enumerate(text.split("\n"), 1) if ABSPATH_RE.search(unquote(line))]
     for where in hits:
         emit("NG", "ローカル絶対パス: %s にローカル絶対パスがある" % where)
     if not hits:
@@ -508,55 +490,140 @@ def check_forbidden_records(root, docs):
         emit("OK", "禁止記録・重複本文: 旧記録形式と完全一致する長い本文の重複はない")
 
 
-def check_uc_ids(project_text, uc_docs):
-    """判定 4: UC ファイル名・本文見出しと project.md のカタログ表が整合するか。"""
-    if project_text is None:
-        emit("対象なし", "UC ID: docs/project.md がない")
-        return
-    head_ids, ng = [], False
-    for path, text in sorted(uc_docs.items()):
-        ids = ["UC-" + m.group(1) for line in text.splitlines()
-               if (m := UC_HEAD_RE.match(line))]
-        head_ids.extend(ids)
-        if len(ids) != 1:
-            ng = True
-            emit("NG", "UC ID: docs/usecases/%s の `# UC-n.` 見出しは1件必要（実測 %d 件）"
-                 % (path.name, len(ids)))
-        elif path.stem != ids[0]:
-            ng = True
-            emit("NG", "UC ID: docs/usecases/%s のファイル名と本文 ID %s が一致しない"
-                 % (path.name, ids[0]))
-    body = section_body(project_text, "## 3. ユースケース一覧")
-    catalog = parse_table(body) if body else None
-    if catalog is None:
-        emit("対象なし", "UC ID: docs/project.md にカタログ表がない")
-        return
-    catalog_ids = []
-    for lineno, cells in catalog[1]:
-        value = cell(catalog[0], cells, "UC ID")
-        uc_id = uc_of(value)
-        if not uc_id:
+def document_structure(text):
+    """コード例を除いた H1、H2 節、節より前の記入項目を返す。"""
+    lines = re.sub(r"<!--.*?-->", "", text, flags=re.S).splitlines()
+    heads, sections, preamble = [], {}, []
+    current, fence = preamble, None
+    for line in lines:
+        marker = FENCE_RE.match(line)
+        if fence:
+            if (marker and marker.group(1)[0] == fence[0]
+                    and len(marker.group(1)) >= fence[1]
+                    and not line[marker.end():].strip()):
+                fence = None
+            current.append(line)
             continue
-        catalog_ids.append(uc_id)
-        targets = LINK_RE.findall(value)
-        if targets and targets != ["usecases/%s.md" % uc_id]:
-            ng = True
-            emit("NG", "UC ID: docs/project.md:%d の %s のリンク先は usecases/%s.md が必要"
-                 % (lineno, uc_id, uc_id))
-    for name, ids in (("docs/usecases/ 見出し", head_ids),
-                      ("docs/project.md カタログ表", catalog_ids)):
-        dups = sorted({i for i in ids if ids.count(i) > 1})
-        if dups:
-            ng = True
-            emit("NG", "UC ID: %s に重複 ID がある: %s" % (name, "、".join(dups)))
-    # 本文はカタログ表の部分集合でよい（着手していない UC は本文がなくてよい）。
-    head_set, catalog_set = set(head_ids), set(catalog_ids)
-    for uc_id in sorted(head_set - catalog_set, key=lambda x: int(x[3:])):
-        ng = True
-        emit("NG", "UC ID: %s の本文があるが docs/project.md カタログ表にない" % uc_id)
-    if not ng:
-        known = sorted(head_set | catalog_set, key=lambda x: int(x[3:]))
-        emit("OK", "UC ID: %d 件の UC ID が一致している（本文あり %d 件）" % (len(known), len(head_set)))
+        if marker:
+            fence = (marker.group(1)[0], len(marker.group(1)))
+            current.append(line)
+            continue
+        matched = re.match(r"^(#{1,2})\s+(.+?)\s*#*\s*$", line)
+        if matched and matched.group(1) == "#":
+            heads.append(matched.group(2))
+        elif matched:
+            current = []
+            sections.setdefault(matched.group(2), []).append(current)
+        else:
+            current.append(line)
+    return heads, sections, preamble
+
+
+def check_usecases(root, project_text, uc_docs):
+    """判定 4: 名称、必須構造、親子の参照とプロジェクト一覧が整合するか。"""
+    before = NG_COUNT
+    parents, scenarios, kinds = {}, {}, {}
+
+    def problem(path, message):
+        emit("NG", "ユースケース構造: %s %s" % (rel(root, path), message))
+
+    def check_document(path, text, name, required, optional=()):
+        heads, sections, preamble = document_structure(text)
+        if heads != [name]:
+            problem(path, "先頭見出しは配置名と一致する `# %s` が1件必要" % name)
+        if re.search(r"\{\{.*?\}\}", text, re.S):
+            problem(path, "未記入の {{...}} が残っている")
+        for title in required + tuple(title for title in optional if title in sections):
+            bodies = sections.get(title, [])
+            if len(bodies) != 1 or not any(line.strip() for line in bodies[0]):
+                problem(path, "`## %s` は空でない節が1件必要" % title)
+        return sections, preamble
+
+    for path, text in sorted(uc_docs.items()):
+        parts = path.relative_to(root / "docs" / "usecases").parts
+        if len(parts) == 2 and parts[1] == "README.md":
+            parents[path] = check_document(path, text, parts[0],
+                ("主アクター", "目的", "シナリオ", "実現パターン"), ("前提", "共通の受け入れ条件"))[0]
+        elif len(parts) == 3 and parts[1] == "scenarios":
+            sections, preamble = check_document(path, text, path.stem, ("手順", "受け入れ条件"))
+            scenarios[path] = path.parent.parent / "README.md"
+            values = {}
+            for label, allowed in (("種別", ("主成功", "拡張")), ("UI確認", ("要", "不要"))):
+                found = [match.group(1).strip() for line in preamble
+                         if (match := re.fullmatch(r"- %s:\s*(.*)" % label, line))]
+                if len(found) != 1 or found[0] not in allowed:
+                    problem(path, "`- %s:` は %s のいずれかを1件記載する" % (label, " / ".join(allowed)))
+                else:
+                    values[label] = found[0]
+            kind = values.get("種別")
+            kinds[path] = kind
+            if kind:
+                title = "開始条件" if kind == "主成功" else "分岐条件"
+                bodies = sections.get(title, [])
+                if len(bodies) != 1 or not any(line.strip() for line in bodies[0]):
+                    problem(path, "`## %s` は空でない節が1件必要" % title)
+        else:
+            problem(path, "配置は <名称>/README.md または <名称>/scenarios/<名称>.md が必要")
+
+    for path, sections in parents.items():
+        if not any(LINK_RE.search(line) for body in sections.get("実現パターン", []) for line in body):
+            problem(path, "実現パターンには設計へのリンクが必要")
+        listed = []
+        for body in sections.get("シナリオ", []):
+            for line in body:
+                if not line.strip():
+                    continue
+                match = re.fullmatch(r"[-*+] \[[^\]]+\]\(([^()\s]+)\)", line.strip())
+                if not match:
+                    problem(path, "シナリオ一覧には1行に1つの個別相対 Markdown リンクだけを記載する")
+                    continue
+                target = unquote(match.group(1))
+                dest = (path.parent / target).resolve()
+                if (Path(target).is_absolute() or dest not in scenarios
+                        or scenarios.get(dest) != path):
+                    problem(path, "シナリオ一覧の参照先は同じユースケースの scenarios/*.md が必要: %s" % target)
+                listed.append(dest)
+        if len(listed) != len(set(listed)):
+            problem(path, "シナリオ一覧に重複した参照がある")
+        children = {child for child, parent in scenarios.items() if parent == path}
+        for child in sorted(children - set(listed)):
+            problem(child, "親のシナリオ一覧に参照がない")
+        if sum(kinds.get(child) == "主成功" for child in children) != 1:
+            problem(path, "主成功シナリオはちょうど1件必要")
+    for path, parent in scenarios.items():
+        if parent not in parents:
+            problem(path, "所属するユースケースの README.md がない")
+
+    body = section_body(project_text, "## 3. ユースケース一覧") if project_text else None
+    catalog = parse_table(body) if body else None
+    catalog_paths, names = [], []
+    project_path = root / "docs" / "project.md"
+    if catalog is None or "ユースケース" not in catalog[0]:
+        if parents or project_text is not None:
+            problem(project_path, "ユースケース一覧には `ユースケース` 列が必要")
+    else:
+        for lineno, cells in catalog[1]:
+            value = cell(catalog[0], cells, "ユースケース")
+            targets = LINK_RE.findall(value)
+            if not value:
+                problem(project_path, "%d 行目のユースケース名が空" % lineno)
+            elif targets:
+                dest = (root / "docs" / unquote(targets[0])).resolve()
+                if len(targets) != 1 or dest not in parents:
+                    problem(project_path, "%d 行目の参照先はユースケースの README.md が必要" % lineno)
+                else:
+                    catalog_paths.append(dest)
+                    names.append(dest.parent.name)
+            else:
+                # 未着手のユースケースは名称だけを掲載し、本文を要求しない。
+                names.append(value)
+        if len(names) != len(set(names)):
+            problem(project_path, "ユースケース一覧に重複した名称がある")
+    for path in sorted(set(parents) - set(catalog_paths)):
+        problem(path, "docs/project.md のユースケース一覧に参照がない")
+    if before == NG_COUNT:
+        emit("OK", "ユースケース構造: ユースケース %d 件、シナリオ %d 件が整合している"
+             % (len(parents), len(scenarios)))
 
 
 def check_hashes(root):
@@ -595,10 +662,11 @@ def check_reports(root, project_text, uc_docs, design_docs):
             emit("NG", "行数: %s は %d 行で上限 %d 行を超える" % (relpath, lines, limit))
         else:
             emit("報告", "行数: %s は %d 行（上限 %d 行）" % (relpath, lines, limit))
-    if project_text is not None:
-        bodies = sorted(uc_bodies(uc_docs), key=lambda kv: int(kv[0][3:]))
-        detail = "、".join("%s 拡張 %d 本" % (uc, len(set(EXT_RE.findall(body)))) for uc, body in bodies)
-        emit("報告", "ユースケース: %d 件%s" % (len(bodies), "（%s）" % detail if bodies else ""))
+    parents = [path for path in uc_docs if path.name == "README.md"
+               and path.parent.parent == root / "docs" / "usecases"]
+    detail = "、".join("%s シナリオ %d 本" % (path.parent.name,
+        sum(child.parent == path.parent / "scenarios" for child in uc_docs)) for path in sorted(parents))
+    emit("報告", "ユースケース: %d 件%s" % (len(parents), "（%s）" % detail if detail else ""))
     if (root / "docs" / "design").is_dir():
         patterns = 0
         for path, text in design_docs.items():
@@ -636,13 +704,13 @@ def main():
                 docs[(here / name).resolve()] = read_text(here / name)
     project_text = docs.get((root / "docs" / "project.md").resolve())
     uc_docs = {path: text for path, text in docs.items()
-               if path.parent == root / "docs" / "usecases"}
+               if (root / "docs" / "usecases") in path.parents}
     design_docs = {path: text for path, text in docs.items()
                    if path.parent == root / "docs" / "design"}
     check_links(root, docs)
     check_abs_paths(root, docs)
     check_forbidden_records(root, docs)
-    check_uc_ids(project_text, uc_docs)
+    check_usecases(root, project_text, uc_docs)
     check_hashes(root)
     check_reports(root, project_text, uc_docs, design_docs)
     print("NG %d 件" % NG_COUNT)

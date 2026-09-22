@@ -7,16 +7,16 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 配布元・版 | [aidd-project-template](https://github.com/nuitsjp/aidd-project-template) / 配布版21 |
-| 採用元固定コミット | `19c8d289e98b7ff35abef9b91086bcf7220d7dd1` |
-| 設計・文書標準 | [版16](standards/design-and-documentation.md) 原文維持 |
-| モック標準 | [版19](standards/mock-driven-development.md) 原文維持 |
-| React拡張 | 0.2.5。製品固有の実装を維持して、依存関係・Node.js指定・セットアップ・配布・検証設定の差分を適用 |
-| 適用範囲 | 共通規則、設計・文書構成とReact基盤。製品の要件・系列・受け入れ条件は各正本で管理 |
+| 配布元・版 | [aidd-project-template](https://github.com/nuitsjp/aidd-project-template) / 配布版22 |
+| 採用元固定コミット | `280fcaaff8380a9199f8b7014cbcd26479e108fa` |
+| 設計・文書標準 | [版17](standards/design-and-documentation.md) 原文維持 |
+| モック標準 | [版20](standards/mock-driven-development.md) 原文維持 |
+| React拡張 | 0.2.6。製品固有の実装を維持して、依存関係・Node.js指定・セットアップ・配布・検証設定の差分を適用 |
+| 適用範囲 | 共通規則、設計・文書構成とReact基盤。製品の要件・シナリオ・受け入れ条件は各正本で管理 |
 | 固有差分 | メモ管理・デモ認証・サンプルのテーブルと試験は使用しない。Hub連携と閲覧の製品実装・テストを使用し、外部Hubの実測資料を保全する。CIはUbuntuで実行 |
 | 依存関係の差分 | サンプル認証専用のCookieプラグインは使用しない。直接依存の版は `package.json`、解決済みの依存関係は `package-lock.json` が正本 |
 
-配布元管理の `AGENTS.md`、標準2件、`scripts/doc_check.py` は同じ固定コミットから一組で更新します。その他の文書・実装・設定・依存定義とロック・DB移行は本プロジェクトで管理し、雛形の全文で上書きしません。テンプレートのサンプル仕様や旧製品の仕様を現行製品仕様へ暗黙的に継承しません。
+配布元管理の `AGENTS.md`、標準2件、`scripts/doc_check.py`、`.agents/skills/usecase-docs/` のスキルと雛形2件は同じ固定コミットから7ファイル一組で更新します。その他の文書・実装・設定・依存定義とロック・DB移行は本プロジェクトで管理し、雛形の全文で上書きしません。テンプレートのサンプル仕様や旧製品の仕様を現行製品仕様へ暗黙的に継承しません。
 
 <a id="mock-scope"></a>
 ## 2. モック駆動開発の適用範囲
@@ -29,12 +29,14 @@
 | 正本 | 内容 |
 | --- | --- |
 | 本書 | 適用する標準、固有差分、文書の責務 |
-| [project.md](project.md) | 目的、制約、UC一覧、確認した事実、実行・検証手順 |
+| [project.md](project.md) | 目的、制約、ユースケース一覧、確認した事実、実行・検証手順 |
 | [architecture.md](architecture.md) | 全体構造、実現パターンの適用条件、設計上の制約 |
 | `design/UCP-n.md` | 実現パターンごとの役割、実装パス、シーケンス、結果確定点、障害時の動作、モック境界 |
 | [design/data.md](design/data.md) | 保存形式、テーブル定義、データ制約 |
 | [architecture-react.md](architecture-react.md) | React・Node.js基盤の責務、起動単位、テスト分離 |
-| usecases/UC-n.md | 現在の系列、UI確認の要否、受け入れ条件 |
+| `usecases/<名称>/README.md` | 主アクター、目的、共通条件、シナリオ一覧、実現パターンへの参照 |
+| `usecases/<名称>/scenarios/<名称>.md` | シナリオ固有の条件・手順・受け入れ条件、種別、UI確認の要否 |
+| [.agents/skills/usecase-docs/](../.agents/skills/usecase-docs/SKILL.md) | 文書作成手順と雛形（実仕様ではない） |
 | standards/ | 輸入標準の原文 |
 | reference/ | 外部システムの取得済み実測資料 |
 | [../README.md](../README.md) | プロジェクト概要と参照案内 |

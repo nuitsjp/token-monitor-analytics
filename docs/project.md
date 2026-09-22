@@ -6,16 +6,16 @@
 
 ## 2. 基盤の制約
 
-Node.js（指定版は [`.nvmrc`](../.nvmrc)）、React、TypeScript、SQLiteを使用し、ローカルのループバックで起動します。UC-1ではGit管理外の接続設定ファイルから2つのHubへ接続します。利用者向けWeb認証は未実装です。
+Node.js（指定版は [`.nvmrc`](../.nvmrc)）、React、TypeScript、SQLiteを使用し、ローカルのループバックで起動します。「Hubの最新情報を保存して通知する」ではGit管理外の接続設定ファイルから2つのHubへ接続します。利用者向けWeb認証は未実装です。
 
 <a id="usecases"></a>
 
 ## 3. ユースケース一覧
 
-| UC ID | 主アクター | 目的 | 実装順序 | 実現パターン | モック適用 |
+| ユースケース | 主アクター | 目的 | 実装順序 | 実現パターン | モック適用 |
 | --- | --- | --- | --- | --- | --- |
-| [UC-1](usecases/UC-1.md) | 利用者 | Hubの最新情報をローカルに保存し、通知する | 1 | [UCP-1](design/UCP-1.md) | 対象外（UI確認不要） |
-| [UC-2](usecases/UC-2.md) | 利用者 | 登録Hubの最新利用状況を閲覧する | 2 | [UCP-2](design/UCP-2.md) | 対象（UI確認必要） |
+| [Hubの最新情報を保存して通知する](usecases/Hubの最新情報を保存して通知する/README.md) | 利用者 | Hubの最新情報をローカルに保存し、通知する | 1 | [UCP-1](design/UCP-1.md) | 対象外（UI確認不要） |
+| [利用状況を閲覧する](usecases/利用状況を閲覧する/README.md) | 利用者 | 登録Hubの最新利用状況を閲覧する | 2 | [UCP-2](design/UCP-2.md) | 対象（UI確認必要） |
 
 <a id="design"></a>
 
@@ -54,7 +54,7 @@ Node.js（指定版は [`.nvmrc`](../.nvmrc)）、React、TypeScript、SQLiteを
 
 ブラウザー実体を指定する場合は `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` を使います。その環境で `--disable-extensions` による起動失敗を確認した場合だけ、`PLAYWRIGHT_IGNORE_DISABLE_EXTENSIONS=1` を指定して同引数を除外します。自動で別のブラウザーへ切り替えません。
 
-`npm run verify` はLint、文書検査、設定の基盤テスト、型検査、本番ビルド、UC-1・UC-2の製品E2Eを実行します。CIも同じコマンドを使用します。`npm run test:e2e:repeat` はビルド後にE2Eを4並列で3回実行します。各テストの分離は [検証基盤](architecture-react.md#3-検証基盤) を参照します。
+`npm run verify` はLint、文書検査、設定の基盤テスト、型検査、本番ビルド、Hub受信・通知と利用状況閲覧の製品E2Eを実行します。CIも同じコマンドを使用します。`npm run test:e2e:repeat` はビルド後にE2Eを4並列で3回実行します。各テストの分離は [検証基盤](architecture-react.md#3-検証基盤) を参照します。
 
 | 検証対象 | 条件・期待結果 |
 | --- | --- |
