@@ -2,7 +2,7 @@
 
 設定されたHubからSSEで最新状態を受信し、SQLiteへ保存するローカルアプリです。保存した最新状態はブラウザーのダッシュボードで閲覧でき、Hubの保存通知で自動更新します。
 
-起動、Hub接続設定、検証、配布物の生成は [実行・検証手順](docs/project.md#commands) に従ってください。必要なNode.jsの版は [`.nvmrc`](.nvmrc) に指定し、文書検査にはPython 3を使用します。
+起動、Hub接続設定、検証、配布物の生成は [実行・検証手順](docs/project.md#commands) に従ってください。Node.jsとPythonはmiseで管理し、版の正本は [mise.toml](mise.toml) と [mise.lock](mise.lock) です。
 
 ## 文書
 

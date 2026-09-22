@@ -130,10 +130,15 @@ function Dashboard() {
               <span className={classes.headerMeta}>
                 {[selected.shortRange, fetchedAt ? `取得 ${fetchedAt}` : null].filter(Boolean).join(' · ')}
               </span>
-              <div className={classes.periodSwitch} role="group" aria-label="集計期間">
-                {(Object.keys(PERIODS) as PeriodKey[]).map((key) => (
-                  <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{key.toUpperCase()}</button>
-                ))}
+              <div className={classes.headerPeriod}>
+                {connectionStatus === 'reconnecting' ? (
+                  <p className={classes.reconnect} role="status"><span className={classes.reconnectDot} aria-hidden="true" />再接続中</p>
+                ) : null}
+                <div className={classes.periodSwitch} role="group" aria-label="集計期間">
+                  {(Object.keys(PERIODS) as PeriodKey[]).map((key) => (
+                    <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{key.toUpperCase()}</button>
+                  ))}
+                </div>
               </div>
             </div>
           </header>
@@ -154,7 +159,6 @@ function Dashboard() {
 
           <section className={`${classes.panel} ${classes.hubPanel}`} id="hubs" aria-labelledby="hubs-title">
             <PanelHeader id="hubs-title" title="Hub・デバイス" saved />
-            {connectionStatus === 'reconnecting' ? <p role="status" className={classes.hubError}>再接続中</p> : null}
             {overview.isPending ? <HubLoading /> : overview.isError ? <div className={classes.hubError}>Hub・デバイスを取得できませんでした</div> : <HubList hubs={hubs} period={period} />}
           </section>
         </div>

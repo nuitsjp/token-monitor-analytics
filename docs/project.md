@@ -6,7 +6,7 @@
 
 ## 2. 基盤の制約
 
-Node.js（指定版は [`.nvmrc`](../.nvmrc)）、React、TypeScript、SQLiteを使用し、ローカルのループバックで起動します。「Hubの最新情報を保存して通知する」ではGit管理外の接続設定ファイルから2つのHubへ接続します。利用者向けWeb認証は未実装です。
+Node.js、React、TypeScript、SQLiteを使用し、ローカルのループバックで起動します。「Hubの最新情報を保存して通知する」ではGit管理外の接続設定ファイルから2つのHubへ接続します。利用者向けWeb認証は未実装です。開発とCIのNode.jsとPythonの版は [mise.toml](../mise.toml) と [mise.lock](../mise.lock) が正本です。
 
 <a id="usecases"></a>
 
@@ -28,15 +28,15 @@ Node.js（指定版は [`.nvmrc`](../.nvmrc)）、React、TypeScript、SQLiteを
 
 ## 5. 実行・検証手順
 
-リポジトリルートを作業ディレクトリとします。[`.nvmrc`](../.nvmrc) の指定版Node.jsとPython 3を用意し、`npm run setup` を実行します。セットアップはNode.jsの版の一致を確認して、`package-lock.json` に従い `npm ci` を実行します。依存を更新する場合は `package.json` とロックを併せて更新します。
+miseを導入し、リポジトリルートで `mise run setup` を実行します。セットアップは `package-lock.json` に従い `npm ci` を実行します。依存を更新する場合は `package.json` とロックを併せて更新します。
 
 | 操作 | コマンド・確認 |
 | --- | --- |
-| 開発起動 | `npm run dev`、http://127.0.0.1:5173/ |
+| 開発起動 | `mise run hub`、http://127.0.0.1:5173/ |
 | 本番形式での起動 | `npm run build` 後に `npm start`、http://127.0.0.1:3000/ |
 | 終了 | Ctrl+C |
 | サーバー確認 | `GET /health` が `{"status":"ok"}` を返す |
-| 基盤・製品検証 | `npm run verify` |
+| 基盤・製品検証 | `mise run verify` |
 | 文書検査 | `python scripts/doc_check.py .` |
 | DB整合性 | `npm run db:check` |
 | 保存後通知の確認 | 起動中に `curl.exe -N http://127.0.0.1:3000/api/usage/stream` を実行し、接続時とHubの保存成功後に `event: update` が届くことを確認する |
@@ -54,7 +54,7 @@ Node.js（指定版は [`.nvmrc`](../.nvmrc)）、React、TypeScript、SQLiteを
 
 ブラウザー実体を指定する場合は `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` を使います。その環境で `--disable-extensions` による起動失敗を確認した場合だけ、`PLAYWRIGHT_IGNORE_DISABLE_EXTENSIONS=1` を指定して同引数を除外します。自動で別のブラウザーへ切り替えません。
 
-`npm run verify` はLint、文書検査、設定の基盤テスト、型検査、本番ビルド、Hub受信・通知と利用状況閲覧の製品E2Eを実行します。CIも同じコマンドを使用します。`npm run test:e2e:repeat` はビルド後にE2Eを4並列で3回実行します。各テストの分離は [検証基盤](architecture-react.md#3-検証基盤) を参照します。
+`mise run verify` はLint、文書検査、設定の基盤テスト、型検査、本番ビルド、Hub受信・通知と利用状況閲覧の製品E2Eを実行します。CIは同じ内容を `npm run verify` で実行します。`npm run test:e2e:repeat` はビルド後にE2Eを4並列で3回実行します。各テストの分離は [検証基盤](architecture-react.md#3-検証基盤) を参照します。
 
 | 検証対象 | 条件・期待結果 |
 | --- | --- |
@@ -65,4 +65,4 @@ Node.js（指定版は [`.nvmrc`](../.nvmrc)）、React、TypeScript、SQLiteを
 
 ### 配布物の生成
 
-`npm run package` は全体検証後に `release/app` を生成し、ビルド成果物、`package.json`、`package-lock.json`、`.nvmrc`、設定例を配置します。配布先でも指定版Node.jsを使用し、`npm ci --omit=dev` を実行して `.env` とHub接続設定を用意してから `npm start` で起動します。DBは配布ディレクトリの外に置きます。
+`npm run package` は全体検証後に `release/app` を生成し、ビルド成果物、`package.json`、`package-lock.json`、`mise.toml`、`mise.lock`、設定例を配置します。配布先でも `mise install --locked` で指定版を導入し、`npm ci --omit=dev` を実行して `.env` とHub接続設定を用意してから `npm start` で起動します。DBは配布ディレクトリの外に置きます。

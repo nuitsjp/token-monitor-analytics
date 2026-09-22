@@ -24,6 +24,13 @@
 .headingLine span { border: 1px solid var(--tm-border-1); border-radius: var(--mantine-radius-sm); padding: 2px var(--tm-space-2); color: var(--tm-text-3); background: var(--tm-surface-panel); font-size: var(--mantine-font-size-xs); font-weight: 600; }
 .headerControls { display: flex; align-items: center; gap: var(--tm-space-3); }
 .headerMeta { color: var(--tm-text-3); font-size: var(--mantine-font-size-xs); white-space: nowrap; }
+.headerPeriod { display: flex; align-items: center; gap: var(--tm-space-3); }
+.reconnect { display: inline-flex; align-items: center; gap: var(--tm-space-2); margin: 0; border-radius: var(--mantine-radius-md); padding: var(--tm-space-2) var(--tm-space-3); background: var(--tm-status-warn-bg); color: var(--tm-status-warn); font-size: var(--mantine-font-size-xs); font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+.reconnectDot { width: var(--tm-space-2); height: var(--tm-space-2); flex: none; border-radius: 50%; background: var(--tm-status-warn); animation: reconnectPulse 1.8s ease-out infinite; }
+@keyframes reconnectPulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tm-status-warn) 45%, transparent); }
+  70% { box-shadow: 0 0 0 var(--tm-space-2) color-mix(in srgb, var(--tm-status-warn) 0%, transparent); }
+}
 .periodSwitch { display: flex; border-radius: var(--mantine-radius-md); background: var(--tm-surface-sunken); padding: 3px; }
 .periodSwitch button { min-width: 68px; border: 0; border-radius: var(--mantine-radius-sm); padding: var(--tm-space-2) var(--tm-space-3); background: transparent; color: var(--tm-text-2); cursor: pointer; font-size: var(--mantine-font-size-xs); font-weight: 700; letter-spacing: .05em; }
 .periodSwitch button[aria-pressed='true'] { background: var(--tm-surface-panel); color: var(--mantine-color-brand-8); box-shadow: 0 1px 3px rgb(21 53 46 / 12%); }
@@ -149,7 +156,9 @@
   .navIcon { display: none; }
   .main { margin-left: 0; padding: var(--tm-space-5) var(--tm-space-4) var(--tm-space-6); }
   .pageHeader { flex-direction: column; }
-  .periodSwitch { width: 100%; }
+  .headerControls { flex-wrap: wrap; }
+  .headerPeriod { width: 100%; }
+  .periodSwitch { flex: 1; width: auto; }
   .periodSwitch button { flex: 1; }
   .kpis { grid-template-columns: 1fr 1fr; }
   .kpi:nth-child(3) { border-left: 0; }
@@ -165,6 +174,10 @@
   .kpi { padding: var(--tm-space-3); }
   .kpiValue strong { font-size: 22px; }
   .chartLegend { justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reconnectDot { animation: none; }
 }
 
 @media (max-width: 380px) {
