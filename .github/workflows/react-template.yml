@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies and generate routes
         run: npm run setup
       - name: Install Playwright Chromium
-        run: npm exec -- playwright install --with-deps chromium
+        run: npm exec -- playwright install --with-deps --only-shell chromium
       - name: Verify foundation and product E2E
         run: npm run verify
       - name: Upload failed-test diagnostics

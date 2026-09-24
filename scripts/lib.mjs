@@ -8,4 +8,7 @@ export function run(command, args = [], options = {}) {
         child.once('exit', (code, signal) => code === 0 ? resolve() : reject(new Error(`${command} ${args.join(' ')} failed (${code ?? signal})`)));
     });
 }
-export const npm = (...args) => run(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, { shell: process.platform === 'win32' });
+// npm.cmd は cmd.exe を要する。引数はすべて本リポジトリのスクリプトが固定した値であり、shell: true と引数配列の併用（DEP0190）は避ける。
+export const npm = (...args) => process.platform === 'win32'
+    ? run(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `npm ${args.join(' ')}`])
+    : run('npm', args);
